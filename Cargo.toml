@@ -1,0 +1,18 @@
+[package]
+name = "koala"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = "0.13.1"
+anyhow = "1.0.93"
+strum = "0.26"
+strum_macros = "0.26"
+
+[[bin]]
+name = "koala"
+path = "bin/koala.rs"
+
+[[bin]]
+name = "koala_cli"
+path = "bin/koala_cli.rs"
