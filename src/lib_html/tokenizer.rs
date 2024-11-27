@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
 use strum_macros::Display;
 
-use super::token::HTMLToken;
+use super::token::{HTMLToken, HTMLTokenType};
 fn pause() {
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -153,8 +153,10 @@ impl HTMLTokenizer {
                 self.switch_to(TokenizerState::TagOpen);
             }
             Some('\n') => {
-                self.current_token
-                    .set_token_type(super::token::HTMLTokenType::Character);
+                if self.current_token.token_type() != HTMLTokenType::Character {
+                    self.current_token
+                        .set_token_type(super::token::HTMLTokenType::Character);
+                }
                 self.current_token
                     .doctype_data()
                     .append_character_to_name(self.current_input_character.unwrap());
