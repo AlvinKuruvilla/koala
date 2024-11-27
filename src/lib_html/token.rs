@@ -3,7 +3,7 @@ use core::fmt;
 use strum_macros::Display;
 
 /// The types of tokens the tokenizer produces
-#[derive(Display, PartialEq)]
+#[derive(Display, PartialEq, Clone, Copy)]
 pub enum HTMLTokenType {
     Invalid,
     DOCTYPE,
@@ -82,7 +82,13 @@ pub struct HTMLToken {
 }
 impl fmt::Display for HTMLToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({}, {})", self.token_type, self.doctype_data)
+        if self.token_type == HTMLTokenType::Character
+            || self.token_type == HTMLTokenType::EndOfFile
+        {
+            write!(f, "({})", self.token_type)
+        } else {
+            write!(f, "({}, name = {})", self.token_type, self.doctype_data)
+        }
     }
 }
 impl HTMLToken {
@@ -96,6 +102,9 @@ impl HTMLToken {
     }
     pub fn set_token_type(&mut self, token_type: HTMLTokenType) {
         self.token_type = token_type
+    }
+    pub fn token_type(&self) -> HTMLTokenType {
+        self.token_type
     }
     pub fn doctype_data(&mut self) -> &mut DoctypeData {
         &mut self.doctype_data
