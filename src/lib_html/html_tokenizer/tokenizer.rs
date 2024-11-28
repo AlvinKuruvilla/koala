@@ -106,6 +106,7 @@ pub struct HTMLTokenizer {
     current_input_character: Option<char>,
     current_token: HTMLToken,
     at_eof: bool,
+    token_stream: Vec<HTMLToken>,
 }
 impl HTMLTokenizer {
     pub fn new(input: String) -> Self {
@@ -118,6 +119,7 @@ impl HTMLTokenizer {
             current_input_character: None,
             current_token: HTMLToken::new(super::token::HTMLTokenType::DOCTYPE),
             at_eof: false,
+            token_stream: Vec::new(),
         }
     }
 
@@ -139,6 +141,7 @@ impl HTMLTokenizer {
     }
     pub fn emit_token(&mut self) {
         if self.current_token.is_eof() || (!self.current_token.doctype_data().name().is_empty()) {
+            self.token_stream.push(self.current_token.clone());
             println!("Token: {}", self.current_token);
         }
         self.current_token = HTMLToken::new(super::token::HTMLTokenType::DOCTYPE);

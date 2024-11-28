@@ -13,6 +13,7 @@ pub enum HTMLTokenType {
     Character,
     EndOfFile,
 }
+#[derive(Clone)]
 pub struct TokenAttribute {
     name: String,
     value: String,
@@ -58,7 +59,7 @@ impl fmt::Display for DoctypeData {
     }
 }
 /// Token Type Start and End Tag
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartOrEndTagData {
     text_name: String,
     self_closing: bool,
@@ -69,11 +70,12 @@ impl StartOrEndTagData {
         self.self_closing = flag;
     }
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CommentOrCharacterTagData {
     data: String,
 }
 
+#[derive(Clone)]
 pub struct HTMLToken {
     token_type: HTMLTokenType,
     doctype_data: DoctypeData,

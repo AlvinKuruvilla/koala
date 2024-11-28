@@ -1,3 +1,2 @@
-pub mod parser;
-pub mod token;
-pub mod tokenizer;
+pub mod html_parser;
+pub mod html_tokenizer;
