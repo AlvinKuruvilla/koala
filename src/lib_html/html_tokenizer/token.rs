@@ -1,11 +1,14 @@
 use core::fmt;
 
-// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-// "The output of the tokenization step is a series of zero or more of the following
-// tokens: DOCTYPE, start tag, end tag, comment, character, end-of-file."
+/// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+///
+/// "The output of the tokenization step is a series of zero or more of the following
+/// tokens: DOCTYPE, start tag, end tag, comment, character, end-of-file."
 
 /// An attribute on a start or end tag token.
-/// Spec: "a list of attributes, each of which has a name and a value"
+///
+/// Per [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization):
+/// "a list of attributes, each of which has a name and a value"
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
     pub name: String,
@@ -18,16 +21,16 @@ impl Attribute {
     }
 }
 
-/// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+/// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+///
 /// The tokenizer emits tokens of these types to the tree construction stage.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-    // "DOCTYPE tokens have a name, a public identifier, a system identifier,
-    // and a force-quirks flag. When a DOCTYPE token is created, its name,
-    // public identifier, and system identifier must be marked as missing
-    // (which is a distinct state from the empty string), and the force-quirks
-    // flag must be set to off (its other state is on)."
+    /// "DOCTYPE tokens have a name, a public identifier, a system identifier,
+    /// and a force-quirks flag. When a DOCTYPE token is created, its name,
+    /// public identifier, and system identifier must be marked as missing
+    /// (which is a distinct state from the empty string), and the force-quirks
+    /// flag must be set to off (its other state is on)."
     Doctype {
         name: Option<String>,
         public_identifier: Option<String>,
@@ -35,36 +38,36 @@ pub enum Token {
         force_quirks: bool,
     },
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-    // "Start and end tag tokens have a tag name, a self-closing flag, and a
-    // list of attributes, each of which has a name and a value. When a start
-    // or end tag token is created, its self-closing flag must be unset (its
-    // other state is that it be set), and its attributes list must be empty."
+    /// "Start and end tag tokens have a tag name, a self-closing flag, and a
+    /// list of attributes, each of which has a name and a value. When a start
+    /// or end tag token is created, its self-closing flag must be unset (its
+    /// other state is that it be set), and its attributes list must be empty."
     StartTag {
         name: String,
         self_closing: bool,
         attributes: Vec<Attribute>,
     },
 
+    /// End tag token. Same structure as start tag per spec.
     EndTag {
         name: String,
         attributes: Vec<Attribute>,
     },
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-    // "Comment and character tokens have data."
+    /// "Comment and character tokens have data."
     Comment { data: String },
 
+    /// "Comment and character tokens have data."
     Character { data: char },
 
+    /// End-of-file token signals the end of input.
     EndOfFile,
 }
 
 impl Token {
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-    // "When a DOCTYPE token is created, its name, public identifier, and system
-    // identifier must be marked as missing (which is a distinct state from the
-    // empty string), and the force-quirks flag must be set to off."
+    /// "When a DOCTYPE token is created, its name, public identifier, and system
+    /// identifier must be marked as missing (which is a distinct state from the
+    /// empty string), and the force-quirks flag must be set to off."
     pub fn new_doctype() -> Self {
         Token::Doctype {
             name: None,
@@ -74,10 +77,9 @@ impl Token {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-    // "When a start or end tag token is created, its self-closing flag must be
-    // unset (its other state is that it be set), and its attributes list must
-    // be empty."
+    /// "When a start or end tag token is created, its self-closing flag must be
+    /// unset (its other state is that it be set), and its attributes list must
+    /// be empty."
     pub fn new_start_tag() -> Self {
         Token::StartTag {
             name: String::new(),
@@ -86,6 +88,7 @@ impl Token {
         }
     }
 
+    /// Create a new end tag token per spec.
     pub fn new_end_tag() -> Self {
         Token::EndTag {
             name: String::new(),
@@ -93,16 +96,19 @@ impl Token {
         }
     }
 
+    /// Create a new comment token with empty data.
     pub fn new_comment() -> Self {
         Token::Comment {
             data: String::new(),
         }
     }
 
+    /// Create a character token with the given character.
     pub fn new_character(c: char) -> Self {
         Token::Character { data: c }
     }
 
+    /// Create an end-of-file token.
     pub fn new_eof() -> Self {
         Token::EndOfFile
     }
@@ -112,14 +118,12 @@ impl Token {
         matches!(self, Token::EndOfFile)
     }
 
-    // -------------------------------------------------------------------------
-    // Mutation helpers for use during tokenization.
-    // These panic if called on the wrong token variant, which indicates a bug
-    // in the tokenizer state machine.
-    // -------------------------------------------------------------------------
+    /// Mutation helpers for use during tokenization.
+    /// These panic if called on the wrong token variant, which indicates a bug
+    /// in the tokenizer state machine.
 
-    /// Append a character to the DOCTYPE token's name.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#doctype-name-state
+    /// [§ 13.2.5.55 DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-name-state)
+    ///
     /// "Append the current input character to the current DOCTYPE token's name."
     pub fn append_to_doctype_name(&mut self, c: char) {
         match self {
@@ -134,8 +138,8 @@ impl Token {
         }
     }
 
-    /// Append a character to a start or end tag token's name.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state
+    /// [§ 13.2.5.8 Tag name state](https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state)
+    ///
     /// "Append the current input character to the current tag token's tag name."
     pub fn append_to_tag_name(&mut self, c: char) {
         match self {
@@ -146,8 +150,8 @@ impl Token {
         }
     }
 
-    /// Set the self-closing flag on a start tag token.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#self-closing-start-tag-state
+    /// [§ 13.2.5.40 Self-closing start tag state](https://html.spec.whatwg.org/multipage/parsing.html#self-closing-start-tag-state)
+    ///
     /// "Set the self-closing flag of the current tag token."
     pub fn set_self_closing(&mut self) {
         match self {
@@ -158,8 +162,8 @@ impl Token {
         }
     }
 
-    /// Append a character to a comment token's data.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-state
+    /// [§ 13.2.5.45 Comment state](https://html.spec.whatwg.org/multipage/parsing.html#comment-state)
+    ///
     /// "Append the current input character to the comment token's data."
     pub fn append_to_comment(&mut self, c: char) {
         match self {
@@ -170,8 +174,8 @@ impl Token {
         }
     }
 
-    /// Set the force-quirks flag on a DOCTYPE token.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-name-state
+    /// [§ 13.2.5.54 Before DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-name-state)
+    ///
     /// "Set the current DOCTYPE token's force-quirks flag to on."
     pub fn set_force_quirks(&mut self) {
         match self {
@@ -182,12 +186,8 @@ impl Token {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Attribute mutation helpers
-    // -------------------------------------------------------------------------
-
-    /// Start a new attribute with empty name and value.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
+    /// [§ 13.2.5.32 Before attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state)
+    ///
     /// "Start a new attribute in the current tag token."
     pub fn start_new_attribute(&mut self) {
         match self {
@@ -198,8 +198,8 @@ impl Token {
         }
     }
 
-    /// Append a character to the current attribute's name.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state
+    /// [§ 13.2.5.33 Attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state)
+    ///
     /// "Append the current input character to the current attribute's name."
     pub fn append_to_current_attribute_name(&mut self, c: char) {
         match self {
@@ -212,8 +212,8 @@ impl Token {
         }
     }
 
-    /// Append a character to the current attribute's value.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state
+    /// [§ 13.2.5.36 Attribute value (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state)
+    ///
     /// "Append the current input character to the current attribute's value."
     pub fn append_to_current_attribute_value(&mut self, c: char) {
         match self {
@@ -226,8 +226,8 @@ impl Token {
         }
     }
 
-    /// Check if the current attribute name is a duplicate of an existing attribute.
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state
+    /// [§ 13.2.5.33 Attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state)
+    ///
     /// "When the user agent leaves the attribute name state (and before emitting the
     /// tag token, if appropriate), the complete attribute's name must be compared to
     /// the other attributes on the same token; if there is already an attribute on
