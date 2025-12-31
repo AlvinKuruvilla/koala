@@ -115,8 +115,8 @@ impl HTMLTokenizer {
             if let Token::StartTag { ref name, .. } = token {
                 self.last_start_tag_name = Some(name.clone());
 
-                /// [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
-                /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+                // [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+                // [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
                 // NOTE: Per spec, the parser should switch the tokenizer state. Since we run
                 // the tokenizer before the parser, we detect special elements here and switch
                 // states accordingly.
@@ -127,7 +127,7 @@ impl HTMLTokenizer {
                 match name.as_str() {
                     // "A start tag whose tag name is "title""
                     // "Follow the generic RCDATA element parsing algorithm."
-                    /// [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm)
+                    // [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm)
                     // "Switch the tokenizer to the RCDATA state."
                     "title" | "textarea" => {
                         self.token_stream.push(token);
@@ -145,7 +145,7 @@ impl HTMLTokenizer {
                     }
                     // "A start tag whose tag name is \"script\""
                     // "Follow the generic script element parsing algorithm."
-                    /// [§ 13.2.6.4](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+                    // [§ 13.2.6.4](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
                     // "Switch the tokenizer to the ScriptData state."
                     "script" => {
                         self.token_stream.push(token);
