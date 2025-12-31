@@ -302,6 +302,18 @@ impl HTMLParser {
         }
     }
 
+    /// Pop elements until one of the given tag names is found.
+    /// Used for heading elements where any h1-h6 can close any other.
+    fn pop_until_one_of(&mut self, tag_names: &[&str]) {
+        while let Some(idx) = self.stack_of_open_elements.pop() {
+            if let Some(name) = self.get_tag_name(idx) {
+                if tag_names.contains(&name) {
+                    break;
+                }
+            }
+        }
+    }
+
     /// [§ 13.2.6.4.1 The "initial" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode)
     fn handle_initial_mode(&mut self, token: &Token) {
         match token {
@@ -528,6 +540,22 @@ impl HTMLParser {
                 // NOTE: The spec also says "Switch the tokenizer to the RCDATA state."
                 // We don't have tokenizer integration, so we rely on the tokenizer
                 // emitting character tokens that the Text mode will handle.
+            }
+
+            // "A start tag whose tag name is one of: "noscript", "noframes", "style""
+            // "Follow the generic raw text element parsing algorithm."
+            //
+            // [§ 13.2.6.3 The generic raw text element parsing algorithm](https://html.spec.whatwg.org/multipage/parsing.html#generic-raw-text-element-parsing-algorithm):
+            // 1. "Insert an HTML element for the token."
+            // 2. "Let the original insertion mode be the current insertion mode."
+            // 3. "Switch the insertion mode to "text"."
+            Token::StartTag { name, .. }
+                if matches!(name.as_str(), "style" | "noscript" | "noframes") =>
+            {
+                self.insert_html_element(token);
+                self.original_insertion_mode = Some(InsertionMode::InHead);
+                self.insertion_mode = InsertionMode::Text;
+                // NOTE: The tokenizer handles switching to RAWTEXT state for these elements
             }
 
             // "An end tag whose tag name is "head""
@@ -825,6 +853,57 @@ impl HTMLParser {
                 ) =>
             {
                 // NOTE: We skip scope checking and implied end tag generation for simplicity.
+                self.pop_until_tag(name);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag h1-h6](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "An end tag whose tag name is one of: "h1", "h2", "h3", "h4", "h5", "h6""
+            // "If the stack of open elements does not have an element in scope that is an HTML
+            // element and whose tag name is one of "h1", "h2", "h3", "h4", "h5", "h6", then this
+            // is a parse error; ignore the token."
+            // "Otherwise, run these steps:"
+            // 1. "Generate implied end tags."
+            // 2. "If the current node is not an HTML element with the same tag name as that of
+            //     the token, then this is a parse error."
+            // 3. "Pop elements from the stack of open elements until an HTML element whose tag
+            //     name is one of "h1", "h2", "h3", "h4", "h5", "h6" has been popped from the stack."
+            Token::EndTag { name, .. }
+                if matches!(name.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+            {
+                // Pop until any heading element is found (spec allows closing h2 with </h1>, etc.)
+                self.pop_until_one_of(&["h1", "h2", "h3", "h4", "h5", "h6"]);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag "p"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "An end tag whose tag name is "p""
+            // "If the stack of open elements does not have a p element in button scope, then
+            // this is a parse error; act as if a start tag with the tag name "p" had been seen,
+            // then reprocess the current token."
+            // "Otherwise, run these steps:"
+            // 1. "Generate implied end tags, except for p elements."
+            // 2. "If the current node is not a p element, then this is a parse error."
+            // 3. "Pop elements from the stack of open elements until a p element has been
+            //     popped from the stack."
+            Token::EndTag { name, .. } if name == "p" => {
+                // NOTE: We skip the scope check for simplicity
+                self.pop_until_tag("p");
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // Handle end tags for inline elements like span, a, em, strong, etc.
+            // The spec uses the "Adoption Agency Algorithm" for formatting elements,
+            // but for simplicity we just pop until the matching tag.
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "span" | "a" | "b" | "i" | "em" | "strong" | "small" | "s" | "cite"
+                        | "q" | "dfn" | "abbr" | "ruby" | "rt" | "rp" | "data" | "time"
+                        | "code" | "var" | "samp" | "kbd" | "sub" | "sup" | "u" | "mark"
+                        | "bdi" | "bdo" | "wbr"
+                ) =>
+            {
+                // NOTE: This is a simplified version - the spec uses the Adoption Agency Algorithm
+                // for formatting elements, which is more complex.
                 self.pop_until_tag(name);
             }
 
