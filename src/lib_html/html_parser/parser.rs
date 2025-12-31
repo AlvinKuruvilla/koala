@@ -1018,6 +1018,49 @@ impl HTMLParser {
                 self.pop_until_tag(name);
             }
 
+            // [§ 13.2.6.4.7 "in body" - Start tag "table"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "table""
+            // "If the Document is not set to quirks mode, and the stack of open elements has a p
+            //  element in button scope, then close a p element."
+            // "Insert an HTML element for the token."
+            // "Set the frameset-ok flag to "not ok"."
+            // "Switch the insertion mode to "in table"."
+            //
+            // NOTE: We simplify by not switching to InTable mode - just insert the element
+            // and continue in InBody mode. This means table elements won't have proper
+            // foster parenting behavior, but basic tables will render.
+            Token::StartTag { name, .. } if name == "table" => {
+                self.close_element_if_in_scope("p");
+                self.insert_html_element(token);
+            }
+
+            // Table-related start tags: tr, td, th, tbody, thead, tfoot, caption, colgroup, col
+            // Per spec these should only appear in InTable/InTableBody/InRow modes, but
+            // for simplified parsing we just insert them as elements.
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption" | "colgroup" | "col"
+                ) =>
+            {
+                self.insert_html_element(token);
+                // col and colgroup are void-like in tables
+                if matches!(name.as_str(), "col") {
+                    self.stack_of_open_elements.pop();
+                }
+            }
+
+            // Table-related end tags
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "table" | "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption"
+                        | "colgroup"
+                ) =>
+            {
+                self.pop_until_tag(name);
+            }
+
             // "A start tag whose tag name is one of: "area", "br", "embed", "img", "keygen", "wbr""
             // "Reconstruct the active formatting elements, if any."
             // "Insert an HTML element for the token. Immediately pop the current node off the
