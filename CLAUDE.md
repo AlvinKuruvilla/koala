@@ -81,16 +81,16 @@ koala/
 │   ├── app/              # GUI (iced framework)
 │   ├── lib_html/
 │   │   ├── html_tokenizer/   # HTML5 tokenizer (spec: §13.2.5)
-│   │   └── html_parser/      # Tree construction (spec: §13.2.6) [not started]
+│   │   └── html_parser/      # Tree construction (spec: §13.2.6)
 │   └── lib_dom/          # DOM node structures
 └── res/                  # Test files
 ```
 
 ### Current Status
 
-- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments. Missing: character references, script/RCDATA modes
-- **Parser**: Not started (empty file)
-- **DOM**: Structures defined, not populated
+- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing. Missing: character references, script/RCDATA state switching
+- **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
+- **DOM**: Node, Element, Text, Comment types defined and populated by parser
 - **Rendering**: Not started
 
 ### Dependencies
