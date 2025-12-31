@@ -5,7 +5,7 @@ A minimal web browser with a Rust parsing engine and Swift UI.
 ![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-FA7343?style=flat&logo=swift&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-13%2B-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ## Overview
 
