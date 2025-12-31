@@ -506,38 +506,57 @@ impl HTMLTokenizer {
             // "If the current end tag token is an appropriate end tag token, then switch to the
             // before attribute name state. Otherwise, treat it as per the \"anything else\" entry below."
             Some(c) if Self::is_whitespace_char(c) => {
-                todo!("implement: check appropriate end tag, switch to BeforeAttributeName or anything else");
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::BeforeAttributeName);
+                } else {
+                    self.emit_script_data_end_tag_name_anything_else();
+                }
             }
             // "U+002F SOLIDUS (/)"
             // "If the current end tag token is an appropriate end tag token, then switch to the
             // self-closing start tag state. Otherwise, treat it as per the \"anything else\" entry below."
             Some('/') => {
-                todo!("implement: check appropriate end tag, switch to SelfClosingStartTag or anything else");
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::SelfClosingStartTag);
+                } else {
+                    self.emit_script_data_end_tag_name_anything_else();
+                }
             }
             // "U+003E GREATER-THAN SIGN (>)"
             // "If the current end tag token is an appropriate end tag token, then switch to the data state
             // and emit the current tag token. Otherwise, treat it as per the \"anything else\" entry below."
             Some('>') => {
-                todo!("implement: check appropriate end tag, switch to Data and emit, or anything else");
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::Data);
+                    self.emit_token();
+                } else {
+                    self.emit_script_data_end_tag_name_anything_else();
+                }
             }
             // "ASCII upper alpha"
             // "Append the lowercase version of the current input character to the current tag token's
             // tag name. Append the current input character to the temporary buffer."
             Some(c) if c.is_ascii_uppercase() => {
-                todo!("implement: append lowercase to tag name, append to buffer");
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_tag_name(c.to_ascii_lowercase());
+                }
+                self.temporary_buffer.push(c);
             }
             // "ASCII lower alpha"
             // "Append the current input character to the current tag token's tag name. Append the
             // current input character to the temporary buffer."
             Some(c) if c.is_ascii_lowercase() => {
-                todo!("implement: append to tag name, append to buffer");
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_tag_name(c);
+                }
+                self.temporary_buffer.push(c);
             }
             // "Anything else"
             // "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character token, and a
             // character token for each of the characters in the temporary buffer. Reconsume in the
             // script data state."
             _ => {
-                todo!("implement: emit '<', '/', buffer contents, reconsume in ScriptData");
+                self.emit_script_data_end_tag_name_anything_else();
             }
         }
     }

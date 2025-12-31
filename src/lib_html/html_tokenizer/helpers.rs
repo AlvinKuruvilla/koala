@@ -215,6 +215,17 @@ impl HTMLTokenizer {
         self.current_token = None;
         self.reconsume_in(TokenizerState::RAWTEXT);
     }
+
+    /// Helper for script data end tag name state "anything else" branch.
+    pub(super) fn emit_script_data_end_tag_name_anything_else(&mut self) {
+        self.emit_character_token('<');
+        self.emit_character_token('/');
+        for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+            self.emit_character_token(c);
+        }
+        self.current_token = None;
+        self.reconsume_in(TokenizerState::ScriptData);
+    }
 }
 
 // =============================================================================
