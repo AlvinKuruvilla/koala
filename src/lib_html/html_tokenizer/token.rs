@@ -181,6 +181,84 @@ impl Token {
             _ => panic!("set_force_quirks called on non-DOCTYPE token"),
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Attribute mutation helpers
+    // -------------------------------------------------------------------------
+
+    /// Start a new attribute with empty name and value.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
+    /// "Start a new attribute in the current tag token."
+    pub fn start_new_attribute(&mut self) {
+        match self {
+            Token::StartTag { attributes, .. } | Token::EndTag { attributes, .. } => {
+                attributes.push(Attribute::new(String::new(), String::new()));
+            }
+            _ => panic!("start_new_attribute called on non-tag token"),
+        }
+    }
+
+    /// Append a character to the current attribute's name.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state
+    /// "Append the current input character to the current attribute's name."
+    pub fn append_to_current_attribute_name(&mut self, c: char) {
+        match self {
+            Token::StartTag { attributes, .. } | Token::EndTag { attributes, .. } => {
+                if let Some(attr) = attributes.last_mut() {
+                    attr.name.push(c);
+                }
+            }
+            _ => panic!("append_to_current_attribute_name called on non-tag token"),
+        }
+    }
+
+    /// Append a character to the current attribute's value.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state
+    /// "Append the current input character to the current attribute's value."
+    pub fn append_to_current_attribute_value(&mut self, c: char) {
+        match self {
+            Token::StartTag { attributes, .. } | Token::EndTag { attributes, .. } => {
+                if let Some(attr) = attributes.last_mut() {
+                    attr.value.push(c);
+                }
+            }
+            _ => panic!("append_to_current_attribute_value called on non-tag token"),
+        }
+    }
+
+    /// Check if the current attribute name is a duplicate of an existing attribute.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state
+    /// "When the user agent leaves the attribute name state (and before emitting the
+    /// tag token, if appropriate), the complete attribute's name must be compared to
+    /// the other attributes on the same token; if there is already an attribute on
+    /// the token with the exact same name, then this is a duplicate-attribute parse
+    /// error and the new attribute must be removed from the token."
+    pub fn current_attribute_name_is_duplicate(&self) -> bool {
+        match self {
+            Token::StartTag { attributes, .. } | Token::EndTag { attributes, .. } => {
+                if let Some(current) = attributes.last() {
+                    // Check if any other attribute has the same name
+                    attributes[..attributes.len() - 1]
+                        .iter()
+                        .any(|attr| attr.name == current.name)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Remove the current (last) attribute from the token.
+    /// Used when a duplicate attribute is detected.
+    pub fn remove_current_attribute(&mut self) {
+        match self {
+            Token::StartTag { attributes, .. } | Token::EndTag { attributes, .. } => {
+                attributes.pop();
+            }
+            _ => panic!("remove_current_attribute called on non-tag token"),
+        }
+    }
 }
 
 impl fmt::Display for Token {

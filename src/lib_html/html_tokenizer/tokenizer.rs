@@ -514,6 +514,353 @@ impl HTMLTokenizer {
             }
         }
     }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
+    fn handle_before_attribute_name_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE - Ignore the character."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BeforeAttributeName);
+            }
+            // Spec: "U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
+            // Reconsume in the after attribute name state."
+            Some('/') | Some('>') | None => {
+                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+            }
+            // Spec: "U+003D EQUALS SIGN (=) - This is an unexpected-equals-sign-before-attribute-name
+            // parse error. Start a new attribute in the current tag token. Set that attribute's name
+            // to the current input character, and its value to the empty string. Switch to the
+            // attribute name state."
+            Some('=') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.start_new_attribute();
+                    token.append_to_current_attribute_name('=');
+                }
+                self.switch_to(TokenizerState::AttributeName);
+            }
+            // Spec: "Anything else - Start a new attribute in the current tag token. Set that
+            // attribute name and value to the empty string. Reconsume in the attribute name state."
+            Some(_) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.start_new_attribute();
+                }
+                self.switch_to_without_consume(TokenizerState::AttributeName);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state
+    fn handle_attribute_name_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE, U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
+            // Reconsume in the after attribute name state."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.check_duplicate_attribute();
+                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+            }
+            Some('/') | Some('>') => {
+                self.check_duplicate_attribute();
+                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+            }
+            None => {
+                self.check_duplicate_attribute();
+                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+            }
+            // Spec: "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
+            Some('=') => {
+                self.check_duplicate_attribute();
+                self.switch_to(TokenizerState::BeforeAttributeValue);
+            }
+            // Spec: "ASCII upper alpha - Append the lowercase version of the current input
+            // character to the current attribute's name."
+            Some(c) if c.is_ascii_uppercase() => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_name(c.to_ascii_lowercase());
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // U+FFFD REPLACEMENT CHARACTER to the current attribute's name."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_name('\u{FFFD}');
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<) -
+            // This is an unexpected-character-in-attribute-name parse error. Treat it as per the
+            // 'anything else' entry below."
+            Some('"') | Some('\'') | Some('<') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_name(self.current_input_character.unwrap());
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "Anything else - Append the current input character to the current attribute's name."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_name(c);
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-name-state
+    fn handle_after_attribute_name_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE - Ignore the character."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::AfterAttributeName);
+            }
+            // Spec: "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
+            Some('/') => {
+                self.switch_to(TokenizerState::SelfClosingStartTag);
+            }
+            // Spec: "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
+            Some('=') => {
+                self.switch_to(TokenizerState::BeforeAttributeValue);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Start a new attribute in the current tag token. Set that
+            // attribute name and value to the empty string. Reconsume in the attribute name state."
+            Some(_) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.start_new_attribute();
+                }
+                self.switch_to_without_consume(TokenizerState::AttributeName);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-value-state
+    fn handle_before_attribute_value_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE - Ignore the character."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BeforeAttributeValue);
+            }
+            // Spec: "U+0022 QUOTATION MARK (\") - Switch to the attribute value (double-quoted) state."
+            Some('"') => {
+                self.switch_to(TokenizerState::AttributeValueDoubleQuoted);
+            }
+            // Spec: "U+0027 APOSTROPHE (') - Switch to the attribute value (single-quoted) state."
+            Some('\'') => {
+                self.switch_to(TokenizerState::AttributeValueSingleQuoted);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - This is a missing-attribute-value parse error.
+            // Switch to the data state. Emit the current tag token."
+            Some('>') => {
+                self.log_parse_error();
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "Anything else - Reconsume in the attribute value (unquoted) state."
+            _ => {
+                self.switch_to_without_consume(TokenizerState::AttributeValueUnquoted);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state
+    fn handle_attribute_value_double_quoted_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0022 QUOTATION MARK (\") - Switch to the after attribute value (quoted) state."
+            Some('"') => {
+                self.switch_to(TokenizerState::AfterAttributeValueQuoted);
+            }
+            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the attribute value (double-quoted)
+            // state. Switch to the character reference state."
+            Some('&') => {
+                self.return_state = Some(TokenizerState::AttributeValueDoubleQuoted);
+                self.switch_to(TokenizerState::CharacterReference);
+            }
+            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // U+FFFD REPLACEMENT CHARACTER to the current attribute's value."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value('\u{FFFD}');
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append the current input character to the current attribute's value."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value(c);
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(single-quoted)-state
+    fn handle_attribute_value_single_quoted_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0027 APOSTROPHE (') - Switch to the after attribute value (quoted) state."
+            Some('\'') => {
+                self.switch_to(TokenizerState::AfterAttributeValueQuoted);
+            }
+            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the attribute value (single-quoted)
+            // state. Switch to the character reference state."
+            Some('&') => {
+                self.return_state = Some(TokenizerState::AttributeValueSingleQuoted);
+                self.switch_to(TokenizerState::CharacterReference);
+            }
+            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // U+FFFD REPLACEMENT CHARACTER to the current attribute's value."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value('\u{FFFD}');
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append the current input character to the current attribute's value."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value(c);
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(unquoted)-state
+    fn handle_attribute_value_unquoted_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE - Switch to the before attribute name state."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BeforeAttributeName);
+            }
+            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the attribute value (unquoted)
+            // state. Switch to the character reference state."
+            Some('&') => {
+                self.return_state = Some(TokenizerState::AttributeValueUnquoted);
+                self.switch_to(TokenizerState::CharacterReference);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // U+FFFD REPLACEMENT CHARACTER to the current attribute's value."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value('\u{FFFD}');
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<),
+            // U+003D EQUALS SIGN (=), U+0060 GRAVE ACCENT (`) - This is an
+            // unexpected-character-in-unquoted-attribute-value parse error. Treat it as per the
+            // 'anything else' entry below."
+            Some('"') | Some('\'') | Some('<') | Some('=') | Some('`') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value(self.current_input_character.unwrap());
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append the current input character to the current attribute's value."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value(c);
+                }
+                self.current_input_character = self.next_codepoint(false);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-value-(quoted)-state
+    fn handle_after_attribute_value_quoted_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE - Switch to the before attribute name state."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BeforeAttributeName);
+            }
+            // Spec: "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
+            Some('/') => {
+                self.switch_to(TokenizerState::SelfClosingStartTag);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - This is a missing-whitespace-between-attributes parse error.
+            // Reconsume in the before attribute name state."
+            Some(_) => {
+                self.log_parse_error();
+                self.switch_to_without_consume(TokenizerState::BeforeAttributeName);
+            }
+        }
+    }
+
+    /// Helper to check for duplicate attributes and handle the parse error.
+    fn check_duplicate_attribute(&mut self) {
+        // Check for duplicate first, then log error and remove if needed.
+        // This avoids borrow checker issues by not holding a mutable borrow
+        // while calling log_parse_error.
+        let is_duplicate = self
+            .current_token
+            .as_ref()
+            .map(|t| t.current_attribute_name_is_duplicate())
+            .unwrap_or(false);
+
+        if is_duplicate {
+            self.log_parse_error();
+            if let Some(ref mut token) = self.current_token {
+                token.remove_current_attribute();
+            }
+        }
+    }
+
     /// Retrieve the next code point (character) and update the position
     pub fn next_codepoint(&mut self, is_parsing_first_char: bool) -> Option<char> {
         // Print the current position and the remaining string
@@ -676,19 +1023,37 @@ impl HTMLTokenizer {
                 TokenizerState::ScriptDataDoubleEscapeEnd => {
                     todo!("Unhandled state: {}", self.state)
                 }
-                TokenizerState::BeforeAttributeName => todo!("Unhandled state: {}", self.state),
-                TokenizerState::AttributeName => todo!("Unhandled state: {}", self.state),
-                TokenizerState::AfterAttributeName => todo!("Unhandled state: {}", self.state),
-                TokenizerState::BeforeAttributeValue => todo!("Unhandled state: {}", self.state),
+                TokenizerState::BeforeAttributeName => {
+                    self.handle_before_attribute_name_state();
+                    continue;
+                }
+                TokenizerState::AttributeName => {
+                    self.handle_attribute_name_state();
+                    continue;
+                }
+                TokenizerState::AfterAttributeName => {
+                    self.handle_after_attribute_name_state();
+                    continue;
+                }
+                TokenizerState::BeforeAttributeValue => {
+                    self.handle_before_attribute_value_state();
+                    continue;
+                }
                 TokenizerState::AttributeValueDoubleQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    self.handle_attribute_value_double_quoted_state();
+                    continue;
                 }
                 TokenizerState::AttributeValueSingleQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    self.handle_attribute_value_single_quoted_state();
+                    continue;
                 }
-                TokenizerState::AttributeValueUnquoted => todo!("Unhandled state: {}", self.state),
+                TokenizerState::AttributeValueUnquoted => {
+                    self.handle_attribute_value_unquoted_state();
+                    continue;
+                }
                 TokenizerState::AfterAttributeValueQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    self.handle_after_attribute_value_quoted_state();
+                    continue;
                 }
                 TokenizerState::SelfClosingStartTag => {
                     self.handle_self_closing_start_tag_state();
