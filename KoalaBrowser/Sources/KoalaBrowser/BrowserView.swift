@@ -219,12 +219,41 @@ struct ElementView: View {
     let tagName: String
     let node: DOMNode
 
+    // Computed style shortcut
+    var style: ComputedStyle? {
+        node.computedStyle
+    }
+
     var body: some View {
         switch tagName.lowercased() {
-        case "html", "body", "div", "article", "section", "main", "header", "footer", "nav", "aside":
+        case "html":
+            // HTML element - just render children
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(node.childNodes) { child in
+                    NodeView(node: child)
+                }
+            }
+
+        case "body":
+            // Body element - apply background and padding from CSS
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(node.childNodes) { child in
                     NodeView(node: child)
+                }
+            }
+            .padding(style?.paddingInsets ?? EdgeInsets())
+            .padding(style?.marginInsets ?? EdgeInsets())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(style?.background_color?.swiftUIColor ?? Color.clear)
+            .foregroundColor(style?.color?.swiftUIColor)
+
+        case "div", "article", "section", "main", "header", "footer", "nav", "aside":
+            // Block elements - apply box model and background
+            styledBlockView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(node.childNodes) { child in
+                        NodeView(node: child)
+                    }
                 }
             }
 
@@ -232,36 +261,41 @@ struct ElementView: View {
             EmptyView()
 
         case "h1":
-            Text(getTextContent(node))
-                .font(.system(size: 32, weight: .bold))
+            styledTextView(getTextContent(node), defaultSize: 32, weight: .bold)
                 .padding(.vertical, 12)
 
         case "h2":
-            Text(getTextContent(node))
-                .font(.system(size: 28, weight: .bold))
+            styledTextView(getTextContent(node), defaultSize: 28, weight: .bold)
                 .padding(.vertical, 10)
 
         case "h3":
-            Text(getTextContent(node))
-                .font(.system(size: 24, weight: .semibold))
+            styledTextView(getTextContent(node), defaultSize: 24, weight: .semibold)
                 .padding(.vertical, 8)
 
         case "p":
-            Text(getTextContent(node))
-                .font(.system(size: 16))
-                .lineSpacing(4)
-                .padding(.vertical, 8)
+            styledTextView(getTextContent(node), defaultSize: 16, weight: .regular)
+                .lineSpacing(style?.line_height.map { CGFloat(($0 - 1.0) * 16) } ?? 4)
+                .padding(.bottom, style?.margin_bottom?.cgFloat ?? 8)
 
-        case "span", "a":
+        case "span":
+            // Inline element with possible highlight
+            styledInlineView {
+                Text(getTextContent(node))
+            }
+
+        case "a":
             Text(getTextContent(node))
+                .foregroundColor(style?.color?.swiftUIColor ?? .blue)
 
         case "b", "strong":
             Text(getTextContent(node))
                 .fontWeight(.bold)
+                .foregroundColor(style?.color?.swiftUIColor)
 
         case "i", "em":
             Text(getTextContent(node))
                 .italic()
+                .foregroundColor(style?.color?.swiftUIColor)
 
         case "br":
             Text("\n")
@@ -278,6 +312,55 @@ struct ElementView: View {
             }
         }
     }
+
+    // MARK: - Styled Views
+
+    /// Apply styles to a block-level element
+    @ViewBuilder
+    func styledBlockView<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let baseView = content()
+            .padding(style?.paddingInsets ?? EdgeInsets())
+            .background(style?.background_color?.swiftUIColor ?? Color.clear)
+            .foregroundColor(style?.color?.swiftUIColor)
+
+        // Apply border if present
+        if let border = style?.border_top {
+            baseView
+                .overlay(
+                    RoundedRectangle(cornerRadius: 0)
+                        .stroke(border.color.swiftUIColor, lineWidth: border.width.cgFloat)
+                )
+                .padding(style?.marginInsets ?? EdgeInsets())
+        } else {
+            baseView
+                .padding(style?.marginInsets ?? EdgeInsets())
+        }
+    }
+
+    /// Apply styles to inline element (like span with highlight)
+    @ViewBuilder
+    func styledInlineView<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if let bgColor = style?.background_color {
+            content()
+                .foregroundColor(style?.color?.swiftUIColor)
+                .padding(.horizontal, style?.padding_right?.cgFloat ?? 0)
+                .padding(.vertical, style?.padding_top?.cgFloat ?? 0)
+                .background(bgColor.swiftUIColor)
+        } else {
+            content()
+                .foregroundColor(style?.color?.swiftUIColor)
+        }
+    }
+
+    /// Create styled text with computed font size and color
+    func styledTextView(_ text: String, defaultSize: CGFloat, weight: Font.Weight) -> some View {
+        let fontSize = style?.font_size?.cgFloat ?? defaultSize
+        return Text(text)
+            .font(.system(size: fontSize, weight: weight))
+            .foregroundColor(style?.color?.swiftUIColor)
+    }
+
+    // MARK: - Text Helpers
 
     func getTextContent(_ node: DOMNode) -> String {
         var result = ""

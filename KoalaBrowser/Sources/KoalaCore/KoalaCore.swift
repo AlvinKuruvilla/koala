@@ -46,6 +46,114 @@ public class KoalaParser {
     }
 }
 
+// MARK: - CSS Value Types
+
+import SwiftUI
+
+/// CSS color value (RGBA)
+public struct CSSColor: Decodable {
+    public let r: UInt8
+    public let g: UInt8
+    public let b: UInt8
+    public let a: UInt8
+
+    /// Convert to SwiftUI Color
+    public var swiftUIColor: Color {
+        Color(
+            red: Double(r) / 255.0,
+            green: Double(g) / 255.0,
+            blue: Double(b) / 255.0,
+            opacity: Double(a) / 255.0
+        )
+    }
+}
+
+/// CSS length value
+public enum CSSLength: Decodable {
+    case px(Double)
+
+    /// Get value in points (for SwiftUI)
+    public var cgFloat: CGFloat {
+        switch self {
+        case .px(let value):
+            return CGFloat(value)
+        }
+    }
+
+    // Custom decoding for tagged enum from Rust
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let px = try container.decodeIfPresent(Double.self, forKey: .Px) {
+            self = .px(px)
+        } else {
+            self = .px(0)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case Px
+    }
+}
+
+/// CSS border value
+public struct CSSBorder: Decodable {
+    public let width: CSSLength
+    public let style: String
+    public let color: CSSColor
+}
+
+/// Computed CSS styles for an element
+public struct ComputedStyle: Decodable {
+    // Text properties
+    public let color: CSSColor?
+    public let font_family: String?
+    public let font_size: CSSLength?
+    public let line_height: Double?
+
+    // Background
+    public let background_color: CSSColor?
+
+    // Box model - margins
+    public let margin_top: CSSLength?
+    public let margin_right: CSSLength?
+    public let margin_bottom: CSSLength?
+    public let margin_left: CSSLength?
+
+    // Box model - padding
+    public let padding_top: CSSLength?
+    public let padding_right: CSSLength?
+    public let padding_bottom: CSSLength?
+    public let padding_left: CSSLength?
+
+    // Box model - borders
+    public let border_top: CSSBorder?
+    public let border_right: CSSBorder?
+    public let border_bottom: CSSBorder?
+    public let border_left: CSSBorder?
+
+    /// Get EdgeInsets for padding
+    public var paddingInsets: EdgeInsets {
+        EdgeInsets(
+            top: padding_top?.cgFloat ?? 0,
+            leading: padding_left?.cgFloat ?? 0,
+            bottom: padding_bottom?.cgFloat ?? 0,
+            trailing: padding_right?.cgFloat ?? 0
+        )
+    }
+
+    /// Get EdgeInsets for margin
+    public var marginInsets: EdgeInsets {
+        EdgeInsets(
+            top: margin_top?.cgFloat ?? 0,
+            leading: margin_left?.cgFloat ?? 0,
+            bottom: margin_bottom?.cgFloat ?? 0,
+            trailing: margin_right?.cgFloat ?? 0
+        )
+    }
+}
+
+// MARK: - DOM Node
+
 /// DOM Node representation matching the Rust structure
 public class DOMNode: Decodable, Identifiable {
     public let id = UUID()
@@ -54,9 +162,10 @@ public class DOMNode: Decodable, Identifiable {
     public let attributes: [String: String]?
     public let content: String?
     public let children: [DOMNode]?
+    public let computedStyle: ComputedStyle?
 
     private enum CodingKeys: String, CodingKey {
-        case type, tagName, attributes, content, children
+        case type, tagName, attributes, content, children, computedStyle
     }
 
     public required init(from decoder: Decoder) throws {
@@ -66,6 +175,7 @@ public class DOMNode: Decodable, Identifiable {
         attributes = try container.decodeIfPresent([String: String].self, forKey: .attributes)
         content = try container.decodeIfPresent(String.self, forKey: .content)
         children = try container.decodeIfPresent([DOMNode].self, forKey: .children)
+        computedStyle = try container.decodeIfPresent(ComputedStyle.self, forKey: .computedStyle)
     }
 
     /// Get all child nodes (empty array if none)
