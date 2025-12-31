@@ -1,21 +1,26 @@
 //! Koala Browser CLI - HTML/CSS parsing and debugging tool
 //!
 //! Usage:
-//!   koala <file>              Parse and display DOM tree with computed styles
+//!   koala <file|url>          Parse and display DOM tree with computed styles
 //!   koala <file> --json       Output DOM as JSON with computed styles
 //!   koala <file> --tokens     Show HTML tokens
 //!   koala <file> --css        Show extracted CSS and parsed rules
 //!   koala <file> --verbose    Show all debugging information
+//!   koala <file> --stats      Show parsing statistics
 //!   koala <file> --no-color   Disable colored output
+//!   koala --interactive       Enter REPL mode for quick testing
 //!
 //! Examples:
 //!   koala res/simple.html
+//!   koala https://example.com
 //!   koala res/simple.html --json
 //!   koala --html '<h1>Hello</h1>'
+//!   koala --interactive
 
 use std::env;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Write};
+use std::time::Instant;
 
 use koala::lib_css::css_cascade::compute_styles;
 use koala::lib_css::css_parser::parser::{CSSParser, Rule};
@@ -32,6 +37,7 @@ mod color {
     pub const DIM: &str = "\x1b[2m";
 
     // Foreground colors
+    pub const RED: &str = "\x1b[31m";
     pub const GREEN: &str = "\x1b[32m";
     pub const YELLOW: &str = "\x1b[33m";
     pub const CYAN: &str = "\x1b[36m";
@@ -109,29 +115,35 @@ impl Colors {
     fn number(&self, text: &str) -> String {
         self.wrap(text, color::BRIGHT_YELLOW)
     }
+
+    fn error(&self, text: &str) -> String {
+        self.wrap(text, color::RED)
+    }
+
+    fn warning(&self, text: &str) -> String {
+        self.wrap(text, color::YELLOW)
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Options {
     json: bool,
     tokens: bool,
     css: bool,
     verbose: bool,
+    stats: bool,
+    interactive: bool,
     no_color: bool,
+    strict: bool,
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        print_usage(&args[0]);
-        std::process::exit(1);
-    }
-
     // Parse arguments
     let mut options = Options::default();
     let mut html_source: Option<String> = None;
-    let mut file_path: Option<String> = None;
+    let mut source_path: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -139,12 +151,16 @@ fn main() {
             "--json" | "-j" => options.json = true,
             "--tokens" | "-t" => options.tokens = true,
             "--css" | "-c" => options.css = true,
+            "--stats" | "-s" => options.stats = true,
             "--verbose" | "-v" => {
                 options.verbose = true;
                 options.tokens = true;
                 options.css = true;
+                options.stats = true;
             }
+            "--interactive" | "-i" => options.interactive = true,
             "--no-color" => options.no_color = true,
+            "--strict" => options.strict = true,
             "--html" => {
                 i += 1;
                 if i < args.len() {
@@ -159,7 +175,7 @@ fn main() {
                 std::process::exit(0);
             }
             arg if !arg.starts_with('-') => {
-                file_path = Some(arg.to_string());
+                source_path = Some(arg.to_string());
             }
             _ => {
                 eprintln!("Unknown option: {}", args[i]);
@@ -173,27 +189,84 @@ fn main() {
     let use_colors = !options.no_color && io::stdout().is_terminal();
     let c = Colors::new(use_colors);
 
+    // Interactive mode
+    if options.interactive {
+        interactive_mode(&options, &c);
+        return;
+    }
+
+    // Need some input
+    if args.len() < 2 || (source_path.is_none() && html_source.is_none()) {
+        print_usage(&args[0]);
+        std::process::exit(1);
+    }
+
     // Get HTML content
-    let html = if let Some(src) = html_source {
-        src
-    } else if let Some(ref path) = file_path {
-        match fs::read_to_string(path) {
-            Ok(content) => content,
+    let (html, source_name) = if let Some(src) = html_source {
+        (src, "<inline>".to_string())
+    } else if let Some(ref path) = source_path {
+        match fetch_html(path) {
+            Ok(content) => (content, path.clone()),
             Err(e) => {
-                eprintln!("Error reading '{}': {}", path, e);
+                eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
         }
     } else {
-        eprintln!("Error: No input file or --html provided");
+        eprintln!("Error: No input file, URL, or --html provided");
         print_usage(&args[0]);
         std::process::exit(1);
     };
 
+    parse_and_display(&html, &source_name, &options, &c);
+}
+
+/// Fetch HTML from a file path, URL, or stdin
+fn fetch_html(source: &str) -> Result<String, String> {
+    // Check if it's a URL
+    if source.starts_with("http://") || source.starts_with("https://") {
+        fetch_url(source)
+    } else if source == "-" {
+        // Read from stdin
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|e| format!("Failed to read stdin: {}", e))?;
+        Ok(buffer)
+    } else {
+        // Read from file
+        fs::read_to_string(source).map_err(|e| format!("Failed to read '{}': {}", source, e))
+    }
+}
+
+/// Fetch HTML from a URL using curl
+fn fetch_url(url: &str) -> Result<String, String> {
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "--max-time", "10", url])
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "curl failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8 in response: {}", e))
+}
+
+/// Parse HTML and display results
+fn parse_and_display(html: &str, source_name: &str, options: &Options, c: &Colors) {
+    println!("{}", c.header(&format!("=== {} ({} bytes) ===", source_name, html.len())));
+    println!();
+
     // Tokenize HTML
-    let mut tokenizer = HTMLTokenizer::new(html.clone());
+    let tokenize_start = Instant::now();
+    let mut tokenizer = HTMLTokenizer::new(html.to_string());
     tokenizer.run();
     let tokens = tokenizer.into_tokens();
+    let tokenize_time = tokenize_start.elapsed();
 
     if options.tokens {
         println!("{}", c.header(&format!("=== HTML Tokens ({}) ===", tokens.len())));
@@ -204,8 +277,16 @@ fn main() {
     }
 
     // Parse HTML
-    let parser = HTMLParser::new(tokens);
-    let dom = parser.run();
+    let parse_start = Instant::now();
+    let mut parser = HTMLParser::new(tokens.clone());
+    if options.strict {
+        parser = parser.with_strict_mode();
+    }
+    let (dom, parse_issues) = parser.run_with_issues();
+    let parse_time = parse_start.elapsed();
+
+    // Collect DOM stats
+    let (element_count, text_count, comment_count, total_nodes) = count_dom_nodes(&dom);
 
     // Extract and parse CSS
     let css_text = extract_style_content(&dom);
@@ -216,7 +297,7 @@ fn main() {
 
         if options.css {
             println!("{}", c.header(&format!("=== CSS ({} chars) ===", css_text.len())));
-            print_css_highlighted(&css_text, &c);
+            print_css_highlighted(&css_text, c);
             println!();
 
             if options.verbose {
@@ -269,7 +350,7 @@ fn main() {
         std::collections::HashMap::new()
     };
 
-    // Output
+    // Output DOM tree
     if options.json {
         print_json(&dom, &styles);
     } else {
@@ -277,29 +358,190 @@ fn main() {
             "{}",
             c.header(&format!("=== DOM Tree ({} styled) ===", styles.len()))
         );
-        print_tree(&dom, &styles, 0, &c);
+        print_tree(&dom, &styles, 0, c);
+    }
+
+    // Stats output
+    if options.stats {
+        println!();
+        println!("{}", c.header("=== Parsing Stats ==="));
+        println!("  Tokenize: {} ({} tokens)", c.number(&format!("{:?}", tokenize_time)), tokens.len());
+        println!("  Parse:    {} ({} nodes)", c.number(&format!("{:?}", parse_time)), total_nodes);
+        println!("  Elements: {}", c.number(&element_count.to_string()));
+        println!("  Text:     {}", c.number(&text_count.to_string()));
+        println!("  Comments: {}", c.number(&comment_count.to_string()));
+        println!("  Styled:   {}", c.number(&styles.len().to_string()));
+    }
+
+    // Show parse issues (if verbose/stats or if there are errors)
+    let errors: Vec<_> = parse_issues.iter().filter(|i| i.is_error).collect();
+    let warnings: Vec<_> = parse_issues.iter().filter(|i| !i.is_error).collect();
+
+    if !parse_issues.is_empty() && (options.verbose || options.stats) {
+        println!();
+        println!(
+            "{}",
+            c.header(&format!(
+                "=== Parse Issues ({} errors, {} warnings) ===",
+                errors.len(),
+                warnings.len()
+            ))
+        );
+        for issue in &parse_issues {
+            if issue.is_error {
+                println!(
+                    "  {} [token {}]: {}",
+                    c.error("ERROR"),
+                    issue.token_index,
+                    issue.message
+                );
+            } else {
+                println!(
+                    "  {} [token {}]: {}",
+                    c.warning("WARN"),
+                    issue.token_index,
+                    issue.message
+                );
+            }
+        }
+    } else if !errors.is_empty() {
+        // Always show errors even without verbose mode
+        println!();
+        println!(
+            "{}",
+            c.error(&format!("=== {} Parse Errors ===", errors.len()))
+        );
+        for issue in &errors {
+            println!("  [token {}]: {}", issue.token_index, issue.message);
+        }
     }
 
     // Flush stdout
     let _ = io::stdout().flush();
 }
 
+/// Count nodes in the DOM tree
+fn count_dom_nodes(node: &Node) -> (usize, usize, usize, usize) {
+    let mut elements = 0;
+    let mut text = 0;
+    let mut comments = 0;
+    let mut total = 1;
+
+    match &node.node_type {
+        NodeType::Element(_) => elements += 1,
+        NodeType::Text(t) => {
+            if !t.trim().is_empty() {
+                text += 1;
+            }
+        }
+        NodeType::Comment(_) => comments += 1,
+        NodeType::Document => {}
+    }
+
+    for child in &node.children {
+        let (e, t, c, tot) = count_dom_nodes(child);
+        elements += e;
+        text += t;
+        comments += c;
+        total += tot;
+    }
+
+    (elements, text, comments, total)
+}
+
+/// Interactive REPL mode for quick testing
+fn interactive_mode(base_options: &Options, c: &Colors) {
+    println!("{}", c.header("=== Koala Browser Test REPL ==="));
+    println!("Enter HTML to parse, or commands:");
+    println!("  :file <path>   Load and parse a file");
+    println!("  :url <url>     Fetch and parse a URL");
+    println!("  :tokens        Toggle token output");
+    println!("  :css           Toggle CSS output");
+    println!("  :stats         Toggle stats output");
+    println!("  :quit          Exit");
+    println!();
+
+    let mut options = base_options.clone();
+    let mut buffer = String::new();
+
+    loop {
+        print!("{}", c.selector("koala> "));
+        let _ = io::stdout().flush();
+
+        buffer.clear();
+        if io::stdin().read_line(&mut buffer).is_err() {
+            break;
+        }
+
+        let input = buffer.trim();
+        if input.is_empty() {
+            continue;
+        }
+
+        if input.starts_with(':') {
+            let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
+            match parts[0] {
+                "quit" | "q" | "exit" => break,
+                "tokens" => {
+                    options.tokens = !options.tokens;
+                    println!("Token output: {}", if options.tokens { "ON" } else { "OFF" });
+                }
+                "css" => {
+                    options.css = !options.css;
+                    println!("CSS output: {}", if options.css { "ON" } else { "OFF" });
+                }
+                "stats" => {
+                    options.stats = !options.stats;
+                    println!("Stats output: {}", if options.stats { "ON" } else { "OFF" });
+                }
+                "file" | "f" if parts.len() > 1 => match fetch_html(parts[1]) {
+                    Ok(html) => {
+                        println!();
+                        parse_and_display(&html, parts[1], &options, c);
+                    }
+                    Err(e) => eprintln!("Error: {}", e),
+                },
+                "url" | "u" if parts.len() > 1 => match fetch_url(parts[1]) {
+                    Ok(html) => {
+                        println!();
+                        parse_and_display(&html, parts[1], &options, c);
+                    }
+                    Err(e) => eprintln!("Error: {}", e),
+                },
+                _ => {
+                    eprintln!("Unknown command: {}", input);
+                }
+            }
+        } else {
+            // Parse inline HTML
+            println!();
+            parse_and_display(input, "<inline>", &options, c);
+        }
+        println!();
+    }
+}
+
 fn print_usage(program: &str) {
     eprintln!("Koala Browser CLI - HTML/CSS parsing and debugging tool");
     eprintln!();
     eprintln!("Usage:");
-    eprintln!("  {} <file>              Parse and display DOM tree with styles", program);
+    eprintln!("  {} <file|url>          Parse and display DOM tree with styles", program);
     eprintln!("  {} <file> --json       Output DOM as JSON with computed styles", program);
     eprintln!("  {} <file> --tokens     Show HTML tokens", program);
     eprintln!("  {} <file> --css        Show extracted CSS and parsed rules", program);
+    eprintln!("  {} <file> --stats      Show parsing statistics and issues", program);
     eprintln!("  {} <file> --verbose    Show all debugging information", program);
+    eprintln!("  {} <file> --strict     Panic on unhandled tokens (for development)", program);
     eprintln!("  {} <file> --no-color   Disable colored output", program);
     eprintln!("  {} --html '<html>'     Parse HTML string directly", program);
+    eprintln!("  {} --interactive       Enter REPL mode for quick testing", program);
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  {} res/simple.html", program);
-    eprintln!("  {} res/simple.html --json", program);
+    eprintln!("  {} https://example.com", program);
+    eprintln!("  {} res/simple.html --stats", program);
     eprintln!("  {} --html '<h1>Hello</h1>' --css", program);
+    eprintln!("  {} -i", program);
 }
 
 fn print_css_highlighted(css: &str, c: &Colors) {

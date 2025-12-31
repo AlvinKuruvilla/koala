@@ -144,18 +144,6 @@ impl HTMLParser {
         &self.issues
     }
 
-    /// Record a parse error.
-    fn parse_error(&mut self, message: &str) {
-        self.issues.push(ParseIssue {
-            message: message.to_string(),
-            token_index: self.token_index,
-            is_error: true,
-        });
-        if self.strict_mode {
-            panic!("Parse error at token {}: {}", self.token_index, message);
-        }
-    }
-
     /// Record a parse warning (for unhandled but recoverable situations).
     fn parse_warning(&mut self, message: &str) {
         self.issues.push(ParseIssue {
