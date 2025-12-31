@@ -3,56 +3,57 @@ use strum_macros::Display;
 use crate::lib_dom::{AttributesMap, ElementData, Node, NodeType};
 use crate::lib_html::html_tokenizer::token::{Attribute, Token};
 
-/// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode
+/// [§ 13.2.4.1 The insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode)
+///
 /// "The insertion mode is a state variable that controls the primary operation
 /// of the tree construction stage."
 #[derive(Debug, Clone, Copy, PartialEq, Display)]
 pub enum InsertionMode {
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode
+    /// [§ 13.2.6.4.1 The "initial" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode)
     Initial,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode
+    /// [§ 13.2.6.4.2 The "before html" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode)
     BeforeHtml,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-before-head-insertion-mode
+    /// [§ 13.2.6.4.3 The "before head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-before-head-insertion-mode)
     BeforeHead,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead
+    /// [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
     InHead,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inheadnoscript
+    /// [§ 13.2.6.4.5 The "in head noscript" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inheadnoscript)
     InHeadNoscript,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-after-head-insertion-mode
+    /// [§ 13.2.6.4.6 The "after head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-after-head-insertion-mode)
     AfterHead,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
+    /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
     InBody,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incdata
+    /// [§ 13.2.6.4.8 The "text" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incdata)
     Text,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable
+    /// [§ 13.2.6.4.9 The "in table" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable)
     InTable,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext
+    /// [§ 13.2.6.4.10 The "in table text" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext)
     InTableText,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incaption
+    /// [§ 13.2.6.4.11 The "in caption" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incaption)
     InCaption,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolumngroup
+    /// [§ 13.2.6.4.12 The "in column group" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolumngroup)
     InColumnGroup,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody
+    /// [§ 13.2.6.4.13 The "in table body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
     InTableBody,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow
+    /// [§ 13.2.6.4.14 The "in row" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow)
     InRow,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incell
+    /// [§ 13.2.6.4.15 The "in cell" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incell)
     InCell,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselect
+    /// [§ 13.2.6.4.16 The "in select" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselect)
     InSelect,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselectintable
+    /// [§ 13.2.6.4.17 The "in select in table" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselectintable)
     InSelectInTable,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intemplate
+    /// [§ 13.2.6.4.18 The "in template" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intemplate)
     InTemplate,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterbody
+    /// [§ 13.2.6.4.19 The "after body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterbody)
     AfterBody,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inframeset
+    /// [§ 13.2.6.4.20 The "in frameset" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inframeset)
     InFrameset,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterframeset
+    /// [§ 13.2.6.4.21 The "after frameset" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterframeset)
     AfterFrameset,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-body-insertion-mode
+    /// [§ 13.2.6.4.22 The "after after body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-body-insertion-mode)
     AfterAfterBody,
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-frameset-insertion-mode
+    /// [§ 13.2.6.4.23 The "after after frameset" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-frameset-insertion-mode)
     AfterAfterFrameset,
 }
 
@@ -64,20 +65,22 @@ struct ParserNode {
     children: Vec<usize>, // Indices into the nodes arena
 }
 
-/// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tree-construction
+/// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction)
+///
 /// The HTML parser builds a DOM tree from a stream of tokens.
 pub struct HTMLParser {
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode
+    /// [§ 13.2.4.1 The insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode)
     insertion_mode: InsertionMode,
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#original-insertion-mode
+    /// [§ 13.2.4.2 The original insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#original-insertion-mode)
     original_insertion_mode: Option<InsertionMode>,
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements
+    /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
+    ///
     /// Stores indices into the nodes arena.
     stack_of_open_elements: Vec<usize>,
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-element-pointers
+    /// [§ 13.2.4.4 The element pointers](https://html.spec.whatwg.org/multipage/parsing.html#the-element-pointers)
     head_element_pointer: Option<usize>,
 
     /// Arena of all nodes. Index 0 is the Document node.
@@ -141,7 +144,7 @@ impl HTMLParser {
         }
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher
+    /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher)
     fn process_token(&mut self, token: &Token) {
         match self.insertion_mode {
             InsertionMode::Initial => self.handle_initial_mode(token),
@@ -174,15 +177,11 @@ impl HTMLParser {
         self.process_token(token);
     }
 
-    // -------------------------------------------------------------------------
-    // Helper functions
-    // -------------------------------------------------------------------------
-
     fn is_whitespace(c: char) -> bool {
         matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ')
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#current-node
+    /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#current-node)
     fn current_node(&self) -> Option<usize> {
         self.stack_of_open_elements.last().copied()
     }
@@ -241,11 +240,11 @@ impl HTMLParser {
         self.nodes[parent_idx].children.push(child_idx);
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#insert-a-character
+    /// [§ 13.2.6.1 Insert a character](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-character)
     fn insert_character(&mut self, c: char) {
         let parent_idx = self.insertion_location();
 
-        // Spec: "If there is a Text node immediately before the adjusted insertion
+        // "If there is a Text node immediately before the adjusted insertion
         // location, then append data to that Text node's data."
         if let Some(&last_child_idx) = self.nodes[parent_idx].children.last() {
             if let NodeType::Text(ref mut text_data) = self.nodes[last_child_idx].node_type {
@@ -272,7 +271,7 @@ impl HTMLParser {
         self.append_child(0, comment_idx);
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element
+    /// [§ 13.2.6.1 Insert an HTML element](https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element)
     fn insert_html_element(&mut self, token: &Token) -> usize {
         if let Token::StartTag { name, attributes, .. } = token {
             let element_idx = self.create_element(name, attributes);
@@ -303,28 +302,36 @@ impl HTMLParser {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Insertion mode handlers
-    // -------------------------------------------------------------------------
-
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode
+    /// [§ 13.2.6.4.1 The "initial" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode)
     fn handle_initial_mode(&mut self, token: &Token) {
         match token {
-            // Spec: "A character token that is one of [whitespace] - Ignore the token."
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Ignore the token."
             Token::Character { data } if Self::is_whitespace(*data) => {}
 
-            // Spec: "A comment token - Insert a comment as the last child of the Document."
+            // "A comment token"
+            // "Insert a comment as the last child of the Document object."
             Token::Comment { data } => {
                 self.insert_comment_to_document(data);
             }
 
-            // Spec: "A DOCTYPE token - ... switch the insertion mode to 'before html'."
+            // "A DOCTYPE token"
+            // "If the DOCTYPE token's name is not "html", or the token's public identifier is not
+            // missing, or the token's system identifier is neither missing nor "about:legacy-compat",
+            // then there is a parse error."
+            // ...
+            // "Then, switch the insertion mode to "before html"."
             Token::Doctype { .. } => {
-                // Skip creating DocumentType node for simplicity
+                // NOTE: We skip creating a DocumentType node for simplicity.
+                // The full spec requires appending a DocumentType node to the Document.
                 self.insertion_mode = InsertionMode::BeforeHtml;
             }
 
-            // Spec: "Anything else - switch to 'before html', reprocess."
+            // "Anything else"
+            // "If the document is not an iframe srcdoc document, then this is a parse error;
+            // if the parser cannot change the mode flag is false, set the Document to quirks mode."
+            // "In any case, switch the insertion mode to "before html", then reprocess the token."
             _ => {
                 self.insertion_mode = InsertionMode::BeforeHtml;
                 self.reprocess_token(token);
@@ -332,18 +339,30 @@ impl HTMLParser {
         }
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode
+    /// [§ 13.2.6.4.2 The "before html" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode)
     fn handle_before_html_mode(&mut self, token: &Token) {
         match token {
-            Token::Doctype { .. } => {} // Parse error, ignore
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
 
+            // "A comment token"
+            // "Insert a comment as the last child of the Document object."
             Token::Comment { data } => {
                 self.insert_comment_to_document(data);
             }
 
-            Token::Character { data } if Self::is_whitespace(*data) => {} // Ignore
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Ignore the token."
+            Token::Character { data } if Self::is_whitespace(*data) => {}
 
-            // Spec: "A start tag whose tag name is 'html'"
+            // "A start tag whose tag name is "html""
+            // "Create an element for the token in the HTML namespace, with the Document as the
+            // intended parent. Append it to the Document object. Put this element in the stack
+            // of open elements."
+            // ...
+            // "Switch the insertion mode to "before head"."
             Token::StartTag { name, attributes, .. } if name == "html" => {
                 let html_idx = self.create_element(name, attributes);
                 self.append_child(0, html_idx);
@@ -351,20 +370,30 @@ impl HTMLParser {
                 self.insertion_mode = InsertionMode::BeforeHead;
             }
 
+            // "An end tag whose tag name is one of: "head", "body", "html", "br""
+            // "Act as described in the "anything else" entry below."
             Token::EndTag { name, .. }
                 if matches!(name.as_str(), "head" | "body" | "html" | "br") =>
             {
                 self.handle_before_html_anything_else(token);
             }
 
-            Token::EndTag { .. } => {} // Parse error, ignore
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::EndTag { .. } => {}
 
+            // "Anything else"
             _ => {
                 self.handle_before_html_anything_else(token);
             }
         }
     }
 
+    /// "Anything else" branch for "before html" mode:
+    /// "Create an html element whose node document is the Document object. Append it to the
+    /// Document object. Put this element in the stack of open elements."
+    /// ...
+    /// "Switch the insertion mode to "before head", then reprocess the token."
     fn handle_before_html_anything_else(&mut self, token: &Token) {
         let html_idx = self.create_element("html", &[]);
         self.append_child(0, html_idx);
@@ -373,42 +402,64 @@ impl HTMLParser {
         self.reprocess_token(token);
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-before-head-insertion-mode
+    /// [§ 13.2.6.4.3 The "before head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-before-head-insertion-mode)
     fn handle_before_head_mode(&mut self, token: &Token) {
         match token {
-            Token::Character { data } if Self::is_whitespace(*data) => {} // Ignore
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Ignore the token."
+            Token::Character { data } if Self::is_whitespace(*data) => {}
 
+            // "A comment token"
+            // "Insert a comment."
             Token::Comment { data } => {
                 self.insert_comment(data);
             }
 
-            Token::Doctype { .. } => {} // Parse error, ignore
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
 
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
             Token::StartTag { name, .. } if name == "html" => {
                 self.handle_in_body_mode(token);
             }
 
-            // Spec: "A start tag whose tag name is 'head'"
+            // "A start tag whose tag name is "head""
+            // "Insert an HTML element for the token."
+            // "Set the head element pointer to the newly created head element."
+            // "Switch the insertion mode to "in head"."
             Token::StartTag { name, .. } if name == "head" => {
                 let head_idx = self.insert_html_element(token);
                 self.head_element_pointer = Some(head_idx);
                 self.insertion_mode = InsertionMode::InHead;
             }
 
+            // "An end tag whose tag name is one of: "head", "body", "html", "br""
+            // "Act as described in the "anything else" entry below."
             Token::EndTag { name, .. }
                 if matches!(name.as_str(), "head" | "body" | "html" | "br") =>
             {
                 self.handle_before_head_anything_else(token);
             }
 
-            Token::EndTag { .. } => {} // Parse error, ignore
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::EndTag { .. } => {}
 
+            // "Anything else"
             _ => {
                 self.handle_before_head_anything_else(token);
             }
         }
     }
 
+    /// "Anything else" branch for "before head" mode:
+    /// "Insert an HTML element for a "head" start tag token with no attributes."
+    /// "Set the head element pointer to the newly created head element."
+    /// "Switch the insertion mode to "in head"."
+    /// "Reprocess the current token."
     fn handle_before_head_anything_else(&mut self, token: &Token) {
         let head_idx = self.create_element("head", &[]);
         let parent_idx = self.insertion_location();
@@ -419,24 +470,41 @@ impl HTMLParser {
         self.reprocess_token(token);
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead
+    /// [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
     fn handle_in_head_mode(&mut self, token: &Token) {
         match token {
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Insert the character."
             Token::Character { data } if Self::is_whitespace(*data) => {
                 self.insert_character(*data);
             }
 
+            // "A comment token"
+            // "Insert a comment."
             Token::Comment { data } => {
                 self.insert_comment(data);
             }
 
-            Token::Doctype { .. } => {} // Parse error, ignore
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
 
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
             Token::StartTag { name, .. } if name == "html" => {
                 self.handle_in_body_mode(token);
             }
 
-            // Spec: Void elements in head
+            // "A start tag whose tag name is one of: "base", "basefont", "bgsound", "link""
+            // "Insert an HTML element for the token. Immediately pop the current node off the
+            // stack of open elements."
+            // "Acknowledge the token's self-closing flag, if it is set."
+            //
+            // "A start tag whose tag name is "meta""
+            // "Insert an HTML element for the token. Immediately pop the current node off the
+            // stack of open elements."
+            // ...
             Token::StartTag { name, .. }
                 if matches!(name.as_str(), "base" | "basefont" | "bgsound" | "link" | "meta") =>
             {
@@ -444,112 +512,157 @@ impl HTMLParser {
                 self.stack_of_open_elements.pop();
             }
 
-            // Spec: "A start tag whose tag name is 'title'"
-            // Spec: "Follow the generic RCDATA element parsing algorithm."
-            // https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm
+            // "A start tag whose tag name is "title""
+            // "Follow the generic RCDATA element parsing algorithm."
+            //
+            // [§ 13.2.6.2 The generic RCDATA element parsing algorithm](https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm):
+            // 1. "Insert an HTML element for the token."
+            // 2. "If the parser was created as part of the HTML fragment parsing algorithm, then
+            //     mark the script element as "already started"." (N/A)
+            // 3. "Let the original insertion mode be the current insertion mode."
+            // 4. "Switch the insertion mode to "text"."
             Token::StartTag { name, .. } if name == "title" => {
-                // Spec: "Insert an HTML element for the token."
                 self.insert_html_element(token);
-                // Spec: "Let the original insertion mode be the current insertion mode."
                 self.original_insertion_mode = Some(InsertionMode::InHead);
-                // Spec: "Switch the insertion mode to 'text'."
                 self.insertion_mode = InsertionMode::Text;
                 // NOTE: The spec also says "Switch the tokenizer to the RCDATA state."
                 // We don't have tokenizer integration, so we rely on the tokenizer
                 // emitting character tokens that the Text mode will handle.
             }
 
-            // Spec: "An end tag whose tag name is 'head'"
+            // "An end tag whose tag name is "head""
+            // "Pop the current node (which will be the head element) off the stack of open elements."
+            // "Switch the insertion mode to "after head"."
             Token::EndTag { name, .. } if name == "head" => {
                 self.stack_of_open_elements.pop();
                 self.insertion_mode = InsertionMode::AfterHead;
             }
 
+            // "An end tag whose tag name is one of: "body", "html", "br""
+            // "Act as described in the "anything else" entry below."
             Token::EndTag { name, .. } if matches!(name.as_str(), "body" | "html" | "br") => {
                 self.handle_in_head_anything_else(token);
             }
 
-            Token::EndTag { .. } => {} // Parse error, ignore
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::EndTag { .. } => {}
 
+            // "Anything else"
             _ => {
                 self.handle_in_head_anything_else(token);
             }
         }
     }
 
+    /// "Anything else" branch for "in head" mode:
+    /// "Pop the current node (which will be the head element) off the stack of open elements."
+    /// "Switch the insertion mode to "after head"."
+    /// "Reprocess the token."
     fn handle_in_head_anything_else(&mut self, token: &Token) {
         self.stack_of_open_elements.pop();
         self.insertion_mode = InsertionMode::AfterHead;
         self.reprocess_token(token);
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incdata
-    /// "The 'text' insertion mode"
+    /// [§ 13.2.6.4.8 The "text" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incdata)
     fn handle_text_mode(&mut self, token: &Token) {
         match token {
-            // Spec: "A character token - Insert the character."
+            // "A character token"
+            // "Insert the character."
             Token::Character { data } => {
                 self.insert_character(*data);
             }
 
-            // Spec: "An end-of-file token - Parse error. ... Pop the current node off
-            // the stack of open elements. Switch the insertion mode to the original
-            // insertion mode."
+            // "An end-of-file token"
+            // "Parse error."
+            // "If the current node is a script element, then set its already started to true."
+            // "Pop the current node off the stack of open elements."
+            // "Switch the insertion mode to the original insertion mode and reprocess the token."
             Token::EndOfFile => {
-                // Parse error
+                // Parse error (logged implicitly)
                 self.stack_of_open_elements.pop();
                 self.insertion_mode = self.original_insertion_mode.unwrap_or(InsertionMode::InBody);
+                // NOTE: Spec says to reprocess, but EOF is terminal so we just switch mode.
             }
 
-            // Spec: "Any other end tag - Pop the current node off the stack of open
-            // elements. Switch the insertion mode to the original insertion mode."
+            // "An end tag whose tag name is "script""
+            // (Complex script handling - not implemented)
+            //
+            // "Any other end tag"
+            // "Pop the current node off the stack of open elements."
+            // "Switch the insertion mode to the original insertion mode."
             Token::EndTag { .. } => {
                 self.stack_of_open_elements.pop();
                 self.insertion_mode = self.original_insertion_mode.unwrap_or(InsertionMode::InBody);
             }
 
-            // Ignore other tokens in text mode
+            // NOTE: Start tags and other tokens should not appear in text mode
+            // per the tokenizer's behavior, but we ignore them if they do.
             _ => {}
         }
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-after-head-insertion-mode
+    /// [§ 13.2.6.4.6 The "after head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-after-head-insertion-mode)
     fn handle_after_head_mode(&mut self, token: &Token) {
         match token {
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Insert the character."
             Token::Character { data } if Self::is_whitespace(*data) => {
                 self.insert_character(*data);
             }
 
+            // "A comment token"
+            // "Insert a comment."
             Token::Comment { data } => {
                 self.insert_comment(data);
             }
 
-            Token::Doctype { .. } => {} // Parse error, ignore
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
 
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
             Token::StartTag { name, .. } if name == "html" => {
                 self.handle_in_body_mode(token);
             }
 
-            // Spec: "A start tag whose tag name is 'body'"
+            // "A start tag whose tag name is "body""
+            // "Insert an HTML element for the token."
+            // "Set the frameset-ok flag to "not ok"."
+            // "Switch the insertion mode to "in body"."
             Token::StartTag { name, .. } if name == "body" => {
                 self.insert_html_element(token);
                 self.insertion_mode = InsertionMode::InBody;
             }
 
-            Token::StartTag { name, .. } if name == "head" => {} // Parse error, ignore
+            // "A start tag whose tag name is "head""
+            // "Parse error. Ignore the token."
+            Token::StartTag { name, .. } if name == "head" => {}
 
+            // "An end tag whose tag name is one of: "body", "html", "br""
+            // "Act as described in the "anything else" entry below."
             Token::EndTag { name, .. } if matches!(name.as_str(), "body" | "html" | "br") => {
                 self.handle_after_head_anything_else(token);
             }
 
-            Token::EndTag { .. } => {} // Parse error, ignore
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::EndTag { .. } => {}
 
+            // "Anything else"
             _ => {
                 self.handle_after_head_anything_else(token);
             }
         }
     }
 
+    /// "Anything else" branch for "after head" mode:
+    /// "Insert an HTML element for a "body" start tag token with no attributes."
+    /// "Switch the insertion mode to "in body"."
+    /// "Reprocess the current token."
     fn handle_after_head_anything_else(&mut self, token: &Token) {
         let body_idx = self.create_element("body", &[]);
         let parent_idx = self.insertion_location();
@@ -559,26 +672,57 @@ impl HTMLParser {
         self.reprocess_token(token);
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
+    /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    ///
+    /// NOTE: This is a partial implementation. The full spec has many more cases
+    /// for formatting elements, adoption agency algorithm, etc.
     fn handle_in_body_mode(&mut self, token: &Token) {
         match token {
-            Token::Character { data: '\0' } => {} // Parse error, ignore
+            // "A character token that is U+0000 NULL"
+            // "Parse error. Ignore the token."
+            Token::Character { data: '\0' } => {}
 
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert the character."
+            //
+            // "Any other character token"
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert the character."
+            // "Set the frameset-ok flag to "not ok"."
             Token::Character { data } => {
+                // NOTE: We skip "reconstruct the active formatting elements" as we don't
+                // implement the list of active formatting elements.
                 self.insert_character(*data);
             }
 
+            // "A comment token"
+            // "Insert a comment."
             Token::Comment { data } => {
                 self.insert_comment(data);
             }
 
-            Token::Doctype { .. } => {} // Parse error, ignore
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
 
+            // "A start tag whose tag name is "html""
+            // "Parse error."
+            // "If there is a template element on the stack of open elements, then ignore the token."
+            // "Otherwise, for each attribute on the token, check to see if the attribute is already
+            // present on the top element of the stack of open elements. If it is not, add the
+            // attribute and its corresponding value to that element."
             Token::StartTag { name, .. } if name == "html" => {
-                // Parse error. Merge attributes (simplified: ignore)
+                // Parse error. Simplified: ignore attribute merging.
             }
 
-            // Block elements
+            // "A start tag whose tag name is one of: "address", "article", "aside", "blockquote",
+            // "center", "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure",
+            // "footer", "header", "hgroup", "main", "menu", "nav", "ol", "p", "search", "section",
+            // "summary", "ul""
+            // "If the stack of open elements has a p element in button scope, then close a p element."
+            // "Insert an HTML element for the token."
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -609,10 +753,22 @@ impl HTMLParser {
                         | "ul"
                 ) =>
             {
+                // NOTE: We skip "close a p element" check for simplicity.
                 self.insert_html_element(token);
             }
 
-            // Void elements
+            // "A start tag whose tag name is one of: "area", "br", "embed", "img", "keygen", "wbr""
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token. Immediately pop the current node off the
+            // stack of open elements."
+            // "Acknowledge the token's self-closing flag, if it is set."
+            // "Set the frameset-ok flag to "not ok"."
+            //
+            // "A start tag whose tag name is "input""
+            // (similar handling for void element)
+            //
+            // "A start tag whose tag name is "hr""
+            // (similar handling for void element)
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -623,7 +779,19 @@ impl HTMLParser {
                 self.stack_of_open_elements.pop();
             }
 
-            // End tags for block elements
+            // "An end tag whose tag name is one of: "address", "article", "aside", "blockquote",
+            // "button", "center", "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption",
+            // "figure", "footer", "header", "hgroup", "listing", "main", "menu", "nav", "ol", "pre",
+            // "search", "section", "summary", "ul""
+            // "If the stack of open elements does not have an element in scope that is an HTML
+            // element with the same tag name as that of the token, then this is a parse error;
+            // ignore the token."
+            // "Otherwise, run these steps:"
+            // 1. "Generate implied end tags."
+            // 2. "If the current node is not an HTML element with the same tag name as that of
+            //     the token, then this is a parse error."
+            // 3. "Pop elements from the stack of open elements until an HTML element with the
+            //     same tag name as the token has been popped from the stack."
             Token::EndTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -656,25 +824,48 @@ impl HTMLParser {
                         | "ul"
                 ) =>
             {
+                // NOTE: We skip scope checking and implied end tag generation for simplicity.
                 self.pop_until_tag(name);
             }
 
-            // Spec: "An end tag whose tag name is 'body'"
+            // "An end tag whose tag name is "body""
+            // "If the stack of open elements does not have a body element in scope, this is a
+            // parse error; ignore the token."
+            // "Otherwise, if there is a node in the stack of open elements that is not either a
+            // dd element, a dt element, an li element, an optgroup element, an option element,
+            // a p element, an rb element, an rp element, an rt element, an rtc element, a tbody
+            // element, a td element, a tfoot element, a th element, a thead element, a tr element,
+            // the body element, or the html element, then this is a parse error."
+            // "Switch the insertion mode to "after body"."
             Token::EndTag { name, .. } if name == "body" => {
                 self.insertion_mode = InsertionMode::AfterBody;
             }
 
-            // Spec: "An end tag whose tag name is 'html'"
+            // "An end tag whose tag name is "html""
+            // "If the stack of open elements does not have a body element in scope, this is a
+            // parse error; ignore the token."
+            // "Otherwise, if there is a node in the stack of open elements that is not either
+            // [list of elements], then this is a parse error."
+            // "Switch the insertion mode to "after body"."
+            // "Reprocess the token."
             Token::EndTag { name, .. } if name == "html" => {
                 self.insertion_mode = InsertionMode::AfterBody;
                 self.reprocess_token(token);
             }
 
+            // "An end-of-file token"
+            // "If the stack of template insertion modes is not empty, then process the token
+            // using the rules for the "in template" insertion mode."
+            // "Otherwise, follow these steps:"
+            // 1. "If there is a node in the stack of open elements that is not either [list],
+            //     then this is a parse error."
+            // 2. "Stop parsing."
             Token::EndOfFile => {
                 self.stopped = true;
             }
 
             // Default: insert if it's a start tag
+            // NOTE: This is a simplified catch-all. The full spec has many more specific cases.
             _ => {
                 if let Token::StartTag { .. } = token {
                     self.insert_html_element(token);
@@ -683,36 +874,52 @@ impl HTMLParser {
         }
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterbody
+    /// [§ 13.2.6.4.19 The "after body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterbody)
     fn handle_after_body_mode(&mut self, token: &Token) {
         match token {
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Process the token using the rules for the "in body" insertion mode."
             Token::Character { data } if Self::is_whitespace(*data) => {
                 self.handle_in_body_mode(token);
             }
 
+            // "A comment token"
+            // "Insert a comment as the last child of the first element in the stack of open
+            // elements (the html element)."
             Token::Comment { data } => {
-                // Insert as last child of html element
                 if let Some(&html_idx) = self.stack_of_open_elements.first() {
                     let comment_idx = self.create_comment_node(data.clone());
                     self.append_child(html_idx, comment_idx);
                 }
             }
 
-            Token::Doctype { .. } => {} // Parse error, ignore
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
 
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
             Token::StartTag { name, .. } if name == "html" => {
                 self.handle_in_body_mode(token);
             }
 
-            // Spec: "An end tag whose tag name is 'html'"
+            // "An end tag whose tag name is "html""
+            // "If the parser was created as part of the HTML fragment parsing algorithm, this is
+            // a parse error; ignore the token. (fragment case)"
+            // "Otherwise, switch the insertion mode to "after after body"."
             Token::EndTag { name, .. } if name == "html" => {
                 self.insertion_mode = InsertionMode::AfterAfterBody;
             }
 
+            // "An end-of-file token"
+            // "Stop parsing."
             Token::EndOfFile => {
                 self.stopped = true;
             }
 
+            // "Anything else"
+            // "Parse error. Switch the insertion mode to "in body" and reprocess the token."
             _ => {
                 self.insertion_mode = InsertionMode::InBody;
                 self.reprocess_token(token);
@@ -720,16 +927,25 @@ impl HTMLParser {
         }
     }
 
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-body-insertion-mode
+    /// [§ 13.2.6.4.22 The "after after body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-body-insertion-mode)
     fn handle_after_after_body_mode(&mut self, token: &Token) {
         match token {
+            // "A comment token"
+            // "Insert a comment as the last child of the Document object."
             Token::Comment { data } => {
                 self.insert_comment_to_document(data);
             }
 
-            Token::Doctype { .. } | Token::Character { data: _ }
-                if matches!(token, Token::Character { data } if Self::is_whitespace(*data)) =>
-            {
+            // "A DOCTYPE token"
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
+            // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
+            Token::Doctype { .. } => {
+                self.handle_in_body_mode(token);
+            }
+
+            Token::Character { data } if Self::is_whitespace(*data) => {
                 self.handle_in_body_mode(token);
             }
 
@@ -737,10 +953,14 @@ impl HTMLParser {
                 self.handle_in_body_mode(token);
             }
 
+            // "An end-of-file token"
+            // "Stop parsing."
             Token::EndOfFile => {
                 self.stopped = true;
             }
 
+            // "Anything else"
+            // "Parse error. Switch the insertion mode to "in body" and reprocess the token."
             _ => {
                 self.insertion_mode = InsertionMode::InBody;
                 self.reprocess_token(token);
