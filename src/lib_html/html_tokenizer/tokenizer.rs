@@ -1550,3 +1550,196 @@ impl HTMLTokenizer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to tokenize a string and return the tokens (excluding printing)
+    fn tokenize(input: &str) -> Vec<Token> {
+        let mut tokenizer = HTMLTokenizer::new(input.to_string());
+        tokenizer.run();
+        tokenizer.into_tokens()
+    }
+
+    #[test]
+    fn test_plain_text() {
+        let tokens = tokenize("Hello");
+        assert_eq!(tokens.len(), 6); // 5 chars + EOF
+        assert!(matches!(tokens[0], Token::Character { data: 'H' }));
+        assert!(matches!(tokens[4], Token::Character { data: 'o' }));
+        assert!(matches!(tokens[5], Token::EndOfFile));
+    }
+
+    #[test]
+    fn test_doctype() {
+        let tokens = tokenize("<!DOCTYPE html>");
+        assert_eq!(tokens.len(), 2); // DOCTYPE + EOF
+        match &tokens[0] {
+            Token::Doctype { name, force_quirks, .. } => {
+                assert_eq!(name.as_deref(), Some("html"));
+                assert!(!force_quirks);
+            }
+            _ => panic!("Expected DOCTYPE token"),
+        }
+    }
+
+    #[test]
+    fn test_start_tag() {
+        let tokens = tokenize("<div>");
+        assert_eq!(tokens.len(), 2);
+        match &tokens[0] {
+            Token::StartTag { name, self_closing, attributes } => {
+                assert_eq!(name, "div");
+                assert!(!self_closing);
+                assert!(attributes.is_empty());
+            }
+            _ => panic!("Expected StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_end_tag() {
+        let tokens = tokenize("</div>");
+        assert_eq!(tokens.len(), 2);
+        match &tokens[0] {
+            Token::EndTag { name, .. } => {
+                assert_eq!(name, "div");
+            }
+            _ => panic!("Expected EndTag token"),
+        }
+    }
+
+    #[test]
+    fn test_self_closing_tag() {
+        let tokens = tokenize("<br/>");
+        assert_eq!(tokens.len(), 2);
+        match &tokens[0] {
+            Token::StartTag { name, self_closing, .. } => {
+                assert_eq!(name, "br");
+                assert!(self_closing);
+            }
+            _ => panic!("Expected self-closing StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_comment() {
+        let tokens = tokenize("<!-- hello -->");
+        assert_eq!(tokens.len(), 2);
+        match &tokens[0] {
+            Token::Comment { data } => {
+                assert_eq!(data, " hello ");
+            }
+            _ => panic!("Expected Comment token"),
+        }
+    }
+
+    #[test]
+    fn test_attribute_double_quoted() {
+        let tokens = tokenize(r#"<div class="foo">"#);
+        match &tokens[0] {
+            Token::StartTag { name, attributes, .. } => {
+                assert_eq!(name, "div");
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0].name, "class");
+                assert_eq!(attributes[0].value, "foo");
+            }
+            _ => panic!("Expected StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_attribute_single_quoted() {
+        let tokens = tokenize("<div class='bar'>");
+        match &tokens[0] {
+            Token::StartTag { name, attributes, .. } => {
+                assert_eq!(name, "div");
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0].name, "class");
+                assert_eq!(attributes[0].value, "bar");
+            }
+            _ => panic!("Expected StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_attribute_unquoted() {
+        let tokens = tokenize("<div class=baz>");
+        match &tokens[0] {
+            Token::StartTag { name, attributes, .. } => {
+                assert_eq!(name, "div");
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0].name, "class");
+                assert_eq!(attributes[0].value, "baz");
+            }
+            _ => panic!("Expected StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_boolean_attribute() {
+        let tokens = tokenize("<input disabled>");
+        match &tokens[0] {
+            Token::StartTag { name, attributes, .. } => {
+                assert_eq!(name, "input");
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0].name, "disabled");
+                assert_eq!(attributes[0].value, "");
+            }
+            _ => panic!("Expected StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_attributes() {
+        let tokens = tokenize(r#"<input type="text" id="name" disabled>"#);
+        match &tokens[0] {
+            Token::StartTag { name, attributes, .. } => {
+                assert_eq!(name, "input");
+                assert_eq!(attributes.len(), 3);
+                assert_eq!(attributes[0].name, "type");
+                assert_eq!(attributes[0].value, "text");
+                assert_eq!(attributes[1].name, "id");
+                assert_eq!(attributes[1].value, "name");
+                assert_eq!(attributes[2].name, "disabled");
+                assert_eq!(attributes[2].value, "");
+            }
+            _ => panic!("Expected StartTag token"),
+        }
+    }
+
+    #[test]
+    fn test_tag_with_text_content() {
+        let tokens = tokenize("<p>Hi</p>");
+        assert_eq!(tokens.len(), 5); // <p>, H, i, </p>, EOF
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "p"));
+        assert!(matches!(tokens[1], Token::Character { data: 'H' }));
+        assert!(matches!(tokens[2], Token::Character { data: 'i' }));
+        assert!(matches!(&tokens[3], Token::EndTag { name, .. } if name == "p"));
+        assert!(matches!(tokens[4], Token::EndOfFile));
+    }
+
+    #[test]
+    fn test_simple_html_document() {
+        let html = r#"<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>Hello</body>
+</html>"#;
+        let tokens = tokenize(html);
+
+        // Should have DOCTYPE as first token
+        assert!(matches!(&tokens[0], Token::Doctype { name: Some(n), .. } if n == "html"));
+
+        // Should end with EOF
+        assert!(matches!(tokens.last(), Some(Token::EndOfFile)));
+
+        // Count tag tokens
+        let start_tags: Vec<_> = tokens.iter().filter(|t| matches!(t, Token::StartTag { .. })).collect();
+        let end_tags: Vec<_> = tokens.iter().filter(|t| matches!(t, Token::EndTag { .. })).collect();
+
+        assert_eq!(start_tags.len(), 4); // html, head, title, body
+        assert_eq!(end_tags.len(), 4);   // /title, /head, /body, /html
+    }
+}
