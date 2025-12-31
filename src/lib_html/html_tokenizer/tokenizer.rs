@@ -240,6 +240,38 @@ impl HTMLTokenizer {
     fn is_whitespace_char(input_char: char) -> bool {
         matches!(input_char, ' ' | '\t' | '\n' | '\x0C')
     }
+
+    /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
+    /// Returns true if the return state is an attribute value state.
+    /// Per spec: "consumed as part of an attribute"
+    fn is_consumed_as_part_of_attribute(&self) -> bool {
+        matches!(
+            self.return_state,
+            Some(TokenizerState::AttributeValueDoubleQuoted)
+                | Some(TokenizerState::AttributeValueSingleQuoted)
+                | Some(TokenizerState::AttributeValueUnquoted)
+        )
+    }
+
+    /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
+    /// "Flush code points consumed as a character reference"
+    /// Per spec: "If the character reference was consumed as part of an attribute,
+    /// then append each character to the current attribute's value. Otherwise,
+    /// emit each character as a character token."
+    fn flush_code_points_consumed_as_character_reference(&mut self) {
+        if self.is_consumed_as_part_of_attribute() {
+            for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_current_attribute_value(c);
+                }
+            }
+        } else {
+            for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+                self.emit_character_token(c);
+            }
+        }
+    }
+
     // [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
     // "Emit the current token" - adds the token to the output stream.
     pub fn emit_token(&mut self) {
@@ -1593,6 +1625,37 @@ impl HTMLTokenizer {
         }
     }
 
+    /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
+    fn handle_character_reference_state(&mut self) {
+        // "Set the temporary buffer to the empty string."
+        self.temporary_buffer.clear();
+        // "Append a U+0026 AMPERSAND character (&) to the temporary buffer."
+        self.temporary_buffer.push('&');
+
+        match self.current_input_character {
+            // "ASCII alphanumeric"
+            // "Reconsume in the named character reference state."
+            Some(c) if c.is_ascii_alphanumeric() => {
+                self.reconsume_in(TokenizerState::NamedCharacterReference);
+            }
+            // "U+0023 NUMBER SIGN (#)"
+            // "Append the current input character to the temporary buffer.
+            // Switch to the numeric character reference state."
+            Some('#') => {
+                self.temporary_buffer.push('#');
+                self.switch_to(TokenizerState::NumericCharacterReference);
+            }
+            // "Anything else"
+            // "Flush code points consumed as a character reference.
+            // Reconsume in the return state."
+            _ => {
+                self.flush_code_points_consumed_as_character_reference();
+                let return_state = self.return_state.take().unwrap();
+                self.reconsume_in(return_state);
+            }
+        }
+    }
+
     /// Helper to check for duplicate attributes and handle the parse error.
     fn check_duplicate_attribute(&mut self) {
         // Check for duplicate first, then log error and remove if needed.
@@ -1911,7 +1974,7 @@ impl HTMLTokenizer {
                 TokenizerState::CDATASection => todo!("Unhandled state: {}", self.state),
                 TokenizerState::CDATASectionBracket => todo!("Unhandled state: {}", self.state),
                 TokenizerState::CDATASectionEnd => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CharacterReference => todo!("Unhandled state: {}", self.state),
+                TokenizerState::CharacterReference => self.handle_character_reference_state(),
                 TokenizerState::NamedCharacterReference => todo!("Unhandled state: {}", self.state),
                 TokenizerState::AmbiguousAmpersand => todo!("Unhandled state: {}", self.state),
                 TokenizerState::NumericCharacterReference => {
@@ -2302,5 +2365,20 @@ mod tests {
             .collect();
 
         assert_eq!(content, "some content");
+    }
+
+    #[test]
+    fn test_character_reference_bare_ampersand() {
+        // [§ 13.2.5.72 Character reference state]
+        // Bare ampersand followed by non-alphanumeric should flush as literal '&'
+        let tokens = tokenize("a & b");
+        // Should be: 'a', ' ', '&', ' ', 'b', EOF
+        assert_eq!(tokens.len(), 6);
+        assert!(matches!(tokens[0], Token::Character { data: 'a' }));
+        assert!(matches!(tokens[1], Token::Character { data: ' ' }));
+        assert!(matches!(tokens[2], Token::Character { data: '&' }));
+        assert!(matches!(tokens[3], Token::Character { data: ' ' }));
+        assert!(matches!(tokens[4], Token::Character { data: 'b' }));
+        assert!(matches!(tokens[5], Token::EndOfFile));
     }
 }
