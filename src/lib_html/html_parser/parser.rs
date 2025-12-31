@@ -691,8 +691,13 @@ impl HTMLParser {
             }
 
             // NOTE: Start tags and other tokens should not appear in text mode
-            // per the tokenizer's behavior, but we ignore them if they do.
-            _ => {}
+            // per the tokenizer's behavior. If they do, it indicates a bug.
+            _ => {
+                panic!(
+                    "Unexpected token in Text mode: {:?}. This indicates a tokenizer or parser bug.",
+                    token
+                );
+            }
         }
     }
 
