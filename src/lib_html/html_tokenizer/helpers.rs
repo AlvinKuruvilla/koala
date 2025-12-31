@@ -107,7 +107,7 @@ impl HTMLTokenizer {
 // =============================================================================
 
 impl HTMLTokenizer {
-    // [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
     // "Emit the current token" - adds the token to the output stream.
     pub fn emit_token(&mut self) {
         if let Some(token) = self.current_token.take() {
@@ -115,9 +115,8 @@ impl HTMLTokenizer {
             if let Token::StartTag { ref name, .. } = token {
                 self.last_start_tag_name = Some(name.clone());
 
-                // [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
-                // [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-                //
+                /// [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+                /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
                 // NOTE: Per spec, the parser should switch the tokenizer state. Since we run
                 // the tokenizer before the parser, we detect special elements here and switch
                 // states accordingly.
@@ -128,7 +127,7 @@ impl HTMLTokenizer {
                 match name.as_str() {
                     // "A start tag whose tag name is "title""
                     // "Follow the generic RCDATA element parsing algorithm."
-                    // [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm)
+                    /// [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm)
                     // "Switch the tokenizer to the RCDATA state."
                     "title" | "textarea" => {
                         self.token_stream.push(token);
@@ -146,10 +145,12 @@ impl HTMLTokenizer {
                     }
                     // "A start tag whose tag name is \"script\""
                     // "Follow the generic script element parsing algorithm."
-                    // [§ 13.2.6.4](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+                    /// [§ 13.2.6.4](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
                     // "Switch the tokenizer to the ScriptData state."
                     "script" => {
-                        todo!("ScriptData state not implemented - cannot parse <script> content");
+                        self.token_stream.push(token);
+                        self.switch_to(TokenizerState::ScriptData);
+                        return;
                     }
                     _ => {}
                 }
@@ -180,8 +181,8 @@ impl HTMLTokenizer {
     /// [§ 13.2.5.11 RCDATA end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-name-state)
     /// [§ 13.2.5.14 RAWTEXT end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-name-state)
     ///
-    /// "An appropriate end tag token is an end tag token whose tag name matches the tag name
-    /// of the last start tag to have been emitted from this tokenizer, if any."
+    // "An appropriate end tag token is an end tag token whose tag name matches the tag name
+    // of the last start tag to have been emitted from this tokenizer, if any."
     pub(super) fn is_appropriate_end_tag_token(&self) -> bool {
         if let (Some(ref last_start_tag), Some(ref current_token)) =
             (&self.last_start_tag_name, &self.current_token)

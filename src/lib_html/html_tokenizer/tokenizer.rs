@@ -419,6 +419,35 @@ impl HTMLTokenizer {
             }
         }
     }
+    /// [§ 13.2.5.4 Script Data State](https://html.spec.whatwg.org/multipage/parsing.html#script-data-state)
+    fn handle_script_data_state(&mut self) {
+        // "Consume the next input character:"
+        let next = self.consume();
+        match next {
+            // "U+003C LESS-THAN SIGN (<)"
+            // "Switch to the script data less-than sign state."
+            Some('<') => {
+                self.switch_to(TokenizerState::ScriptDataLessThanSign);
+            }
+            // "U+0000 NULL"
+            // "This is an unexpected-null-character parse error. Emit a U+FFFD REPLACEMENT CHARACTER character token."
+            Some('\0') => {
+                self.log_parse_error();
+                self.emit_character_token('\u{FFFD}');
+            }
+            // "EOF"
+            // "Emit an end-of-file token."
+            None => {
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else"
+            // "Emit the current input character as a character token"
+            Some(c) => {
+                self.emit_character_token(c);
+            }
+        }
+    }
 
     /// [§ 13.2.5.12 RAWTEXT less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state)
     fn handle_rawtext_less_than_sign_state(&mut self) {
@@ -1716,7 +1745,7 @@ impl HTMLTokenizer {
                     self.handle_rawtext_state();
                     continue;
                 }
-                TokenizerState::ScriptData => todo!("Unhandled state: {}", self.state),
+                TokenizerState::ScriptData => self.handle_script_data_state(),
                 TokenizerState::PLAINTEXT => todo!("Unhandled state: {}", self.state),
                 TokenizerState::TagOpen => {
                     self.handle_tag_open_state();
@@ -1978,7 +2007,9 @@ mod tests {
         let tokens = tokenize("<!DOCTYPE html>");
         assert_eq!(tokens.len(), 2); // DOCTYPE + EOF
         match &tokens[0] {
-            Token::Doctype { name, force_quirks, .. } => {
+            Token::Doctype {
+                name, force_quirks, ..
+            } => {
                 assert_eq!(name.as_deref(), Some("html"));
                 assert!(!force_quirks);
             }
@@ -1991,7 +2022,11 @@ mod tests {
         let tokens = tokenize("<div>");
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
-            Token::StartTag { name, self_closing, attributes } => {
+            Token::StartTag {
+                name,
+                self_closing,
+                attributes,
+            } => {
                 assert_eq!(name, "div");
                 assert!(!self_closing);
                 assert!(attributes.is_empty());
@@ -2017,7 +2052,9 @@ mod tests {
         let tokens = tokenize("<br/>");
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
-            Token::StartTag { name, self_closing, .. } => {
+            Token::StartTag {
+                name, self_closing, ..
+            } => {
                 assert_eq!(name, "br");
                 assert!(self_closing);
             }
@@ -2041,7 +2078,9 @@ mod tests {
     fn test_attribute_double_quoted() {
         let tokens = tokenize(r#"<div class="foo">"#);
         match &tokens[0] {
-            Token::StartTag { name, attributes, .. } => {
+            Token::StartTag {
+                name, attributes, ..
+            } => {
                 assert_eq!(name, "div");
                 assert_eq!(attributes.len(), 1);
                 assert_eq!(attributes[0].name, "class");
@@ -2055,7 +2094,9 @@ mod tests {
     fn test_attribute_single_quoted() {
         let tokens = tokenize("<div class='bar'>");
         match &tokens[0] {
-            Token::StartTag { name, attributes, .. } => {
+            Token::StartTag {
+                name, attributes, ..
+            } => {
                 assert_eq!(name, "div");
                 assert_eq!(attributes.len(), 1);
                 assert_eq!(attributes[0].name, "class");
@@ -2069,7 +2110,9 @@ mod tests {
     fn test_attribute_unquoted() {
         let tokens = tokenize("<div class=baz>");
         match &tokens[0] {
-            Token::StartTag { name, attributes, .. } => {
+            Token::StartTag {
+                name, attributes, ..
+            } => {
                 assert_eq!(name, "div");
                 assert_eq!(attributes.len(), 1);
                 assert_eq!(attributes[0].name, "class");
@@ -2083,7 +2126,9 @@ mod tests {
     fn test_boolean_attribute() {
         let tokens = tokenize("<input disabled>");
         match &tokens[0] {
-            Token::StartTag { name, attributes, .. } => {
+            Token::StartTag {
+                name, attributes, ..
+            } => {
                 assert_eq!(name, "input");
                 assert_eq!(attributes.len(), 1);
                 assert_eq!(attributes[0].name, "disabled");
@@ -2097,7 +2142,9 @@ mod tests {
     fn test_multiple_attributes() {
         let tokens = tokenize(r#"<input type="text" id="name" disabled>"#);
         match &tokens[0] {
-            Token::StartTag { name, attributes, .. } => {
+            Token::StartTag {
+                name, attributes, ..
+            } => {
                 assert_eq!(name, "input");
                 assert_eq!(attributes.len(), 3);
                 assert_eq!(attributes[0].name, "type");
@@ -2138,11 +2185,17 @@ mod tests {
         assert!(matches!(tokens.last(), Some(Token::EndOfFile)));
 
         // Count tag tokens
-        let start_tags: Vec<_> = tokens.iter().filter(|t| matches!(t, Token::StartTag { .. })).collect();
-        let end_tags: Vec<_> = tokens.iter().filter(|t| matches!(t, Token::EndTag { .. })).collect();
+        let start_tags: Vec<_> = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::StartTag { .. }))
+            .collect();
+        let end_tags: Vec<_> = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::EndTag { .. }))
+            .collect();
 
         assert_eq!(start_tags.len(), 4); // html, head, title, body
-        assert_eq!(end_tags.len(), 4);   // /title, /head, /body, /html
+        assert_eq!(end_tags.len(), 4); // /title, /head, /body, /html
     }
 
     // ========== Raw text element (RCDATA/RAWTEXT) tests ==========
@@ -2277,7 +2330,9 @@ mod tests {
 
         // Content should be literal text, not parsed tags
         assert_eq!(content, "<b>bold?</b>");
-        assert!(matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "textarea"));
+        assert!(
+            matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "textarea")
+        );
     }
 
     #[test]
