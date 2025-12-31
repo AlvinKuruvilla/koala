@@ -117,6 +117,12 @@ impl HTMLTokenizer {
         }
     }
 
+    /// Consume the tokenizer and return the token stream.
+    /// Call this after run() to get the tokens for the parser.
+    pub fn into_tokens(self) -> Vec<Token> {
+        self.token_stream
+    }
+
     // Spec: "Switch to the X state"
     // Transitions to a new state. The next character will be consumed on the next
     // iteration of the main loop.
