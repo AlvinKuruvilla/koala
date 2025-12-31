@@ -82,8 +82,11 @@ koala/
 │   ├── lib_html/
 │   │   ├── html_tokenizer/   # HTML5 tokenizer (spec: §13.2.5)
 │   │   └── html_parser/      # Tree construction (spec: §13.2.6)
+│   ├── lib_css/              # CSS parsing (spec: css-syntax-3)
+│   │   ├── css_tokenizer/    # CSS tokenizer
+│   │   └── css_parser/       # CSS parser
 │   └── lib_dom/          # DOM node structures
-└── res/                  # Test files
+└── res/                  # Test files, icons
 ```
 
 ### Current Status
@@ -91,7 +94,8 @@ koala/
 - **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing. Missing: character references, script/RCDATA state switching
 - **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
 - **DOM**: Node, Element, Text, Comment types defined and populated by parser
-- **Rendering**: Not started
+- **GUI**: iced-based browser chrome with SVG icons, dark mode support, pill-shaped URL bar
+- **Rendering**: Basic — renders headings, paragraphs, text nodes with proper theming. Missing: CSS parsing, layout engine, styled text (bold/italic fonts)
 
 ### Dependencies
 
