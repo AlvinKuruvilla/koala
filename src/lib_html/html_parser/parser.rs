@@ -65,6 +65,14 @@ struct ParserNode {
     children: Vec<usize>, // Indices into the nodes arena
 }
 
+/// A parse error or warning encountered during parsing.
+#[derive(Debug, Clone)]
+pub struct ParseIssue {
+    pub message: String,
+    pub token_index: usize,
+    pub is_error: bool,
+}
+
 /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction)
 ///
 /// The HTML parser builds a DOM tree from a stream of tokens.
@@ -94,6 +102,12 @@ pub struct HTMLParser {
 
     /// Whether we've stopped parsing.
     stopped: bool,
+
+    /// Parse issues (errors and warnings) encountered during parsing.
+    issues: Vec<ParseIssue>,
+
+    /// If true, panic on unhandled tokens or unexpected states.
+    strict_mode: bool,
 }
 
 impl HTMLParser {
@@ -114,7 +128,41 @@ impl HTMLParser {
             tokens,
             token_index: 0,
             stopped: false,
+            issues: Vec::new(),
+            strict_mode: false,
         }
+    }
+
+    /// Enable strict mode - panics on unhandled tokens.
+    pub fn with_strict_mode(mut self) -> Self {
+        self.strict_mode = true;
+        self
+    }
+
+    /// Get all parse issues (errors and warnings) encountered during parsing.
+    pub fn get_issues(&self) -> &[ParseIssue] {
+        &self.issues
+    }
+
+    /// Record a parse error.
+    fn parse_error(&mut self, message: &str) {
+        self.issues.push(ParseIssue {
+            message: message.to_string(),
+            token_index: self.token_index,
+            is_error: true,
+        });
+        if self.strict_mode {
+            panic!("Parse error at token {}: {}", self.token_index, message);
+        }
+    }
+
+    /// Record a parse warning (for unhandled but recoverable situations).
+    fn parse_warning(&mut self, message: &str) {
+        self.issues.push(ParseIssue {
+            message: message.to_string(),
+            token_index: self.token_index,
+            is_error: false,
+        });
     }
 
     /// Run the parser and return the document node.
@@ -127,6 +175,18 @@ impl HTMLParser {
 
         // Convert arena to tree structure
         self.build_tree(0)
+    }
+
+    /// Run the parser and return both the document and any parse issues.
+    pub fn run_with_issues(mut self) -> (Node, Vec<ParseIssue>) {
+        while !self.stopped && self.token_index < self.tokens.len() {
+            let token = self.tokens[self.token_index].clone();
+            self.process_token(&token);
+            self.token_index += 1;
+        }
+
+        let issues = std::mem::take(&mut self.issues);
+        (self.build_tree(0), issues)
     }
 
     /// Recursively build a Node tree from the arena.
@@ -311,6 +371,23 @@ impl HTMLParser {
                     break;
                 }
             }
+        }
+    }
+
+    /// Check if an element with the given tag name is in scope.
+    /// Simplified version - just checks if it's on the stack.
+    fn has_element_in_scope(&self, tag_name: &str) -> bool {
+        self.stack_of_open_elements
+            .iter()
+            .any(|&idx| self.get_tag_name(idx) == Some(tag_name))
+    }
+
+    /// [§ 13.2.6.4.7 "in body" - implicit end tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    /// Close an open element if present on the stack.
+    /// Used for elements like <li>, <p>, <dd>, <dt> that implicitly close.
+    fn close_element_if_in_scope(&mut self, tag_name: &str) {
+        if self.has_element_in_scope(tag_name) {
+            self.pop_until_tag(tag_name);
         }
     }
 
@@ -774,15 +851,138 @@ impl HTMLParser {
                         | "menu"
                         | "nav"
                         | "ol"
-                        | "p"
                         | "search"
                         | "section"
                         | "summary"
                         | "ul"
                 ) =>
             {
-                // NOTE: We skip "close a p element" check for simplicity.
+                // "If the stack of open elements has a p element in button scope, then close a p element."
+                self.close_element_if_in_scope("p");
                 self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "p"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "p""
+            // "If the stack of open elements has a p element in button scope, then close a p element."
+            // "Insert an HTML element for the token."
+            Token::StartTag { name, .. } if name == "p" => {
+                // Close any existing <p> element first
+                self.close_element_if_in_scope("p");
+                self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag h1-h6](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is one of: "h1", "h2", "h3", "h4", "h5", "h6""
+            // "If the stack of open elements has a p element in button scope, then close a p element."
+            // "If the current node is an HTML element whose tag name is one of "h1", "h2", "h3",
+            //  "h4", "h5", or "h6", then this is a parse error; pop the current node off the stack
+            //  of open elements."
+            // "Insert an HTML element for the token."
+            Token::StartTag { name, .. }
+                if matches!(name.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+            {
+                self.close_element_if_in_scope("p");
+                // If currently in a heading, close it (headings don't nest)
+                if let Some(idx) = self.current_node() {
+                    if let Some(tag) = self.get_tag_name(idx) {
+                        if matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                            self.stack_of_open_elements.pop();
+                        }
+                    }
+                }
+                self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "a"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "a""
+            // ... complex adoption agency handling for nested <a> tags ...
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            // "Push onto the list of active formatting elements that element."
+            Token::StartTag { name, .. } if name == "a" => {
+                // NOTE: We skip the adoption agency algorithm for nested <a> tags
+                // and the list of active formatting elements for simplicity
+                self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tags for formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is one of: "b", "big", "code", "em", "font", "i",
+            //  "s", "small", "strike", "strong", "tt", "u""
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            // "Push onto the list of active formatting elements that element."
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "b" | "big"
+                        | "code"
+                        | "em"
+                        | "font"
+                        | "i"
+                        | "s"
+                        | "small"
+                        | "strike"
+                        | "strong"
+                        | "tt"
+                        | "u"
+                        | "span"
+                        | "label"
+                        | "abbr"
+                        | "cite"
+                        | "dfn"
+                        | "kbd"
+                        | "mark"
+                        | "q"
+                        | "ruby"
+                        | "samp"
+                        | "sub"
+                        | "sup"
+                        | "time"
+                        | "var"
+                        | "bdi"
+                        | "bdo"
+                        | "data"
+                ) =>
+            {
+                // NOTE: We skip the list of active formatting elements for simplicity
+                self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "li""
+            // "Run these steps:
+            //  1. Set the frameset-ok flag to "not ok".
+            //  2. Initialize node to be the current node (the bottommost node of the stack).
+            //  3. Loop: If node is an li element, then run these substeps:
+            //     - Generate implied end tags, except for li elements.
+            //     - If the current node is not an li element, then this is a parse error.
+            //     - Pop elements from the stack of open elements until an li element has been popped.
+            //     - Jump to the step labeled done below.
+            //  ...
+            //  8. Done: If the stack of open elements has a p element in button scope, then close a p element.
+            //  9. Insert an HTML element for the token."
+            Token::StartTag { name, .. } if name == "li" => {
+                // Close any existing <li> element first
+                self.close_element_if_in_scope("li");
+                // Close any <p> in button scope
+                self.close_element_if_in_scope("p");
+                self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tags "dd", "dt"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // Similar to <li> but checks for dd/dt
+            Token::StartTag { name, .. } if matches!(name.as_str(), "dd" | "dt") => {
+                // Close any existing <dd> or <dt> element
+                self.close_element_if_in_scope("dd");
+                self.close_element_if_in_scope("dt");
+                self.close_element_if_in_scope("p");
+                self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tags "dd", "dt", "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            Token::EndTag { name, .. } if matches!(name.as_str(), "dd" | "dt" | "li") => {
+                self.pop_until_tag(name);
             }
 
             // "A start tag whose tag name is one of: "area", "br", "embed", "img", "keygen", "wbr""
@@ -946,8 +1146,19 @@ impl HTMLParser {
             // Default: insert if it's a start tag
             // NOTE: This is a simplified catch-all. The full spec has many more specific cases.
             _ => {
-                if let Token::StartTag { .. } = token {
+                if let Token::StartTag { name, .. } = token {
+                    // Log a warning for unhandled tags so we know what's missing
+                    self.parse_warning(&format!(
+                        "Unhandled start tag <{}> in InBody mode (using default insert)",
+                        name
+                    ));
                     self.insert_html_element(token);
+                } else if let Token::EndTag { name, .. } = token {
+                    // Unhandled end tags are parse errors per spec
+                    self.parse_warning(&format!(
+                        "Unhandled end tag </{}> in InBody mode (ignored)",
+                        name
+                    ));
                 }
             }
         }
