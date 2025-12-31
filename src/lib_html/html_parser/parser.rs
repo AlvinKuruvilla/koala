@@ -1239,4 +1239,58 @@ mod tests {
             assert_eq!(data.attrs.get("disabled"), Some(&"".to_string()));
         }
     }
+
+    // ========== Raw text element tests at parser level ==========
+
+    #[test]
+    fn test_style_element_content_preserved() {
+        // Style content should be preserved as text, not parsed as HTML
+        let html = r#"<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { color: red; }
+.container { margin: 0; }
+</style>
+</head>
+<body></body>
+</html>"#;
+
+        let doc = parse(html);
+        let style = find_element(&doc, "style").unwrap();
+        let content = text_content(style);
+
+        // The CSS should be preserved as text
+        assert!(content.contains("body { color: red; }"));
+        assert!(content.contains(".container { margin: 0; }"));
+    }
+
+    #[test]
+    fn test_style_with_html_like_content() {
+        // HTML-like content inside style should NOT be interpreted as tags
+        let html = "<html><head><style><div>not a tag</div></style></head><body></body></html>";
+
+        let doc = parse(html);
+        let style = find_element(&doc, "style").unwrap();
+        let content = text_content(style);
+
+        // The <div> should appear as literal text
+        assert_eq!(content, "<div>not a tag</div>");
+
+        // There should be no div element in the document (since it's inside style)
+        let div_in_body = find_element(find_element(&doc, "body").unwrap(), "div");
+        assert!(div_in_body.is_none());
+    }
+
+    #[test]
+    fn test_title_content_preserved() {
+        let html = "<html><head><title>My <test> Title</title></head><body></body></html>";
+
+        let doc = parse(html);
+        let title = find_element(&doc, "title").unwrap();
+        let content = text_content(title);
+
+        // Title content including < should be preserved
+        assert_eq!(content, "My <test> Title");
+    }
 }

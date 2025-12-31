@@ -2,7 +2,11 @@
 
 ## HTML Parser
 
-- [ ] **Raw text element handling** - The parser incorrectly parses content inside `<style>`, `<script>`, `<textarea>`, and `<title>` tags as HTML instead of raw text. Per the HTML spec, these elements should collect all text until their closing tag without interpreting it as markup. This causes `simple.html` to render incorrectly because the CSS content `body {` is interpreted as an HTML `<body>` tag.
+- [x] **Raw text element handling** - Implemented RCDATA and RAWTEXT states for `<title>`, `<textarea>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, and `<noframes>` elements. Content inside these elements is now correctly treated as text and not parsed as HTML markup.
+
+- [ ] **Script element handling** - `<script>` elements require the more complex ScriptData state machine with escape sequences. Currently left unimplemented.
+
+- [ ] **Character references** - Character references (like `&amp;`, `&#38;`, `&#x26;`) are not yet parsed. They are passed through as literal text.
 
 ## Future Work
 

@@ -91,7 +91,7 @@ koala/
 
 ### Current Status
 
-- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing. Missing: character references, script/RCDATA state switching
+- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing, RCDATA/RAWTEXT states for raw text elements (`<style>`, `<title>`, `<textarea>`, etc.). Missing: character references, script data states
 - **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
 - **DOM**: Node, Element, Text, Comment types defined and populated by parser
 - **GUI**: iced-based browser chrome with SVG icons, dark mode support, pill-shaped URL bar

@@ -181,6 +181,16 @@ pub struct HTMLTokenizer {
     // When true, the next iteration of the main loop will not consume a new character.
     // "Reconsume in the X state" sets this flag.
     reconsume: bool,
+
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    /// "The last start tag token emitted is used as part of the tree construction stage
+    /// and in the RCDATA, RAWTEXT, and script data states."
+    last_start_tag_name: Option<String>,
+
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#temporary-buffer)
+    /// "The temporary buffer is used to temporarily store characters during certain
+    /// tokenization operations, particularly for end tag detection in RCDATA/RAWTEXT states."
+    temporary_buffer: String,
 }
 impl HTMLTokenizer {
     pub fn new(input: String) -> Self {
@@ -197,6 +207,8 @@ impl HTMLTokenizer {
             at_eof: false,
             token_stream: Vec::new(),
             reconsume: false,
+            last_start_tag_name: None,
+            temporary_buffer: String::new(),
         }
     }
 
@@ -232,6 +244,44 @@ impl HTMLTokenizer {
     // "Emit the current token" - adds the token to the output stream.
     pub fn emit_token(&mut self) {
         if let Some(token) = self.current_token.take() {
+            // Track the last start tag name for RCDATA/RAWTEXT end tag detection
+            if let Token::StartTag { ref name, .. } = token {
+                self.last_start_tag_name = Some(name.clone());
+
+                // [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+                // [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+                //
+                // NOTE: Per spec, the parser should switch the tokenizer state. Since we run
+                // the tokenizer before the parser, we detect special elements here and switch
+                // states accordingly.
+                //
+                // RCDATA elements: "title", "textarea"
+                // RAWTEXT elements: "style", "xmp", "iframe", "noembed", "noframes"
+                // Script data: "script" (more complex, not yet implemented)
+                match name.as_str() {
+                    // "A start tag whose tag name is "title""
+                    // "Follow the generic RCDATA element parsing algorithm."
+                    // [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generic-rcdata-element-parsing-algorithm)
+                    // "Switch the tokenizer to the RCDATA state."
+                    "title" | "textarea" => {
+                        self.token_stream.push(token);
+                        self.switch_to(TokenizerState::RCDATA);
+                        return;
+                    }
+                    // "A start tag whose tag name is one of: "style", "xmp", "iframe", "noembed", "noframes""
+                    // "Follow the generic raw text element parsing algorithm."
+                    // [§ 13.2.6.3](https://html.spec.whatwg.org/multipage/parsing.html#generic-raw-text-element-parsing-algorithm)
+                    // "Switch the tokenizer to the RAWTEXT state."
+                    "style" | "xmp" | "iframe" | "noembed" | "noframes" => {
+                        self.token_stream.push(token);
+                        self.switch_to(TokenizerState::RAWTEXT);
+                        return;
+                    }
+                    // NOTE: "script" requires ScriptData state which is more complex.
+                    // Left as todo!() for now.
+                    _ => {}
+                }
+            }
             self.token_stream.push(token);
         }
     }
@@ -280,6 +330,320 @@ impl HTMLTokenizer {
             }
         }
     }
+    /// [§ 13.2.5.2 RCDATA state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-state)
+    fn handle_rcdata_state(&mut self) {
+        match self.current_input_character {
+            // "U+0026 AMPERSAND (&)"
+            // "Set the return state to the RCDATA state. Switch to the character reference state."
+            Some('&') => {
+                self.return_state = Some(TokenizerState::RCDATA);
+                self.switch_to(TokenizerState::CharacterReference);
+            }
+            // "U+003C LESS-THAN SIGN (<)"
+            // "Switch to the RCDATA less-than sign state."
+            Some('<') => {
+                self.switch_to(TokenizerState::RCDATALessThanSign);
+            }
+            // "U+0000 NULL"
+            // "This is an unexpected-null-character parse error. Emit a U+FFFD REPLACEMENT
+            // CHARACTER character token."
+            Some('\0') => {
+                self.log_parse_error();
+                self.emit_character_token('\u{FFFD}');
+            }
+            // "EOF"
+            // "Emit an end-of-file token."
+            None => {
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else"
+            // "Emit the current input character as a character token."
+            Some(c) => {
+                self.emit_character_token(c);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.9 RCDATA less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-less-than-sign-state)
+    fn handle_rcdata_less_than_sign_state(&mut self) {
+        match self.current_input_character {
+            // "U+002F SOLIDUS (/)"
+            // "Set the temporary buffer to the empty string. Switch to the RCDATA end tag open state."
+            Some('/') => {
+                self.temporary_buffer.clear();
+                self.switch_to(TokenizerState::RCDATAEndTagOpen);
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the RCDATA state."
+            _ => {
+                self.emit_character_token('<');
+                self.reconsume_in(TokenizerState::RCDATA);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.10 RCDATA end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-open-state)
+    fn handle_rcdata_end_tag_open_state(&mut self) {
+        match self.current_input_character {
+            // "ASCII alpha"
+            // "Create a new end tag token, set its tag name to the empty string. Reconsume in
+            // the RCDATA end tag name state."
+            Some(c) if c.is_ascii_alphabetic() => {
+                self.current_token = Some(Token::new_end_tag());
+                self.reconsume_in(TokenizerState::RCDATAEndTagName);
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS character token.
+            // Reconsume in the RCDATA state."
+            _ => {
+                self.emit_character_token('<');
+                self.emit_character_token('/');
+                self.reconsume_in(TokenizerState::RCDATA);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.11 RCDATA end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-name-state)
+    fn handle_rcdata_end_tag_name_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009 CHARACTER TABULATION (tab)"
+            // "U+000A LINE FEED (LF)"
+            // "U+000C FORM FEED (FF)"
+            // "U+0020 SPACE"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // before attribute name state. Otherwise, treat it as per the "anything else" entry below."
+            Some(c) if Self::is_whitespace_char(c) => {
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::BeforeAttributeName);
+                } else {
+                    self.emit_rcdata_end_tag_name_anything_else();
+                }
+            }
+            // "U+002F SOLIDUS (/)"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // self-closing start tag state. Otherwise, treat it as per the "anything else" entry below."
+            Some('/') => {
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::SelfClosingStartTag);
+                } else {
+                    self.emit_rcdata_end_tag_name_anything_else();
+                }
+            }
+            // "U+003E GREATER-THAN SIGN (>)"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // data state and emit the current tag token. Otherwise, treat it as per the "anything
+            // else" entry below."
+            Some('>') => {
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::Data);
+                    self.emit_token();
+                } else {
+                    self.emit_rcdata_end_tag_name_anything_else();
+                }
+            }
+            // "ASCII upper alpha"
+            // "Append the lowercase version of the current input character (add 0x0020 to the
+            // character's code point) to the current tag token's tag name. Append the current
+            // input character to the temporary buffer."
+            Some(c) if c.is_ascii_uppercase() => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_tag_name(c.to_ascii_lowercase());
+                }
+                self.temporary_buffer.push(c);
+            }
+            // "ASCII lower alpha"
+            // "Append the current input character to the current tag token's tag name. Append
+            // the current input character to the temporary buffer."
+            Some(c) if c.is_ascii_lowercase() => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_tag_name(c);
+                }
+                self.temporary_buffer.push(c);
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character token,
+            // and a character token for each of the characters in the temporary buffer (in the
+            // order they were added to the buffer). Reconsume in the RCDATA state."
+            _ => {
+                self.emit_rcdata_end_tag_name_anything_else();
+            }
+        }
+    }
+
+    /// Helper for RCDATA end tag name state "anything else" branch.
+    fn emit_rcdata_end_tag_name_anything_else(&mut self) {
+        self.emit_character_token('<');
+        self.emit_character_token('/');
+        for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+            self.emit_character_token(c);
+        }
+        self.current_token = None;
+        self.reconsume_in(TokenizerState::RCDATA);
+    }
+
+    /// [§ 13.2.5.3 RAWTEXT state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-state)
+    fn handle_rawtext_state(&mut self) {
+        match self.current_input_character {
+            // "U+003C LESS-THAN SIGN (<)"
+            // "Switch to the RAWTEXT less-than sign state."
+            Some('<') => {
+                self.switch_to(TokenizerState::RAWTEXTLessThanSign);
+            }
+            // "U+0000 NULL"
+            // "This is an unexpected-null-character parse error. Emit a U+FFFD REPLACEMENT
+            // CHARACTER character token."
+            Some('\0') => {
+                self.log_parse_error();
+                self.emit_character_token('\u{FFFD}');
+            }
+            // "EOF"
+            // "Emit an end-of-file token."
+            None => {
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else"
+            // "Emit the current input character as a character token."
+            Some(c) => {
+                self.emit_character_token(c);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.12 RAWTEXT less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state)
+    fn handle_rawtext_less_than_sign_state(&mut self) {
+        match self.current_input_character {
+            // "U+002F SOLIDUS (/)"
+            // "Set the temporary buffer to the empty string. Switch to the RAWTEXT end tag open state."
+            Some('/') => {
+                self.temporary_buffer.clear();
+                self.switch_to(TokenizerState::RAWTEXTEndTagOpen);
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the RAWTEXT state."
+            _ => {
+                self.emit_character_token('<');
+                self.reconsume_in(TokenizerState::RAWTEXT);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.13 RAWTEXT end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-open-state)
+    fn handle_rawtext_end_tag_open_state(&mut self) {
+        match self.current_input_character {
+            // "ASCII alpha"
+            // "Create a new end tag token, set its tag name to the empty string. Reconsume in
+            // the RAWTEXT end tag name state."
+            Some(c) if c.is_ascii_alphabetic() => {
+                self.current_token = Some(Token::new_end_tag());
+                self.reconsume_in(TokenizerState::RAWTEXTEndTagName);
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS character token.
+            // Reconsume in the RAWTEXT state."
+            _ => {
+                self.emit_character_token('<');
+                self.emit_character_token('/');
+                self.reconsume_in(TokenizerState::RAWTEXT);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.14 RAWTEXT end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-name-state)
+    fn handle_rawtext_end_tag_name_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009 CHARACTER TABULATION (tab)"
+            // "U+000A LINE FEED (LF)"
+            // "U+000C FORM FEED (FF)"
+            // "U+0020 SPACE"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // before attribute name state. Otherwise, treat it as per the "anything else" entry below."
+            Some(c) if Self::is_whitespace_char(c) => {
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::BeforeAttributeName);
+                } else {
+                    self.emit_rawtext_end_tag_name_anything_else();
+                }
+            }
+            // "U+002F SOLIDUS (/)"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // self-closing start tag state. Otherwise, treat it as per the "anything else" entry below."
+            Some('/') => {
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::SelfClosingStartTag);
+                } else {
+                    self.emit_rawtext_end_tag_name_anything_else();
+                }
+            }
+            // "U+003E GREATER-THAN SIGN (>)"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // data state and emit the current tag token. Otherwise, treat it as per the "anything
+            // else" entry below."
+            Some('>') => {
+                if self.is_appropriate_end_tag_token() {
+                    self.switch_to(TokenizerState::Data);
+                    self.emit_token();
+                } else {
+                    self.emit_rawtext_end_tag_name_anything_else();
+                }
+            }
+            // "ASCII upper alpha"
+            // "Append the lowercase version of the current input character (add 0x0020 to the
+            // character's code point) to the current tag token's tag name. Append the current
+            // input character to the temporary buffer."
+            Some(c) if c.is_ascii_uppercase() => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_tag_name(c.to_ascii_lowercase());
+                }
+                self.temporary_buffer.push(c);
+            }
+            // "ASCII lower alpha"
+            // "Append the current input character to the current tag token's tag name. Append
+            // the current input character to the temporary buffer."
+            Some(c) if c.is_ascii_lowercase() => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_tag_name(c);
+                }
+                self.temporary_buffer.push(c);
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character token,
+            // and a character token for each of the characters in the temporary buffer (in the
+            // order they were added to the buffer). Reconsume in the RAWTEXT state."
+            _ => {
+                self.emit_rawtext_end_tag_name_anything_else();
+            }
+        }
+    }
+
+    /// Helper for RAWTEXT end tag name state "anything else" branch.
+    fn emit_rawtext_end_tag_name_anything_else(&mut self) {
+        self.emit_character_token('<');
+        self.emit_character_token('/');
+        for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+            self.emit_character_token(c);
+        }
+        self.current_token = None;
+        self.reconsume_in(TokenizerState::RAWTEXT);
+    }
+
+    /// [§ 13.2.5.11 RCDATA end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-name-state)
+    /// [§ 13.2.5.14 RAWTEXT end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-name-state)
+    ///
+    /// "An appropriate end tag token is an end tag token whose tag name matches the tag name
+    /// of the last start tag to have been emitted from this tokenizer, if any."
+    fn is_appropriate_end_tag_token(&self) -> bool {
+        if let (Some(ref last_start_tag), Some(ref current_token)) =
+            (&self.last_start_tag_name, &self.current_token)
+        {
+            if let Token::EndTag { name, .. } = current_token {
+                return name == last_start_tag;
+            }
+        }
+        false
+    }
+
     /// [§ 13.2.5.6 Tag open state](https://html.spec.whatwg.org/multipage/parsing.html#tag-open-state)
     fn handle_tag_open_state(&mut self) {
         match self.current_input_character {
@@ -1330,8 +1694,14 @@ impl HTMLTokenizer {
                     self.handle_data_state();
                     continue;
                 }
-                TokenizerState::RCDATA => todo!("Unhandled state: {}", self.state),
-                TokenizerState::RAWTEXT => todo!("Unhandled state: {}", self.state),
+                TokenizerState::RCDATA => {
+                    self.handle_rcdata_state();
+                    continue;
+                }
+                TokenizerState::RAWTEXT => {
+                    self.handle_rawtext_state();
+                    continue;
+                }
                 TokenizerState::ScriptData => todo!("Unhandled state: {}", self.state),
                 TokenizerState::PLAINTEXT => todo!("Unhandled state: {}", self.state),
                 TokenizerState::TagOpen => {
@@ -1346,12 +1716,30 @@ impl HTMLTokenizer {
                     self.handle_tag_name_state();
                     continue;
                 }
-                TokenizerState::RCDATALessThanSign => todo!("Unhandled state: {}", self.state),
-                TokenizerState::RCDATAEndTagOpen => todo!("Unhandled state: {}", self.state),
-                TokenizerState::RCDATAEndTagName => todo!("Unhandled state: {}", self.state),
-                TokenizerState::RAWTEXTLessThanSign => todo!("Unhandled state: {}", self.state),
-                TokenizerState::RAWTEXTEndTagOpen => todo!("Unhandled state: {}", self.state),
-                TokenizerState::RAWTEXTEndTagName => todo!("Unhandled state: {}", self.state),
+                TokenizerState::RCDATALessThanSign => {
+                    self.handle_rcdata_less_than_sign_state();
+                    continue;
+                }
+                TokenizerState::RCDATAEndTagOpen => {
+                    self.handle_rcdata_end_tag_open_state();
+                    continue;
+                }
+                TokenizerState::RCDATAEndTagName => {
+                    self.handle_rcdata_end_tag_name_state();
+                    continue;
+                }
+                TokenizerState::RAWTEXTLessThanSign => {
+                    self.handle_rawtext_less_than_sign_state();
+                    continue;
+                }
+                TokenizerState::RAWTEXTEndTagOpen => {
+                    self.handle_rawtext_end_tag_open_state();
+                    continue;
+                }
+                TokenizerState::RAWTEXTEndTagName => {
+                    self.handle_rawtext_end_tag_name_state();
+                    continue;
+                }
                 TokenizerState::ScriptDataLessThanSign => todo!("Unhandled state: {}", self.state),
                 TokenizerState::ScriptDataEndTagOpen => todo!("Unhandled state: {}", self.state),
                 TokenizerState::ScriptDataEndTagName => todo!("Unhandled state: {}", self.state),
@@ -1739,5 +2127,180 @@ mod tests {
 
         assert_eq!(start_tags.len(), 4); // html, head, title, body
         assert_eq!(end_tags.len(), 4);   // /title, /head, /body, /html
+    }
+
+    // ========== Raw text element (RCDATA/RAWTEXT) tests ==========
+
+    #[test]
+    fn test_style_element_rawtext() {
+        // Style content should be treated as raw text, not parsed as tags
+        let tokens = tokenize("<style>body { color: red; }</style>");
+
+        // Should have: <style>, characters for content, </style>, EOF
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "style"));
+
+        // Collect the character content
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(content, "body { color: red; }");
+
+        // Last tokens should be </style> and EOF
+        assert!(matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "style"));
+        assert!(matches!(tokens.last(), Some(Token::EndOfFile)));
+    }
+
+    #[test]
+    fn test_title_element_rcdata() {
+        // Title content should be treated as RCDATA (raw text, but character references are parsed)
+        let tokens = tokenize("<title>My Page</title>");
+
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "title"));
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(content, "My Page");
+        assert!(matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "title"));
+    }
+
+    #[test]
+    fn test_style_with_fake_tags() {
+        // Tags inside style should NOT be parsed as tags
+        let tokens = tokenize("<style><div>not a tag</div></style>");
+
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "style"));
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // The <div> and </div> should appear as literal text, not as tags
+        assert_eq!(content, "<div>not a tag</div>");
+        assert!(matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "style"));
+    }
+
+    #[test]
+    fn test_title_with_less_than() {
+        // Less-than signs in title should be emitted as characters
+        let tokens = tokenize("<title>a < b</title>");
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(content, "a < b");
+    }
+
+    #[test]
+    fn test_style_with_wrong_end_tag() {
+        // </notastyle> inside style should NOT close the style element
+        let tokens = tokenize("<style>a</notastyle>b</style>");
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // The </notastyle> should appear as literal text
+        assert_eq!(content, "a</notastyle>b");
+    }
+
+    #[test]
+    fn test_textarea_element_rcdata() {
+        let tokens = tokenize("<textarea><b>bold?</b></textarea>");
+
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "textarea"));
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Content should be literal text, not parsed tags
+        assert_eq!(content, "<b>bold?</b>");
+        assert!(matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "textarea"));
+    }
+
+    #[test]
+    fn test_xmp_element_rawtext() {
+        let tokens = tokenize("<xmp><html>is text</html></xmp>");
+
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "xmp"));
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(content, "<html>is text</html>");
+    }
+
+    #[test]
+    fn test_iframe_element_rawtext() {
+        let tokens = tokenize("<iframe>some content</iframe>");
+
+        assert!(matches!(&tokens[0], Token::StartTag { name, .. } if name == "iframe"));
+
+        let content: String = tokens[1..tokens.len() - 2]
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(content, "some content");
     }
 }
