@@ -467,7 +467,8 @@ impl HTMLTokenizer {
             // "Anything else"
             // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the script data state."
             _ => {
-                todo!("implement: emit '<', reconsume in ScriptData");
+                self.emit_character_token('<');
+                self.reconsume_in(TokenizerState::ScriptData);
             }
         }
     }
