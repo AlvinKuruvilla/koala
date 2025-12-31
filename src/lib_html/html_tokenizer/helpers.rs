@@ -144,8 +144,13 @@ impl HTMLTokenizer {
                         self.switch_to(TokenizerState::RAWTEXT);
                         return;
                     }
-                    // NOTE: "script" requires ScriptData state which is more complex.
-                    // Left as todo!() for now.
+                    // "A start tag whose tag name is \"script\""
+                    // "Follow the generic script element parsing algorithm."
+                    // [§ 13.2.6.4](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+                    // "Switch the tokenizer to the ScriptData state."
+                    "script" => {
+                        todo!("ScriptData state not implemented - cannot parse <script> content");
+                    }
                     _ => {}
                 }
             }

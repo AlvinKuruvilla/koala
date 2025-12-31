@@ -55,18 +55,57 @@ struct KoalaScreenshot {
             exit(1)
         }
 
-        // Resolve path
-        let resolvedPath: String
-        if path.hasPrefix("/") {
-            resolvedPath = path
-        } else {
-            resolvedPath = FileManager.default.currentDirectoryPath + "/" + path
-        }
+        // Load HTML from URL or file
+        let html: String
+        let sourceName: String
 
-        // Load and parse HTML
-        guard let html = try? String(contentsOfFile: resolvedPath, encoding: .utf8) else {
-            fputs("Error: Could not read file '\(resolvedPath)'\n", stderr)
-            exit(1)
+        if path.hasPrefix("http://") || path.hasPrefix("https://") {
+            // Fetch from URL
+            sourceName = path
+            guard let url = URL(string: path) else {
+                fputs("Error: Invalid URL '\(path)'\n", stderr)
+                exit(1)
+            }
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var fetchedHTML: String?
+            var fetchError: Error?
+
+            let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                if let error = error {
+                    fetchError = error
+                } else if let data = data {
+                    fetchedHTML = String(data: data, encoding: .utf8)
+                }
+                semaphore.signal()
+            }
+            task.resume()
+            semaphore.wait()
+
+            if let error = fetchError {
+                fputs("Error: Could not fetch URL: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            guard let content = fetchedHTML else {
+                fputs("Error: Could not decode response from '\(path)'\n", stderr)
+                exit(1)
+            }
+            html = content
+        } else {
+            // Read from file
+            let resolvedPath: String
+            if path.hasPrefix("/") {
+                resolvedPath = path
+            } else {
+                resolvedPath = FileManager.default.currentDirectoryPath + "/" + path
+            }
+            sourceName = resolvedPath
+
+            guard let content = try? String(contentsOfFile: resolvedPath, encoding: .utf8) else {
+                fputs("Error: Could not read file '\(resolvedPath)'\n", stderr)
+                exit(1)
+            }
+            html = content
         }
 
         guard let dom = KoalaParser.parse(html) else {
@@ -74,7 +113,7 @@ struct KoalaScreenshot {
             exit(1)
         }
 
-        fputs("Rendering \(resolvedPath) (\(width)x\(height))...\n", stderr)
+        fputs("Rendering \(sourceName) (\(width)x\(height))...\n", stderr)
 
         // Create the SwiftUI view
         let swiftUIView = DocumentRenderView(node: dom)
@@ -121,7 +160,7 @@ struct KoalaScreenshot {
         let usage = """
         KoalaScreenshot - Headless screenshot tool
 
-        Usage: koala-screenshot <file> [options]
+        Usage: koala-screenshot <file|url> [options]
 
         Options:
           -o, --output <path>   Output PNG path (default: screenshot.png)
@@ -131,6 +170,7 @@ struct KoalaScreenshot {
 
         Examples:
           koala-screenshot res/simple.html
+          koala-screenshot https://example.com -o output.png
           koala-screenshot res/simple.html -o output.png -w 1024 -h 768
 
         """
