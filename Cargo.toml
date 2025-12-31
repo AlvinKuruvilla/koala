@@ -4,14 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.13.1", features = ["svg"] }
 anyhow = "1.0.93"
 strum = "0.26"
 strum_macros = "0.26"
-
-[[bin]]
-name = "koala"
-path = "bin/koala.rs"
 
 [[bin]]
 name = "koala_cli"
