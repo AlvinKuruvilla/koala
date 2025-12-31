@@ -481,13 +481,16 @@ impl HTMLTokenizer {
             // "Create a new end tag token, set its tag name to the empty string. Reconsume in the
             // script data end tag name state."
             Some(c) if c.is_ascii_alphabetic() => {
-                todo!("implement: create end tag token, reconsume in ScriptDataEndTagName");
+                self.current_token = Some(Token::new_end_tag());
+                self.reconsume_in(TokenizerState::ScriptDataEndTagName);
             }
             // "Anything else"
             // "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS character token.
             // Reconsume in the script data state."
             _ => {
-                todo!("implement: emit '<' and '/', reconsume in ScriptData");
+                self.emit_character_token('<');
+                self.emit_character_token('/');
+                self.reconsume_in(TokenizerState::ScriptData);
             }
         }
     }
