@@ -17,10 +17,6 @@
 //! 3. No display property handling (block, inline, none, etc.)
 //! 4. Tables rendered without table layout algorithm
 
-// =============================================================================
-// § 1. Display Types
-// =============================================================================
-//
 // [§ 2 Box Layout Modes: the display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
 //
 // "The display property defines an element's display type, which consists of
@@ -97,10 +93,6 @@ impl DisplayValue {
     }
 }
 
-// =============================================================================
-// § 2. Default Display Values per Element
-// =============================================================================
-//
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
 
@@ -115,8 +107,8 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
     // area, base, basefont, datalist, head, link, meta, noembed,
     // noframes, param, rp, script, style, template, title
     let hidden = [
-        "area", "base", "basefont", "datalist", "head", "link", "meta",
-        "noembed", "noframes", "param", "rp", "script", "style", "template", "title",
+        "area", "base", "basefont", "datalist", "head", "link", "meta", "noembed", "noframes",
+        "param", "rp", "script", "style", "template", "title",
     ];
     if hidden.contains(&tag_name) {
         return None; // display: none
@@ -125,12 +117,49 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
     // [§ 15.3.3 Flow content]
     // Block-level elements by default
     let block_elements = [
-        "address", "article", "aside", "blockquote", "body", "center",
-        "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset",
-        "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4",
-        "h5", "h6", "header", "hgroup", "hr", "html", "legend", "li",
-        "listing", "main", "menu", "nav", "ol", "p", "plaintext", "pre",
-        "search", "section", "summary", "ul", "xmp",
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "body",
+        "center",
+        "dd",
+        "details",
+        "dialog",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hgroup",
+        "hr",
+        "html",
+        "legend",
+        "li",
+        "listing",
+        "main",
+        "menu",
+        "nav",
+        "ol",
+        "p",
+        "plaintext",
+        "pre",
+        "search",
+        "section",
+        "summary",
+        "ul",
+        "xmp",
     ];
     if block_elements.contains(&tag_name) {
         return Some(DisplayValue::block());
@@ -143,10 +172,6 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
     Some(DisplayValue::inline())
 }
 
-// =============================================================================
-// § 3. Box Model
-// =============================================================================
-//
 // [CSS Box Model Module Level 3](https://www.w3.org/TR/css-box-3/)
 
 /// [§ 3. The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
@@ -182,29 +207,147 @@ pub struct EdgeSizes {
 }
 
 impl BoxDimensions {
+    // [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
+    //
+    // "Each box has a content area and optional surrounding padding, border,
+    // and margin areas... These areas are determined by their respective edges."
+    //
+    // ┌─────────────────────────────────────────┐
+    // │              margin-top                 │
+    // │   ┌─────────────────────────────────┐   │
+    // │   │          border-top             │   │
+    // │   │   ┌─────────────────────────┐   │   │
+    // │   │   │      padding-top        │   │   │
+    // │   │   │   ┌─────────────────┐   │   │   │
+    // │ m │ b │ p │                 │ p │ b │ m │
+    // │ a │ o │ a │     CONTENT     │ a │ o │ a │
+    // │ r │ r │ d │                 │ d │ r │ r │
+    // │ g │ d │ d │                 │ d │ d │ g │
+    // │ i │ e │ i │                 │ i │ e │ i │
+    // │ n │ r │ n │                 │ n │ r │ n │
+    // │   │   │ g │                 │ g │   │   │
+    // │   │   │   └─────────────────┘   │   │   │
+    // │   │   │      padding-bottom     │   │   │
+    // │   │   └─────────────────────────┘   │   │
+    // │   │          border-bottom          │   │
+    // │   └─────────────────────────────────┘   │
+    // │              margin-bottom              │
+    // └─────────────────────────────────────────┘
+    //
+    // The boxes from innermost to outermost:
+    //   1. Content box  - the actual content (text, images, etc.)
+    //   2. Padding box  - content + padding
+    //   3. Border box   - content + padding + border
+    //   4. Margin box   - content + padding + border + margin (outermost)
+
     /// [§ 3.1 Margins](https://www.w3.org/TR/css-box-3/#margins)
+    ///
     /// "The margin box is the outermost box, and contains all four areas."
+    ///
+    /// # Formulas
+    ///
+    /// To find the margin box from the content box, we expand outward through
+    /// all three layers (padding, border, margin):
+    ///
+    /// ```text
+    /// x = content.x - padding.left - border.left - margin.left
+    /// y = content.y - padding.top - border.top - margin.top
+    ///
+    /// width = content.width
+    ///       + padding.left + padding.right
+    ///       + border.left + border.right
+    ///       + margin.left + margin.right
+    ///
+    /// height = content.height
+    ///        + padding.top + padding.bottom
+    ///        + border.top + border.bottom
+    ///        + margin.top + margin.bottom
+    /// ```
     pub fn margin_box(&self) -> Rect {
-        todo!("Calculate margin box from content + padding + border + margin")
+        Rect {
+            x: self.content.x - self.padding.left - self.border.left - self.margin.left,
+            y: self.content.y - self.padding.top - self.border.top - self.margin.top,
+            width: self.content.width
+                + self.padding.left
+                + self.padding.right
+                + self.border.left
+                + self.border.right
+                + self.margin.left
+                + self.margin.right,
+            height: self.content.height
+                + self.padding.top
+                + self.padding.bottom
+                + self.border.top
+                + self.border.bottom
+                + self.margin.top
+                + self.margin.bottom,
+        }
     }
 
     /// [§ 3.2 Padding](https://www.w3.org/TR/css-box-3/#paddings)
+    ///
     /// "The padding box contains both the content and padding areas."
+    ///
+    /// # Formulas
+    ///
+    /// To find the padding box from the content box, we expand outward through
+    /// only the padding layer:
+    ///
+    /// ```text
+    /// x = content.x - padding.left
+    /// y = content.y - padding.top
+    ///
+    /// width = content.width + padding.left + padding.right
+    /// height = content.height + padding.top + padding.bottom
+    /// ```
     pub fn padding_box(&self) -> Rect {
-        todo!("Calculate padding box from content + padding")
+        Rect {
+            x: self.content.x - self.padding.left,
+            y: self.content.y - self.padding.top,
+            width: self.content.width + self.padding.left + self.padding.right,
+            height: self.content.height + self.padding.top + self.padding.bottom,
+        }
     }
 
     /// [§ 3.3 Borders](https://www.w3.org/TR/css-box-3/#borders)
+    ///
     /// "The border box contains content, padding, and border areas."
+    ///
+    /// # Formulas
+    ///
+    /// To find the border box from the content box, we expand outward through
+    /// two layers (padding, border):
+    ///
+    /// ```text
+    /// x = content.x - padding.left - border.left
+    /// y = content.y - padding.top - border.top
+    ///
+    /// width = content.width
+    ///       + padding.left + padding.right
+    ///       + border.left + border.right
+    ///
+    /// height = content.height
+    ///        + padding.top + padding.bottom
+    ///        + border.top + border.bottom
+    /// ```
     pub fn border_box(&self) -> Rect {
-        todo!("Calculate border box from content + padding + border")
+        Rect {
+            x: self.content.x - self.padding.left - self.border.left,
+            y: self.content.y - self.padding.top - self.border.top,
+            width: self.content.width
+                + self.padding.left
+                + self.padding.right
+                + self.border.left
+                + self.border.right,
+            height: self.content.height
+                + self.padding.top
+                + self.padding.bottom
+                + self.border.top
+                + self.border.bottom,
+        }
     }
 }
 
-// =============================================================================
-// § 4. Block Formatting Context
-// =============================================================================
-//
 // [CSS 2.1 § 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
 
 /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -228,10 +371,6 @@ impl BlockFormattingContext {
     }
 }
 
-// =============================================================================
-// § 5. Inline Formatting Context
-// =============================================================================
-//
 // [CSS 2.1 § 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
 
 /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -267,10 +406,6 @@ impl InlineFormattingContext {
     }
 }
 
-// =============================================================================
-// § 6. Layout Tree
-// =============================================================================
-
 /// A node in the layout tree (render tree with computed layout)
 #[derive(Debug)]
 pub struct LayoutBox {
@@ -294,10 +429,6 @@ impl LayoutBox {
     }
 }
 
-// =============================================================================
-// § 7. Table Layout (simplified)
-// =============================================================================
-//
 // [CSS 2.1 § 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
 
 /// [§ 17.5 Visual layout of table contents](https://www.w3.org/TR/CSS2/tables.html#table-layout)
