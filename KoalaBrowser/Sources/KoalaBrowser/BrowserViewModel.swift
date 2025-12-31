@@ -11,6 +11,9 @@ class BrowserViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
+    @Published var showDebugPanel: Bool = false
+    @Published var rawHTML: String = ""
+    @Published var rawJSON: String = ""
 
     var securityIcon: String {
         if currentURL.hasPrefix("file://") || !currentURL.contains("://") {
@@ -52,10 +55,12 @@ class BrowserViewModel: ObservableObject {
         // Try to load the file
         do {
             let html = try String(contentsOfFile: path, encoding: .utf8)
+            rawHTML = html
             print("[DEBUG] Loaded HTML (\(html.count) chars)")
 
             // Use the Rust parser via FFI
             if let json = KoalaParser.parseHTML(html) {
+                rawJSON = json
                 print("[DEBUG] Got JSON from Rust: \(json.prefix(500))...")
                 if let dom = KoalaParser.parse(html) {
                     document = dom

@@ -74,12 +74,13 @@ struct ToolbarView: View {
                     .stroke(isUrlFieldFocused ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
             )
 
-            // Theme toggle (placeholder for now)
-            Button(action: { }) {
-                Image(systemName: "sun.max")
+            // Debug panel toggle
+            Button(action: { viewModel.showDebugPanel.toggle() }) {
+                Image(systemName: viewModel.showDebugPanel ? "ladybug.fill" : "ladybug")
                     .font(.system(size: 14, weight: .medium))
             }
             .buttonStyle(NavButtonStyle())
+            .help("Toggle Debug Panel")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -93,6 +94,22 @@ struct ContentView: View {
     @ObservedObject var viewModel: BrowserViewModel
 
     var body: some View {
+        HSplitView {
+            // Main content
+            mainContent
+                .frame(minWidth: 300)
+
+            // Debug panel (shown when toggle is on)
+            if viewModel.showDebugPanel {
+                DebugPanelView(viewModel: viewModel)
+                    .frame(minWidth: 300, idealWidth: 400)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    var mainContent: some View {
         Group {
             if let error = viewModel.error {
                 ErrorView(message: error)
@@ -162,6 +179,215 @@ struct ErrorView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Debug Panel
+
+struct DebugPanelView: View {
+    @ObservedObject var viewModel: BrowserViewModel
+    @State private var selectedTab = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Tab bar
+            HStack(spacing: 0) {
+                DebugTabButton(title: "DOM Tree", isSelected: selectedTab == 0) {
+                    selectedTab = 0
+                }
+                DebugTabButton(title: "Raw HTML", isSelected: selectedTab == 1) {
+                    selectedTab = 1
+                }
+                DebugTabButton(title: "Raw JSON", isSelected: selectedTab == 2) {
+                    selectedTab = 2
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+
+            Divider()
+                .padding(.top, 8)
+
+            // Tab content
+            Group {
+                switch selectedTab {
+                case 0:
+                    if let document = viewModel.document {
+                        ScrollView {
+                            DOMTreeView(node: document, depth: 0)
+                                .padding()
+                        }
+                    } else {
+                        Text("No document loaded")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                case 1:
+                    ScrollView {
+                        Text(viewModel.rawHTML)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                case 2:
+                    ScrollView {
+                        Text(formatJSON(viewModel.rawJSON))
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                default:
+                    EmptyView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    func formatJSON(_ json: String) -> String {
+        // Try to pretty-print the JSON
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              let prettyData = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+              let pretty = String(data: prettyData, encoding: .utf8) else {
+            return json
+        }
+        return pretty
+    }
+}
+
+struct DebugTabButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct DOMTreeView: View {
+    let node: DOMNode
+    let depth: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Node representation
+            HStack(spacing: 4) {
+                Text(String(repeating: "  ", count: depth))
+                    .font(.system(size: 11, design: .monospaced))
+
+                nodeLabel
+            }
+
+            // Children
+            ForEach(node.childNodes) { child in
+                DOMTreeView(node: child, depth: depth + 1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    var nodeLabel: some View {
+        switch node.type {
+        case "document":
+            Text("#document")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+
+        case "element":
+            if let tagName = node.tagName {
+                HStack(spacing: 2) {
+                    Text("<\(tagName)>")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.blue)
+
+                    // Show computed styles summary
+                    if let style = node.computedStyle {
+                        stylesSummary(style)
+                    }
+                }
+            }
+
+        case "text":
+            if let content = node.content {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    let preview = trimmed.count > 40 ? String(trimmed.prefix(40)) + "..." : trimmed
+                    Text("\"\(preview)\"")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.green)
+                }
+            }
+
+        case "comment":
+            if let content = node.content {
+                let preview = content.count > 30 ? String(content.prefix(30)) + "..." : content
+                Text("<!-- \(preview) -->")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.gray)
+            }
+
+        default:
+            Text(node.type)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    func stylesSummary(_ style: ComputedStyle) -> some View {
+        let parts = buildStyleParts(style)
+        return Group {
+            if !parts.isEmpty {
+                Text("[\(parts.joined(separator: " "))]")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+
+    func buildStyleParts(_ style: ComputedStyle) -> [String] {
+        var parts: [String] = []
+
+        if let color = style.color {
+            parts.append("color:#\(colorHex(color))")
+        }
+        if let bg = style.background_color {
+            parts.append("bg:#\(colorHex(bg))")
+        }
+        if let fs = style.font_size {
+            parts.append("font:\(Int(fs.cgFloat))px")
+        }
+        if let p = style.padding_top {
+            parts.append("pad:\(Int(p.cgFloat))px")
+        }
+        if let m = style.margin_top {
+            parts.append("margin:\(Int(m.cgFloat))px")
+        }
+        if style.border_top != nil {
+            parts.append("border")
+        }
+        if let lh = style.line_height {
+            parts.append("lh:\(String(format: "%.1f", lh))")
+        }
+
+        return parts
+    }
+
+    func colorHex(_ color: CSSColor) -> String {
+        String(format: "%02x%02x%02x", color.r, color.g, color.b)
     }
 }
 
