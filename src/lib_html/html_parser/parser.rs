@@ -1006,3 +1006,237 @@ pub fn print_tree(node: &Node, indent: usize) {
         print_tree(child, indent + 1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lib_html::html_tokenizer::tokenizer::HTMLTokenizer;
+
+    /// Helper to parse HTML and return the document node
+    fn parse(html: &str) -> Node {
+        let mut tokenizer = HTMLTokenizer::new(html.to_string());
+        tokenizer.run();
+        let parser = HTMLParser::new(tokenizer.into_tokens());
+        parser.run()
+    }
+
+    /// Helper to get element by tag name (first match, depth-first)
+    fn find_element<'a>(node: &'a Node, tag: &str) -> Option<&'a Node> {
+        if let NodeType::Element(data) = &node.node_type {
+            if data.tag_name == tag {
+                return Some(node);
+            }
+        }
+        for child in &node.children {
+            if let Some(found) = find_element(child, tag) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Helper to get text content of a node (concatenated)
+    fn text_content(node: &Node) -> String {
+        let mut result = String::new();
+        match &node.node_type {
+            NodeType::Text(data) => result.push_str(data),
+            _ => {
+                for child in &node.children {
+                    result.push_str(&text_content(child));
+                }
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn test_document_structure() {
+        let doc = parse("<!DOCTYPE html><html><head></head><body></body></html>");
+
+        // Root should be Document
+        assert!(matches!(doc.node_type, NodeType::Document));
+
+        // Document should have html child
+        let html = find_element(&doc, "html");
+        assert!(html.is_some());
+
+        // html should have head and body
+        let html = html.unwrap();
+        let head = find_element(html, "head");
+        let body = find_element(html, "body");
+        assert!(head.is_some());
+        assert!(body.is_some());
+    }
+
+    #[test]
+    fn test_text_node() {
+        let doc = parse("<html><body>Hello World</body></html>");
+        let body = find_element(&doc, "body").unwrap();
+
+        let text = text_content(body);
+        assert_eq!(text, "Hello World");
+    }
+
+    #[test]
+    fn test_comment_node() {
+        let doc = parse("<html><body><!-- test comment --></body></html>");
+        let body = find_element(&doc, "body").unwrap();
+
+        // Body should have a comment child
+        let has_comment = body.children.iter().any(|child| {
+            matches!(&child.node_type, NodeType::Comment(data) if data == " test comment ")
+        });
+        assert!(has_comment);
+    }
+
+    #[test]
+    fn test_nested_elements() {
+        let doc = parse("<html><body><div><p>Text</p></div></body></html>");
+
+        let div = find_element(&doc, "div").unwrap();
+        let p = find_element(div, "p").unwrap();
+        let text = text_content(p);
+
+        assert_eq!(text, "Text");
+    }
+
+    #[test]
+    fn test_element_attributes() {
+        let doc = parse(r#"<html><body><div id="main" class="container"></div></body></html>"#);
+        let div = find_element(&doc, "div").unwrap();
+
+        if let NodeType::Element(data) = &div.node_type {
+            assert_eq!(data.attrs.get("id"), Some(&"main".to_string()));
+            assert_eq!(data.attrs.get("class"), Some(&"container".to_string()));
+        } else {
+            panic!("Expected Element");
+        }
+    }
+
+    #[test]
+    fn test_void_elements() {
+        let doc = parse(r#"<html><body><input type="text"><br></body></html>"#);
+        let body = find_element(&doc, "body").unwrap();
+
+        // Both input and br should be children of body (void elements don't nest)
+        let element_names: Vec<_> = body
+            .children
+            .iter()
+            .filter_map(|child| {
+                if let NodeType::Element(data) = &child.node_type {
+                    Some(data.tag_name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(element_names.contains(&"input"));
+        assert!(element_names.contains(&"br"));
+    }
+
+    #[test]
+    fn test_title_element() {
+        let doc = parse("<html><head><title>My Page</title></head><body></body></html>");
+        let title = find_element(&doc, "title").unwrap();
+        let text = text_content(title);
+
+        assert_eq!(text, "My Page");
+    }
+
+    #[test]
+    fn test_meta_element() {
+        let doc = parse(r#"<html><head><meta charset="UTF-8"></head><body></body></html>"#);
+        let meta = find_element(&doc, "meta").unwrap();
+
+        if let NodeType::Element(data) = &meta.node_type {
+            assert_eq!(data.attrs.get("charset"), Some(&"UTF-8".to_string()));
+        } else {
+            panic!("Expected Element");
+        }
+    }
+
+    #[test]
+    fn test_whitespace_preserved_in_text() {
+        let doc = parse("<html><body>  hello  world  </body></html>");
+        let text = text_content(find_element(&doc, "body").unwrap());
+
+        // Whitespace should be preserved
+        assert_eq!(text, "  hello  world  ");
+    }
+
+    #[test]
+    fn test_multiple_text_nodes_merged() {
+        // Adjacent character tokens should become a single text node
+        let doc = parse("<html><body>abc</body></html>");
+        let body = find_element(&doc, "body").unwrap();
+
+        // Should have exactly one text node child (merged from a, b, c)
+        let text_nodes: Vec<_> = body
+            .children
+            .iter()
+            .filter(|child| matches!(child.node_type, NodeType::Text(_)))
+            .collect();
+
+        assert_eq!(text_nodes.len(), 1);
+        assert_eq!(text_content(body), "abc");
+    }
+
+    #[test]
+    fn test_simple_html_file() {
+        // Test parsing of the actual simple.html structure
+        let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- This is a comment -->
+    <title>Test</title>
+</head>
+<body class="main" id="content">
+    <!-- TODO: add more content -->
+    <div data-value='single quoted'>Hello</div>
+    <input type="text" disabled />
+</body>
+</html>"#;
+
+        let doc = parse(html);
+
+        // Check basic structure
+        assert!(matches!(doc.node_type, NodeType::Document));
+
+        let html_elem = find_element(&doc, "html").unwrap();
+        if let NodeType::Element(data) = &html_elem.node_type {
+            assert_eq!(data.attrs.get("lang"), Some(&"en".to_string()));
+        }
+
+        // Check head elements
+        let title = find_element(&doc, "title").unwrap();
+        assert_eq!(text_content(title), "Test");
+
+        let meta = find_element(&doc, "meta").unwrap();
+        if let NodeType::Element(data) = &meta.node_type {
+            assert_eq!(data.attrs.get("charset"), Some(&"UTF-8".to_string()));
+        }
+
+        // Check body elements
+        let body = find_element(&doc, "body").unwrap();
+        if let NodeType::Element(data) = &body.node_type {
+            assert_eq!(data.attrs.get("class"), Some(&"main".to_string()));
+            assert_eq!(data.attrs.get("id"), Some(&"content".to_string()));
+        }
+
+        // Check div with single-quoted attribute
+        let div = find_element(&doc, "div").unwrap();
+        if let NodeType::Element(data) = &div.node_type {
+            assert_eq!(data.attrs.get("data-value"), Some(&"single quoted".to_string()));
+        }
+        assert_eq!(text_content(div), "Hello");
+
+        // Check input with boolean attribute
+        let input = find_element(&doc, "input").unwrap();
+        if let NodeType::Element(data) = &input.node_type {
+            assert_eq!(data.attrs.get("type"), Some(&"text".to_string()));
+            assert_eq!(data.attrs.get("disabled"), Some(&"".to_string()));
+        }
+    }
+}
