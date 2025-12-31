@@ -1,1 +1,14 @@
+# Rust
 /target
+
+# Swift
+KoalaBrowser/.build/
+KoalaBrowser/.swiftpm/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+*.dSYM
