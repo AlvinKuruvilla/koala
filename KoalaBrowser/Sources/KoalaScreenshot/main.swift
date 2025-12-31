@@ -292,13 +292,13 @@ struct RenderElementView: View {
         case "span":
             if let bgColor = style?.background_color {
                 Text(getTextContent(node))
-                    .foregroundColor(style?.color?.swiftUIColor)
+                    .foregroundColor(style?.color?.swiftUIColor ?? .black)
                     .padding(.horizontal, style?.padding_right?.cgFloat ?? 0)
                     .padding(.vertical, style?.padding_top?.cgFloat ?? 0)
                     .background(bgColor.swiftUIColor)
             } else {
                 Text(getTextContent(node))
-                    .foregroundColor(style?.color?.swiftUIColor)
+                    .foregroundColor(style?.color?.swiftUIColor ?? .black)
             }
 
         case "a":
@@ -308,12 +308,12 @@ struct RenderElementView: View {
         case "b", "strong":
             Text(getTextContent(node))
                 .fontWeight(.bold)
-                .foregroundColor(style?.color?.swiftUIColor)
+                .foregroundColor(style?.color?.swiftUIColor ?? .black)
 
         case "i", "em":
             Text(getTextContent(node))
                 .italic()
-                .foregroundColor(style?.color?.swiftUIColor)
+                .foregroundColor(style?.color?.swiftUIColor ?? .black)
 
         case "br":
             Text("\n")
@@ -342,7 +342,7 @@ struct RenderElementView: View {
         let fontSize = style?.font_size?.cgFloat ?? defaultSize
         return Text(getTextContent(node))
             .font(.system(size: fontSize, weight: weight))
-            .foregroundColor(style?.color?.swiftUIColor)
+            .foregroundColor(style?.color?.swiftUIColor ?? .black)
     }
 
     func getTextContent(_ node: DOMNode) -> String {
