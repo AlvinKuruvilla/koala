@@ -1167,22 +1167,23 @@ impl HTMLParser {
                 self.stopped = true;
             }
 
-            // Default: insert if it's a start tag
-            // NOTE: This is a simplified catch-all. The full spec has many more specific cases.
+            // Unhandled tokens - panic to surface missing implementations
             _ => {
                 if let Token::StartTag { name, .. } = token {
-                    // Log a warning for unhandled tags so we know what's missing
-                    self.parse_warning(&format!(
-                        "Unhandled start tag <{}> in InBody mode (using default insert)",
+                    todo!(
+                        "Unhandled start tag <{}> in InBody mode - implement handler",
                         name
-                    ));
-                    self.insert_html_element(token);
+                    );
                 } else if let Token::EndTag { name, .. } = token {
-                    // Unhandled end tags are parse errors per spec
-                    self.parse_warning(&format!(
-                        "Unhandled end tag </{}> in InBody mode (ignored)",
+                    todo!(
+                        "Unhandled end tag </{}> in InBody mode - implement handler",
                         name
-                    ));
+                    );
+                } else {
+                    panic!(
+                        "Unexpected token in InBody mode: {:?}. This indicates a parser bug.",
+                        token
+                    );
                 }
             }
         }
