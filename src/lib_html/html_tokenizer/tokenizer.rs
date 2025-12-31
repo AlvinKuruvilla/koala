@@ -449,6 +449,95 @@ impl HTMLTokenizer {
         }
     }
 
+    /// [§ 13.2.5.17 Script data less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-less-than-sign-state)
+    fn handle_script_data_less_than_sign_state(&mut self) {
+        // "Consume the next input character:"
+        match self.consume() {
+            // "U+002F SOLIDUS (/)"
+            // "Set the temporary buffer to the empty string. Switch to the script data end tag open state."
+            Some('/') => {
+                todo!("implement: clear buffer, switch to ScriptDataEndTagOpen");
+            }
+            // "U+0021 EXCLAMATION MARK (!)"
+            // "Switch to the script data escape start state. Emit a U+003C LESS-THAN SIGN character token
+            // and a U+0021 EXCLAMATION MARK character token."
+            Some('!') => {
+                todo!("implement: switch to ScriptDataEscapeStart, emit '<' and '!'");
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the script data state."
+            _ => {
+                todo!("implement: emit '<', reconsume in ScriptData");
+            }
+        }
+    }
+
+    /// [§ 13.2.5.18 Script data end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-open-state)
+    fn handle_script_data_end_tag_open_state(&mut self) {
+        // "Consume the next input character:"
+        match self.consume() {
+            // "ASCII alpha"
+            // "Create a new end tag token, set its tag name to the empty string. Reconsume in the
+            // script data end tag name state."
+            Some(c) if c.is_ascii_alphabetic() => {
+                todo!("implement: create end tag token, reconsume in ScriptDataEndTagName");
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS character token.
+            // Reconsume in the script data state."
+            _ => {
+                todo!("implement: emit '<' and '/', reconsume in ScriptData");
+            }
+        }
+    }
+
+    /// [§ 13.2.5.19 Script data end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-name-state)
+    fn handle_script_data_end_tag_name_state(&mut self) {
+        // "Consume the next input character:"
+        match self.consume() {
+            // "U+0009 CHARACTER TABULATION (tab)"
+            // "U+000A LINE FEED (LF)"
+            // "U+000C FORM FEED (FF)"
+            // "U+0020 SPACE"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // before attribute name state. Otherwise, treat it as per the \"anything else\" entry below."
+            Some(c) if Self::is_whitespace_char(c) => {
+                todo!("implement: check appropriate end tag, switch to BeforeAttributeName or anything else");
+            }
+            // "U+002F SOLIDUS (/)"
+            // "If the current end tag token is an appropriate end tag token, then switch to the
+            // self-closing start tag state. Otherwise, treat it as per the \"anything else\" entry below."
+            Some('/') => {
+                todo!("implement: check appropriate end tag, switch to SelfClosingStartTag or anything else");
+            }
+            // "U+003E GREATER-THAN SIGN (>)"
+            // "If the current end tag token is an appropriate end tag token, then switch to the data state
+            // and emit the current tag token. Otherwise, treat it as per the \"anything else\" entry below."
+            Some('>') => {
+                todo!("implement: check appropriate end tag, switch to Data and emit, or anything else");
+            }
+            // "ASCII upper alpha"
+            // "Append the lowercase version of the current input character to the current tag token's
+            // tag name. Append the current input character to the temporary buffer."
+            Some(c) if c.is_ascii_uppercase() => {
+                todo!("implement: append lowercase to tag name, append to buffer");
+            }
+            // "ASCII lower alpha"
+            // "Append the current input character to the current tag token's tag name. Append the
+            // current input character to the temporary buffer."
+            Some(c) if c.is_ascii_lowercase() => {
+                todo!("implement: append to tag name, append to buffer");
+            }
+            // "Anything else"
+            // "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character token, and a
+            // character token for each of the characters in the temporary buffer. Reconsume in the
+            // script data state."
+            _ => {
+                todo!("implement: emit '<', '/', buffer contents, reconsume in ScriptData");
+            }
+        }
+    }
+
     /// [§ 13.2.5.12 RAWTEXT less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state)
     fn handle_rawtext_less_than_sign_state(&mut self) {
         match self.current_input_character {
@@ -1783,9 +1872,15 @@ impl HTMLTokenizer {
                     self.handle_rawtext_end_tag_name_state();
                     continue;
                 }
-                TokenizerState::ScriptDataLessThanSign => todo!("Unhandled state: {}", self.state),
-                TokenizerState::ScriptDataEndTagOpen => todo!("Unhandled state: {}", self.state),
-                TokenizerState::ScriptDataEndTagName => todo!("Unhandled state: {}", self.state),
+                TokenizerState::ScriptDataLessThanSign => {
+                    self.handle_script_data_less_than_sign_state();
+                }
+                TokenizerState::ScriptDataEndTagOpen => {
+                    self.handle_script_data_end_tag_open_state();
+                }
+                TokenizerState::ScriptDataEndTagName => {
+                    self.handle_script_data_end_tag_name_state();
+                }
                 TokenizerState::ScriptDataEscapeStart => todo!("Unhandled state: {}", self.state),
                 TokenizerState::ScriptDataEscapeStartDash => {
                     todo!("Unhandled state: {}", self.state)
