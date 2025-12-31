@@ -1,123 +1,242 @@
 use core::fmt;
 
-use strum_macros::Display;
+// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+// "The output of the tokenization step is a series of zero or more of the following
+// tokens: DOCTYPE, start tag, end tag, comment, character, end-of-file."
 
-/// The types of tokens the tokenizer produces
-#[derive(Display, PartialEq, Clone, Copy)]
-pub enum HTMLTokenType {
-    Invalid,
-    DOCTYPE,
-    StartTag,
-    EndTag,
-    Comment,
-    Character,
-    EndOfFile,
+/// An attribute on a start or end tag token.
+/// Spec: "a list of attributes, each of which has a name and a value"
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attribute {
+    pub name: String,
+    pub value: String,
 }
-#[derive(Clone)]
-pub struct TokenAttribute {
-    name: String,
-    value: String,
-}
-impl TokenAttribute {
+
+impl Attribute {
     pub fn new(name: String, value: String) -> Self {
         Self { name, value }
     }
-    // TODO: The clone is sad here
-    pub fn get_attribute_name(&self) -> String {
-        self.name.clone()
-    }
-
-    pub fn get_attribute_value(&self) -> String {
-        self.value.clone()
-    }
-    pub fn set_value(&mut self, new_value: String) {
-        self.value = new_value
-    }
-}
-/// Token Type DOCTYPE
-#[derive(Default, Clone)]
-pub struct DoctypeData {
-    name: String,
-    doctype_public_identifier: String,
-    system_public_identifier: String,
-    force_quirks_flag: bool,
-}
-impl DoctypeData {
-    pub fn set_name(&mut self, name: String) {
-        self.name = name
-    }
-    pub fn append_character_to_name(&mut self, ch: char) {
-        self.name.push(ch);
-    }
-    pub fn name(&self) -> String {
-        self.name.clone()
-    }
-}
-impl fmt::Display for DoctypeData {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-/// Token Type Start and End Tag
-#[derive(Default, Clone)]
-pub struct StartOrEndTagData {
-    text_name: String,
-    self_closing: bool,
-    attributes: Vec<TokenAttribute>,
-}
-impl StartOrEndTagData {
-    pub fn set_self_closing_flag(&mut self, flag: bool) {
-        self.self_closing = flag;
-    }
-}
-#[derive(Default, Clone)]
-pub struct CommentOrCharacterTagData {
-    data: String,
 }
 
-#[derive(Clone)]
-pub struct HTMLToken {
-    token_type: HTMLTokenType,
-    doctype_data: DoctypeData,
-    start_or_end_tag_data: StartOrEndTagData,
-    comment_or_character_data: CommentOrCharacterTagData,
+/// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+/// The tokenizer emits tokens of these types to the tree construction stage.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+    // "DOCTYPE tokens have a name, a public identifier, a system identifier,
+    // and a force-quirks flag. When a DOCTYPE token is created, its name,
+    // public identifier, and system identifier must be marked as missing
+    // (which is a distinct state from the empty string), and the force-quirks
+    // flag must be set to off (its other state is on)."
+    Doctype {
+        name: Option<String>,
+        public_identifier: Option<String>,
+        system_identifier: Option<String>,
+        force_quirks: bool,
+    },
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+    // "Start and end tag tokens have a tag name, a self-closing flag, and a
+    // list of attributes, each of which has a name and a value. When a start
+    // or end tag token is created, its self-closing flag must be unset (its
+    // other state is that it be set), and its attributes list must be empty."
+    StartTag {
+        name: String,
+        self_closing: bool,
+        attributes: Vec<Attribute>,
+    },
+
+    EndTag {
+        name: String,
+        attributes: Vec<Attribute>,
+    },
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+    // "Comment and character tokens have data."
+    Comment { data: String },
+
+    Character { data: char },
+
+    EndOfFile,
 }
-impl fmt::Display for HTMLToken {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.token_type == HTMLTokenType::Character
-            || self.token_type == HTMLTokenType::EndOfFile
-        {
-            write!(f, "({})", self.token_type)
-        } else {
-            write!(f, "({}, name = {})", self.token_type, self.doctype_data)
+
+impl Token {
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+    // "When a DOCTYPE token is created, its name, public identifier, and system
+    // identifier must be marked as missing (which is a distinct state from the
+    // empty string), and the force-quirks flag must be set to off."
+    pub fn new_doctype() -> Self {
+        Token::Doctype {
+            name: None,
+            public_identifier: None,
+            system_identifier: None,
+            force_quirks: false,
         }
     }
-}
-impl HTMLToken {
-    pub fn new(token_type: HTMLTokenType) -> Self {
-        Self {
-            token_type,
-            doctype_data: DoctypeData::default(),
-            start_or_end_tag_data: StartOrEndTagData::default(),
-            comment_or_character_data: CommentOrCharacterTagData::default(),
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+    // "When a start or end tag token is created, its self-closing flag must be
+    // unset (its other state is that it be set), and its attributes list must
+    // be empty."
+    pub fn new_start_tag() -> Self {
+        Token::StartTag {
+            name: String::new(),
+            self_closing: false,
+            attributes: Vec::new(),
         }
     }
-    pub fn set_token_type(&mut self, token_type: HTMLTokenType) {
-        self.token_type = token_type
+
+    pub fn new_end_tag() -> Self {
+        Token::EndTag {
+            name: String::new(),
+            attributes: Vec::new(),
+        }
     }
-    pub fn token_type(&self) -> HTMLTokenType {
-        self.token_type
+
+    pub fn new_comment() -> Self {
+        Token::Comment {
+            data: String::new(),
+        }
     }
-    pub fn doctype_data(&mut self) -> &mut DoctypeData {
-        &mut self.doctype_data
+
+    pub fn new_character(c: char) -> Self {
+        Token::Character { data: c }
     }
-    pub fn start_or_end_tag_data(&mut self) -> &mut StartOrEndTagData {
-        &mut self.start_or_end_tag_data
+
+    pub fn new_eof() -> Self {
+        Token::EndOfFile
     }
+
+    /// Returns true if this is an end-of-file token.
     pub fn is_eof(&self) -> bool {
-        if self.token_type == HTMLTokenType::EndOfFile {
-            return true;
+        matches!(self, Token::EndOfFile)
+    }
+
+    // -------------------------------------------------------------------------
+    // Mutation helpers for use during tokenization.
+    // These panic if called on the wrong token variant, which indicates a bug
+    // in the tokenizer state machine.
+    // -------------------------------------------------------------------------
+
+    /// Append a character to the DOCTYPE token's name.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#doctype-name-state
+    /// "Append the current input character to the current DOCTYPE token's name."
+    pub fn append_to_doctype_name(&mut self, c: char) {
+        match self {
+            Token::Doctype { name, .. } => {
+                if let Some(ref mut n) = name {
+                    n.push(c);
+                } else {
+                    *name = Some(c.to_string());
+                }
+            }
+            _ => panic!("append_to_doctype_name called on non-DOCTYPE token"),
         }
-        false
+    }
+
+    /// Append a character to a start or end tag token's name.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state
+    /// "Append the current input character to the current tag token's tag name."
+    pub fn append_to_tag_name(&mut self, c: char) {
+        match self {
+            Token::StartTag { name, .. } | Token::EndTag { name, .. } => {
+                name.push(c);
+            }
+            _ => panic!("append_to_tag_name called on non-tag token"),
+        }
+    }
+
+    /// Set the self-closing flag on a start tag token.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#self-closing-start-tag-state
+    /// "Set the self-closing flag of the current tag token."
+    pub fn set_self_closing(&mut self) {
+        match self {
+            Token::StartTag { self_closing, .. } => {
+                *self_closing = true;
+            }
+            _ => panic!("set_self_closing called on non-start-tag token"),
+        }
+    }
+
+    /// Append a character to a comment token's data.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-state
+    /// "Append the current input character to the comment token's data."
+    pub fn append_to_comment(&mut self, c: char) {
+        match self {
+            Token::Comment { data } => {
+                data.push(c);
+            }
+            _ => panic!("append_to_comment called on non-comment token"),
+        }
+    }
+
+    /// Set the force-quirks flag on a DOCTYPE token.
+    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-name-state
+    /// "Set the current DOCTYPE token's force-quirks flag to on."
+    pub fn set_force_quirks(&mut self) {
+        match self {
+            Token::Doctype { force_quirks, .. } => {
+                *force_quirks = true;
+            }
+            _ => panic!("set_force_quirks called on non-DOCTYPE token"),
+        }
+    }
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Doctype {
+                name,
+                public_identifier,
+                system_identifier,
+                force_quirks,
+            } => {
+                write!(f, "DOCTYPE")?;
+                if let Some(n) = name {
+                    write!(f, " {}", n)?;
+                }
+                if let Some(pub_id) = public_identifier {
+                    write!(f, " PUBLIC \"{}\"", pub_id)?;
+                }
+                if let Some(sys_id) = system_identifier {
+                    write!(f, " SYSTEM \"{}\"", sys_id)?;
+                }
+                if *force_quirks {
+                    write!(f, " (force-quirks)")?;
+                }
+                Ok(())
+            }
+            Token::StartTag {
+                name,
+                self_closing,
+                attributes,
+            } => {
+                write!(f, "<{}", name)?;
+                for attr in attributes {
+                    write!(f, " {}=\"{}\"", attr.name, attr.value)?;
+                }
+                if *self_closing {
+                    write!(f, " /")?;
+                }
+                write!(f, ">")
+            }
+            Token::EndTag { name, .. } => {
+                write!(f, "</{}>", name)
+            }
+            Token::Comment { data } => {
+                write!(f, "<!--{}-->", data)
+            }
+            Token::Character { data } => {
+                // Show whitespace characters explicitly
+                match data {
+                    '\n' => write!(f, "Character(\\n)"),
+                    '\t' => write!(f, "Character(\\t)"),
+                    ' ' => write!(f, "Character(SPACE)"),
+                    c => write!(f, "Character({})", c),
+                }
+            }
+            Token::EndOfFile => write!(f, "EOF"),
+        }
     }
 }
