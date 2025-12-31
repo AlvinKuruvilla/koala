@@ -922,6 +922,14 @@ impl HTMLParser {
             // "Reconstruct the active formatting elements, if any."
             // "Insert an HTML element for the token."
             // "Push onto the list of active formatting elements that element."
+            //
+            // "A start tag whose tag name is "nobr""
+            // "Reconstruct the active formatting elements, if any."
+            // "If the stack of open elements has a nobr element in scope, then this is a parse error;
+            //  run the adoption agency algorithm for the token, then once again reconstruct the
+            //  active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            // "Push onto the list of active formatting elements that element."
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -936,6 +944,7 @@ impl HTMLParser {
                         | "strong"
                         | "tt"
                         | "u"
+                        | "nobr"
                         | "span"
                         | "label"
                         | "abbr"
@@ -955,7 +964,7 @@ impl HTMLParser {
                         | "data"
                 ) =>
             {
-                // NOTE: We skip the list of active formatting elements for simplicity
+                // NOTE: We skip the list of active formatting elements and adoption agency for simplicity
                 self.insert_html_element(token);
             }
 
@@ -1123,7 +1132,7 @@ impl HTMLParser {
                     "span" | "a" | "b" | "i" | "em" | "strong" | "small" | "s" | "cite"
                         | "q" | "dfn" | "abbr" | "ruby" | "rt" | "rp" | "data" | "time"
                         | "code" | "var" | "samp" | "kbd" | "sub" | "sup" | "u" | "mark"
-                        | "bdi" | "bdo" | "wbr"
+                        | "bdi" | "bdo" | "wbr" | "nobr"
                 ) =>
             {
                 // NOTE: This is a simplified version - the spec uses the Adoption Agency Algorithm
