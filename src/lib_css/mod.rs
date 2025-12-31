@@ -3,6 +3,7 @@ pub mod css_parser;
 pub mod css_selector;
 pub mod css_style;
 pub mod css_tokenizer;
+pub mod layout;
 
 use crate::lib_dom::{Node, NodeType};
 
