@@ -3,6 +3,9 @@ set -e
 
 cd "$(dirname "$0")"
 
+echo "Building Rust library..."
+(cd .. && cargo build --release)
+
 echo "Building KoalaBrowser..."
 swift build
 

@@ -1,0 +1,4 @@
+module CKoala {
+    header "koala.h"
+    export *
+}

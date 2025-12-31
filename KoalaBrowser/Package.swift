@@ -10,8 +10,28 @@ let package = Package(
         .executable(name: "KoalaBrowser", targets: ["KoalaBrowser"])
     ],
     targets: [
+        // System library target that wraps the Rust FFI
+        .systemLibrary(
+            name: "CKoala",
+            path: "Sources/KoalaCore/include"
+        ),
+        // Swift wrapper for the Rust library
+        .target(
+            name: "KoalaCore",
+            dependencies: ["CKoala"],
+            path: "Sources/KoalaCore",
+            exclude: ["include"],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L", "../target/release",
+                    "-lkoala"
+                ])
+            ]
+        ),
+        // Main browser application
         .executableTarget(
             name: "KoalaBrowser",
+            dependencies: ["KoalaCore"],
             path: "Sources/KoalaBrowser"
         )
     ]

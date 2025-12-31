@@ -3,6 +3,9 @@ name = "koala"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["lib", "staticlib"]
+
 [dependencies]
 anyhow = "1.0.93"
 strum = "0.26"

@@ -1,4 +1,5 @@
 import SwiftUI
+import KoalaCore
 
 struct BrowserView: View {
     @StateObject private var viewModel = BrowserViewModel()
@@ -178,23 +179,30 @@ struct NodeView: View {
 
     var body: some View {
         switch node.type {
-        case .document:
+        case "document":
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(node.children) { child in
+                ForEach(node.childNodes) { child in
                     NodeView(node: child)
                 }
             }
 
-        case .element(let tagName, _):
-            ElementView(tagName: tagName, node: node)
-
-        case .text(let content):
-            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                Text(normalizeWhitespace(content))
+        case "element":
+            if let tagName = node.tagName {
+                ElementView(tagName: tagName, node: node)
             }
 
-        case .comment:
+        case "text":
+            if let content = node.content {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    Text(normalizeWhitespace(content))
+                }
+            }
+
+        case "comment":
+            EmptyView()
+
+        default:
             EmptyView()
         }
     }
@@ -214,7 +222,7 @@ struct ElementView: View {
         switch tagName.lowercased() {
         case "html", "body", "div", "article", "section", "main", "header", "footer", "nav", "aside":
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(node.children) { child in
+                ForEach(node.childNodes) { child in
                     NodeView(node: child)
                 }
             }
@@ -263,7 +271,7 @@ struct ElementView: View {
 
         default:
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(node.children) { child in
+                ForEach(node.childNodes) { child in
                     NodeView(node: child)
                 }
             }
@@ -277,11 +285,10 @@ struct ElementView: View {
     }
 
     func collectText(_ node: DOMNode, into result: inout String) {
-        switch node.type {
-        case .text(let content):
+        if node.type == "text", let content = node.content {
             result += content
-        default:
-            for child in node.children {
+        } else {
+            for child in node.childNodes {
                 collectText(child, into: &result)
             }
         }
