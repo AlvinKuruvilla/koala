@@ -127,14 +127,15 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.semibold)
 
-            Text("Enter a file path to load HTML")
+            Text("Enter an absolute file path to load HTML")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
-            Text("Try: res/simple.html")
+            Text("Try: /Users/alvinkuruvilla/Dev/koala/res/simple.html")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .padding(.top, 4)
+                .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

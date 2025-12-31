@@ -52,10 +52,19 @@ class BrowserViewModel: ObservableObject {
         // Try to load the file
         do {
             let html = try String(contentsOfFile: path, encoding: .utf8)
+            print("[DEBUG] Loaded HTML (\(html.count) chars)")
+
             // Use the Rust parser via FFI
-            if let dom = KoalaParser.parse(html) {
-                document = dom
-                print("[INFO] Successfully loaded: \(path)")
+            if let json = KoalaParser.parseHTML(html) {
+                print("[DEBUG] Got JSON from Rust: \(json.prefix(500))...")
+                if let dom = KoalaParser.parse(html) {
+                    document = dom
+                    print("[INFO] Successfully parsed: \(path)")
+                    print("[DEBUG] Document type: \(dom.type), children: \(dom.childNodes.count)")
+                } else {
+                    self.error = "Failed to decode JSON to DOMNode"
+                    print("[ERROR] JSON decode failed")
+                }
             } else {
                 self.error = "Failed to parse HTML"
                 print("[ERROR] Rust parser returned nil for \(path)")

@@ -222,7 +222,8 @@ impl HTMLTokenizer {
     }
 
     fn log_parse_error(&self) {
-        println!("Parse error at position {}", self.current_pos);
+        // Debug output disabled
+        // println!("Parse error at position {}", self.current_pos);
     }
     fn is_whitespace_char(input_char: char) -> bool {
         matches!(input_char, ' ' | '\t' | '\n' | '\x0C')
@@ -231,7 +232,6 @@ impl HTMLTokenizer {
     // "Emit the current token" - adds the token to the output stream.
     pub fn emit_token(&mut self) {
         if let Some(token) = self.current_token.take() {
-            println!("Token: {}", token);
             self.token_stream.push(token);
         }
     }
@@ -240,14 +240,12 @@ impl HTMLTokenizer {
     // Emits a character token directly without going through current_token.
     pub fn emit_character_token(&mut self, c: char) {
         let token = Token::new_character(c);
-        println!("Token: {}", token);
         self.token_stream.push(token);
     }
 
     // "Emit an end-of-file token."
     pub fn emit_eof_token(&mut self) {
         let token = Token::new_eof();
-        println!("Token: {}", token);
         self.token_stream.push(token);
     }
     /// [§ 13.2.5.1 Data state](https://html.spec.whatwg.org/multipage/parsing.html#data-state)

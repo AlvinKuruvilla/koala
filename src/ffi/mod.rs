@@ -178,6 +178,7 @@ mod tests {
             assert!(!json_ptr.is_null());
 
             let json = CStr::from_ptr(json_ptr).to_str().unwrap();
+            println!("JSON output: {}", json);
             assert!(json.contains("\"type\":\"document\""));
             assert!(json.contains("\"tagName\":\"html\""));
             assert!(json.contains("\"tagName\":\"h1\""));
