@@ -6,19 +6,37 @@ A from-scratch web browser implementation in Rust, built for learning and unders
 
 ### The Spec is the Bible
 
-This project follows the [WHATWG HTML Living Standard](https://html.spec.whatwg.org/) religiously. Every piece of parsing logic should:
+This project follows the [WHATWG HTML Living Standard](https://html.spec.whatwg.org/) religiously. The code should read like a synthesized spec-driven implementation.
 
-1. **Link to the spec** — Include the URL to the relevant spec section
-2. **Quote the spec verbatim** — Copy the exact language from the spec as comments
-3. **Match the spec's structure** — State machines, token types, and algorithms should mirror the spec's organization
+#### Spec Commenting Requirements
 
-Example of good code:
+1. **Include section numbers** — Use `§13.2.5.1` format for traceability
+2. **Quote the spec exactly** — Copy the exact language from the spec as comments
+3. **Preserve the spec's structure** — If the spec uses numbered steps, use numbered comments. If it uses bullets, use bullets. Match nesting levels.
+4. **Add interpretive comments where helpful** — When something requires clarification, add your own commentary clearly marked as such (e.g., "NOTE:" or "Implementation note:")
+5. **Document unimplemented branches too** — Even `todo!()` branches should have full spec text explaining what they *would* do
+
+#### Example of Good Code
+
 ```rust
-// Spec: https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state
+/// [§ 13.2.5.8 Tag name state](https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state)
 fn handle_tag_name_state(&mut self) {
     match self.current_input_character {
-        // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state.
-        // Emit the current tag token."
+        // "U+0009 CHARACTER TABULATION (tab)"
+        // "U+000A LINE FEED (LF)"
+        // "U+000C FORM FEED (FF)"
+        // "U+0020 SPACE"
+        // "Switch to the before attribute name state."
+        Some(c) if Self::is_whitespace_char(c) => {
+            self.switch_to(TokenizerState::BeforeAttributeName);
+        }
+        // "U+002F SOLIDUS (/)"
+        // "Switch to the self-closing start tag state."
+        Some('/') => {
+            self.switch_to(TokenizerState::SelfClosingStartTag);
+        }
+        // "U+003E GREATER-THAN SIGN (>)"
+        // "Switch to the data state. Emit the current tag token."
         Some('>') => {
             self.switch_to(TokenizerState::Data);
             self.emit_token();
@@ -27,6 +45,12 @@ fn handle_tag_name_state(&mut self) {
     }
 }
 ```
+
+#### What NOT to Do
+
+- Don't use banner-style section dividers like `// --------`
+- Don't paraphrase the spec when you can quote it
+- Don't skip documenting branches just because they're not implemented yet
 
 ### Earn the Understanding
 
@@ -77,7 +101,7 @@ koala/
 ## Code Style
 
 - Spec comments go above the code they describe
-- Use `// Spec: "quoted text"` for verbatim spec language
-- Use `// Spec: URL` for section links
+- Use markdown hyperlinks for spec references: `/// [§ X.Y.Z Title](URL)`
+- Use `// "quoted text"` for verbatim spec language inside match arms
 - Panic on impossible states (indicates tokenizer bug, not bad input)
 - Parse errors are logged, not fatal — HTML parsing is intentionally permissive
