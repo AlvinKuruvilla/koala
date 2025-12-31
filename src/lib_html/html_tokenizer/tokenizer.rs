@@ -419,11 +419,10 @@ impl HTMLTokenizer {
             }
         }
     }
-    /// [§ 13.2.5.4 Script Data State](https://html.spec.whatwg.org/multipage/parsing.html#script-data-state)
+    /// [§ 13.2.5.4 Script data state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-state)
     fn handle_script_data_state(&mut self) {
         // "Consume the next input character:"
-        let next = self.consume();
-        match next {
+        match self.current_input_character {
             // "U+003C LESS-THAN SIGN (<)"
             // "Switch to the script data less-than sign state."
             Some('<') => {
@@ -442,7 +441,7 @@ impl HTMLTokenizer {
                 self.at_eof = true;
             }
             // "Anything else"
-            // "Emit the current input character as a character token"
+            // "Emit the current input character as a character token."
             Some(c) => {
                 self.emit_character_token(c);
             }
@@ -452,7 +451,7 @@ impl HTMLTokenizer {
     /// [§ 13.2.5.17 Script data less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-less-than-sign-state)
     fn handle_script_data_less_than_sign_state(&mut self) {
         // "Consume the next input character:"
-        match self.consume() {
+        match self.current_input_character {
             // "U+002F SOLIDUS (/)"
             // "Set the temporary buffer to the empty string. Switch to the script data end tag open state."
             Some('/') => {
@@ -476,7 +475,7 @@ impl HTMLTokenizer {
     /// [§ 13.2.5.18 Script data end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-open-state)
     fn handle_script_data_end_tag_open_state(&mut self) {
         // "Consume the next input character:"
-        match self.consume() {
+        match self.current_input_character {
             // "ASCII alpha"
             // "Create a new end tag token, set its tag name to the empty string. Reconsume in the
             // script data end tag name state."
@@ -495,7 +494,7 @@ impl HTMLTokenizer {
     /// [§ 13.2.5.19 Script data end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-name-state)
     fn handle_script_data_end_tag_name_state(&mut self) {
         // "Consume the next input character:"
-        match self.consume() {
+        match self.current_input_character {
             // "U+0009 CHARACTER TABULATION (tab)"
             // "U+000A LINE FEED (LF)"
             // "U+000C FORM FEED (FF)"
@@ -1835,7 +1834,10 @@ impl HTMLTokenizer {
                     self.handle_rawtext_state();
                     continue;
                 }
-                TokenizerState::ScriptData => self.handle_script_data_state(),
+                TokenizerState::ScriptData => {
+                    self.handle_script_data_state();
+                    continue;
+                }
                 TokenizerState::PLAINTEXT => todo!("Unhandled state: {}", self.state),
                 TokenizerState::TagOpen => {
                     self.handle_tag_open_state();
