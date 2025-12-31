@@ -1,9 +1,41 @@
 use iced::widget::{
-    button, column, container, horizontal_space, row, scrollable, text, text_input, Column,
-    TextInput,
+    button, column, container, horizontal_space, row, scrollable, svg, text, text_input, Column,
+    Svg, TextInput,
 };
 use iced::{Alignment, Border, Color, Element, Length, Padding, Shadow, Theme};
 use std::fs::read_to_string;
+
+// ============================================================================
+// SVG Icons
+// ============================================================================
+
+mod icons {
+    use iced::widget::svg;
+
+    pub fn back() -> svg::Handle {
+        svg::Handle::from_memory(include_bytes!("../../res/icons/back.svg").as_slice())
+    }
+
+    pub fn forward() -> svg::Handle {
+        svg::Handle::from_memory(include_bytes!("../../res/icons/forward.svg").as_slice())
+    }
+
+    pub fn refresh() -> svg::Handle {
+        svg::Handle::from_memory(include_bytes!("../../res/icons/refresh.svg").as_slice())
+    }
+
+    pub fn lock() -> svg::Handle {
+        svg::Handle::from_memory(include_bytes!("../../res/icons/lock.svg").as_slice())
+    }
+
+    pub fn file() -> svg::Handle {
+        svg::Handle::from_memory(include_bytes!("../../res/icons/file.svg").as_slice())
+    }
+
+    pub fn globe() -> svg::Handle {
+        svg::Handle::from_memory(include_bytes!("../../res/icons/globe.svg").as_slice())
+    }
+}
 
 use crate::lib_dom::{Node, NodeType};
 use crate::lib_html::html_parser::parser::HTMLParser;
@@ -124,31 +156,50 @@ impl Browser {
     }
 
     fn view_toolbar(&self) -> Element<'_, Message> {
-        // Navigation buttons
-        let back_btn = nav_button("◀", Message::Back, false);
-        let forward_btn = nav_button("▶", Message::Forward, false);
-        let refresh_btn = nav_button("↻", Message::Refresh, self.document.is_some());
+        // Navigation buttons with SVG icons
+        let back_btn = nav_button_svg(icons::back(), Message::Back, false);
+        let forward_btn = nav_button_svg(icons::forward(), Message::Forward, false);
+        let refresh_btn = nav_button_svg(icons::refresh(), Message::Refresh, self.document.is_some());
 
         let nav_buttons = row![back_btn, forward_btn, refresh_btn]
-            .spacing(2)
+            .spacing(4)
             .align_y(Alignment::Center);
 
-        // Security indicator
-        let security_icon = if self.url.starts_with("file://") || !self.url.contains("://") {
-            text("📄").size(14) // Local file
-        } else if self.url.starts_with("https://") {
-            text("🔒").size(14).color(colors::SECURE) // Secure
-        } else {
-            text("ⓘ").size(14).color(colors::TEXT_MUTED) // Info/unknown
-        };
+        // Security indicator with SVG
+        let security_icon: Element<'_, Message> =
+            if self.url.starts_with("file://") || !self.url.contains("://") {
+                svg(icons::file())
+                    .width(14)
+                    .height(14)
+                    .style(|_theme, _status| svg::Style {
+                        color: Some(colors::LOCAL),
+                    })
+                    .into()
+            } else if self.url.starts_with("https://") {
+                svg(icons::lock())
+                    .width(14)
+                    .height(14)
+                    .style(|_theme, _status| svg::Style {
+                        color: Some(colors::SECURE),
+                    })
+                    .into()
+            } else {
+                svg(icons::globe())
+                    .width(14)
+                    .height(14)
+                    .style(|_theme, _status| svg::Style {
+                        color: Some(colors::TEXT_MUTED),
+                    })
+                    .into()
+            };
 
-        // URL bar
+        // URL bar - pill shaped, takes full width
         let url_input: TextInput<'_, Message> =
             text_input("Enter file path or URL...", &self.url)
                 .on_input(Message::UrlChanged)
                 .on_submit(Message::Go)
-                .padding(Padding::from([8, 12]))
-                .size(14)
+                .padding(Padding::from([6, 8]))
+                .size(13)
                 .width(Length::Fill)
                 .style(url_input_style);
 
@@ -157,24 +208,19 @@ impl Browser {
                 .spacing(8)
                 .align_y(Alignment::Center),
         )
-        .padding(Padding::from([4, 12]))
+        .padding(Padding::from([6, 14]))
         .width(Length::Fill)
         .style(url_bar_style);
 
-        // Go button
-        let go_btn = button(text("Go").size(13).color(colors::TEXT_PRIMARY))
-            .padding(Padding::from([8, 16]))
-            .style(go_button_style)
-            .on_press(Message::Go);
-
-        // Assemble toolbar
-        let toolbar_content = row![nav_buttons, url_bar, go_btn]
-            .spacing(8)
+        // Assemble toolbar - 48px height standard
+        let toolbar_content = row![nav_buttons, url_bar]
+            .spacing(12)
             .align_y(Alignment::Center)
-            .padding(Padding::from([8, 12]));
+            .padding(Padding::from([8, 16]));
 
         container(toolbar_content)
             .width(Length::Fill)
+            .height(48)
             .style(toolbar_style)
             .into()
     }
@@ -213,7 +259,13 @@ impl Browser {
     }
 
     fn view_empty_state(&self) -> Element<'_, Message> {
-        let icon = text("🌐").size(64);
+        let icon: Element<'_, Message> = svg(icons::globe())
+            .width(64)
+            .height(64)
+            .style(|_theme, _status| svg::Style {
+                color: Some(colors::TEXT_SECONDARY),
+            })
+            .into();
         let title = text("Welcome to Koala")
             .size(28)
             .color(colors::TEXT_PRIMARY);
@@ -272,7 +324,7 @@ fn url_bar_style(_theme: &Theme) -> container::Style {
         border: Border {
             color: colors::BORDER_LIGHT,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 18.0.into(), // Pill shape
         },
         ..Default::default()
     }
@@ -330,42 +382,31 @@ fn nav_button_disabled_style(_theme: &Theme, _status: button::Status) -> button:
     }
 }
 
-fn go_button_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let background = match status {
-        button::Status::Hovered => Some(colors::BUTTON_HOVER_BG.into()),
-        button::Status::Pressed => Some(colors::BORDER_LIGHT.into()),
-        _ => Some(colors::TOOLBAR_BG.into()),
-    };
-
-    button::Style {
-        background,
-        text_color: colors::TEXT_PRIMARY,
-        border: Border {
-            color: colors::BORDER_LIGHT,
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..Default::default()
-    }
-}
-
 // ============================================================================
 // Navigation Button Helper
 // ============================================================================
 
-fn nav_button(label: &str, msg: Message, enabled: bool) -> Element<'_, Message> {
+fn nav_button_svg(icon: svg::Handle, msg: Message, enabled: bool) -> Element<'static, Message> {
+    let icon_color = if enabled {
+        colors::BUTTON_TEXT
+    } else {
+        colors::BUTTON_DISABLED
+    };
+
+    let icon_widget: Svg<'static, Theme> = svg(icon).width(18).height(18).style(
+        move |_theme: &Theme, _status| svg::Style {
+            color: Some(icon_color),
+        },
+    );
+
     let btn = button(
-        text(label)
-            .size(16)
-            .color(if enabled {
-                colors::BUTTON_TEXT
-            } else {
-                colors::BUTTON_DISABLED
-            })
-            .width(Length::Fixed(24.0))
-            .align_x(Alignment::Center),
+        container(icon_widget)
+            .width(28)
+            .height(28)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
     )
-    .padding(Padding::from([6, 4]));
+    .padding(4);
 
     if enabled {
         btn.style(nav_button_style).on_press(msg).into()
