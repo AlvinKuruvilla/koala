@@ -2,87 +2,170 @@ use strum_macros::Display;
 
 use super::token::Token;
 
+/// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+///
+/// The tokenizer state machine. Each state corresponds to a section in § 13.2.5.
 #[derive(Debug, PartialEq, Display)]
 pub enum TokenizerState {
+    /// [§ 13.2.5.1 Data state](https://html.spec.whatwg.org/multipage/parsing.html#data-state)
     Data,
+    /// [§ 13.2.5.2 RCDATA state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-state)
     RCDATA,
+    /// [§ 13.2.5.3 RAWTEXT state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-state)
     RAWTEXT,
+    /// [§ 13.2.5.4 Script data state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-state)
     ScriptData,
+    /// [§ 13.2.5.5 PLAINTEXT state](https://html.spec.whatwg.org/multipage/parsing.html#plaintext-state)
     PLAINTEXT,
+    /// [§ 13.2.5.6 Tag open state](https://html.spec.whatwg.org/multipage/parsing.html#tag-open-state)
     TagOpen,
+    /// [§ 13.2.5.7 End tag open state](https://html.spec.whatwg.org/multipage/parsing.html#end-tag-open-state)
     EndTagOpen,
+    /// [§ 13.2.5.8 Tag name state](https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state)
     TagName,
+    /// [§ 13.2.5.9 RCDATA less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-less-than-sign-state)
     RCDATALessThanSign,
+    /// [§ 13.2.5.10 RCDATA end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-open-state)
     RCDATAEndTagOpen,
+    /// [§ 13.2.5.11 RCDATA end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-name-state)
     RCDATAEndTagName,
+    /// [§ 13.2.5.12 RAWTEXT less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state)
     RAWTEXTLessThanSign,
+    /// [§ 13.2.5.13 RAWTEXT end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-open-state)
     RAWTEXTEndTagOpen,
+    /// [§ 13.2.5.14 RAWTEXT end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-name-state)
     RAWTEXTEndTagName,
+    /// [§ 13.2.5.15 Script data less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-less-than-sign-state)
     ScriptDataLessThanSign,
+    /// [§ 13.2.5.16 Script data end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-open-state)
     ScriptDataEndTagOpen,
+    /// [§ 13.2.5.17 Script data end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-name-state)
     ScriptDataEndTagName,
+    /// [§ 13.2.5.18 Script data escape start state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escape-start-state)
     ScriptDataEscapeStart,
+    /// [§ 13.2.5.19 Script data escape start dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escape-start-dash-state)
     ScriptDataEscapeStartDash,
+    /// [§ 13.2.5.20 Script data escaped state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-state)
     ScriptDataEscaped,
+    /// [§ 13.2.5.21 Script data escaped dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-dash-state)
     ScriptDataEscapedDash,
+    /// [§ 13.2.5.22 Script data escaped dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-dash-dash-state)
     ScriptDataEscapedDashDash,
+    /// [§ 13.2.5.23 Script data escaped less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-less-than-sign-state)
     ScriptDataEscapedLessThanSign,
+    /// [§ 13.2.5.24 Script data escaped end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-open-state)
     ScriptDataEscapedEndTagOpen,
+    /// [§ 13.2.5.25 Script data escaped end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-name-state)
     ScriptDataEscapedEndTagName,
+    /// [§ 13.2.5.26 Script data double escape start state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escape-start-state)
     ScriptDataDoubleEscapeStart,
+    /// [§ 13.2.5.27 Script data double escaped state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-state)
     ScriptDataDoubleEscaped,
+    /// [§ 13.2.5.28 Script data double escaped dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-dash-state)
     ScriptDataDoubleEscapedDash,
+    /// [§ 13.2.5.29 Script data double escaped dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-dash-dash-state)
     ScriptDataDoubleEscapedDashDash,
+    /// [§ 13.2.5.30 Script data double escaped less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-less-than-sign-state)
     ScriptDataDoubleEscapedLessThanSign,
+    /// [§ 13.2.5.31 Script data double escape end state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escape-end-state)
     ScriptDataDoubleEscapeEnd,
+    /// [§ 13.2.5.32 Before attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state)
     BeforeAttributeName,
+    /// [§ 13.2.5.33 Attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state)
     AttributeName,
+    /// [§ 13.2.5.34 After attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-name-state)
     AfterAttributeName,
+    /// [§ 13.2.5.35 Before attribute value state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-value-state)
     BeforeAttributeValue,
+    /// [§ 13.2.5.36 Attribute value (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state)
     AttributeValueDoubleQuoted,
+    /// [§ 13.2.5.37 Attribute value (single-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(single-quoted)-state)
     AttributeValueSingleQuoted,
+    /// [§ 13.2.5.38 Attribute value (unquoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(unquoted)-state)
     AttributeValueUnquoted,
+    /// [§ 13.2.5.39 After attribute value (quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-value-(quoted)-state)
     AfterAttributeValueQuoted,
+    /// [§ 13.2.5.40 Self-closing start tag state](https://html.spec.whatwg.org/multipage/parsing.html#self-closing-start-tag-state)
     SelfClosingStartTag,
+    /// [§ 13.2.5.41 Bogus comment state](https://html.spec.whatwg.org/multipage/parsing.html#bogus-comment-state)
     BogusComment,
+    /// [§ 13.2.5.42 Markup declaration open state](https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state)
     MarkupDeclarationOpen,
+    /// [§ 13.2.5.43 Comment start state](https://html.spec.whatwg.org/multipage/parsing.html#comment-start-state)
     CommentStart,
+    /// [§ 13.2.5.44 Comment start dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-start-dash-state)
     CommentStartDash,
+    /// [§ 13.2.5.45 Comment state](https://html.spec.whatwg.org/multipage/parsing.html#comment-state)
     Comment,
+    /// [§ 13.2.5.46 Comment less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-state)
     CommentLessThanSign,
+    /// [§ 13.2.5.47 Comment less-than sign bang state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-state)
     CommentLessThanSignBang,
+    /// [§ 13.2.5.48 Comment less-than sign bang dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-state)
     CommentLessThanSignBangDash,
+    /// [§ 13.2.5.49 Comment less-than sign bang dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-dash-state)
     CommentLessThanSignBangDashDash,
+    /// [§ 13.2.5.50 Comment end dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-end-dash-state)
     CommentEndDash,
+    /// [§ 13.2.5.51 Comment end state](https://html.spec.whatwg.org/multipage/parsing.html#comment-end-state)
     CommentEnd,
+    /// [§ 13.2.5.52 Comment end bang state](https://html.spec.whatwg.org/multipage/parsing.html#comment-end-bang-state)
     CommentEndBang,
+    /// [§ 13.2.5.53 DOCTYPE state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-state)
     DOCTYPE,
+    /// [§ 13.2.5.54 Before DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-name-state)
     BeforeDOCTYPEName,
+    /// [§ 13.2.5.55 DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-name-state)
     DOCTYPEName,
+    /// [§ 13.2.5.56 After DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
     AfterDOCTYPEName,
+    /// [§ 13.2.5.57 After DOCTYPE public keyword state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-public-keyword-state)
     AfterDOCTYPEPublicKeyword,
+    /// [§ 13.2.5.58 Before DOCTYPE public identifier state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-public-identifier-state)
     BeforeDOCTYPEPublicIdentifier,
+    /// [§ 13.2.5.59 DOCTYPE public identifier (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-public-identifier-(double-quoted)-state)
     DOCTYPEPublicIdentifierDoubleQuoted,
+    /// [§ 13.2.5.60 DOCTYPE public identifier (single-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-public-identifier-(single-quoted)-state)
     DOCTYPEPublicIdentifierSingleQuoted,
+    /// [§ 13.2.5.61 After DOCTYPE public identifier state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-public-identifier-state)
     AfterDOCTYPEPublicIdentifier,
+    /// [§ 13.2.5.62 Between DOCTYPE public and system identifiers state](https://html.spec.whatwg.org/multipage/parsing.html#between-doctype-public-and-system-identifiers-state)
     BetweenDOCTYPEPublicAndSystemIdentifiers,
+    /// [§ 13.2.5.63 After DOCTYPE system keyword state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-system-keyword-state)
     AfterDOCTYPESystemKeyword,
+    /// [§ 13.2.5.64 Before DOCTYPE system identifier state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-system-identifier-state)
     BeforeDOCTYPESystemIdentifier,
+    /// [§ 13.2.5.65 DOCTYPE system identifier (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-system-identifier-(double-quoted)-state)
     DOCTYPESystemIdentifierDoubleQuoted,
+    /// [§ 13.2.5.66 DOCTYPE system identifier (single-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-system-identifier-(single-quoted)-state)
     DOCTYPESystemIdentifierSingleQuoted,
+    /// [§ 13.2.5.67 After DOCTYPE system identifier state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-system-identifier-state)
     AfterDOCTYPESystemIdentifier,
+    /// [§ 13.2.5.68 Bogus DOCTYPE state](https://html.spec.whatwg.org/multipage/parsing.html#bogus-doctype-state)
     BogusDOCTYPE,
+    /// [§ 13.2.5.69 CDATA section state](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-state)
     CDATASection,
+    /// [§ 13.2.5.70 CDATA section bracket state](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-bracket-state)
     CDATASectionBracket,
+    /// [§ 13.2.5.71 CDATA section end state](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-end-state)
     CDATASectionEnd,
+    /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
     CharacterReference,
+    /// [§ 13.2.5.73 Named character reference state](https://html.spec.whatwg.org/multipage/parsing.html#named-character-reference-state)
     NamedCharacterReference,
+    /// [§ 13.2.5.74 Ambiguous ampersand state](https://html.spec.whatwg.org/multipage/parsing.html#ambiguous-ampersand-state)
     AmbiguousAmpersand,
+    /// [§ 13.2.5.75 Numeric character reference state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-state)
     NumericCharacterReference,
+    /// [§ 13.2.5.76 Hexadecimal character reference start state](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-start-state)
     HexadecimalCharacterReferenceStart,
+    /// [§ 13.2.5.77 Decimal character reference start state](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-start-state)
     DecimalCharacterReferenceStart,
+    /// [§ 13.2.5.78 Hexadecimal character reference state](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-state)
     HexadecimalCharacterReference,
+    /// [§ 13.2.5.79 Decimal character reference state](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-state)
     DecimalCharacterReference,
+    /// [§ 13.2.5.80 Numeric character reference end state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)
     NumericCharacterReferenceEnd,
 }
 
@@ -96,12 +179,12 @@ pub struct HTMLTokenizer {
     at_eof: bool,
     token_stream: Vec<Token>,
     // When true, the next iteration of the main loop will not consume a new character.
-    // Spec: "Reconsume in the X state" sets this flag.
+    // "Reconsume in the X state" sets this flag.
     reconsume: bool,
 }
 impl HTMLTokenizer {
     pub fn new(input: String) -> Self {
-        // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+        // [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
         // "The tokenizer state machine consists of the states defined in the
         // following subsections. The initial state is the data state."
         HTMLTokenizer {
@@ -123,14 +206,14 @@ impl HTMLTokenizer {
         self.token_stream
     }
 
-    // Spec: "Switch to the X state"
+    // "Switch to the X state"
     // Transitions to a new state. The next character will be consumed on the next
     // iteration of the main loop.
     fn switch_to(&mut self, new_state: TokenizerState) {
         self.state = new_state;
     }
 
-    // Spec: "Reconsume in the X state"
+    // "Reconsume in the X state"
     // Transitions to a new state without consuming the current character.
     // The same character will be processed again in the new state.
     fn reconsume_in(&mut self, new_state: TokenizerState) {
@@ -144,8 +227,8 @@ impl HTMLTokenizer {
     fn is_whitespace_char(input_char: char) -> bool {
         matches!(input_char, ' ' | '\t' | '\n' | '\x0C')
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-    // "Emit the current token" - this adds the token to the output stream.
+    // [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    // "Emit the current token" - adds the token to the output stream.
     pub fn emit_token(&mut self) {
         if let Some(token) = self.current_token.take() {
             println!("Token: {}", token);
@@ -153,76 +236,73 @@ impl HTMLTokenizer {
         }
     }
 
-    // Emit a character token directly without going through current_token.
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#data-state
     // "Emit the current input character as a character token."
+    // Emits a character token directly without going through current_token.
     pub fn emit_character_token(&mut self, c: char) {
         let token = Token::new_character(c);
         println!("Token: {}", token);
         self.token_stream.push(token);
     }
 
-    // Emit an EOF token.
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
     // "Emit an end-of-file token."
     pub fn emit_eof_token(&mut self) {
         let token = Token::new_eof();
         println!("Token: {}", token);
         self.token_stream.push(token);
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#data-state
+    /// [§ 13.2.5.1 Data state](https://html.spec.whatwg.org/multipage/parsing.html#data-state)
     fn handle_data_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the data state.
+            // "U+0026 AMPERSAND (&) - Set the return state to the data state.
             // Switch to the character reference state."
             Some('&') => {
                 self.return_state = Some(TokenizerState::Data);
                 self.switch_to(TokenizerState::CharacterReference);
             }
-            // Spec: "U+003C LESS-THAN SIGN (<) - Switch to the tag open state."
+            // "U+003C LESS-THAN SIGN (<) - Switch to the tag open state."
             Some('<') => {
                 self.switch_to(TokenizerState::TagOpen);
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error.
+            // "U+0000 NULL - This is an unexpected-null-character parse error.
             // Emit the current input character as a character token."
             Some('\0') => {
                 self.log_parse_error();
                 self.emit_character_token('\0');
                 self.switch_to(TokenizerState::Data);
             }
-            // Spec: "EOF - Emit an end-of-file token."
+            // "EOF - Emit an end-of-file token."
             None => {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Emit the current input character as a character token."
+            // "Anything else - Emit the current input character as a character token."
             Some(c) => {
                 self.emit_character_token(c);
                 self.switch_to(TokenizerState::Data);
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tag-open-state
+    /// [§ 13.2.5.6 Tag open state](https://html.spec.whatwg.org/multipage/parsing.html#tag-open-state)
     fn handle_tag_open_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0021 EXCLAMATION MARK (!) - Switch to the markup declaration open state."
+            // "U+0021 EXCLAMATION MARK (!) - Switch to the markup declaration open state."
             // NOTE: We use reconsume_in here so that MarkupDeclarationOpen can peek ahead
             // without the main loop consuming a character first. This state uses lookahead
             // rather than consuming the "current input character".
             Some('!') => {
                 self.reconsume_in(TokenizerState::MarkupDeclarationOpen);
             }
-            // Spec: "U+002F SOLIDUS (/) - Switch to the end tag open state."
+            // "U+002F SOLIDUS (/) - Switch to the end tag open state."
             Some('/') => {
                 self.switch_to(TokenizerState::EndTagOpen);
             }
-            // Spec: "ASCII alpha - Create a new start tag token, set its tag name to the empty
+            // "ASCII alpha - Create a new start tag token, set its tag name to the empty
             // string. Reconsume in the tag name state."
             Some(c) if c.is_ascii_alphabetic() => {
                 self.current_token = Some(Token::new_start_tag());
                 self.reconsume_in(TokenizerState::TagName);
             }
-            // Spec: "U+003F QUESTION MARK (?) - This is an unexpected-question-mark-instead-of-tag-name
+            // "U+003F QUESTION MARK (?) - This is an unexpected-question-mark-instead-of-tag-name
             // parse error. Create a comment token whose data is the empty string. Reconsume in the
             // bogus comment state."
             Some('?') => {
@@ -230,7 +310,7 @@ impl HTMLTokenizer {
                 self.current_token = Some(Token::new_comment());
                 self.reconsume_in(TokenizerState::BogusComment);
             }
-            // Spec: "EOF - This is an eof-before-tag-name parse error. Emit a U+003C LESS-THAN SIGN
+            // "EOF - This is an eof-before-tag-name parse error. Emit a U+003C LESS-THAN SIGN
             // character token and an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -238,7 +318,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - This is an invalid-first-character-of-tag-name parse error.
+            // "Anything else - This is an invalid-first-character-of-tag-name parse error.
             // Emit a U+003C LESS-THAN SIGN character token. Reconsume in the data state."
             Some(_) => {
                 self.log_parse_error();
@@ -247,9 +327,9 @@ impl HTMLTokenizer {
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
+    /// [§ 13.2.5.42 Markup declaration open state](https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state)
     fn handle_markup_declaration_open_state(&mut self) {
-        // Spec: "If the next two characters are both U+002D HYPHEN-MINUS characters (-),
+        // "If the next two characters are both U+002D HYPHEN-MINUS characters (-),
         // consume those two characters, create a comment token whose data is the empty
         // string, and switch to the comment start state."
         if self.next_few_characters_are("--") {
@@ -257,14 +337,14 @@ impl HTMLTokenizer {
             self.current_token = Some(Token::new_comment());
             self.switch_to(TokenizerState::CommentStart);
         }
-        // Spec: "Otherwise, if the next seven characters are an ASCII case-insensitive
+        // "Otherwise, if the next seven characters are an ASCII case-insensitive
         // match for the word 'DOCTYPE', consume those characters and switch to the
         // DOCTYPE state."
         else if self.next_few_characters_are_case_insensitive("DOCTYPE") {
             self.consume_string("DOCTYPE");
             self.switch_to(TokenizerState::DOCTYPE);
         }
-        // Spec: "Otherwise, if there is an adjusted current node and it is not an element
+        // "Otherwise, if there is an adjusted current node and it is not an element
         // in the HTML namespace and the next seven characters are a case-sensitive match
         // for the string '[CDATA[', then consume those characters and switch to the
         // CDATA section state."
@@ -273,7 +353,7 @@ impl HTMLTokenizer {
             self.consume_string("[CDATA[");
             self.switch_to(TokenizerState::CDATASection);
         }
-        // Spec: "Otherwise, this is an incorrectly-opened-comment parse error. Create a
+        // "Otherwise, this is an incorrectly-opened-comment parse error. Create a
         // comment token whose data is the empty string. Switch to the bogus comment state
         // (don't consume anything in the current state)."
         else {
@@ -282,19 +362,19 @@ impl HTMLTokenizer {
             self.reconsume_in(TokenizerState::BogusComment);
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#doctype-state
+    /// [§ 13.2.5.53 DOCTYPE state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-state)
     fn handle_doctype_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Switch to the before DOCTYPE name state."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeDOCTYPEName);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Reconsume in the before DOCTYPE name state."
+            // "U+003E GREATER-THAN SIGN (>) - Reconsume in the before DOCTYPE name state."
             Some('>') => {
                 self.reconsume_in(TokenizerState::BeforeDOCTYPEName);
             }
-            // Spec: "EOF - This is an eof-in-doctype parse error. Create a new DOCTYPE token.
+            // "EOF - This is an eof-in-doctype parse error. Create a new DOCTYPE token.
             // Set its force-quirks flag to on. Emit the current token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -305,7 +385,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - This is a missing-whitespace-before-doctype-name parse error.
+            // "Anything else - This is a missing-whitespace-before-doctype-name parse error.
             // Reconsume in the before DOCTYPE name state."
             Some(_) => {
                 self.log_parse_error();
@@ -313,15 +393,15 @@ impl HTMLTokenizer {
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-name-state
+    /// [§ 13.2.5.54 Before DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-name-state)
     fn handle_before_doctype_name_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Ignore the character."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeDOCTYPEName);
             }
-            // Spec: "ASCII upper alpha - Create a new DOCTYPE token. Set the token's name to
+            // "ASCII upper alpha - Create a new DOCTYPE token. Set the token's name to
             // the lowercase version of the current input character. Switch to the DOCTYPE name state."
             Some(c) if c.is_ascii_uppercase() => {
                 let mut token = Token::new_doctype();
@@ -329,7 +409,7 @@ impl HTMLTokenizer {
                 self.current_token = Some(token);
                 self.switch_to(TokenizerState::DOCTYPEName);
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Create a new
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Create a new
             // DOCTYPE token. Set the token's name to a U+FFFD REPLACEMENT CHARACTER. Switch to
             // the DOCTYPE name state."
             Some('\0') => {
@@ -339,7 +419,7 @@ impl HTMLTokenizer {
                 self.current_token = Some(token);
                 self.switch_to(TokenizerState::DOCTYPEName);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - This is a missing-doctype-name parse error.
+            // "U+003E GREATER-THAN SIGN (>) - This is a missing-doctype-name parse error.
             // Create a new DOCTYPE token. Set its force-quirks flag to on. Switch to the data state.
             // Emit the current token."
             Some('>') => {
@@ -350,7 +430,7 @@ impl HTMLTokenizer {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - This is an eof-in-doctype parse error. Create a new DOCTYPE token.
+            // "EOF - This is an eof-in-doctype parse error. Create a new DOCTYPE token.
             // Set its force-quirks flag to on. Emit the current token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -361,7 +441,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Create a new DOCTYPE token. Set the token's name to the
+            // "Anything else - Create a new DOCTYPE token. Set the token's name to the
             // current input character. Switch to the DOCTYPE name state."
             Some(c) => {
                 let mut token = Token::new_doctype();
@@ -371,27 +451,27 @@ impl HTMLTokenizer {
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#doctype-name-state
+    /// [§ 13.2.5.55 DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-name-state)
     fn handle_doctype_name_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Switch to the after DOCTYPE name state."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::AfterDOCTYPEName);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current token."
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "ASCII upper alpha - Append the lowercase version of the current input
+            // "ASCII upper alpha - Append the lowercase version of the current input
             // character to the current DOCTYPE token's name."
             Some(c) if c.is_ascii_uppercase() => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_doctype_name(c.to_ascii_lowercase());
                 }
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current DOCTYPE token's name."
             Some('\0') => {
                 self.log_parse_error();
@@ -399,7 +479,7 @@ impl HTMLTokenizer {
                     token.append_to_doctype_name('\u{FFFD}');
                 }
             }
-            // Spec: "EOF - This is an eof-in-doctype parse error. Set the current DOCTYPE token's
+            // "EOF - This is an eof-in-doctype parse error. Set the current DOCTYPE token's
             // force-quirks flag to on. Emit the current token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -410,7 +490,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append the current input character to the current DOCTYPE
+            // "Anything else - Append the current input character to the current DOCTYPE
             // token's name."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
@@ -419,31 +499,31 @@ impl HTMLTokenizer {
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state
+    /// [§ 13.2.5.8 Tag name state](https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state)
     fn handle_tag_name_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Switch to the before attribute name state."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeAttributeName);
             }
-            // Spec: "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
+            // "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
             Some('/') => {
                 self.switch_to(TokenizerState::SelfClosingStartTag);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current token."
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "ASCII upper alpha - Append the lowercase version of the current input
+            // "ASCII upper alpha - Append the lowercase version of the current input
             // character to the current tag token's tag name."
             Some(c) if c.is_ascii_uppercase() => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_tag_name(c.to_ascii_lowercase());
                 }
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current tag token's tag name."
             Some('\0') => {
                 self.log_parse_error();
@@ -451,13 +531,13 @@ impl HTMLTokenizer {
                     token.append_to_tag_name('\u{FFFD}');
                 }
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append the current input character to the current tag
+            // "Anything else - Append the current input character to the current tag
             // token's tag name."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
@@ -466,10 +546,10 @@ impl HTMLTokenizer {
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#self-closing-start-tag-state
+    /// [§ 13.2.5.40 Self-closing start tag state](https://html.spec.whatwg.org/multipage/parsing.html#self-closing-start-tag-state)
     fn handle_self_closing_start_tag_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Set the self-closing flag of the current
+            // "U+003E GREATER-THAN SIGN (>) - Set the self-closing flag of the current
             // tag token. Switch to the data state. Emit the current token."
             Some('>') => {
                 if let Some(ref mut token) = self.current_token {
@@ -478,13 +558,13 @@ impl HTMLTokenizer {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - This is an unexpected-solidus-in-tag parse error.
+            // "Anything else - This is an unexpected-solidus-in-tag parse error.
             // Reconsume in the before attribute name state."
             Some(_) => {
                 self.log_parse_error();
@@ -492,22 +572,22 @@ impl HTMLTokenizer {
             }
         }
     }
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#end-tag-open-state
+    /// [§ 13.2.5.7 End tag open state](https://html.spec.whatwg.org/multipage/parsing.html#end-tag-open-state)
     fn handle_end_tag_open_state(&mut self) {
         match self.current_input_character {
-            // Spec: "ASCII alpha - Create a new end tag token, set its tag name to the empty
+            // "ASCII alpha - Create a new end tag token, set its tag name to the empty
             // string. Reconsume in the tag name state."
             Some(c) if c.is_ascii_alphabetic() => {
                 self.current_token = Some(Token::new_end_tag());
                 self.reconsume_in(TokenizerState::TagName);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - This is a missing-end-tag-name parse error.
+            // "U+003E GREATER-THAN SIGN (>) - This is a missing-end-tag-name parse error.
             // Switch to the data state."
             Some('>') => {
                 self.log_parse_error();
                 self.switch_to(TokenizerState::Data);
             }
-            // Spec: "EOF - This is an eof-before-tag-name parse error. Emit a U+003C LESS-THAN
+            // "EOF - This is an eof-before-tag-name parse error. Emit a U+003C LESS-THAN
             // SIGN character token, a U+002F SOLIDUS character token and an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -516,7 +596,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - This is an invalid-first-character-of-tag-name parse error.
+            // "Anything else - This is an invalid-first-character-of-tag-name parse error.
             // Create a comment token whose data is the empty string. Reconsume in the bogus
             // comment state."
             Some(_) => {
@@ -527,20 +607,20 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
+    /// [§ 13.2.5.32 Before attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state)
     fn handle_before_attribute_name_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Ignore the character."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeAttributeName);
             }
-            // Spec: "U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
+            // "U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
             // Reconsume in the after attribute name state."
             Some('/') | Some('>') | None => {
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
-            // Spec: "U+003D EQUALS SIGN (=) - This is an unexpected-equals-sign-before-attribute-name
+            // "U+003D EQUALS SIGN (=) - This is an unexpected-equals-sign-before-attribute-name
             // parse error. Start a new attribute in the current tag token. Set that attribute's name
             // to the current input character, and its value to the empty string. Switch to the
             // attribute name state."
@@ -552,7 +632,7 @@ impl HTMLTokenizer {
                 }
                 self.switch_to(TokenizerState::AttributeName);
             }
-            // Spec: "Anything else - Start a new attribute in the current tag token. Set that
+            // "Anything else - Start a new attribute in the current tag token. Set that
             // attribute name and value to the empty string. Reconsume in the attribute name state."
             Some(_) => {
                 if let Some(ref mut token) = self.current_token {
@@ -563,10 +643,10 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state
+    /// [§ 13.2.5.33 Attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state)
     fn handle_attribute_name_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE, U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
             // Reconsume in the after attribute name state."
             Some(c) if Self::is_whitespace_char(c) => {
@@ -581,19 +661,19 @@ impl HTMLTokenizer {
                 self.check_duplicate_attribute();
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
-            // Spec: "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
+            // "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
             Some('=') => {
                 self.check_duplicate_attribute();
                 self.switch_to(TokenizerState::BeforeAttributeValue);
             }
-            // Spec: "ASCII upper alpha - Append the lowercase version of the current input
+            // "ASCII upper alpha - Append the lowercase version of the current input
             // character to the current attribute's name."
             Some(c) if c.is_ascii_uppercase() => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name(c.to_ascii_lowercase());
                 }
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current attribute's name."
             Some('\0') => {
                 self.log_parse_error();
@@ -601,7 +681,7 @@ impl HTMLTokenizer {
                     token.append_to_current_attribute_name('\u{FFFD}');
                 }
             }
-            // Spec: "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<) -
+            // "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<) -
             // This is an unexpected-character-in-attribute-name parse error. Treat it as per the
             // 'anything else' entry below."
             Some('"') | Some('\'') | Some('<') => {
@@ -610,7 +690,7 @@ impl HTMLTokenizer {
                     token.append_to_current_attribute_name(self.current_input_character.unwrap());
                 }
             }
-            // Spec: "Anything else - Append the current input character to the current attribute's name."
+            // "Anything else - Append the current input character to the current attribute's name."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name(c);
@@ -619,34 +699,34 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-name-state
+    /// [§ 13.2.5.34 After attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-name-state)
     fn handle_after_attribute_name_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Ignore the character."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::AfterAttributeName);
             }
-            // Spec: "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
+            // "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
             Some('/') => {
                 self.switch_to(TokenizerState::SelfClosingStartTag);
             }
-            // Spec: "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
+            // "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
             Some('=') => {
                 self.switch_to(TokenizerState::BeforeAttributeValue);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Start a new attribute in the current tag token. Set that
+            // "Anything else - Start a new attribute in the current tag token. Set that
             // attribute name and value to the empty string. Reconsume in the attribute name state."
             Some(_) => {
                 if let Some(ref mut token) = self.current_token {
@@ -657,50 +737,50 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-value-state
+    /// [§ 13.2.5.35 Before attribute value state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-value-state)
     fn handle_before_attribute_value_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Ignore the character."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeAttributeValue);
             }
-            // Spec: "U+0022 QUOTATION MARK (\") - Switch to the attribute value (double-quoted) state."
+            // "U+0022 QUOTATION MARK (\") - Switch to the attribute value (double-quoted) state."
             Some('"') => {
                 self.switch_to(TokenizerState::AttributeValueDoubleQuoted);
             }
-            // Spec: "U+0027 APOSTROPHE (') - Switch to the attribute value (single-quoted) state."
+            // "U+0027 APOSTROPHE (') - Switch to the attribute value (single-quoted) state."
             Some('\'') => {
                 self.switch_to(TokenizerState::AttributeValueSingleQuoted);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - This is a missing-attribute-value parse error.
+            // "U+003E GREATER-THAN SIGN (>) - This is a missing-attribute-value parse error.
             // Switch to the data state. Emit the current tag token."
             Some('>') => {
                 self.log_parse_error();
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "Anything else - Reconsume in the attribute value (unquoted) state."
+            // "Anything else - Reconsume in the attribute value (unquoted) state."
             _ => {
                 self.reconsume_in(TokenizerState::AttributeValueUnquoted);
             }
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state
+    /// [§ 13.2.5.36 Attribute value (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(double-quoted)-state)
     fn handle_attribute_value_double_quoted_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0022 QUOTATION MARK (\") - Switch to the after attribute value (quoted) state."
+            // "U+0022 QUOTATION MARK (\") - Switch to the after attribute value (quoted) state."
             Some('"') => {
                 self.switch_to(TokenizerState::AfterAttributeValueQuoted);
             }
-            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the attribute value (double-quoted)
+            // "U+0026 AMPERSAND (&) - Set the return state to the attribute value (double-quoted)
             // state. Switch to the character reference state."
             Some('&') => {
                 self.return_state = Some(TokenizerState::AttributeValueDoubleQuoted);
                 self.switch_to(TokenizerState::CharacterReference);
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current attribute's value."
             Some('\0') => {
                 self.log_parse_error();
@@ -708,13 +788,13 @@ impl HTMLTokenizer {
                     token.append_to_current_attribute_value('\u{FFFD}');
                 }
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append the current input character to the current attribute's value."
+            // "Anything else - Append the current input character to the current attribute's value."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
@@ -723,20 +803,20 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(single-quoted)-state
+    /// [§ 13.2.5.37 Attribute value (single-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(single-quoted)-state)
     fn handle_attribute_value_single_quoted_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0027 APOSTROPHE (') - Switch to the after attribute value (quoted) state."
+            // "U+0027 APOSTROPHE (') - Switch to the after attribute value (quoted) state."
             Some('\'') => {
                 self.switch_to(TokenizerState::AfterAttributeValueQuoted);
             }
-            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the attribute value (single-quoted)
+            // "U+0026 AMPERSAND (&) - Set the return state to the attribute value (single-quoted)
             // state. Switch to the character reference state."
             Some('&') => {
                 self.return_state = Some(TokenizerState::AttributeValueSingleQuoted);
                 self.switch_to(TokenizerState::CharacterReference);
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current attribute's value."
             Some('\0') => {
                 self.log_parse_error();
@@ -744,13 +824,13 @@ impl HTMLTokenizer {
                     token.append_to_current_attribute_value('\u{FFFD}');
                 }
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append the current input character to the current attribute's value."
+            // "Anything else - Append the current input character to the current attribute's value."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
@@ -759,26 +839,26 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(unquoted)-state
+    /// [§ 13.2.5.38 Attribute value (unquoted) state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-value-(unquoted)-state)
     fn handle_attribute_value_unquoted_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Switch to the before attribute name state."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeAttributeName);
             }
-            // Spec: "U+0026 AMPERSAND (&) - Set the return state to the attribute value (unquoted)
+            // "U+0026 AMPERSAND (&) - Set the return state to the attribute value (unquoted)
             // state. Switch to the character reference state."
             Some('&') => {
                 self.return_state = Some(TokenizerState::AttributeValueUnquoted);
                 self.switch_to(TokenizerState::CharacterReference);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current attribute's value."
             Some('\0') => {
                 self.log_parse_error();
@@ -786,7 +866,7 @@ impl HTMLTokenizer {
                     token.append_to_current_attribute_value('\u{FFFD}');
                 }
             }
-            // Spec: "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<),
+            // "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<),
             // U+003D EQUALS SIGN (=), U+0060 GRAVE ACCENT (`) - This is an
             // unexpected-character-in-unquoted-attribute-value parse error. Treat it as per the
             // 'anything else' entry below."
@@ -796,13 +876,13 @@ impl HTMLTokenizer {
                     token.append_to_current_attribute_value(self.current_input_character.unwrap());
                 }
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append the current input character to the current attribute's value."
+            // "Anything else - Append the current input character to the current attribute's value."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
@@ -811,30 +891,30 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-value-(quoted)-state
+    /// [§ 13.2.5.39 After attribute value (quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#after-attribute-value-(quoted)-state)
     fn handle_after_attribute_value_quoted_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
             // U+0020 SPACE - Switch to the before attribute name state."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.switch_to(TokenizerState::BeforeAttributeName);
             }
-            // Spec: "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
+            // "U+002F SOLIDUS (/) - Switch to the self-closing start tag state."
             Some('/') => {
                 self.switch_to(TokenizerState::SelfClosingStartTag);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current tag token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
+            // "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - This is a missing-whitespace-between-attributes parse error.
+            // "Anything else - This is a missing-whitespace-between-attributes parse error.
             // Reconsume in the before attribute name state."
             Some(_) => {
                 self.log_parse_error();
@@ -843,46 +923,42 @@ impl HTMLTokenizer {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Comment states
-    // -------------------------------------------------------------------------
-
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-start-state
+    /// [§ 13.2.5.43 Comment start state](https://html.spec.whatwg.org/multipage/parsing.html#comment-start-state)
     fn handle_comment_start_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment start dash state."
+            // "U+002D HYPHEN-MINUS (-) - Switch to the comment start dash state."
             Some('-') => {
                 self.switch_to(TokenizerState::CommentStartDash);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - This is an abrupt-closing-of-empty-comment
+            // "U+003E GREATER-THAN SIGN (>) - This is an abrupt-closing-of-empty-comment
             // parse error. Switch to the data state. Emit the current comment token."
             Some('>') => {
                 self.log_parse_error();
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "Anything else - Reconsume in the comment state."
+            // "Anything else - Reconsume in the comment state."
             _ => {
                 self.reconsume_in(TokenizerState::Comment);
             }
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-start-dash-state
+    /// [§ 13.2.5.44 Comment start dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-start-dash-state)
     fn handle_comment_start_dash_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment end state."
+            // "U+002D HYPHEN-MINUS (-) - Switch to the comment end state."
             Some('-') => {
                 self.switch_to(TokenizerState::CommentEnd);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - This is an abrupt-closing-of-empty-comment
+            // "U+003E GREATER-THAN SIGN (>) - This is an abrupt-closing-of-empty-comment
             // parse error. Switch to the data state. Emit the current comment token."
             Some('>') => {
                 self.log_parse_error();
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // "EOF - This is an eof-in-comment parse error. Emit the current comment
             // token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -890,7 +966,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append a U+002D HYPHEN-MINUS character (-) to the comment
+            // "Anything else - Append a U+002D HYPHEN-MINUS character (-) to the comment
             // token's data. Reconsume in the comment state."
             Some(_) => {
                 if let Some(ref mut token) = self.current_token {
@@ -901,10 +977,10 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-state
+    /// [§ 13.2.5.45 Comment state](https://html.spec.whatwg.org/multipage/parsing.html#comment-state)
     fn handle_comment_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+003C LESS-THAN SIGN (<) - Append the current input character to the
+            // "U+003C LESS-THAN SIGN (<) - Append the current input character to the
             // comment token's data. Switch to the comment less-than sign state."
             Some('<') => {
                 if let Some(ref mut token) = self.current_token {
@@ -912,11 +988,11 @@ impl HTMLTokenizer {
                 }
                 self.switch_to(TokenizerState::CommentLessThanSign);
             }
-            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment end dash state."
+            // "U+002D HYPHEN-MINUS (-) - Switch to the comment end dash state."
             Some('-') => {
                 self.switch_to(TokenizerState::CommentEndDash);
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER character to the comment token's data."
             Some('\0') => {
                 self.log_parse_error();
@@ -924,7 +1000,7 @@ impl HTMLTokenizer {
                     token.append_to_comment('\u{FFFD}');
                 }
             }
-            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // "EOF - This is an eof-in-comment parse error. Emit the current comment
             // token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -932,7 +1008,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append the current input character to the comment token's data."
+            // "Anything else - Append the current input character to the comment token's data."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_comment(c);
@@ -941,10 +1017,10 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-state
+    /// [§ 13.2.5.46 Comment less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-state)
     fn handle_comment_less_than_sign_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+0021 EXCLAMATION MARK (!) - Append the current input character to the
+            // "U+0021 EXCLAMATION MARK (!) - Append the current input character to the
             // comment token's data. Switch to the comment less-than sign bang state."
             Some('!') => {
                 if let Some(ref mut token) = self.current_token {
@@ -952,60 +1028,60 @@ impl HTMLTokenizer {
                 }
                 self.switch_to(TokenizerState::CommentLessThanSignBang);
             }
-            // Spec: "U+003C LESS-THAN SIGN (<) - Append the current input character to the
+            // "U+003C LESS-THAN SIGN (<) - Append the current input character to the
             // comment token's data."
             Some('<') => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_comment('<');
                 }
             }
-            // Spec: "Anything else - Reconsume in the comment state."
+            // "Anything else - Reconsume in the comment state."
             _ => {
                 self.reconsume_in(TokenizerState::Comment);
             }
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-state
+    /// [§ 13.2.5.47 Comment less-than sign bang state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-state)
     fn handle_comment_less_than_sign_bang_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash state."
+            // "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash state."
             Some('-') => {
                 self.switch_to(TokenizerState::CommentLessThanSignBangDash);
             }
-            // Spec: "Anything else - Reconsume in the comment state."
+            // "Anything else - Reconsume in the comment state."
             _ => {
                 self.reconsume_in(TokenizerState::Comment);
             }
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-state
+    /// [§ 13.2.5.48 Comment less-than sign bang dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-state)
     fn handle_comment_less_than_sign_bang_dash_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash dash state."
+            // "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash dash state."
             Some('-') => {
                 self.switch_to(TokenizerState::CommentLessThanSignBangDashDash);
             }
-            // Spec: "Anything else - Reconsume in the comment end dash state."
+            // "Anything else - Reconsume in the comment end dash state."
             _ => {
                 self.reconsume_in(TokenizerState::CommentEndDash);
             }
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-dash-state
+    /// [§ 13.2.5.49 Comment less-than sign bang dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-dash-state)
     fn handle_comment_less_than_sign_bang_dash_dash_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Reconsume in the comment end state."
+            // "U+003E GREATER-THAN SIGN (>) - Reconsume in the comment end state."
             Some('>') => {
                 self.reconsume_in(TokenizerState::CommentEnd);
             }
-            // Spec: "EOF - Reconsume in the comment end state."
+            // "EOF - Reconsume in the comment end state."
             None => {
                 self.reconsume_in(TokenizerState::CommentEnd);
             }
-            // Spec: "Anything else - This is a nested-comment parse error. Reconsume in the
+            // "Anything else - This is a nested-comment parse error. Reconsume in the
             // comment end state."
             Some(_) => {
                 self.log_parse_error();
@@ -1014,14 +1090,14 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-end-dash-state
+    /// [§ 13.2.5.50 Comment end dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-end-dash-state)
     fn handle_comment_end_dash_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment end state."
+            // "U+002D HYPHEN-MINUS (-) - Switch to the comment end state."
             Some('-') => {
                 self.switch_to(TokenizerState::CommentEnd);
             }
-            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // "EOF - This is an eof-in-comment parse error. Emit the current comment
             // token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -1029,7 +1105,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append a U+002D HYPHEN-MINUS character (-) to the comment
+            // "Anything else - Append a U+002D HYPHEN-MINUS character (-) to the comment
             // token's data. Reconsume in the comment state."
             Some(_) => {
                 if let Some(ref mut token) = self.current_token {
@@ -1040,27 +1116,27 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-end-state
+    /// [§ 13.2.5.51 Comment end state](https://html.spec.whatwg.org/multipage/parsing.html#comment-end-state)
     fn handle_comment_end_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current
             // comment token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "U+0021 EXCLAMATION MARK (!) - Switch to the comment end bang state."
+            // "U+0021 EXCLAMATION MARK (!) - Switch to the comment end bang state."
             Some('!') => {
                 self.switch_to(TokenizerState::CommentEndBang);
             }
-            // Spec: "U+002D HYPHEN-MINUS (-) - Append a U+002D HYPHEN-MINUS character (-) to
+            // "U+002D HYPHEN-MINUS (-) - Append a U+002D HYPHEN-MINUS character (-) to
             // the comment token's data."
             Some('-') => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_comment('-');
                 }
             }
-            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // "EOF - This is an eof-in-comment parse error. Emit the current comment
             // token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -1068,7 +1144,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append two U+002D HYPHEN-MINUS characters (-) to the
+            // "Anything else - Append two U+002D HYPHEN-MINUS characters (-) to the
             // comment token's data. Reconsume in the comment state."
             Some(_) => {
                 if let Some(ref mut token) = self.current_token {
@@ -1080,10 +1156,10 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-end-bang-state
+    /// [§ 13.2.5.52 Comment end bang state](https://html.spec.whatwg.org/multipage/parsing.html#comment-end-bang-state)
     fn handle_comment_end_bang_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+002D HYPHEN-MINUS (-) - Append two U+002D HYPHEN-MINUS characters (-)
+            // "U+002D HYPHEN-MINUS (-) - Append two U+002D HYPHEN-MINUS characters (-)
             // and a U+0021 EXCLAMATION MARK character (!) to the comment token's data. Switch
             // to the comment end dash state."
             Some('-') => {
@@ -1094,14 +1170,14 @@ impl HTMLTokenizer {
                 }
                 self.switch_to(TokenizerState::CommentEndDash);
             }
-            // Spec: "U+003E GREATER-THAN SIGN (>) - This is an incorrectly-closed-comment parse
+            // "U+003E GREATER-THAN SIGN (>) - This is an incorrectly-closed-comment parse
             // error. Switch to the data state. Emit the current comment token."
             Some('>') => {
                 self.log_parse_error();
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // "EOF - This is an eof-in-comment parse error. Emit the current comment
             // token. Emit an end-of-file token."
             None => {
                 self.log_parse_error();
@@ -1109,7 +1185,7 @@ impl HTMLTokenizer {
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "Anything else - Append two U+002D HYPHEN-MINUS characters (-) and a U+0021
+            // "Anything else - Append two U+002D HYPHEN-MINUS characters (-) and a U+0021
             // EXCLAMATION MARK character (!) to the comment token's data. Reconsume in the
             // comment state."
             Some(_) => {
@@ -1123,22 +1199,22 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#bogus-comment-state
+    /// [§ 13.2.5.41 Bogus comment state](https://html.spec.whatwg.org/multipage/parsing.html#bogus-comment-state)
     fn handle_bogus_comment_state(&mut self) {
         match self.current_input_character {
-            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current
             // comment token."
             Some('>') => {
                 self.switch_to(TokenizerState::Data);
                 self.emit_token();
             }
-            // Spec: "EOF - Emit the comment. Emit an end-of-file token."
+            // "EOF - Emit the comment. Emit an end-of-file token."
             None => {
                 self.emit_token();
                 self.emit_eof_token();
                 self.at_eof = true;
             }
-            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER character to the comment token's data."
             Some('\0') => {
                 self.log_parse_error();
@@ -1146,7 +1222,7 @@ impl HTMLTokenizer {
                     token.append_to_comment('\u{FFFD}');
                 }
             }
-            // Spec: "Anything else - Append the current input character to the comment token's data."
+            // "Anything else - Append the current input character to the comment token's data."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_comment(c);
@@ -1174,7 +1250,7 @@ impl HTMLTokenizer {
         }
     }
 
-    // Spec: "Consume the next input character"
+    // "Consume the next input character"
     // Returns the character at the current position and advances the position.
     fn consume(&mut self) -> Option<char> {
         if let Some(c) = self.input[self.current_pos..].chars().next() {
@@ -1203,8 +1279,8 @@ impl HTMLTokenizer {
     }
 
     /// Check if the next few characters match the target string (ASCII case-insensitive).
-    /// Spec: https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
-    /// "ASCII case-insensitive match"
+    /// Used by [§ 13.2.5.42 Markup declaration open state](https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state)
+    /// for "ASCII case-insensitive match".
     pub fn next_few_characters_are_case_insensitive(&self, target: &str) -> bool {
         let target_chars: Vec<char> = target.chars().collect();
 
@@ -1238,7 +1314,7 @@ impl HTMLTokenizer {
 
     pub fn run(&mut self) {
         loop {
-            // Spec: Each state begins by consuming the next input character,
+            // Each state begins by consuming the next input character,
             // unless we're reconsuming from a previous state transition.
             if self.reconsume {
                 self.reconsume = false;
