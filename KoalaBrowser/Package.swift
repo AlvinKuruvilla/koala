@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "KoalaBrowser", targets: ["KoalaBrowser"])
+        .executable(name: "KoalaBrowser", targets: ["KoalaBrowser"]),
+        .executable(name: "koala-screenshot", targets: ["KoalaScreenshot"])
     ],
     targets: [
         // System library target that wraps the Rust FFI
@@ -33,6 +34,12 @@ let package = Package(
             name: "KoalaBrowser",
             dependencies: ["KoalaCore"],
             path: "Sources/KoalaBrowser"
+        ),
+        // Headless screenshot tool
+        .executableTarget(
+            name: "KoalaScreenshot",
+            dependencies: ["KoalaCore"],
+            path: "Sources/KoalaScreenshot"
         )
     ]
 )

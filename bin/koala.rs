@@ -6,6 +6,7 @@
 //!   koala <file> --tokens     Show HTML tokens
 //!   koala <file> --css        Show extracted CSS and parsed rules
 //!   koala <file> --verbose    Show all debugging information
+//!   koala <file> --no-color   Disable colored output
 //!
 //! Examples:
 //!   koala res/simple.html
@@ -14,6 +15,7 @@
 
 use std::env;
 use std::fs;
+use std::io::{self, IsTerminal, Write};
 
 use koala::lib_css::css_cascade::compute_styles;
 use koala::lib_css::css_parser::parser::{CSSParser, Rule};
@@ -23,12 +25,99 @@ use koala::lib_dom::{Node, NodeType};
 use koala::lib_html::html_parser::parser::HTMLParser;
 use koala::lib_html::html_tokenizer::tokenizer::HTMLTokenizer;
 
+// ANSI color codes
+mod color {
+    pub const RESET: &str = "\x1b[0m";
+    pub const BOLD: &str = "\x1b[1m";
+    pub const DIM: &str = "\x1b[2m";
+
+    // Foreground colors
+    pub const GREEN: &str = "\x1b[32m";
+    pub const YELLOW: &str = "\x1b[33m";
+    pub const CYAN: &str = "\x1b[36m";
+    pub const WHITE: &str = "\x1b[37m";
+    pub const GRAY: &str = "\x1b[90m";
+
+    // Bright colors
+    pub const BRIGHT_BLUE: &str = "\x1b[94m";
+    pub const BRIGHT_YELLOW: &str = "\x1b[93m";
+    pub const BRIGHT_MAGENTA: &str = "\x1b[95m";
+    pub const BRIGHT_CYAN: &str = "\x1b[96m";
+}
+
+struct Colors {
+    enabled: bool,
+}
+
+impl Colors {
+    fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+
+    fn wrap(&self, text: &str, color: &str) -> String {
+        if self.enabled {
+            format!("{}{}{}", color, text, color::RESET)
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn tag(&self, text: &str) -> String {
+        self.wrap(text, color::BRIGHT_BLUE)
+    }
+
+    fn attr_name(&self, text: &str) -> String {
+        self.wrap(text, color::CYAN)
+    }
+
+    fn attr_value(&self, text: &str) -> String {
+        self.wrap(text, color::YELLOW)
+    }
+
+    fn text(&self, text: &str) -> String {
+        self.wrap(text, color::GREEN)
+    }
+
+    fn comment(&self, text: &str) -> String {
+        self.wrap(text, color::GRAY)
+    }
+
+    fn style(&self, text: &str) -> String {
+        self.wrap(text, color::BRIGHT_MAGENTA)
+    }
+
+    fn css_prop(&self, text: &str) -> String {
+        self.wrap(text, color::CYAN)
+    }
+
+    fn css_value(&self, text: &str) -> String {
+        self.wrap(text, color::YELLOW)
+    }
+
+    fn header(&self, text: &str) -> String {
+        self.wrap(text, &format!("{}{}", color::BOLD, color::WHITE))
+    }
+
+    fn dim(&self, text: &str) -> String {
+        self.wrap(text, color::DIM)
+    }
+
+    fn selector(&self, text: &str) -> String {
+        self.wrap(text, color::BRIGHT_CYAN)
+    }
+
+    fn number(&self, text: &str) -> String {
+        self.wrap(text, color::BRIGHT_YELLOW)
+    }
+}
+
 #[derive(Default)]
 struct Options {
     json: bool,
     tokens: bool,
     css: bool,
     verbose: bool,
+    no_color: bool,
 }
 
 fn main() {
@@ -55,6 +144,7 @@ fn main() {
                 options.tokens = true;
                 options.css = true;
             }
+            "--no-color" => options.no_color = true,
             "--html" => {
                 i += 1;
                 if i < args.len() {
@@ -79,11 +169,15 @@ fn main() {
         i += 1;
     }
 
+    // Determine if colors should be enabled
+    let use_colors = !options.no_color && io::stdout().is_terminal();
+    let c = Colors::new(use_colors);
+
     // Get HTML content
     let html = if let Some(src) = html_source {
         src
-    } else if let Some(path) = file_path {
-        match fs::read_to_string(&path) {
+    } else if let Some(ref path) = file_path {
+        match fs::read_to_string(path) {
             Ok(content) => content,
             Err(e) => {
                 eprintln!("Error reading '{}': {}", path, e);
@@ -102,9 +196,9 @@ fn main() {
     let tokens = tokenizer.into_tokens();
 
     if options.tokens {
-        println!("=== HTML Tokens ({}) ===", tokens.len());
+        println!("{}", c.header(&format!("=== HTML Tokens ({}) ===", tokens.len())));
         for (i, token) in tokens.iter().enumerate() {
-            println!("  {:3}: {:?}", i, token);
+            println!("  {}: {:?}", c.number(&format!("{:3}", i)), token);
         }
         println!();
     }
@@ -121,33 +215,44 @@ fn main() {
         let css_tokens = css_tokenizer.into_tokens();
 
         if options.css {
-            println!("=== Extracted CSS ({} chars) ===", css_text.len());
-            println!("{}", css_text.trim());
+            println!("{}", c.header(&format!("=== CSS ({} chars) ===", css_text.len())));
+            print_css_highlighted(&css_text, &c);
             println!();
 
-            println!("=== CSS Tokens ({}) ===", css_tokens.len());
             if options.verbose {
+                println!("{}", c.header(&format!("=== CSS Tokens ({}) ===", css_tokens.len())));
                 for (i, token) in css_tokens.iter().enumerate() {
-                    println!("  {:3}: {:?}", i, token);
+                    println!("  {}: {:?}", c.number(&format!("{:3}", i)), token);
                 }
-            } else {
-                println!("  (use --verbose to see tokens)");
+                println!();
             }
-            println!();
         }
 
         let mut css_parser = CSSParser::new(css_tokens);
         let stylesheet = css_parser.parse_stylesheet();
 
         if options.css {
-            println!("=== CSS Rules ({}) ===", stylesheet.rules.len());
+            println!("{}", c.header(&format!("=== CSS Rules ({}) ===", stylesheet.rules.len())));
             for (i, rule) in stylesheet.rules.iter().enumerate() {
                 if let Rule::Style(sr) = rule {
-                    let selectors: Vec<&str> = sr.selectors.iter().map(|s| s.text.as_str()).collect();
-                    println!("  Rule {}: {} {{ {} declarations }}", i, selectors.join(", "), sr.declarations.len());
+                    let selectors: Vec<String> = sr
+                        .selectors
+                        .iter()
+                        .map(|s| c.selector(&s.text))
+                        .collect();
+                    println!(
+                        "  {} {} {{ {} }}",
+                        c.dim(&format!("{}.", i)),
+                        selectors.join(", "),
+                        c.number(&format!("{} declarations", sr.declarations.len()))
+                    );
                     if options.verbose {
                         for decl in &sr.declarations {
-                            println!("    {}: {:?}", decl.name, decl.value);
+                            println!(
+                                "       {}: {}",
+                                c.css_prop(&decl.name),
+                                c.css_value(&format!("{:?}", decl.value))
+                            );
                         }
                     }
                 }
@@ -158,7 +263,7 @@ fn main() {
         compute_styles(&dom, &stylesheet)
     } else {
         if options.css {
-            println!("=== No CSS found ===");
+            println!("{}", c.header("=== No CSS found ==="));
             println!();
         }
         std::collections::HashMap::new()
@@ -168,9 +273,15 @@ fn main() {
     if options.json {
         print_json(&dom, &styles);
     } else {
-        println!("=== DOM Tree ({} styled elements) ===", styles.len());
-        print_tree(&dom, &styles, 0);
+        println!(
+            "{}",
+            c.header(&format!("=== DOM Tree ({} styled) ===", styles.len()))
+        );
+        print_tree(&dom, &styles, 0, &c);
     }
+
+    // Flush stdout
+    let _ = io::stdout().flush();
 }
 
 fn print_usage(program: &str) {
@@ -182,6 +293,7 @@ fn print_usage(program: &str) {
     eprintln!("  {} <file> --tokens     Show HTML tokens", program);
     eprintln!("  {} <file> --css        Show extracted CSS and parsed rules", program);
     eprintln!("  {} <file> --verbose    Show all debugging information", program);
+    eprintln!("  {} <file> --no-color   Disable colored output", program);
     eprintln!("  {} --html '<html>'     Parse HTML string directly", program);
     eprintln!();
     eprintln!("Examples:");
@@ -190,35 +302,108 @@ fn print_usage(program: &str) {
     eprintln!("  {} --html '<h1>Hello</h1>' --css", program);
 }
 
+fn print_css_highlighted(css: &str, c: &Colors) {
+    // Simple CSS syntax highlighting
+    let mut in_value = false;
+    let mut in_selector = true;
+    let mut buffer = String::new();
+
+    for ch in css.chars() {
+        match ch {
+            '{' => {
+                // End selector, start declarations
+                print!("{}", c.selector(&buffer));
+                buffer.clear();
+                print!("{}", c.dim("{"));
+                in_selector = false;
+                in_value = false;
+            }
+            '}' => {
+                // End value/property
+                if in_value {
+                    print!("{}", c.css_value(&buffer));
+                } else {
+                    print!("{}", c.css_prop(&buffer));
+                }
+                buffer.clear();
+                println!("{}", c.dim("}"));
+                in_selector = true;
+                in_value = false;
+            }
+            ':' if !in_selector => {
+                // Property name ends
+                print!("{}", c.css_prop(&buffer));
+                buffer.clear();
+                print!("{}", c.dim(":"));
+                in_value = true;
+            }
+            ';' => {
+                // Value ends
+                print!("{}", c.css_value(&buffer));
+                buffer.clear();
+                println!("{}", c.dim(";"));
+                in_value = false;
+            }
+            '\n' if in_selector => {
+                // Newline in selector area
+                if !buffer.trim().is_empty() {
+                    print!("{}", c.selector(&buffer));
+                }
+                buffer.clear();
+                println!();
+            }
+            _ => {
+                buffer.push(ch);
+            }
+        }
+    }
+
+    // Print any remaining buffer
+    if !buffer.is_empty() {
+        print!("{}", buffer);
+    }
+}
+
 fn print_tree(
     node: &Node,
     styles: &std::collections::HashMap<*const Node, koala::lib_css::css_style::ComputedStyle>,
     depth: usize,
+    c: &Colors,
 ) {
     let indent = "  ".repeat(depth);
 
     match &node.node_type {
         NodeType::Document => {
-            println!("{}#document", indent);
+            println!("{}{}", indent, c.dim("#document"));
         }
         NodeType::Element(data) => {
-            // Build attribute string
-            let mut attr_str = String::new();
+            // Build tag with attributes
+            let mut tag_str = format!("<{}", data.tag_name);
+
             if let Some(id) = data.attrs.get("id") {
-                attr_str.push_str(&format!(" id=\"{}\"", id));
+                tag_str.push_str(&format!(
+                    " {}={}",
+                    c.attr_name("id"),
+                    c.attr_value(&format!("\"{}\"", id))
+                ));
             }
             if let Some(class) = data.attrs.get("class") {
-                attr_str.push_str(&format!(" class=\"{}\"", class));
+                tag_str.push_str(&format!(
+                    " {}={}",
+                    c.attr_name("class"),
+                    c.attr_value(&format!("\"{}\"", class))
+                ));
             }
+            tag_str.push('>');
 
-            print!("{}<{}{}>", indent, data.tag_name, attr_str);
+            print!("{}{}", indent, c.tag(&tag_str));
 
             // Show computed styles
             if let Some(style) = styles.get(&(node as *const Node)) {
                 let mut parts = Vec::new();
 
-                if let Some(ref c) = style.color {
-                    parts.push(format!("color:#{:02x}{:02x}{:02x}", c.r, c.g, c.b));
+                if let Some(ref clr) = style.color {
+                    parts.push(format!("color:#{:02x}{:02x}{:02x}", clr.r, clr.g, clr.b));
                 }
                 if let Some(ref bg) = style.background_color {
                     parts.push(format!("bg:#{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b));
@@ -240,7 +425,7 @@ fn print_tree(
                 }
 
                 if !parts.is_empty() {
-                    print!(" [{}]", parts.join(" "));
+                    print!(" {}", c.style(&format!("[{}]", parts.join(" "))));
                 }
             }
             println!();
@@ -248,12 +433,12 @@ fn print_tree(
         NodeType::Text(text) => {
             let trimmed = text.trim();
             if !trimmed.is_empty() {
-                let preview = if trimmed.len() > 50 {
-                    format!("{}...", &trimmed[..50])
+                let preview = if trimmed.len() > 60 {
+                    format!("{}...", &trimmed[..60])
                 } else {
                     trimmed.to_string()
                 };
-                println!("{}\"{}\"", indent, preview);
+                println!("{}{}", indent, c.text(&format!("\"{}\"", preview)));
             }
         }
         NodeType::Comment(text) => {
@@ -262,12 +447,12 @@ fn print_tree(
             } else {
                 text.to_string()
             };
-            println!("{}<!-- {} -->", indent, preview);
+            println!("{}{}", indent, c.comment(&format!("<!-- {} -->", preview)));
         }
     }
 
     for child in &node.children {
-        print_tree(child, styles, depth + 1);
+        print_tree(child, styles, depth + 1, c);
     }
 }
 
@@ -276,7 +461,10 @@ fn print_json(
     styles: &std::collections::HashMap<*const Node, koala::lib_css::css_style::ComputedStyle>,
 ) {
     let json = node_to_json(node, styles);
-    println!("{}", serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string()));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string())
+    );
 }
 
 fn node_to_json(
