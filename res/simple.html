@@ -2,12 +2,38 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- This is a comment -->
-    <title>Test</title>
+    <title>Koala CSS Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            margin: 20px;
+        }
+        h1 {
+            color: #2563eb;
+            font-size: 32px;
+        }
+        .highlight {
+            background-color: #fef08a;
+            padding: 4px 8px;
+        }
+        #main-content {
+            border: 1px solid #ddd;
+            padding: 16px;
+            background-color: white;
+        }
+        p {
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+    </style>
 </head>
-<body class="main" id="content">
-    <!-- TODO: add more content -->
-    <div data-value='single quoted'>Hello</div>
-    <input type="text" disabled />
+<body>
+    <h1>Welcome to Koala Browser</h1>
+    <div id="main-content">
+        <p>This is a test page with <span class="highlight">CSS styling</span>.</p>
+        <p>The browser should parse the CSS and apply basic styles.</p>
+    </div>
 </body>
 </html>
