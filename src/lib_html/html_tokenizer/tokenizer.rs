@@ -455,7 +455,8 @@ impl HTMLTokenizer {
             // "U+002F SOLIDUS (/)"
             // "Set the temporary buffer to the empty string. Switch to the script data end tag open state."
             Some('/') => {
-                todo!("implement: clear buffer, switch to ScriptDataEndTagOpen");
+                self.temporary_buffer.clear();
+                self.switch_to(TokenizerState::ScriptDataEndTagOpen);
             }
             // "U+0021 EXCLAMATION MARK (!)"
             // "Switch to the script data escape start state. Emit a U+003C LESS-THAN SIGN character token
