@@ -95,6 +95,9 @@ pub struct HTMLTokenizer {
     current_token: Option<Token>,
     at_eof: bool,
     token_stream: Vec<Token>,
+    // When true, the next iteration of the main loop will not consume a new character.
+    // Spec: "Reconsume in the X state" sets this flag.
+    reconsume: bool,
 }
 impl HTMLTokenizer {
     pub fn new(input: String) -> Self {
@@ -110,16 +113,22 @@ impl HTMLTokenizer {
             current_token: None,
             at_eof: false,
             token_stream: Vec::new(),
+            reconsume: false,
         }
     }
 
-    // Transition to a new state
+    // Spec: "Switch to the X state"
+    // Transitions to a new state. The next character will be consumed on the next
+    // iteration of the main loop.
     fn switch_to(&mut self, new_state: TokenizerState) {
-        // println!("Switched from: {} to {}", self.state, new_state);
         self.state = new_state;
-        self.current_input_character = self.next_codepoint(false);
     }
-    fn switch_to_without_consume(&mut self, new_state: TokenizerState) {
+
+    // Spec: "Reconsume in the X state"
+    // Transitions to a new state without consuming the current character.
+    // The same character will be processed again in the new state.
+    fn reconsume_in(&mut self, new_state: TokenizerState) {
+        self.reconsume = true;
         self.state = new_state;
     }
 
@@ -191,8 +200,11 @@ impl HTMLTokenizer {
     fn handle_tag_open_state(&mut self) {
         match self.current_input_character {
             // Spec: "U+0021 EXCLAMATION MARK (!) - Switch to the markup declaration open state."
+            // NOTE: We use reconsume_in here so that MarkupDeclarationOpen can peek ahead
+            // without the main loop consuming a character first. This state uses lookahead
+            // rather than consuming the "current input character".
             Some('!') => {
-                self.switch_to(TokenizerState::MarkupDeclarationOpen);
+                self.reconsume_in(TokenizerState::MarkupDeclarationOpen);
             }
             // Spec: "U+002F SOLIDUS (/) - Switch to the end tag open state."
             Some('/') => {
@@ -202,7 +214,7 @@ impl HTMLTokenizer {
             // string. Reconsume in the tag name state."
             Some(c) if c.is_ascii_alphabetic() => {
                 self.current_token = Some(Token::new_start_tag());
-                self.switch_to_without_consume(TokenizerState::TagName);
+                self.reconsume_in(TokenizerState::TagName);
             }
             // Spec: "U+003F QUESTION MARK (?) - This is an unexpected-question-mark-instead-of-tag-name
             // parse error. Create a comment token whose data is the empty string. Reconsume in the
@@ -210,7 +222,7 @@ impl HTMLTokenizer {
             Some('?') => {
                 self.log_parse_error();
                 self.current_token = Some(Token::new_comment());
-                self.switch_to_without_consume(TokenizerState::BogusComment);
+                self.reconsume_in(TokenizerState::BogusComment);
             }
             // Spec: "EOF - This is an eof-before-tag-name parse error. Emit a U+003C LESS-THAN SIGN
             // character token and an end-of-file token."
@@ -225,7 +237,7 @@ impl HTMLTokenizer {
             Some(_) => {
                 self.log_parse_error();
                 self.emit_character_token('<');
-                self.switch_to_without_consume(TokenizerState::Data);
+                self.reconsume_in(TokenizerState::Data);
             }
         }
     }
@@ -235,16 +247,16 @@ impl HTMLTokenizer {
         // consume those two characters, create a comment token whose data is the empty
         // string, and switch to the comment start state."
         if self.next_few_characters_are("--") {
-            self.consume("--");
+            self.consume_string("--");
             self.current_token = Some(Token::new_comment());
-            self.switch_to_without_consume(TokenizerState::CommentStart);
+            self.switch_to(TokenizerState::CommentStart);
         }
         // Spec: "Otherwise, if the next seven characters are an ASCII case-insensitive
         // match for the word 'DOCTYPE', consume those characters and switch to the
         // DOCTYPE state."
         else if self.next_few_characters_are_case_insensitive("DOCTYPE") {
-            self.consume("DOCTYPE");
-            self.switch_to_without_consume(TokenizerState::DOCTYPE);
+            self.consume_string("DOCTYPE");
+            self.switch_to(TokenizerState::DOCTYPE);
         }
         // Spec: "Otherwise, if there is an adjusted current node and it is not an element
         // in the HTML namespace and the next seven characters are a case-sensitive match
@@ -252,8 +264,8 @@ impl HTMLTokenizer {
         // CDATA section state."
         else if self.next_few_characters_are("[CDATA[") {
             // TODO: Check adjusted current node condition
-            self.consume("[CDATA[");
-            self.switch_to_without_consume(TokenizerState::CDATASection);
+            self.consume_string("[CDATA[");
+            self.switch_to(TokenizerState::CDATASection);
         }
         // Spec: "Otherwise, this is an incorrectly-opened-comment parse error. Create a
         // comment token whose data is the empty string. Switch to the bogus comment state
@@ -261,7 +273,7 @@ impl HTMLTokenizer {
         else {
             self.log_parse_error();
             self.current_token = Some(Token::new_comment());
-            self.switch_to_without_consume(TokenizerState::BogusComment);
+            self.reconsume_in(TokenizerState::BogusComment);
         }
     }
     // Spec: https://html.spec.whatwg.org/multipage/parsing.html#doctype-state
@@ -274,7 +286,7 @@ impl HTMLTokenizer {
             }
             // Spec: "U+003E GREATER-THAN SIGN (>) - Reconsume in the before DOCTYPE name state."
             Some('>') => {
-                self.switch_to_without_consume(TokenizerState::BeforeDOCTYPEName);
+                self.reconsume_in(TokenizerState::BeforeDOCTYPEName);
             }
             // Spec: "EOF - This is an eof-in-doctype parse error. Create a new DOCTYPE token.
             // Set its force-quirks flag to on. Emit the current token. Emit an end-of-file token."
@@ -291,7 +303,7 @@ impl HTMLTokenizer {
             // Reconsume in the before DOCTYPE name state."
             Some(_) => {
                 self.log_parse_error();
-                self.switch_to_without_consume(TokenizerState::BeforeDOCTYPEName);
+                self.reconsume_in(TokenizerState::BeforeDOCTYPEName);
             }
         }
     }
@@ -372,7 +384,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_doctype_name(c.to_ascii_lowercase());
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current DOCTYPE token's name."
@@ -381,7 +392,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_doctype_name('\u{FFFD}');
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "EOF - This is an eof-in-doctype parse error. Set the current DOCTYPE token's
             // force-quirks flag to on. Emit the current token. Emit an end-of-file token."
@@ -400,7 +410,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_doctype_name(c);
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
         }
     }
@@ -427,7 +436,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_tag_name(c.to_ascii_lowercase());
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current tag token's tag name."
@@ -436,7 +444,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_tag_name('\u{FFFD}');
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
@@ -450,7 +457,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_tag_name(c);
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
         }
     }
@@ -476,7 +482,7 @@ impl HTMLTokenizer {
             // Reconsume in the before attribute name state."
             Some(_) => {
                 self.log_parse_error();
-                self.switch_to_without_consume(TokenizerState::BeforeAttributeName);
+                self.reconsume_in(TokenizerState::BeforeAttributeName);
             }
         }
     }
@@ -487,7 +493,7 @@ impl HTMLTokenizer {
             // string. Reconsume in the tag name state."
             Some(c) if c.is_ascii_alphabetic() => {
                 self.current_token = Some(Token::new_end_tag());
-                self.switch_to_without_consume(TokenizerState::TagName);
+                self.reconsume_in(TokenizerState::TagName);
             }
             // Spec: "U+003E GREATER-THAN SIGN (>) - This is a missing-end-tag-name parse error.
             // Switch to the data state."
@@ -510,7 +516,7 @@ impl HTMLTokenizer {
             Some(_) => {
                 self.log_parse_error();
                 self.current_token = Some(Token::new_comment());
-                self.switch_to_without_consume(TokenizerState::BogusComment);
+                self.reconsume_in(TokenizerState::BogusComment);
             }
         }
     }
@@ -526,7 +532,7 @@ impl HTMLTokenizer {
             // Spec: "U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
             // Reconsume in the after attribute name state."
             Some('/') | Some('>') | None => {
-                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+                self.reconsume_in(TokenizerState::AfterAttributeName);
             }
             // Spec: "U+003D EQUALS SIGN (=) - This is an unexpected-equals-sign-before-attribute-name
             // parse error. Start a new attribute in the current tag token. Set that attribute's name
@@ -546,7 +552,7 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.start_new_attribute();
                 }
-                self.switch_to_without_consume(TokenizerState::AttributeName);
+                self.reconsume_in(TokenizerState::AttributeName);
             }
         }
     }
@@ -559,15 +565,15 @@ impl HTMLTokenizer {
             // Reconsume in the after attribute name state."
             Some(c) if Self::is_whitespace_char(c) => {
                 self.check_duplicate_attribute();
-                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+                self.reconsume_in(TokenizerState::AfterAttributeName);
             }
             Some('/') | Some('>') => {
                 self.check_duplicate_attribute();
-                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+                self.reconsume_in(TokenizerState::AfterAttributeName);
             }
             None => {
                 self.check_duplicate_attribute();
-                self.switch_to_without_consume(TokenizerState::AfterAttributeName);
+                self.reconsume_in(TokenizerState::AfterAttributeName);
             }
             // Spec: "U+003D EQUALS SIGN (=) - Switch to the before attribute value state."
             Some('=') => {
@@ -580,7 +586,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name(c.to_ascii_lowercase());
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
             // U+FFFD REPLACEMENT CHARACTER to the current attribute's name."
@@ -589,7 +594,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name('\u{FFFD}');
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<) -
             // This is an unexpected-character-in-attribute-name parse error. Treat it as per the
@@ -599,14 +603,12 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name(self.current_input_character.unwrap());
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "Anything else - Append the current input character to the current attribute's name."
             Some(c) => {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name(c);
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
         }
     }
@@ -644,7 +646,7 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.start_new_attribute();
                 }
-                self.switch_to_without_consume(TokenizerState::AttributeName);
+                self.reconsume_in(TokenizerState::AttributeName);
             }
         }
     }
@@ -674,7 +676,7 @@ impl HTMLTokenizer {
             }
             // Spec: "Anything else - Reconsume in the attribute value (unquoted) state."
             _ => {
-                self.switch_to_without_consume(TokenizerState::AttributeValueUnquoted);
+                self.reconsume_in(TokenizerState::AttributeValueUnquoted);
             }
         }
     }
@@ -699,7 +701,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value('\u{FFFD}');
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
@@ -712,7 +713,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
         }
     }
@@ -737,7 +737,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value('\u{FFFD}');
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
@@ -750,7 +749,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
         }
     }
@@ -781,7 +779,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value('\u{FFFD}');
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<),
             // U+003D EQUALS SIGN (=), U+0060 GRAVE ACCENT (`) - This is an
@@ -792,7 +789,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(self.current_input_character.unwrap());
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
             // Spec: "EOF - This is an eof-in-tag parse error. Emit an end-of-file token."
             None => {
@@ -805,7 +801,6 @@ impl HTMLTokenizer {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
                 }
-                self.current_input_character = self.next_codepoint(false);
             }
         }
     }
@@ -837,7 +832,319 @@ impl HTMLTokenizer {
             // Reconsume in the before attribute name state."
             Some(_) => {
                 self.log_parse_error();
-                self.switch_to_without_consume(TokenizerState::BeforeAttributeName);
+                self.reconsume_in(TokenizerState::BeforeAttributeName);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Comment states
+    // -------------------------------------------------------------------------
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-start-state
+    fn handle_comment_start_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment start dash state."
+            Some('-') => {
+                self.switch_to(TokenizerState::CommentStartDash);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - This is an abrupt-closing-of-empty-comment
+            // parse error. Switch to the data state. Emit the current comment token."
+            Some('>') => {
+                self.log_parse_error();
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "Anything else - Reconsume in the comment state."
+            _ => {
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-start-dash-state
+    fn handle_comment_start_dash_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment end state."
+            Some('-') => {
+                self.switch_to(TokenizerState::CommentEnd);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - This is an abrupt-closing-of-empty-comment
+            // parse error. Switch to the data state. Emit the current comment token."
+            Some('>') => {
+                self.log_parse_error();
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // token. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append a U+002D HYPHEN-MINUS character (-) to the comment
+            // token's data. Reconsume in the comment state."
+            Some(_) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('-');
+                }
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-state
+    fn handle_comment_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+003C LESS-THAN SIGN (<) - Append the current input character to the
+            // comment token's data. Switch to the comment less-than sign state."
+            Some('<') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('<');
+                }
+                self.switch_to(TokenizerState::CommentLessThanSign);
+            }
+            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment end dash state."
+            Some('-') => {
+                self.switch_to(TokenizerState::CommentEndDash);
+            }
+            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // U+FFFD REPLACEMENT CHARACTER character to the comment token's data."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('\u{FFFD}');
+                }
+            }
+            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // token. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append the current input character to the comment token's data."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment(c);
+                }
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-state
+    fn handle_comment_less_than_sign_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+0021 EXCLAMATION MARK (!) - Append the current input character to the
+            // comment token's data. Switch to the comment less-than sign bang state."
+            Some('!') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('!');
+                }
+                self.switch_to(TokenizerState::CommentLessThanSignBang);
+            }
+            // Spec: "U+003C LESS-THAN SIGN (<) - Append the current input character to the
+            // comment token's data."
+            Some('<') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('<');
+                }
+            }
+            // Spec: "Anything else - Reconsume in the comment state."
+            _ => {
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-state
+    fn handle_comment_less_than_sign_bang_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash state."
+            Some('-') => {
+                self.switch_to(TokenizerState::CommentLessThanSignBangDash);
+            }
+            // Spec: "Anything else - Reconsume in the comment state."
+            _ => {
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-state
+    fn handle_comment_less_than_sign_bang_dash_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash dash state."
+            Some('-') => {
+                self.switch_to(TokenizerState::CommentLessThanSignBangDashDash);
+            }
+            // Spec: "Anything else - Reconsume in the comment end dash state."
+            _ => {
+                self.reconsume_in(TokenizerState::CommentEndDash);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-dash-state
+    fn handle_comment_less_than_sign_bang_dash_dash_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+003E GREATER-THAN SIGN (>) - Reconsume in the comment end state."
+            Some('>') => {
+                self.reconsume_in(TokenizerState::CommentEnd);
+            }
+            // Spec: "EOF - Reconsume in the comment end state."
+            None => {
+                self.reconsume_in(TokenizerState::CommentEnd);
+            }
+            // Spec: "Anything else - This is a nested-comment parse error. Reconsume in the
+            // comment end state."
+            Some(_) => {
+                self.log_parse_error();
+                self.reconsume_in(TokenizerState::CommentEnd);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-end-dash-state
+    fn handle_comment_end_dash_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+002D HYPHEN-MINUS (-) - Switch to the comment end state."
+            Some('-') => {
+                self.switch_to(TokenizerState::CommentEnd);
+            }
+            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // token. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append a U+002D HYPHEN-MINUS character (-) to the comment
+            // token's data. Reconsume in the comment state."
+            Some(_) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('-');
+                }
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-end-state
+    fn handle_comment_end_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current
+            // comment token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "U+0021 EXCLAMATION MARK (!) - Switch to the comment end bang state."
+            Some('!') => {
+                self.switch_to(TokenizerState::CommentEndBang);
+            }
+            // Spec: "U+002D HYPHEN-MINUS (-) - Append a U+002D HYPHEN-MINUS character (-) to
+            // the comment token's data."
+            Some('-') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('-');
+                }
+            }
+            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // token. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append two U+002D HYPHEN-MINUS characters (-) to the
+            // comment token's data. Reconsume in the comment state."
+            Some(_) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('-');
+                    token.append_to_comment('-');
+                }
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#comment-end-bang-state
+    fn handle_comment_end_bang_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+002D HYPHEN-MINUS (-) - Append two U+002D HYPHEN-MINUS characters (-)
+            // and a U+0021 EXCLAMATION MARK character (!) to the comment token's data. Switch
+            // to the comment end dash state."
+            Some('-') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('-');
+                    token.append_to_comment('-');
+                    token.append_to_comment('!');
+                }
+                self.switch_to(TokenizerState::CommentEndDash);
+            }
+            // Spec: "U+003E GREATER-THAN SIGN (>) - This is an incorrectly-closed-comment parse
+            // error. Switch to the data state. Emit the current comment token."
+            Some('>') => {
+                self.log_parse_error();
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "EOF - This is an eof-in-comment parse error. Emit the current comment
+            // token. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "Anything else - Append two U+002D HYPHEN-MINUS characters (-) and a U+0021
+            // EXCLAMATION MARK character (!) to the comment token's data. Reconsume in the
+            // comment state."
+            Some(_) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('-');
+                    token.append_to_comment('-');
+                    token.append_to_comment('!');
+                }
+                self.reconsume_in(TokenizerState::Comment);
+            }
+        }
+    }
+
+    // Spec: https://html.spec.whatwg.org/multipage/parsing.html#bogus-comment-state
+    fn handle_bogus_comment_state(&mut self) {
+        match self.current_input_character {
+            // Spec: "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit the current
+            // comment token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // Spec: "EOF - Emit the comment. Emit an end-of-file token."
+            None => {
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // Spec: "U+0000 NULL - This is an unexpected-null-character parse error. Append a
+            // U+FFFD REPLACEMENT CHARACTER character to the comment token's data."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment('\u{FFFD}');
+                }
+            }
+            // Spec: "Anything else - Append the current input character to the comment token's data."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_comment(c);
+                }
             }
         }
     }
@@ -861,33 +1168,17 @@ impl HTMLTokenizer {
         }
     }
 
-    /// Retrieve the next code point (character) and update the position
-    pub fn next_codepoint(&mut self, is_parsing_first_char: bool) -> Option<char> {
-        // Print the current position and the remaining string
-        // println!("Current position: {}", self.current_pos);
-        // println!(
-        //     "In next_codepoint: Remaining string: {}",
-        //     &self.input[self.current_pos..]
-        // );
-
-        // Get the next character at the current position
-        if let Some(code_point) = self.input[self.current_pos..].chars().next() {
-            // println!("In next_codepoint: Current char: {:?}", code_point); // Print the current character
-
-            // Update the position by advancing past the current code point
-            if !is_parsing_first_char {
-                self.current_pos += code_point.len_utf8();
-            }
-            // println!(
-            //     "In next_codepoint: New position after consuming: {}",
-            //     self.current_pos
-            // );
-
-            Some(code_point)
+    // Spec: "Consume the next input character"
+    // Returns the character at the current position and advances the position.
+    fn consume(&mut self) -> Option<char> {
+        if let Some(c) = self.input[self.current_pos..].chars().next() {
+            self.current_pos += c.len_utf8();
+            Some(c)
         } else {
-            None // Return None if we've reached the end of the string
+            None
         }
     }
+
     /// Check if the next few characters match the target string exactly.
     pub fn next_few_characters_are(&self, target: &str) -> bool {
         let target_chars: Vec<char> = target.chars().collect();
@@ -925,7 +1216,7 @@ impl HTMLTokenizer {
     }
     /// Consume the given string from the input.
     /// Caller must have already verified the characters are present.
-    pub fn consume(&mut self, target: &str) {
+    pub fn consume_string(&mut self, target: &str) {
         // Advance by the number of bytes in the target string.
         // This is safe for ASCII strings (like "DOCTYPE", "--", "[CDATA[").
         self.current_pos += target.len();
@@ -941,20 +1232,15 @@ impl HTMLTokenizer {
 
     pub fn run(&mut self) {
         loop {
-            self.current_input_character = self.next_codepoint(true);
-            // println!(
-            //     "Current char: {:?} at position: {}",
-            //     self.current_input_character, self.current_pos
-            // );
-            // println!(
-            //     "self.current_input_character.is_none: {}",
-            //     self.current_input_character.is_none()
-            // );
-            // println!(
-            //     "self.current_token.is_eof(): {} because current token is: {}",
-            //     self.current_token.is_eof(),
-            //     self.current_token
-            // );
+            // Spec: Each state begins by consuming the next input character,
+            // unless we're reconsuming from a previous state transition.
+            if self.reconsume {
+                self.reconsume = false;
+                // Keep current_input_character as-is for reconsuming
+            } else {
+                self.current_input_character = self.consume();
+            }
+
             if self.current_input_character.is_none() && self.at_eof {
                 println!();
                 break;
@@ -1059,25 +1345,54 @@ impl HTMLTokenizer {
                     self.handle_self_closing_start_tag_state();
                     continue;
                 }
-                TokenizerState::BogusComment => todo!("Unhandled state: {}", self.state),
+                TokenizerState::BogusComment => {
+                    self.handle_bogus_comment_state();
+                    continue;
+                }
                 TokenizerState::MarkupDeclarationOpen => {
                     self.handle_markup_declaration_open_state();
                     continue;
                 }
-                TokenizerState::CommentStart => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CommentStartDash => todo!("Unhandled state: {}", self.state),
-                TokenizerState::Comment => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CommentLessThanSign => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CommentLessThanSignBang => todo!("Unhandled state: {}", self.state),
+                TokenizerState::CommentStart => {
+                    self.handle_comment_start_state();
+                    continue;
+                }
+                TokenizerState::CommentStartDash => {
+                    self.handle_comment_start_dash_state();
+                    continue;
+                }
+                TokenizerState::Comment => {
+                    self.handle_comment_state();
+                    continue;
+                }
+                TokenizerState::CommentLessThanSign => {
+                    self.handle_comment_less_than_sign_state();
+                    continue;
+                }
+                TokenizerState::CommentLessThanSignBang => {
+                    self.handle_comment_less_than_sign_bang_state();
+                    continue;
+                }
                 TokenizerState::CommentLessThanSignBangDash => {
-                    todo!("Unhandled state: {}", self.state)
+                    self.handle_comment_less_than_sign_bang_dash_state();
+                    continue;
                 }
                 TokenizerState::CommentLessThanSignBangDashDash => {
-                    todo!("Unhandled state: {}", self.state)
+                    self.handle_comment_less_than_sign_bang_dash_dash_state();
+                    continue;
                 }
-                TokenizerState::CommentEndDash => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CommentEnd => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CommentEndBang => todo!("Unhandled state: {}", self.state),
+                TokenizerState::CommentEndDash => {
+                    self.handle_comment_end_dash_state();
+                    continue;
+                }
+                TokenizerState::CommentEnd => {
+                    self.handle_comment_end_state();
+                    continue;
+                }
+                TokenizerState::CommentEndBang => {
+                    self.handle_comment_end_bang_state();
+                    continue;
+                }
                 TokenizerState::DOCTYPE => {
                     self.handle_doctype_state();
                     continue;
