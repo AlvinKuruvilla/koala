@@ -600,7 +600,8 @@ impl HTMLParser {
             // 4. "Switch the insertion mode to "text"."
             Token::StartTag { name, .. } if name == "title" => {
                 self.insert_html_element(token);
-                self.original_insertion_mode = Some(InsertionMode::InHead);
+                // "Let the original insertion mode be the current insertion mode."
+                self.original_insertion_mode = Some(self.insertion_mode.clone());
                 self.insertion_mode = InsertionMode::Text;
                 // NOTE: The spec also says "Switch the tokenizer to the RCDATA state."
                 // We don't have tokenizer integration, so we rely on the tokenizer
@@ -618,9 +619,25 @@ impl HTMLParser {
                 if matches!(name.as_str(), "style" | "noscript" | "noframes") =>
             {
                 self.insert_html_element(token);
-                self.original_insertion_mode = Some(InsertionMode::InHead);
+                // "Let the original insertion mode be the current insertion mode."
+                self.original_insertion_mode = Some(self.insertion_mode.clone());
                 self.insertion_mode = InsertionMode::Text;
                 // NOTE: The tokenizer handles switching to RAWTEXT state for these elements
+            }
+
+            // [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+            // "A start tag whose tag name is "script""
+            // "Run these steps:"
+            // 1-8. (Simplified) Insert an HTML element for the token.
+            // 9. "Switch the tokenizer to the script data state."
+            // 10. "Let the original insertion mode be the current insertion mode."
+            // 11. "Switch the insertion mode to "text"."
+            Token::StartTag { name, .. } if name == "script" => {
+                self.insert_html_element(token);
+                // "Let the original insertion mode be the current insertion mode."
+                self.original_insertion_mode = Some(self.insertion_mode.clone());
+                self.insertion_mode = InsertionMode::Text;
+                // NOTE: The tokenizer handles switching to ScriptData state for script elements
             }
 
             // "An end tag whose tag name is "head""
@@ -998,6 +1015,20 @@ impl HTMLParser {
             {
                 self.insert_html_element(token);
                 self.stack_of_open_elements.pop();
+            }
+
+            // [§ 13.2.6.4.7 "in body"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is one of: "base", "basefont", "bgsound", "link",
+            // "meta", "noframes", "script", "style", "template", "title""
+            // "Process the token using the rules for the "in head" insertion mode."
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "base" | "basefont" | "bgsound" | "link" | "meta" | "noframes" | "script"
+                        | "style" | "template" | "title"
+                ) =>
+            {
+                self.handle_in_head_mode(token);
             }
 
             // "An end tag whose tag name is one of: "address", "article", "aside", "blockquote",
