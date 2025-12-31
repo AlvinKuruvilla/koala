@@ -1,0 +1,45 @@
+{
+  "highlight.regexes": {
+    "(//\\s*NOTE:.*(?:\\n\\s*//(?!\\s*(?:NOTE:|DEVIATION:|TODO:|§)).*)*)" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#FFB86C",
+          "backgroundColor": "rgba(255, 184, 108, 0.1)",
+          "isWholeLine": true
+        }
+      ]
+    },
+    "(//\\s*DEVIATION:.*(?:\\n\\s*//(?!\\s*(?:NOTE:|DEVIATION:|TODO:|§)).*)*)" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#FF6B9D",
+          "fontWeight": "bold",
+          "backgroundColor": "rgba(255, 107, 157, 0.1)",
+          "isWholeLine": true
+        }
+      ]
+    },
+    "(//\\s*\"[^\"]*\")" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#6BCDFF",
+          "fontStyle": "italic"
+        }
+      ]
+    },
+    "(///.*\\[§[^\\]]+\\]\\([^)]+\\))" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#BD93F9",
+          "backgroundColor": "rgba(189, 147, 249, 0.1)",
+          "isWholeLine": true
+        }
+      ]
+    }
+  },
+  "highlight.maxMatches": 500
+}
