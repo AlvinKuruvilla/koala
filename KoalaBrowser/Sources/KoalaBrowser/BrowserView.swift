@@ -2,7 +2,25 @@ import SwiftUI
 import KoalaCore
 
 struct BrowserView: View {
-    @StateObject private var viewModel = BrowserViewModel()
+    @StateObject private var viewModel: BrowserViewModel
+
+    /// Initial URL to load (from command line)
+    let initialURL: String?
+
+    init(initialURL: String? = nil) {
+        self.initialURL = initialURL
+
+        // Create ViewModel and configure it
+        let vm = BrowserViewModel()
+        if let url = initialURL {
+            vm.urlInput = url
+            // Schedule load after SwiftUI is ready
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                vm.loadURL()
+            }
+        }
+        self._viewModel = StateObject(wrappedValue: vm)
+    }
 
     var body: some View {
         VStack(spacing: 0) {

@@ -15,6 +15,7 @@ class BrowserViewModel: ObservableObject {
     @Published var rawHTML: String = ""
     @Published var rawJSON: String = ""
 
+
     var securityIcon: String {
         if currentURL.hasPrefix("file://") || !currentURL.contains("://") {
             return "doc"
@@ -56,27 +57,20 @@ class BrowserViewModel: ObservableObject {
         do {
             let html = try String(contentsOfFile: path, encoding: .utf8)
             rawHTML = html
-            print("[DEBUG] Loaded HTML (\(html.count) chars)")
 
             // Use the Rust parser via FFI
             if let json = KoalaParser.parseHTML(html) {
                 rawJSON = json
-                print("[DEBUG] Got JSON from Rust: \(json.prefix(500))...")
                 if let dom = KoalaParser.parse(html) {
                     document = dom
-                    print("[INFO] Successfully parsed: \(path)")
-                    print("[DEBUG] Document type: \(dom.type), children: \(dom.childNodes.count)")
                 } else {
                     self.error = "Failed to decode JSON to DOMNode"
-                    print("[ERROR] JSON decode failed")
                 }
             } else {
                 self.error = "Failed to parse HTML"
-                print("[ERROR] Rust parser returned nil for \(path)")
             }
         } catch {
             self.error = "Failed to load: \(error.localizedDescription)"
-            print("[ERROR] Failed to load \(path): \(error)")
         }
 
         isLoading = false

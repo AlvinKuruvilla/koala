@@ -3,42 +3,36 @@ import KoalaCore
 
 @main
 struct KoalaBrowserApp: App {
+    /// Initial URL from command line arguments
+    private let initialURL: String?
+
     init() {
-        // Test FFI on startup - use FileHandle for stderr to ensure output is visible
-        let stderr = FileHandle.standardError
-        func log(_ msg: String) {
-            if let data = (msg + "\n").data(using: .utf8) {
-                stderr.write(data)
+        // Parse command line arguments
+        // Usage: koala [path]
+        let args = CommandLine.arguments
+
+        var foundURL: String? = nil
+
+        for i in 1..<args.count {
+            let arg = args[i]
+            if !arg.hasPrefix("-") {
+                // Convert relative paths to absolute
+                if arg.hasPrefix("/") || arg.hasPrefix("file://") {
+                    foundURL = arg
+                } else {
+                    let cwd = FileManager.default.currentDirectoryPath
+                    foundURL = "\(cwd)/\(arg)"
+                }
+                break
             }
         }
 
-        log("=== Testing Rust FFI ===")
-        let testHtml = "<html><body><h1>Test</h1></body></html>"
-        if let json = KoalaParser.parseHTML(testHtml) {
-            log("FFI works! JSON: \(String(json.prefix(300)))...")
-            if let dom = KoalaParser.parse(testHtml) {
-                log("Decode works! type=\(dom.type) children=\(dom.childNodes.count)")
-                // Walk the tree
-                func walk(_ node: DOMNode, depth: Int) {
-                    let indent = String(repeating: "  ", count: depth)
-                    log("\(indent)- \(node.type) tag=\(node.tagName ?? "nil") content=\(node.content?.prefix(20) ?? "nil")")
-                    for child in node.childNodes {
-                        walk(child, depth: depth + 1)
-                    }
-                }
-                walk(dom, depth: 0)
-            } else {
-                log("ERROR: JSON decode failed")
-            }
-        } else {
-            log("ERROR: FFI returned nil")
-        }
-        log("========================")
+        self.initialURL = foundURL
     }
 
     var body: some Scene {
         WindowGroup {
-            BrowserView()
+            BrowserView(initialURL: initialURL)
         }
         .windowStyle(.automatic)
         .commands {

@@ -1,0 +1,44 @@
+#!/bin/bash
+# Koala Browser Launcher
+# Usage: ./koala [path]
+#
+# Examples:
+#   ./koala                     # Open browser without loading a page
+#   ./koala res/simple.html     # Open browser and load simple.html, print debug
+#   ./koala /absolute/path.html # Load from absolute path
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Build Rust library (release mode for speed)
+echo "Building Rust parser..."
+cargo build --release --quiet
+
+# Build Swift browser
+echo "Building browser..."
+cd KoalaBrowser
+swift build --quiet 2>/dev/null || swift build
+cd "$SCRIPT_DIR"
+
+# Check if a path argument was provided
+FILE_PATH=""
+for arg in "$@"; do
+    if [[ ! "$arg" =~ ^- ]]; then
+        FILE_PATH="$arg"
+        break
+    fi
+done
+
+# If a file path is provided, run CLI to print debug info
+if [ -n "$FILE_PATH" ]; then
+    echo ""
+    # Run the Rust CLI to show HTML, CSS, and DOM with styles
+    target/release/koala "$FILE_PATH" --css
+    echo ""
+fi
+
+# Launch the browser
+echo "Opening browser..."
+exec KoalaBrowser/.build/arm64-apple-macosx/debug/KoalaBrowser "$@"
