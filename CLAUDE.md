@@ -36,6 +36,16 @@ This is a learning project. The goal is depth over speed. When implementing:
 - Implement things yourself before reaching for libraries (except where unreasonable, like JS engines)
 - Use `todo!()` liberally for unimplemented paths — it's better than wrong behavior
 
+### Incremental Progress over Completeness
+
+Focus on what you're working on *now*. Don't try to implement everything in one shot.
+
+- **`todo!()` is your friend** — Unimplemented states should crash loudly, not silently misbehave. When you hit one, you know exactly what needs work.
+- **Document what's missing** — Leave TODOs in code, update this file's status section, note limitations clearly.
+- **Parse errors ≠ crashes** — Per spec, HTML parsing is permissive. Log parse errors and continue. But hitting an *unimplemented* code path should panic.
+- **Mechanical refactors: do completely** — If you're renaming a function or changing a pattern, update all call sites. Half-migrated code is confusing.
+- **Feature implementation: do incrementally** — Implement what you need for the current test case. Add more states/handlers as you encounter them.
+
 ### Architecture
 
 ```
@@ -54,8 +64,8 @@ koala/
 
 ### Current Status
 
-- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes. Missing: comments, character references, script/RCDATA modes
-- **Parser**: Not started
+- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments. Missing: character references, script/RCDATA modes
+- **Parser**: Not started (empty file)
 - **DOM**: Structures defined, not populated
 - **Rendering**: Not started
 
