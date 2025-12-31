@@ -1505,6 +1505,188 @@ impl HTMLTokenizer {
             }
         }
     }
+    /// [§ 13.2.5.73 Named character reference state](https://html.spec.whatwg.org/multipage/parsing.html#named-character-reference-state)
+    fn handle_named_character_reference_state(&mut self) {
+        use super::named_character_references::{any_entity_has_prefix, lookup_entity};
+
+        // "Consume the maximum number of characters possible, where the consumed
+        // characters are one of the identifiers in the first column of the named
+        // character references table. Append each character to the temporary buffer
+        // when it's consumed."
+        //
+        // We enter this state via reconsume, so current_input_character is the first
+        // alphanumeric. The temporary_buffer already contains "&" from CharacterReference.
+
+        let mut longest_match: Option<(usize, &'static str)> = None;
+
+        // Process current_input_character first (it was reconsumed, so hasn't been
+        // added to buffer yet)
+        if let Some(c) = self.current_input_character {
+            self.temporary_buffer.push(c);
+
+            // Check for match
+            let entity_name = &self.temporary_buffer[1..]; // Skip leading '&'
+            if let Some(replacement) = lookup_entity(entity_name) {
+                longest_match = Some((self.temporary_buffer.len(), replacement));
+            }
+        }
+
+        // Keep consuming characters while they could be part of an entity name
+        loop {
+            let entity_name = &self.temporary_buffer[1..];
+
+            // Stop if we ended with semicolon
+            if entity_name.ends_with(';') {
+                break;
+            }
+
+            // Stop if no entity could start with this prefix
+            if !any_entity_has_prefix(entity_name) {
+                break;
+            }
+
+            // Consume the next character
+            let next = self.consume();
+            match next {
+                Some(c) if c.is_ascii_alphanumeric() || c == ';' => {
+                    // "Append each character to the temporary buffer when it's consumed."
+                    self.temporary_buffer.push(c);
+
+                    // Check for match
+                    let entity_name = &self.temporary_buffer[1..];
+                    if let Some(replacement) = lookup_entity(entity_name) {
+                        longest_match = Some((self.temporary_buffer.len(), replacement));
+                    }
+                }
+                _ => {
+                    // Hit a non-entity character or EOF - need to reconsume it
+                    self.current_input_character = next;
+                    self.reconsume = true;
+                    break;
+                }
+            }
+        }
+
+        // "If there is a match:"
+        if let Some((match_len, replacement)) = longest_match {
+            let matched_entity = &self.temporary_buffer[1..match_len];
+            let last_char_is_semicolon = matched_entity.ends_with(';');
+
+            // "If the character reference was consumed as part of an attribute, and
+            // the last character matched is not a U+003B SEMICOLON character (;), and
+            // the next input character is either a U+003D EQUALS SIGN character (=) or
+            // an ASCII alphanumeric, then, for historical reasons, flush code points
+            // consumed as a character reference. Switch to the return state."
+            if self.is_consumed_as_part_of_attribute() && !last_char_is_semicolon {
+                // The "next input character" is either:
+                // - A character we consumed past the match (in buffer after match_len)
+                // - current_input_character if we set reconsume
+                // - The next char in input if we haven't consumed it
+                let next_char = if match_len < self.temporary_buffer.len() {
+                    self.temporary_buffer.chars().nth(match_len)
+                } else if self.reconsume {
+                    self.current_input_character
+                } else {
+                    self.peek_codepoint(0)
+                };
+
+                if matches!(next_char, Some('='))
+                    || matches!(next_char, Some(c) if c.is_ascii_alphanumeric())
+                {
+                    // Historical exception: don't decode, flush as-is
+                    self.flush_code_points_consumed_as_character_reference();
+                    let return_state = self.return_state.take().unwrap();
+                    if self.reconsume {
+                        self.state = return_state;
+                    } else {
+                        self.switch_to(return_state);
+                    }
+                    return;
+                }
+            }
+
+            // "If the last character matched is not a U+003B SEMICOLON character (;),
+            // then this is a missing-semicolon-after-character-reference parse error."
+            if !last_char_is_semicolon {
+                self.log_parse_error();
+            }
+
+            // Handle any characters we consumed AFTER the match
+            let chars_after_match: String = self.temporary_buffer[match_len..].to_string();
+
+            // "Set the temporary buffer to the empty string. Append one or two characters
+            // corresponding to the character reference name to the temporary buffer."
+            self.temporary_buffer.clear();
+            self.temporary_buffer.push_str(replacement);
+
+            // "Flush code points consumed as a character reference."
+            self.flush_code_points_consumed_as_character_reference();
+
+            // Emit/append the characters that came after the match
+            for c in chars_after_match.chars() {
+                if self.is_consumed_as_part_of_attribute() {
+                    if let Some(ref mut token) = self.current_token {
+                        token.append_to_current_attribute_value(c);
+                    }
+                } else {
+                    self.emit_character_token(c);
+                }
+            }
+
+            // "Switch to the return state."
+            let return_state = self.return_state.take().unwrap();
+            if self.reconsume {
+                self.state = return_state;
+            } else {
+                self.switch_to(return_state);
+            }
+        } else {
+            // "Otherwise:" (no match found)
+            // "Flush code points consumed as a character reference."
+            // The buffer contains "&" plus all characters we consumed.
+            self.flush_code_points_consumed_as_character_reference();
+
+            // "Switch to the ambiguous ampersand state."
+            if self.reconsume {
+                self.state = TokenizerState::AmbiguousAmpersand;
+            } else {
+                self.switch_to(TokenizerState::AmbiguousAmpersand);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.74 Ambiguous ampersand state](https://html.spec.whatwg.org/multipage/parsing.html#ambiguous-ampersand-state)
+    fn handle_ambiguous_ampersand_state(&mut self) {
+        match self.current_input_character {
+            // "ASCII alphanumeric"
+            // "If the character reference was consumed as part of an attribute, then
+            // append the current input character to the current attribute's value.
+            // Otherwise, emit the current input character as a character token."
+            Some(c) if c.is_ascii_alphanumeric() => {
+                if self.is_consumed_as_part_of_attribute() {
+                    if let Some(ref mut token) = self.current_token {
+                        token.append_to_current_attribute_value(c);
+                    }
+                } else {
+                    self.emit_character_token(c);
+                }
+            }
+            // "U+003B SEMICOLON (;)"
+            // "This is an unknown-named-character-reference parse error.
+            // Reconsume in the return state."
+            Some(';') => {
+                self.log_parse_error();
+                let return_state = self.return_state.take().unwrap();
+                self.reconsume_in(return_state);
+            }
+            // "Anything else"
+            // "Reconsume in the return state."
+            _ => {
+                let return_state = self.return_state.take().unwrap();
+                self.reconsume_in(return_state);
+            }
+        }
+    }
 
     pub fn run(&mut self) {
         loop {
@@ -1744,8 +1926,10 @@ impl HTMLTokenizer {
                 TokenizerState::CDATASectionBracket => todo!("Unhandled state: {}", self.state),
                 TokenizerState::CDATASectionEnd => todo!("Unhandled state: {}", self.state),
                 TokenizerState::CharacterReference => self.handle_character_reference_state(),
-                TokenizerState::NamedCharacterReference => todo!("Unhandled state: {}", self.state),
-                TokenizerState::AmbiguousAmpersand => todo!("Unhandled state: {}", self.state),
+                TokenizerState::NamedCharacterReference => {
+                    self.handle_named_character_reference_state()
+                }
+                TokenizerState::AmbiguousAmpersand => self.handle_ambiguous_ampersand_state(),
                 TokenizerState::NumericCharacterReference => {
                     todo!("Unhandled state: {}", self.state)
                 }
@@ -2149,5 +2333,87 @@ mod tests {
         assert!(matches!(tokens[3], Token::Character { data: ' ' }));
         assert!(matches!(tokens[4], Token::Character { data: 'b' }));
         assert!(matches!(tokens[5], Token::EndOfFile));
+    }
+
+    #[test]
+    fn test_named_character_reference_amp() {
+        // [§ 13.2.5.73 Named character reference state]
+        // &amp; should be replaced with &
+        let tokens = tokenize("a &amp; b");
+        let content: String = tokens
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(content, "a & b");
+    }
+
+    #[test]
+    fn test_named_character_reference_lt_gt() {
+        // &lt; and &gt; should be replaced with < and >
+        let tokens = tokenize("&lt;div&gt;");
+        let content: String = tokens
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(content, "<div>");
+    }
+
+    #[test]
+    fn test_named_character_reference_without_semicolon() {
+        // Legacy entities without semicolon should still work
+        let tokens = tokenize("&amp is ok");
+        let content: String = tokens
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(content, "& is ok");
+    }
+
+    #[test]
+    fn test_named_character_reference_unknown() {
+        // Unknown entities should be passed through as-is
+        let tokens = tokenize("&notreal;");
+        let content: String = tokens
+            .iter()
+            .filter_map(|t| {
+                if let Token::Character { data } = t {
+                    Some(*data)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // The ampersand and entity name should be emitted as characters
+        assert_eq!(content, "&notreal;");
+    }
+
+    #[test]
+    fn test_named_character_reference_in_attribute() {
+        // Entities in attribute values should be replaced
+        let tokens = tokenize(r#"<a href="?a=1&amp;b=2">"#);
+        match &tokens[0] {
+            Token::StartTag { attributes, .. } => {
+                assert_eq!(attributes[0].value, "?a=1&b=2");
+            }
+            _ => panic!("Expected StartTag token"),
+        }
     }
 }
