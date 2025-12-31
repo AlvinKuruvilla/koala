@@ -14,13 +14,5 @@ strum = "0.26"
 strum_macros = "0.26"
 
 [[bin]]
-name = "koala_cli"
-path = "bin/koala_cli.rs"
-
-[[bin]]
-name = "json_dump"
-path = "bin/json_dump.rs"
-
-[[bin]]
-name = "render_test"
-path = "bin/render_test.rs"
+name = "koala"
+path = "bin/koala.rs"
