@@ -1,6 +1,6 @@
 use strum_macros::Display;
 
-use crate::lib_dom::{AttributesMap, ElementData, Node, NodeType};
+use crate::lib_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 use crate::lib_html::html_tokenizer::token::{Attribute, Token};
 
 /// [§ 13.2.4.1 The insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode)
@@ -57,14 +57,6 @@ pub enum InsertionMode {
     AfterAfterFrameset,
 }
 
-/// Internal node representation during parsing.
-/// Uses indices for children to enable arena-style allocation.
-#[derive(Debug, Clone)]
-struct ParserNode {
-    node_type: NodeType,
-    children: Vec<usize>, // Indices into the nodes arena
-}
-
 /// A parse error or warning encountered during parsing.
 #[derive(Debug, Clone)]
 pub struct ParseIssue {
@@ -85,14 +77,15 @@ pub struct HTMLParser {
 
     /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
     ///
-    /// Stores indices into the nodes arena.
-    stack_of_open_elements: Vec<usize>,
+    /// Stores NodeIds into the arena.
+    stack_of_open_elements: Vec<NodeId>,
 
     /// [§ 13.2.4.4 The element pointers](https://html.spec.whatwg.org/multipage/parsing.html#the-element-pointers)
-    head_element_pointer: Option<usize>,
+    head_element_pointer: Option<NodeId>,
 
-    /// Arena of all nodes. Index 0 is the Document node.
-    nodes: Vec<ParserNode>,
+    /// DOM tree with parent/sibling pointers.
+    /// NodeId::ROOT (index 0) is the Document node.
+    tree: DomTree,
 
     /// Input tokens from the tokenizer.
     tokens: Vec<Token>,
@@ -113,18 +106,13 @@ pub struct HTMLParser {
 impl HTMLParser {
     /// Create a new parser from a token stream.
     pub fn new(tokens: Vec<Token>) -> Self {
-        // Create the Document node at index 0
-        let document = ParserNode {
-            node_type: NodeType::Document,
-            children: Vec::new(),
-        };
-
+        // DomTree::new() creates the Document node at NodeId::ROOT
         HTMLParser {
             insertion_mode: InsertionMode::Initial,
             original_insertion_mode: None,
             stack_of_open_elements: Vec::new(),
             head_element_pointer: None,
-            nodes: vec![document],
+            tree: DomTree::new(),
             tokens,
             token_index: 0,
             stopped: false,
@@ -153,43 +141,28 @@ impl HTMLParser {
         });
     }
 
-    /// Run the parser and return the document node.
-    pub fn run(mut self) -> Node {
+    /// Run the parser and return the DOM tree.
+    ///
+    /// The returned DomTree preserves parent/sibling relationships
+    /// for efficient traversal.
+    pub fn run(mut self) -> DomTree {
         while !self.stopped && self.token_index < self.tokens.len() {
             let token = self.tokens[self.token_index].clone();
             self.process_token(&token);
             self.token_index += 1;
         }
-
-        // Convert arena to tree structure
-        self.build_tree(0)
+        self.tree
     }
 
-    /// Run the parser and return both the document and any parse issues.
-    pub fn run_with_issues(mut self) -> (Node, Vec<ParseIssue>) {
+    /// Run the parser and return both the DomTree and any parse issues.
+    pub fn run_with_issues(mut self) -> (DomTree, Vec<ParseIssue>) {
         while !self.stopped && self.token_index < self.tokens.len() {
             let token = self.tokens[self.token_index].clone();
             self.process_token(&token);
             self.token_index += 1;
         }
-
         let issues = std::mem::take(&mut self.issues);
-        (self.build_tree(0), issues)
-    }
-
-    /// Recursively build a Node tree from the arena.
-    fn build_tree(&self, index: usize) -> Node {
-        let parser_node = &self.nodes[index];
-        let children: Vec<Node> = parser_node
-            .children
-            .iter()
-            .map(|&child_idx| self.build_tree(child_idx))
-            .collect();
-
-        Node {
-            node_type: parser_node.node_type.clone(),
-            children,
-        }
+        (self.tree, issues)
     }
 
     /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher)
@@ -230,13 +203,13 @@ impl HTMLParser {
     }
 
     /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#current-node)
-    fn current_node(&self) -> Option<usize> {
+    fn current_node(&self) -> Option<NodeId> {
         self.stack_of_open_elements.last().copied()
     }
 
     /// Get the parent node for insertion.
-    fn insertion_location(&self) -> usize {
-        self.current_node().unwrap_or(0)
+    fn insertion_location(&self) -> NodeId {
+        self.current_node().unwrap_or(NodeId::ROOT)
     }
 
     /// Create attributes map from token attributes.
@@ -247,104 +220,84 @@ impl HTMLParser {
             .collect()
     }
 
-    /// Create a new element node and return its index.
-    fn create_element(&mut self, tag_name: &str, attributes: &[Attribute]) -> usize {
-        let node = ParserNode {
-            node_type: NodeType::Element(ElementData {
-                tag_name: tag_name.to_string(),
-                attrs: Self::attributes_to_map(attributes),
-            }),
-            children: Vec::new(),
-        };
-        let index = self.nodes.len();
-        self.nodes.push(node);
-        index
+    /// Create a new element node and return its NodeId.
+    fn create_element(&mut self, tag_name: &str, attributes: &[Attribute]) -> NodeId {
+        self.tree.alloc(NodeType::Element(ElementData {
+            tag_name: tag_name.to_string(),
+            attrs: Self::attributes_to_map(attributes),
+        }))
     }
 
-    /// Create a text node and return its index.
-    fn create_text_node(&mut self, data: String) -> usize {
-        let node = ParserNode {
-            node_type: NodeType::Text(data),
-            children: Vec::new(),
-        };
-        let index = self.nodes.len();
-        self.nodes.push(node);
-        index
+    /// Create a text node and return its NodeId.
+    fn create_text_node(&mut self, data: String) -> NodeId {
+        self.tree.alloc(NodeType::Text(data))
     }
 
-    /// Create a comment node and return its index.
-    fn create_comment_node(&mut self, data: String) -> usize {
-        let node = ParserNode {
-            node_type: NodeType::Comment(data),
-            children: Vec::new(),
-        };
-        let index = self.nodes.len();
-        self.nodes.push(node);
-        index
+    /// Create a comment node and return its NodeId.
+    fn create_comment_node(&mut self, data: String) -> NodeId {
+        self.tree.alloc(NodeType::Comment(data))
     }
 
     /// Add a child to a parent node.
-    fn append_child(&mut self, parent_idx: usize, child_idx: usize) {
-        self.nodes[parent_idx].children.push(child_idx);
+    fn append_child(&mut self, parent_id: NodeId, child_id: NodeId) {
+        self.tree.append_child(parent_id, child_id);
     }
 
     /// [§ 13.2.6.1 Insert a character](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-character)
     fn insert_character(&mut self, c: char) {
-        let parent_idx = self.insertion_location();
+        let parent_id = self.insertion_location();
 
         // "If there is a Text node immediately before the adjusted insertion
         // location, then append data to that Text node's data."
-        if let Some(&last_child_idx) = self.nodes[parent_idx].children.last() {
-            if let NodeType::Text(ref mut text_data) = self.nodes[last_child_idx].node_type {
-                text_data.push(c);
-                return;
+        if let Some(&last_child_id) = self.tree.children(parent_id).last() {
+            if let Some(arena_node) = self.tree.get_mut(last_child_id) {
+                if let NodeType::Text(ref mut text_data) = arena_node.node_type {
+                    text_data.push(c);
+                    return;
+                }
             }
         }
 
         // Otherwise, create a new text node
-        let text_idx = self.create_text_node(c.to_string());
-        self.append_child(parent_idx, text_idx);
+        let text_id = self.create_text_node(c.to_string());
+        self.append_child(parent_id, text_id);
     }
 
     /// Insert a comment node at the current insertion location.
     fn insert_comment(&mut self, data: &str) {
-        let parent_idx = self.insertion_location();
-        let comment_idx = self.create_comment_node(data.to_string());
-        self.append_child(parent_idx, comment_idx);
+        let parent_id = self.insertion_location();
+        let comment_id = self.create_comment_node(data.to_string());
+        self.append_child(parent_id, comment_id);
     }
 
     /// Insert a comment as the last child of the document.
     fn insert_comment_to_document(&mut self, data: &str) {
-        let comment_idx = self.create_comment_node(data.to_string());
-        self.append_child(0, comment_idx);
+        let comment_id = self.create_comment_node(data.to_string());
+        self.append_child(NodeId::ROOT, comment_id);
     }
 
     /// [§ 13.2.6.1 Insert an HTML element](https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element)
-    fn insert_html_element(&mut self, token: &Token) -> usize {
+    fn insert_html_element(&mut self, token: &Token) -> NodeId {
         if let Token::StartTag { name, attributes, .. } = token {
-            let element_idx = self.create_element(name, attributes);
-            let parent_idx = self.insertion_location();
-            self.append_child(parent_idx, element_idx);
-            self.stack_of_open_elements.push(element_idx);
-            element_idx
+            let element_id = self.create_element(name, attributes);
+            let parent_id = self.insertion_location();
+            self.append_child(parent_id, element_id);
+            self.stack_of_open_elements.push(element_id);
+            element_id
         } else {
             panic!("insert_html_element called with non-StartTag token");
         }
     }
 
     /// Get the tag name of a node.
-    fn get_tag_name(&self, idx: usize) -> Option<&str> {
-        if let NodeType::Element(ref data) = self.nodes[idx].node_type {
-            Some(&data.tag_name)
-        } else {
-            None
-        }
+    fn get_tag_name(&self, id: NodeId) -> Option<&str> {
+        self.tree.as_element(id).map(|data| data.tag_name.as_str())
     }
 
     /// Pop elements from the stack until we find one with the given tag name.
     fn pop_until_tag(&mut self, tag_name: &str) {
-        while let Some(idx) = self.stack_of_open_elements.pop() {
-            if self.get_tag_name(idx) == Some(tag_name) {
+        while let Some(id) = self.stack_of_open_elements.pop() {
+            if self.get_tag_name(id) == Some(tag_name) {
                 break;
             }
         }
@@ -442,7 +395,7 @@ impl HTMLParser {
             // "Switch the insertion mode to "before head"."
             Token::StartTag { name, attributes, .. } if name == "html" => {
                 let html_idx = self.create_element(name, attributes);
-                self.append_child(0, html_idx);
+                self.append_child(NodeId::ROOT, html_idx);
                 self.stack_of_open_elements.push(html_idx);
                 self.insertion_mode = InsertionMode::BeforeHead;
             }
@@ -473,7 +426,7 @@ impl HTMLParser {
     /// "Switch the insertion mode to "before head", then reprocess the token."
     fn handle_before_html_anything_else(&mut self, token: &Token) {
         let html_idx = self.create_element("html", &[]);
-        self.append_child(0, html_idx);
+        self.append_child(NodeId::ROOT, html_idx);
         self.stack_of_open_elements.push(html_idx);
         self.insertion_mode = InsertionMode::BeforeHead;
         self.reprocess_token(token);
@@ -1359,50 +1312,53 @@ impl HTMLParser {
 }
 
 /// Print a DOM tree for debugging.
-pub fn print_tree(node: &Node, indent: usize) {
+pub fn print_tree(tree: &DomTree, id: NodeId, indent: usize) {
     let prefix = "  ".repeat(indent);
-    match &node.node_type {
-        NodeType::Document => {
-            println!("{}Document", prefix);
-        }
-        NodeType::Element(data) => {
-            if data.attrs.is_empty() {
-                println!("{}<{}>", prefix, data.tag_name);
-            } else {
-                let attrs: Vec<String> = data
-                    .attrs
-                    .iter()
-                    .map(|(k, v)| {
-                        if v.is_empty() {
-                            k.clone()
-                        } else {
-                            format!("{}=\"{}\"", k, v)
-                        }
-                    })
-                    .collect();
-                println!("{}<{} {}>", prefix, data.tag_name, attrs.join(" "));
+    if let Some(node) = tree.get(id) {
+        match &node.node_type {
+            NodeType::Document => {
+                println!("{}Document", prefix);
+            }
+            NodeType::Element(data) => {
+                if data.attrs.is_empty() {
+                    println!("{}<{}>", prefix, data.tag_name);
+                } else {
+                    let attrs: Vec<String> = data
+                        .attrs
+                        .iter()
+                        .map(|(k, v)| {
+                            if v.is_empty() {
+                                k.clone()
+                            } else {
+                                format!("{}=\"{}\"", k, v)
+                            }
+                        })
+                        .collect();
+                    println!("{}<{} {}>", prefix, data.tag_name, attrs.join(" "));
+                }
+            }
+            NodeType::Text(data) => {
+                let display = data.replace('\n', "\\n").replace(' ', "\u{00B7}");
+                println!("{}\"{}\"", prefix, display);
+            }
+            NodeType::Comment(data) => {
+                println!("{}<!-- {} -->", prefix, data);
             }
         }
-        NodeType::Text(data) => {
-            let display = data.replace('\n', "\\n").replace(' ', "\u{00B7}");
-            println!("{}\"{}\"", prefix, display);
+        for &child_id in tree.children(id) {
+            print_tree(tree, child_id, indent + 1);
         }
-        NodeType::Comment(data) => {
-            println!("{}<!-- {} -->", prefix, data);
-        }
-    }
-    for child in &node.children {
-        print_tree(child, indent + 1);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lib_dom::Node;
     use crate::lib_html::html_tokenizer::tokenizer::HTMLTokenizer;
 
-    /// Helper to parse HTML and return the document node
-    fn parse(html: &str) -> Node {
+    /// Helper to parse HTML and return the DOM tree
+    fn parse(html: &str) -> DomTree {
         let mut tokenizer = HTMLTokenizer::new(html.to_string());
         tokenizer.run();
         let parser = HTMLParser::new(tokenizer.into_tokens());
@@ -1410,14 +1366,14 @@ mod tests {
     }
 
     /// Helper to get element by tag name (first match, depth-first)
-    fn find_element<'a>(node: &'a Node, tag: &str) -> Option<&'a Node> {
-        if let NodeType::Element(data) = &node.node_type {
+    fn find_element(tree: &DomTree, from: NodeId, tag: &str) -> Option<NodeId> {
+        if let Some(data) = tree.as_element(from) {
             if data.tag_name == tag {
-                return Some(node);
+                return Some(from);
             }
         }
-        for child in &node.children {
-            if let Some(found) = find_element(child, tag) {
+        for &child_id in tree.children(from) {
+            if let Some(found) = find_element(tree, child_id, tag) {
                 return Some(found);
             }
         }
@@ -1425,74 +1381,87 @@ mod tests {
     }
 
     /// Helper to get text content of a node (concatenated)
-    fn text_content(node: &Node) -> String {
+    fn text_content(tree: &DomTree, id: NodeId) -> String {
         let mut result = String::new();
-        match &node.node_type {
-            NodeType::Text(data) => result.push_str(data),
-            _ => {
-                for child in &node.children {
-                    result.push_str(&text_content(child));
+        if let Some(node) = tree.get(id) {
+            match &node.node_type {
+                NodeType::Text(data) => result.push_str(data),
+                _ => {
+                    for &child_id in tree.children(id) {
+                        result.push_str(&text_content(tree, child_id));
+                    }
                 }
             }
         }
         result
     }
 
+    /// Helper to get a node reference
+    fn get_node(tree: &DomTree, id: NodeId) -> &Node {
+        tree.get(id).expect("Node not found")
+    }
+
     #[test]
     fn test_document_structure() {
-        let doc = parse("<!DOCTYPE html><html><head></head><body></body></html>");
+        let tree = parse("<!DOCTYPE html><html><head></head><body></body></html>");
 
         // Root should be Document
-        assert!(matches!(doc.node_type, NodeType::Document));
+        let root = get_node(&tree, NodeId::ROOT);
+        assert!(matches!(root.node_type, NodeType::Document));
 
         // Document should have html child
-        let html = find_element(&doc, "html");
-        assert!(html.is_some());
+        let html_id = find_element(&tree, NodeId::ROOT, "html");
+        assert!(html_id.is_some());
 
         // html should have head and body
-        let html = html.unwrap();
-        let head = find_element(html, "head");
-        let body = find_element(html, "body");
-        assert!(head.is_some());
-        assert!(body.is_some());
+        let html_id = html_id.unwrap();
+        let head_id = find_element(&tree, html_id, "head");
+        let body_id = find_element(&tree, html_id, "body");
+        assert!(head_id.is_some());
+        assert!(body_id.is_some());
     }
 
     #[test]
     fn test_text_node() {
-        let doc = parse("<html><body>Hello World</body></html>");
-        let body = find_element(&doc, "body").unwrap();
+        let tree = parse("<html><body>Hello World</body></html>");
+        let body_id = find_element(&tree, NodeId::ROOT, "body").unwrap();
 
-        let text = text_content(body);
+        let text = text_content(&tree, body_id);
         assert_eq!(text, "Hello World");
     }
 
     #[test]
     fn test_comment_node() {
-        let doc = parse("<html><body><!-- test comment --></body></html>");
-        let body = find_element(&doc, "body").unwrap();
+        let tree = parse("<html><body><!-- test comment --></body></html>");
+        let body_id = find_element(&tree, NodeId::ROOT, "body").unwrap();
 
         // Body should have a comment child
-        let has_comment = body.children.iter().any(|child| {
-            matches!(&child.node_type, NodeType::Comment(data) if data == " test comment ")
+        let has_comment = tree.children(body_id).iter().any(|&child_id| {
+            if let Some(node) = tree.get(child_id) {
+                matches!(&node.node_type, NodeType::Comment(data) if data == " test comment ")
+            } else {
+                false
+            }
         });
         assert!(has_comment);
     }
 
     #[test]
     fn test_nested_elements() {
-        let doc = parse("<html><body><div><p>Text</p></div></body></html>");
+        let tree = parse("<html><body><div><p>Text</p></div></body></html>");
 
-        let div = find_element(&doc, "div").unwrap();
-        let p = find_element(div, "p").unwrap();
-        let text = text_content(p);
+        let div_id = find_element(&tree, NodeId::ROOT, "div").unwrap();
+        let p_id = find_element(&tree, div_id, "p").unwrap();
+        let text = text_content(&tree, p_id);
 
         assert_eq!(text, "Text");
     }
 
     #[test]
     fn test_element_attributes() {
-        let doc = parse(r#"<html><body><div id="main" class="container"></div></body></html>"#);
-        let div = find_element(&doc, "div").unwrap();
+        let tree = parse(r#"<html><body><div id="main" class="container"></div></body></html>"#);
+        let div_id = find_element(&tree, NodeId::ROOT, "div").unwrap();
+        let div = get_node(&tree, div_id);
 
         if let NodeType::Element(data) = &div.node_type {
             assert_eq!(data.attrs.get("id"), Some(&"main".to_string()));
@@ -1504,19 +1473,15 @@ mod tests {
 
     #[test]
     fn test_void_elements() {
-        let doc = parse(r#"<html><body><input type="text"><br></body></html>"#);
-        let body = find_element(&doc, "body").unwrap();
+        let tree = parse(r#"<html><body><input type="text"><br></body></html>"#);
+        let body_id = find_element(&tree, NodeId::ROOT, "body").unwrap();
 
         // Both input and br should be children of body (void elements don't nest)
-        let element_names: Vec<_> = body
-            .children
+        let element_names: Vec<_> = tree
+            .children(body_id)
             .iter()
-            .filter_map(|child| {
-                if let NodeType::Element(data) = &child.node_type {
-                    Some(data.tag_name.as_str())
-                } else {
-                    None
-                }
+            .filter_map(|&child_id| {
+                tree.as_element(child_id).map(|data| data.tag_name.as_str())
             })
             .collect();
 
@@ -1526,17 +1491,18 @@ mod tests {
 
     #[test]
     fn test_title_element() {
-        let doc = parse("<html><head><title>My Page</title></head><body></body></html>");
-        let title = find_element(&doc, "title").unwrap();
-        let text = text_content(title);
+        let tree = parse("<html><head><title>My Page</title></head><body></body></html>");
+        let title_id = find_element(&tree, NodeId::ROOT, "title").unwrap();
+        let text = text_content(&tree, title_id);
 
         assert_eq!(text, "My Page");
     }
 
     #[test]
     fn test_meta_element() {
-        let doc = parse(r#"<html><head><meta charset="UTF-8"></head><body></body></html>"#);
-        let meta = find_element(&doc, "meta").unwrap();
+        let tree = parse(r#"<html><head><meta charset="UTF-8"></head><body></body></html>"#);
+        let meta_id = find_element(&tree, NodeId::ROOT, "meta").unwrap();
+        let meta = get_node(&tree, meta_id);
 
         if let NodeType::Element(data) = &meta.node_type {
             assert_eq!(data.attrs.get("charset"), Some(&"UTF-8".to_string()));
@@ -1547,8 +1513,9 @@ mod tests {
 
     #[test]
     fn test_whitespace_preserved_in_text() {
-        let doc = parse("<html><body>  hello  world  </body></html>");
-        let text = text_content(find_element(&doc, "body").unwrap());
+        let tree = parse("<html><body>  hello  world  </body></html>");
+        let body_id = find_element(&tree, NodeId::ROOT, "body").unwrap();
+        let text = text_content(&tree, body_id);
 
         // Whitespace should be preserved
         assert_eq!(text, "  hello  world  ");
@@ -1557,18 +1524,22 @@ mod tests {
     #[test]
     fn test_multiple_text_nodes_merged() {
         // Adjacent character tokens should become a single text node
-        let doc = parse("<html><body>abc</body></html>");
-        let body = find_element(&doc, "body").unwrap();
+        let tree = parse("<html><body>abc</body></html>");
+        let body_id = find_element(&tree, NodeId::ROOT, "body").unwrap();
 
         // Should have exactly one text node child (merged from a, b, c)
-        let text_nodes: Vec<_> = body
-            .children
+        let text_nodes: Vec<_> = tree
+            .children(body_id)
             .iter()
-            .filter(|child| matches!(child.node_type, NodeType::Text(_)))
+            .filter(|&&child_id| {
+                tree.get(child_id)
+                    .map(|n| matches!(n.node_type, NodeType::Text(_)))
+                    .unwrap_or(false)
+            })
             .collect();
 
         assert_eq!(text_nodes.len(), 1);
-        assert_eq!(text_content(body), "abc");
+        assert_eq!(text_content(&tree, body_id), "abc");
     }
 
     #[test]
@@ -1588,41 +1559,47 @@ mod tests {
 </body>
 </html>"#;
 
-        let doc = parse(html);
+        let tree = parse(html);
 
         // Check basic structure
-        assert!(matches!(doc.node_type, NodeType::Document));
+        let root = get_node(&tree, NodeId::ROOT);
+        assert!(matches!(root.node_type, NodeType::Document));
 
-        let html_elem = find_element(&doc, "html").unwrap();
+        let html_id = find_element(&tree, NodeId::ROOT, "html").unwrap();
+        let html_elem = get_node(&tree, html_id);
         if let NodeType::Element(data) = &html_elem.node_type {
             assert_eq!(data.attrs.get("lang"), Some(&"en".to_string()));
         }
 
         // Check head elements
-        let title = find_element(&doc, "title").unwrap();
-        assert_eq!(text_content(title), "Test");
+        let title_id = find_element(&tree, NodeId::ROOT, "title").unwrap();
+        assert_eq!(text_content(&tree, title_id), "Test");
 
-        let meta = find_element(&doc, "meta").unwrap();
+        let meta_id = find_element(&tree, NodeId::ROOT, "meta").unwrap();
+        let meta = get_node(&tree, meta_id);
         if let NodeType::Element(data) = &meta.node_type {
             assert_eq!(data.attrs.get("charset"), Some(&"UTF-8".to_string()));
         }
 
         // Check body elements
-        let body = find_element(&doc, "body").unwrap();
+        let body_id = find_element(&tree, NodeId::ROOT, "body").unwrap();
+        let body = get_node(&tree, body_id);
         if let NodeType::Element(data) = &body.node_type {
             assert_eq!(data.attrs.get("class"), Some(&"main".to_string()));
             assert_eq!(data.attrs.get("id"), Some(&"content".to_string()));
         }
 
         // Check div with single-quoted attribute
-        let div = find_element(&doc, "div").unwrap();
+        let div_id = find_element(&tree, NodeId::ROOT, "div").unwrap();
+        let div = get_node(&tree, div_id);
         if let NodeType::Element(data) = &div.node_type {
             assert_eq!(data.attrs.get("data-value"), Some(&"single quoted".to_string()));
         }
-        assert_eq!(text_content(div), "Hello");
+        assert_eq!(text_content(&tree, div_id), "Hello");
 
         // Check input with boolean attribute
-        let input = find_element(&doc, "input").unwrap();
+        let input_id = find_element(&tree, NodeId::ROOT, "input").unwrap();
+        let input = get_node(&tree, input_id);
         if let NodeType::Element(data) = &input.node_type {
             assert_eq!(data.attrs.get("type"), Some(&"text".to_string()));
             assert_eq!(data.attrs.get("disabled"), Some(&"".to_string()));
@@ -1645,9 +1622,9 @@ body { color: red; }
 <body></body>
 </html>"#;
 
-        let doc = parse(html);
-        let style = find_element(&doc, "style").unwrap();
-        let content = text_content(style);
+        let tree = parse(html);
+        let style = find_element(&tree, tree.root(), "style").unwrap();
+        let content = text_content(&tree, style);
 
         // The CSS should be preserved as text
         assert!(content.contains("body { color: red; }"));
@@ -1659,15 +1636,16 @@ body { color: red; }
         // HTML-like content inside style should NOT be interpreted as tags
         let html = "<html><head><style><div>not a tag</div></style></head><body></body></html>";
 
-        let doc = parse(html);
-        let style = find_element(&doc, "style").unwrap();
-        let content = text_content(style);
+        let tree = parse(html);
+        let style = find_element(&tree, tree.root(), "style").unwrap();
+        let content = text_content(&tree, style);
 
         // The <div> should appear as literal text
         assert_eq!(content, "<div>not a tag</div>");
 
         // There should be no div element in the document (since it's inside style)
-        let div_in_body = find_element(find_element(&doc, "body").unwrap(), "div");
+        let body = find_element(&tree, tree.root(), "body").unwrap();
+        let div_in_body = find_element(&tree, body, "div");
         assert!(div_in_body.is_none());
     }
 
@@ -1675,9 +1653,9 @@ body { color: red; }
     fn test_title_content_preserved() {
         let html = "<html><head><title>My <test> Title</title></head><body></body></html>";
 
-        let doc = parse(html);
-        let title = find_element(&doc, "title").unwrap();
-        let content = text_content(title);
+        let tree = parse(html);
+        let title = find_element(&tree, tree.root(), "title").unwrap();
+        let content = text_content(&tree, title);
 
         // Title content including < should be preserved
         assert_eq!(content, "My <test> Title");

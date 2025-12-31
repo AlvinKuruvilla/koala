@@ -26,7 +26,7 @@ use koala::lib_css::css_cascade::compute_styles;
 use koala::lib_css::css_parser::parser::{CSSParser, Rule};
 use koala::lib_css::css_tokenizer::tokenizer::CSSTokenizer;
 use koala::lib_css::extract_style_content;
-use koala::lib_dom::{Node, NodeType};
+use koala::lib_dom::{DomTree, NodeId, NodeType};
 use koala::lib_html::html_parser::parser::HTMLParser;
 use koala::lib_html::html_tokenizer::tokenizer::HTMLTokenizer;
 
@@ -358,7 +358,7 @@ fn parse_and_display(html: &str, source_name: &str, options: &Options, c: &Color
             "{}",
             c.header(&format!("=== DOM Tree ({} styled) ===", styles.len()))
         );
-        print_tree(&dom, &styles, 0, c);
+        print_tree(&dom, dom.root(), &styles, 0, c);
     }
 
     // Stats output
@@ -421,32 +421,40 @@ fn parse_and_display(html: &str, source_name: &str, options: &Options, c: &Color
 }
 
 /// Count nodes in the DOM tree
-fn count_dom_nodes(node: &Node) -> (usize, usize, usize, usize) {
-    let mut elements = 0;
-    let mut text = 0;
-    let mut comments = 0;
-    let mut total = 1;
+fn count_dom_nodes(tree: &DomTree) -> (usize, usize, usize, usize) {
+    fn count_node(tree: &DomTree, id: NodeId) -> (usize, usize, usize, usize) {
+        let Some(node) = tree.get(id) else {
+            return (0, 0, 0, 0);
+        };
 
-    match &node.node_type {
-        NodeType::Element(_) => elements += 1,
-        NodeType::Text(t) => {
-            if !t.trim().is_empty() {
-                text += 1;
+        let mut elements = 0;
+        let mut text = 0;
+        let mut comments = 0;
+        let mut total = 1;
+
+        match &node.node_type {
+            NodeType::Element(_) => elements += 1,
+            NodeType::Text(t) => {
+                if !t.trim().is_empty() {
+                    text += 1;
+                }
             }
+            NodeType::Comment(_) => comments += 1,
+            NodeType::Document => {}
         }
-        NodeType::Comment(_) => comments += 1,
-        NodeType::Document => {}
+
+        for &child_id in tree.children(id) {
+            let (e, t, c, tot) = count_node(tree, child_id);
+            elements += e;
+            text += t;
+            comments += c;
+            total += tot;
+        }
+
+        (elements, text, comments, total)
     }
 
-    for child in &node.children {
-        let (e, t, c, tot) = count_dom_nodes(child);
-        elements += e;
-        text += t;
-        comments += c;
-        total += tot;
-    }
-
-    (elements, text, comments, total)
+    count_node(tree, tree.root())
 }
 
 /// Interactive REPL mode for quick testing
@@ -607,11 +615,13 @@ fn print_css_highlighted(css: &str, c: &Colors) {
 }
 
 fn print_tree(
-    node: &Node,
-    styles: &std::collections::HashMap<*const Node, koala::lib_css::css_style::ComputedStyle>,
+    tree: &DomTree,
+    id: NodeId,
+    styles: &std::collections::HashMap<NodeId, koala::lib_css::css_style::ComputedStyle>,
     depth: usize,
     c: &Colors,
 ) {
+    let Some(node) = tree.get(id) else { return };
     let indent = "  ".repeat(depth);
 
     match &node.node_type {
@@ -622,11 +632,11 @@ fn print_tree(
             // Build tag with attributes
             let mut tag_str = format!("<{}", data.tag_name);
 
-            if let Some(id) = data.attrs.get("id") {
+            if let Some(id_attr) = data.attrs.get("id") {
                 tag_str.push_str(&format!(
                     " {}={}",
                     c.attr_name("id"),
-                    c.attr_value(&format!("\"{}\"", id))
+                    c.attr_value(&format!("\"{}\"", id_attr))
                 ));
             }
             if let Some(class) = data.attrs.get("class") {
@@ -641,7 +651,7 @@ fn print_tree(
             print!("{}{}", indent, c.tag(&tag_str));
 
             // Show computed styles
-            if let Some(style) = styles.get(&(node as *const Node)) {
+            if let Some(style) = styles.get(&id) {
                 let mut parts = Vec::new();
 
                 if let Some(ref clr) = style.color {
@@ -693,16 +703,16 @@ fn print_tree(
         }
     }
 
-    for child in &node.children {
-        print_tree(child, styles, depth + 1, c);
+    for &child_id in tree.children(id) {
+        print_tree(tree, child_id, styles, depth + 1, c);
     }
 }
 
 fn print_json(
-    node: &Node,
-    styles: &std::collections::HashMap<*const Node, koala::lib_css::css_style::ComputedStyle>,
+    tree: &DomTree,
+    styles: &std::collections::HashMap<NodeId, koala::lib_css::css_style::ComputedStyle>,
 ) {
-    let json = node_to_json(node, styles);
+    let json = node_to_json(tree, tree.root(), styles);
     println!(
         "{}",
         serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string())
@@ -710,9 +720,14 @@ fn print_json(
 }
 
 fn node_to_json(
-    node: &Node,
-    styles: &std::collections::HashMap<*const Node, koala::lib_css::css_style::ComputedStyle>,
+    tree: &DomTree,
+    id: NodeId,
+    styles: &std::collections::HashMap<NodeId, koala::lib_css::css_style::ComputedStyle>,
 ) -> serde_json::Value {
+    let Some(node) = tree.get(id) else {
+        return serde_json::json!({});
+    };
+
     let mut obj = serde_json::Map::new();
 
     match &node.node_type {
@@ -730,7 +745,7 @@ fn node_to_json(
                 .collect();
             obj.insert("attributes".to_string(), serde_json::Value::Object(attrs));
 
-            if let Some(style) = styles.get(&(node as *const Node)) {
+            if let Some(style) = styles.get(&id) {
                 if let Ok(style_json) = serde_json::to_value(style) {
                     obj.insert("computedStyle".to_string(), style_json);
                 }
@@ -746,13 +761,13 @@ fn node_to_json(
         }
     }
 
-    if !node.children.is_empty() {
-        let children: Vec<serde_json::Value> = node
-            .children
+    let children = tree.children(id);
+    if !children.is_empty() {
+        let children_json: Vec<serde_json::Value> = children
             .iter()
-            .map(|child| node_to_json(child, styles))
+            .map(|&child_id| node_to_json(tree, child_id, styles))
             .collect();
-        obj.insert("children".to_string(), serde_json::Value::Array(children));
+        obj.insert("children".to_string(), serde_json::Value::Array(children_json));
     }
 
     serde_json::Value::Object(obj)

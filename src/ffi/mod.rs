@@ -11,14 +11,14 @@ use crate::lib_css::css_parser::parser::CSSParser;
 use crate::lib_css::css_style::ComputedStyle;
 use crate::lib_css::css_tokenizer::tokenizer::CSSTokenizer;
 use crate::lib_css::extract_style_content;
-use crate::lib_dom::{Node, NodeType};
+use crate::lib_dom::{DomTree, NodeId, NodeType};
 use crate::lib_html::html_parser::parser::HTMLParser;
 use crate::lib_html::html_tokenizer::tokenizer::HTMLTokenizer;
 
 /// Opaque handle to a parsed DOM document with computed styles
 pub struct KoalaDocument {
-    root: Node,
-    styles: HashMap<*const Node, ComputedStyle>,
+    tree: DomTree,
+    styles: HashMap<NodeId, ComputedStyle>,
 }
 
 /// Parse HTML string and return a handle to the document.
@@ -43,21 +43,21 @@ pub unsafe extern "C" fn koala_parse_html(html: *const c_char) -> *mut KoalaDocu
     tokenizer.run();
     let tokens = tokenizer.into_tokens();
     let parser = HTMLParser::new(tokens);
-    let root = parser.run();
+    let tree = parser.run();
 
     // Extract CSS from <style> elements and compute styles
-    let css_text = extract_style_content(&root);
+    let css_text = extract_style_content(&tree);
     let styles = if !css_text.is_empty() {
         let mut css_tokenizer = CSSTokenizer::new(css_text);
         css_tokenizer.run();
         let mut css_parser = CSSParser::new(css_tokenizer.into_tokens());
         let stylesheet = css_parser.parse_stylesheet();
-        compute_styles(&root, &stylesheet)
+        compute_styles(&tree, &stylesheet)
     } else {
         HashMap::new()
     };
 
-    let doc = Box::new(KoalaDocument { root, styles });
+    let doc = Box::new(KoalaDocument { tree, styles });
     Box::into_raw(doc)
 }
 
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn koala_document_to_json(doc: *const KoalaDocument) -> *m
     }
 
     let doc = &*doc;
-    let json = node_to_json_with_styles(&doc.root, &doc.styles);
+    let json = node_to_json_with_styles(&doc.tree, doc.tree.root(), &doc.styles);
 
     match CString::new(json) {
         Ok(s) => s.into_raw(),
@@ -115,14 +115,19 @@ pub unsafe extern "C" fn koala_document_child_count(doc: *const KoalaDocument) -
     if doc.is_null() {
         return 0;
     }
-    (*doc).root.children.len()
+    (*doc).tree.children((*doc).tree.root()).len()
 }
 
 // Internal helper to convert a node to JSON with computed styles
 fn node_to_json_with_styles(
-    node: &Node,
-    styles: &HashMap<*const Node, ComputedStyle>,
+    tree: &DomTree,
+    id: NodeId,
+    styles: &HashMap<NodeId, ComputedStyle>,
 ) -> String {
+    let Some(node) = tree.get(id) else {
+        return "{}".to_string();
+    };
+
     let mut json = String::from("{");
 
     match &node.node_type {
@@ -147,7 +152,7 @@ fn node_to_json_with_styles(
             json.push('}');
 
             // Computed style (if available)
-            if let Some(style) = styles.get(&(node as *const Node)) {
+            if let Some(style) = styles.get(&id) {
                 if let Ok(style_json) = serde_json::to_string(style) {
                     json.push_str(",\"computedStyle\":");
                     json.push_str(&style_json);
@@ -165,14 +170,14 @@ fn node_to_json_with_styles(
     }
 
     // Children
-    if !node.children.is_empty() {
+    let children = tree.children(id);
+    if !children.is_empty() {
         json.push_str(",\"children\":[");
-        let children: Vec<String> = node
-            .children
+        let children_json: Vec<String> = children
             .iter()
-            .map(|child| node_to_json_with_styles(child, styles))
+            .map(|&child_id| node_to_json_with_styles(tree, child_id, styles))
             .collect();
-        json.push_str(&children.join(","));
+        json.push_str(&children_json.join(","));
         json.push(']');
     }
 

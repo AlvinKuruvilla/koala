@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::lib_css::css_parser::parser::{Rule, StyleRule, Stylesheet};
 use crate::lib_css::css_selector::{parse_selector, ParsedSelector, Specificity};
 use crate::lib_css::css_style::ComputedStyle;
-use crate::lib_dom::{Node, NodeType};
+use crate::lib_dom::{DomTree, NodeId, NodeType};
 
 /// A matched rule with its specificity for cascade ordering.
 struct MatchedRule<'a> {
@@ -21,8 +21,8 @@ struct MatchedRule<'a> {
 /// on a given element, sorts them by their declaration's precedence..."
 ///
 /// Compute styles for the entire DOM tree given a stylesheet.
-/// Returns a map from node pointer to computed style.
-pub fn compute_styles(dom: &Node, stylesheet: &Stylesheet) -> HashMap<*const Node, ComputedStyle> {
+/// Returns a map from NodeId to computed style.
+pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId, ComputedStyle> {
     let mut styles = HashMap::new();
 
     // Parse all selectors upfront
@@ -43,18 +43,21 @@ pub fn compute_styles(dom: &Node, stylesheet: &Stylesheet) -> HashMap<*const Nod
 
     // Start with default inherited style (none)
     let initial_style = ComputedStyle::default();
-    compute_node_styles(dom, &parsed_rules, &initial_style, &mut styles);
+    compute_node_styles(tree, tree.root(), &parsed_rules, &initial_style, &mut styles);
 
     styles
 }
 
 /// Recursively compute styles for a node and its children.
 fn compute_node_styles(
-    node: &Node,
+    tree: &DomTree,
+    id: NodeId,
     rules: &[(ParsedSelector, &StyleRule)],
     inherited: &ComputedStyle,
-    styles: &mut HashMap<*const Node, ComputedStyle>,
+    styles: &mut HashMap<NodeId, ComputedStyle>,
 ) {
+    let Some(node) = tree.get(id) else { return };
+
     match &node.node_type {
         NodeType::Element(element_data) => {
             // [§ 7 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
@@ -84,17 +87,17 @@ fn compute_node_styles(
             }
 
             // Store the computed style
-            styles.insert(node as *const Node, computed.clone());
+            styles.insert(id, computed.clone());
 
             // Recurse to children with this element's computed style as inherited
-            for child in &node.children {
-                compute_node_styles(child, rules, &computed, styles);
+            for &child_id in tree.children(id) {
+                compute_node_styles(tree, child_id, rules, &computed, styles);
             }
         }
         NodeType::Document => {
             // Document doesn't have styles itself, but pass through to children
-            for child in &node.children {
-                compute_node_styles(child, rules, inherited, styles);
+            for &child_id in tree.children(id) {
+                compute_node_styles(tree, child_id, rules, inherited, styles);
             }
         }
         NodeType::Text(_) | NodeType::Comment(_) => {
@@ -156,8 +159,7 @@ mod tests {
     use super::*;
     use crate::lib_css::css_parser::parser::CSSParser;
     use crate::lib_css::css_tokenizer::tokenizer::CSSTokenizer;
-    use crate::lib_dom::ElementData;
-    use std::collections::HashMap as StdHashMap;
+    use crate::lib_dom::{AttributesMap, ElementData};
 
     fn parse_css(css: &str) -> Stylesheet {
         let mut tokenizer = CSSTokenizer::new(css.to_string());
@@ -166,21 +168,19 @@ mod tests {
         parser.parse_stylesheet()
     }
 
-    fn make_element_node(tag: &str, id: Option<&str>, classes: &[&str]) -> Node {
-        let mut attrs = StdHashMap::new();
+    /// Helper to create element node types
+    fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType {
+        let mut attrs = AttributesMap::new();
         if let Some(id_val) = id {
             attrs.insert("id".to_string(), id_val.to_string());
         }
         if !classes.is_empty() {
             attrs.insert("class".to_string(), classes.join(" "));
         }
-        Node {
-            node_type: NodeType::Element(ElementData {
-                tag_name: tag.to_string(),
-                attrs,
-            }),
-            children: vec![],
-        }
+        NodeType::Element(ElementData {
+            tag_name: tag.to_string(),
+            attrs,
+        })
     }
 
     #[test]
@@ -188,20 +188,17 @@ mod tests {
         let css = "body { color: #333; }";
         let stylesheet = parse_css(css);
 
-        let body = make_element_node("body", None, &[]);
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![body],
-        };
+        let mut tree = DomTree::new();
+        let body_id = tree.alloc(make_element("body", None, &[]));
+        tree.append_child(NodeId::ROOT, body_id);
 
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
         // Document has no style
-        assert!(!styles.contains_key(&(&doc as *const Node)));
+        assert!(!styles.contains_key(&NodeId::ROOT));
 
         // Body should have the color applied
-        let body_ptr = &doc.children[0] as *const Node;
-        let body_style = styles.get(&body_ptr).unwrap();
+        let body_style = styles.get(&body_id).unwrap();
         assert!(body_style.color.is_some());
         let color = body_style.color.as_ref().unwrap();
         assert_eq!(color.r, 0x33);
@@ -214,20 +211,16 @@ mod tests {
         let css = "body { color: #ff0000; }";
         let stylesheet = parse_css(css);
 
-        let p = make_element_node("p", None, &[]);
-        let mut body = make_element_node("body", None, &[]);
-        body.children.push(p);
+        let mut tree = DomTree::new();
+        let body_id = tree.alloc(make_element("body", None, &[]));
+        let p_id = tree.alloc(make_element("p", None, &[]));
+        tree.append_child(NodeId::ROOT, body_id);
+        tree.append_child(body_id, p_id);
 
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![body],
-        };
-
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
         // P should inherit color from body
-        let p_ptr = &doc.children[0].children[0] as *const Node;
-        let p_style = styles.get(&p_ptr).unwrap();
+        let p_style = styles.get(&p_id).unwrap();
         assert!(p_style.color.is_some());
         let color = p_style.color.as_ref().unwrap();
         assert_eq!(color.r, 0xff);
@@ -239,16 +232,13 @@ mod tests {
         let css = "p { color: #ff0000; } .highlight { color: #00ff00; }";
         let stylesheet = parse_css(css);
 
-        let p_with_class = make_element_node("p", None, &["highlight"]);
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![p_with_class],
-        };
+        let mut tree = DomTree::new();
+        let p_id = tree.alloc(make_element("p", None, &["highlight"]));
+        tree.append_child(NodeId::ROOT, p_id);
 
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
-        let p_ptr = &doc.children[0] as *const Node;
-        let p_style = styles.get(&p_ptr).unwrap();
+        let p_style = styles.get(&p_id).unwrap();
         let color = p_style.color.as_ref().unwrap();
         // Class selector wins (green)
         assert_eq!(color.g, 0xff);
@@ -260,17 +250,13 @@ mod tests {
         let css = "#main-content { background-color: white; padding: 16px; }";
         let stylesheet = parse_css(css);
 
-        let div = make_element_node("div", Some("main-content"), &[]);
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![div],
-        };
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element("div", Some("main-content"), &[]));
+        tree.append_child(NodeId::ROOT, div_id);
 
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
-        let div_ptr = &doc.children[0] as *const Node;
-        let div_style = styles.get(&div_ptr).unwrap();
-
+        let div_style = styles.get(&div_id).unwrap();
         assert!(div_style.background_color.is_some());
         assert!(div_style.padding_top.is_some());
     }
@@ -282,27 +268,22 @@ mod tests {
         let css = "body { background-color: #f5f5f5; }";
         let stylesheet = parse_css(css);
 
-        let p = make_element_node("p", None, &[]);
-        let mut body = make_element_node("body", None, &[]);
-        body.children.push(p);
+        let mut tree = DomTree::new();
+        let body_id = tree.alloc(make_element("body", None, &[]));
+        let p_id = tree.alloc(make_element("p", None, &[]));
+        tree.append_child(NodeId::ROOT, body_id);
+        tree.append_child(body_id, p_id);
 
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![body],
-        };
-
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
         // Body should have background-color
-        let body_ptr = &doc.children[0] as *const Node;
-        let body_style = styles.get(&body_ptr).unwrap();
+        let body_style = styles.get(&body_id).unwrap();
         assert!(body_style.background_color.is_some());
         let bg = body_style.background_color.as_ref().unwrap();
         assert_eq!(bg.r, 0xf5);
 
         // P should NOT inherit background-color
-        let p_ptr = &doc.children[0].children[0] as *const Node;
-        let p_style = styles.get(&p_ptr).unwrap();
+        let p_style = styles.get(&p_id).unwrap();
         assert!(p_style.background_color.is_none());
     }
 
@@ -313,20 +294,16 @@ mod tests {
         let css = "body { line-height: 1.6; }";
         let stylesheet = parse_css(css);
 
-        let p = make_element_node("p", None, &[]);
-        let mut body = make_element_node("body", None, &[]);
-        body.children.push(p);
+        let mut tree = DomTree::new();
+        let body_id = tree.alloc(make_element("body", None, &[]));
+        let p_id = tree.alloc(make_element("p", None, &[]));
+        tree.append_child(NodeId::ROOT, body_id);
+        tree.append_child(body_id, p_id);
 
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![body],
-        };
-
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
         // P should inherit line-height from body
-        let p_ptr = &doc.children[0].children[0] as *const Node;
-        let p_style = styles.get(&p_ptr).unwrap();
+        let p_style = styles.get(&p_id).unwrap();
         assert!(p_style.line_height.is_some());
         assert!((p_style.line_height.unwrap() - 1.6).abs() < 0.01);
     }
@@ -336,16 +313,13 @@ mod tests {
         let css = "div { margin: 20px; padding: 16px; }";
         let stylesheet = parse_css(css);
 
-        let div = make_element_node("div", None, &[]);
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![div],
-        };
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element("div", None, &[]));
+        tree.append_child(NodeId::ROOT, div_id);
 
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
-        let div_ptr = &doc.children[0] as *const Node;
-        let div_style = styles.get(&div_ptr).unwrap();
+        let div_style = styles.get(&div_id).unwrap();
 
         // All four sides should be set
         assert!(div_style.margin_top.is_some());
@@ -374,22 +348,18 @@ mod tests {
         let css = "body { font-size: 16px; } h1 { font-size: 32px; }";
         let stylesheet = parse_css(css);
 
-        let span = make_element_node("span", None, &[]);
-        let mut h1 = make_element_node("h1", None, &[]);
-        h1.children.push(span);
-        let mut body = make_element_node("body", None, &[]);
-        body.children.push(h1);
+        let mut tree = DomTree::new();
+        let body_id = tree.alloc(make_element("body", None, &[]));
+        let h1_id = tree.alloc(make_element("h1", None, &[]));
+        let span_id = tree.alloc(make_element("span", None, &[]));
+        tree.append_child(NodeId::ROOT, body_id);
+        tree.append_child(body_id, h1_id);
+        tree.append_child(h1_id, span_id);
 
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![body],
-        };
-
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
         // Span inside h1 should inherit h1's font-size (32px)
-        let span_ptr = &doc.children[0].children[0].children[0] as *const Node;
-        let span_style = styles.get(&span_ptr).unwrap();
+        let span_style = styles.get(&span_id).unwrap();
         assert!(span_style.font_size.is_some());
         if let Some(crate::lib_css::css_style::LengthValue::Px(v)) = &span_style.font_size {
             assert!((v - 32.0).abs() < 0.01, "Expected 32px but got {}px", v);
@@ -401,16 +371,13 @@ mod tests {
         let css = "#box { border: 1px solid #ddd; }";
         let stylesheet = parse_css(css);
 
-        let div = make_element_node("div", Some("box"), &[]);
-        let doc = Node {
-            node_type: NodeType::Document,
-            children: vec![div],
-        };
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element("div", Some("box"), &[]));
+        tree.append_child(NodeId::ROOT, div_id);
 
-        let styles = compute_styles(&doc, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
-        let div_ptr = &doc.children[0] as *const Node;
-        let div_style = styles.get(&div_ptr).unwrap();
+        let div_style = styles.get(&div_id).unwrap();
 
         // All four borders should be set
         assert!(div_style.border_top.is_some());
@@ -477,10 +444,10 @@ mod tests {
         let mut tokenizer = HTMLTokenizer::new(html.to_string());
         tokenizer.run();
         let parser = HTMLParser::new(tokenizer.into_tokens());
-        let dom = parser.run();
+        let tree = parser.run();
 
         // Extract and parse CSS
-        let css_text = extract_style_content(&dom);
+        let css_text = extract_style_content(&tree);
         assert!(!css_text.is_empty(), "CSS should be extracted from <style>");
 
         let mut css_tokenizer = CSSTokenizer::new(css_text);
@@ -489,20 +456,20 @@ mod tests {
         let stylesheet = css_parser.parse_stylesheet();
 
         // Compute styles
-        let styles = compute_styles(&dom, &stylesheet);
+        let styles = compute_styles(&tree, &stylesheet);
 
         // Should have styles for multiple elements
         assert!(!styles.is_empty(), "Should have computed styles");
 
         // Find body and verify styles
-        fn find_element<'a>(node: &'a Node, tag: &str) -> Option<&'a Node> {
-            if let NodeType::Element(data) = &node.node_type {
+        fn find_element(tree: &DomTree, from: NodeId, tag: &str) -> Option<NodeId> {
+            if let Some(data) = tree.as_element(from) {
                 if data.tag_name.eq_ignore_ascii_case(tag) {
-                    return Some(node);
+                    return Some(from);
                 }
             }
-            for child in &node.children {
-                if let Some(found) = find_element(child, tag) {
+            for &child_id in tree.children(from) {
+                if let Some(found) = find_element(tree, child_id, tag) {
                     return Some(found);
                 }
             }
@@ -510,16 +477,16 @@ mod tests {
         }
 
         // Verify body has styles
-        if let Some(body) = find_element(&dom, "body") {
-            let body_style = styles.get(&(body as *const Node)).unwrap();
+        if let Some(body_id) = find_element(&tree, tree.root(), "body") {
+            let body_style = styles.get(&body_id).unwrap();
             assert!(body_style.color.is_some(), "body should have color");
             assert!(body_style.background_color.is_some(), "body should have background-color");
             assert!(body_style.margin_top.is_some(), "body should have margin");
         }
 
         // Verify h1 has specific color
-        if let Some(h1) = find_element(&dom, "h1") {
-            let h1_style = styles.get(&(h1 as *const Node)).unwrap();
+        if let Some(h1_id) = find_element(&tree, tree.root(), "h1") {
+            let h1_style = styles.get(&h1_id).unwrap();
             let color = h1_style.color.as_ref().unwrap();
             // #2563eb = rgb(37, 99, 235)
             assert_eq!(color.r, 0x25);
