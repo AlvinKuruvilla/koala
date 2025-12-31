@@ -59,16 +59,16 @@ fn compute_node_styles(
     let Some(node) = tree.get(id) else { return };
 
     match &node.node_type {
-        NodeType::Element(element_data) => {
+        NodeType::Element(_element_data) => {
             // [§ 7 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
             // Start with inherited styles
             let mut computed = inherit_styles(inherited);
 
             // [§ 6.4 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
-            // Find all matching rules
+            // Find all matching rules using tree-aware matching for combinator support
             let mut matched: Vec<MatchedRule> = rules
                 .iter()
-                .filter(|(selector, _)| selector.matches(element_data))
+                .filter(|(selector, _)| selector.matches_in_tree(tree, id))
                 .map(|(selector, rule)| MatchedRule {
                     specificity: selector.specificity,
                     rule,

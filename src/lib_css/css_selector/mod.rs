@@ -3,7 +3,7 @@
 //! This module implements selector parsing and matching per
 //! [Selectors Level 4](https://www.w3.org/TR/selectors-4/).
 
-use crate::lib_dom::ElementData;
+use crate::lib_dom::{DomTree, ElementData, NodeId};
 
 /// [§ 5 Elemental selectors](https://www.w3.org/TR/selectors-4/#elemental-selectors)
 /// [§ 6 Attribute selectors](https://www.w3.org/TR/selectors-4/#attribute-selectors)
@@ -138,8 +138,8 @@ impl ParsedSelector {
     /// For simple selectors (no combinators), all simple selectors in the
     /// compound must match the element directly.
     ///
-    /// For complex selectors (with combinators), we need DOM tree traversal
-    /// to check ancestor/sibling relationships.
+    /// NOTE: This method only works for simple selectors. For complex selectors
+    /// with combinators, use `matches_in_tree` which has access to DOM context.
     pub fn matches(&self, element: &ElementData) -> bool {
         // First, the subject (rightmost compound) must match the element
         let subject_matches = self
@@ -158,8 +158,48 @@ impl ParsedSelector {
             return true;
         }
 
+        // Complex selectors require DOM traversal - for now, return false
+        // since we don't have tree context. Callers should use matches_in_tree.
+        false
+    }
+
+    /// [§ 4.1 Selector Matching](https://www.w3.org/TR/selectors-4/#match-a-selector-against-an-element)
+    /// "A selector is said to match an element when..."
+    ///
+    /// Match a selector against an element with full DOM tree context.
+    /// This enables matching complex selectors with combinators.
+    ///
+    /// # Arguments
+    /// * `tree` - The DOM tree containing the element
+    /// * `node_id` - The NodeId of the element to match
+    ///
+    /// # Returns
+    /// `true` if the selector matches the element
+    pub fn matches_in_tree(&self, tree: &DomTree, node_id: NodeId) -> bool {
+        // Get the element data for this node
+        let Some(element) = tree.as_element(node_id) else {
+            return false;
+        };
+
+        // First, the subject (rightmost compound) must match the element
+        let subject_matches = self
+            .complex
+            .subject
+            .simple_selectors
+            .iter()
+            .all(|simple| simple.matches(element));
+
+        if !subject_matches {
+            return false;
+        }
+
+        // If there are no combinators, we're done
+        if self.complex.combinators.is_empty() {
+            return true;
+        }
+
         // Complex selectors require DOM traversal
-        self.matches_with_context(element)
+        self.matches_combinators(tree, node_id)
     }
 
     /// [§ 16 Combinators](https://www.w3.org/TR/selectors-4/#combinators)
@@ -167,45 +207,145 @@ impl ParsedSelector {
     /// Match a complex selector by traversing the DOM tree according to
     /// combinator relationships.
     ///
+    /// The combinator chain is stored in right-to-left order (from subject outward),
+    /// so we walk the chain and for each combinator, find a matching element in
+    /// the appropriate relationship (ancestor, parent, previous sibling, etc.).
+    ///
     /// # Arguments
-    /// * `element` - The element to match (already matched the subject)
+    /// * `tree` - The DOM tree
+    /// * `subject_id` - The NodeId of the subject element (already matched)
     ///
     /// # Returns
     /// `true` if all combinator relationships are satisfied
-    ///
-    /// # Note
-    /// This requires access to the DOM tree (parent/sibling pointers) which
-    /// is not available from ElementData alone. The current implementation
-    /// will panic until DOM traversal is implemented.
-    fn matches_with_context(&self, _element: &ElementData) -> bool {
-        // [§ 16.1 Descendant combinator](https://www.w3.org/TR/selectors-4/#descendant-combinators)
-        // "A selector of the form 'A B' represents an element B that is an
-        // arbitrary descendant of some ancestor element A."
-        //
-        // [§ 16.2 Child combinator](https://www.w3.org/TR/selectors-4/#child-combinators)
-        // "A selector of the form 'A > B' represents an element B that is a
-        // direct child of element A."
-        //
-        // [§ 16.3 Next-sibling combinator](https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators)
-        // "A selector of the form 'A + B' represents an element B that
-        // immediately follows element A, where A and B share the same parent."
-        //
-        // [§ 16.4 Subsequent-sibling combinator](https://www.w3.org/TR/selectors-4/#general-sibling-combinators)
-        // "A selector of the form 'A ~ B' represents an element B that follows
-        // element A (not necessarily immediately), where A and B share the
-        // same parent."
-        //
-        // To implement these, we need:
-        // 1. Parent pointer to walk up the tree (for Descendant, Child)
-        // 2. Previous sibling pointer (for NextSibling, SubsequentSibling)
-        // 3. Access to parent's children list (for sibling combinators)
-        todo!(
-            "Complex selector matching requires DOM tree traversal. \
-             Need to implement parent/sibling access in lib_dom. \
-             Combinators: {:?}",
-            self.complex.combinators
-        )
+    fn matches_combinators(&self, tree: &DomTree, subject_id: NodeId) -> bool {
+        let mut current_id = subject_id;
+
+        // Walk the combinator chain (right-to-left, from subject outward)
+        for (combinator, compound) in &self.complex.combinators {
+            match combinator {
+                // [§ 16.1 Descendant combinator](https://www.w3.org/TR/selectors-4/#descendant-combinators)
+                // "A selector of the form 'A B' represents an element B that is an
+                // arbitrary descendant of some ancestor element A."
+                Combinator::Descendant => {
+                    // Find any ancestor that matches the compound selector
+                    let matched_ancestor = tree.ancestors(current_id).find(|&ancestor_id| {
+                        if let Some(ancestor_elem) = tree.as_element(ancestor_id) {
+                            compound_matches(compound, ancestor_elem)
+                        } else {
+                            false
+                        }
+                    });
+
+                    match matched_ancestor {
+                        Some(ancestor_id) => current_id = ancestor_id,
+                        None => return false,
+                    }
+                }
+
+                // [§ 16.2 Child combinator](https://www.w3.org/TR/selectors-4/#child-combinators)
+                // "A selector of the form 'A > B' represents an element B that is a
+                // direct child of element A."
+                Combinator::Child => {
+                    // The immediate parent must match
+                    let Some(parent_id) = tree.parent(current_id) else {
+                        return false;
+                    };
+
+                    let Some(parent_elem) = tree.as_element(parent_id) else {
+                        return false;
+                    };
+
+                    if !compound_matches(compound, parent_elem) {
+                        return false;
+                    }
+
+                    current_id = parent_id;
+                }
+
+                // [§ 16.3 Next-sibling combinator](https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators)
+                // "A next-sibling combinator is a plus sign (+) that separates two compound
+                // selectors. A selector of the form 'A + B' represents an element B that
+                // immediately follows element A, where A and B share the same parent."
+                Combinator::NextSibling => {
+                    // Find the immediately preceding element sibling
+                    let prev_element = find_previous_element_sibling(tree, current_id);
+
+                    let Some(prev_id) = prev_element else {
+                        return false;
+                    };
+
+                    let Some(prev_elem) = tree.as_element(prev_id) else {
+                        return false;
+                    };
+
+                    if !compound_matches(compound, prev_elem) {
+                        return false;
+                    }
+
+                    current_id = prev_id;
+                }
+
+                // [§ 16.4 Subsequent-sibling combinator](https://www.w3.org/TR/selectors-4/#general-sibling-combinators)
+                // "A subsequent-sibling combinator is a tilde (~) that separates two compound
+                // selectors. A selector of the form 'A ~ B' represents an element B that
+                // follows element A (not necessarily immediately), where A and B share the
+                // same parent."
+                Combinator::SubsequentSibling => {
+                    // Find any preceding element sibling that matches
+                    let matched_sibling =
+                        find_matching_preceding_sibling(tree, current_id, compound);
+
+                    match matched_sibling {
+                        Some(sibling_id) => current_id = sibling_id,
+                        None => return false,
+                    }
+                }
+            }
+        }
+
+        // All combinators matched
+        true
     }
+}
+
+/// Check if a compound selector matches an element.
+fn compound_matches(compound: &CompoundSelector, element: &ElementData) -> bool {
+    compound
+        .simple_selectors
+        .iter()
+        .all(|simple| simple.matches(element))
+}
+
+/// [§ 16.3 Next-sibling combinator](https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators)
+///
+/// Find the immediately preceding element sibling (skipping text/comment nodes).
+/// Per spec, the next-sibling combinator considers element nodes only.
+fn find_previous_element_sibling(tree: &DomTree, node_id: NodeId) -> Option<NodeId> {
+    // Walk backwards through preceding siblings until we find an element
+    for sibling_id in tree.preceding_siblings(node_id) {
+        if tree.as_element(sibling_id).is_some() {
+            return Some(sibling_id);
+        }
+    }
+    None
+}
+
+/// [§ 16.4 Subsequent-sibling combinator](https://www.w3.org/TR/selectors-4/#general-sibling-combinators)
+///
+/// Find any preceding element sibling that matches the compound selector.
+fn find_matching_preceding_sibling(
+    tree: &DomTree,
+    node_id: NodeId,
+    compound: &CompoundSelector,
+) -> Option<NodeId> {
+    for sibling_id in tree.preceding_siblings(node_id) {
+        if let Some(sibling_elem) = tree.as_element(sibling_id) {
+            if compound_matches(compound, sibling_elem) {
+                return Some(sibling_id);
+            }
+        }
+    }
+    None
 }
 
 impl ComplexSelector {
@@ -878,5 +1018,181 @@ mod tests {
         // "div.class#id > ul.nav li" = 1,2,3
         let sel3 = parse_selector("div.class#id > ul.nav li").unwrap();
         assert_eq!(sel3.specificity, Specificity(1, 2, 3));
+    }
+
+    // =========================================================================
+    // Combinator Matching Tests (with DOM tree context)
+    // [§ 16 Combinators](https://www.w3.org/TR/selectors-4/#combinators)
+    // =========================================================================
+
+    use crate::lib_dom::{AttributesMap, DomTree, NodeId, NodeType};
+
+    /// Helper to create element NodeType
+    fn make_element_type(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType {
+        let mut attrs = AttributesMap::new();
+        if let Some(id_val) = id {
+            attrs.insert("id".to_string(), id_val.to_string());
+        }
+        if !classes.is_empty() {
+            attrs.insert("class".to_string(), classes.join(" "));
+        }
+        NodeType::Element(crate::lib_dom::ElementData {
+            tag_name: tag.to_string(),
+            attrs,
+        })
+    }
+
+    #[test]
+    fn test_matches_in_tree_simple() {
+        // Simple selector should match without needing tree context
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element_type("div", None, &["container"]));
+        tree.append_child(NodeId::ROOT, div_id);
+
+        let selector = parse_selector("div.container").unwrap();
+        assert!(selector.matches_in_tree(&tree, div_id));
+
+        let wrong_selector = parse_selector("span.container").unwrap();
+        assert!(!wrong_selector.matches_in_tree(&tree, div_id));
+    }
+
+    #[test]
+    fn test_matches_descendant_combinator() {
+        // [§ 16.1 Descendant combinator](https://www.w3.org/TR/selectors-4/#descendant-combinators)
+        // Build: <div class="container"><p><span>text</span></p></div>
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element_type("div", None, &["container"]));
+        let p_id = tree.alloc(make_element_type("p", None, &[]));
+        let span_id = tree.alloc(make_element_type("span", None, &[]));
+
+        tree.append_child(NodeId::ROOT, div_id);
+        tree.append_child(div_id, p_id);
+        tree.append_child(p_id, span_id);
+
+        // "div span" should match span (div is ancestor)
+        let selector = parse_selector("div span").unwrap();
+        assert!(selector.matches_in_tree(&tree, span_id));
+
+        // "div p" should match p
+        let selector2 = parse_selector("div p").unwrap();
+        assert!(selector2.matches_in_tree(&tree, p_id));
+
+        // ".container span" should match span
+        let selector3 = parse_selector(".container span").unwrap();
+        assert!(selector3.matches_in_tree(&tree, span_id));
+
+        // "ul span" should NOT match (no ul ancestor)
+        let selector4 = parse_selector("ul span").unwrap();
+        assert!(!selector4.matches_in_tree(&tree, span_id));
+    }
+
+    #[test]
+    fn test_matches_child_combinator() {
+        // [§ 16.2 Child combinator](https://www.w3.org/TR/selectors-4/#child-combinators)
+        // Build: <div><p><span>text</span></p></div>
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element_type("div", None, &[]));
+        let p_id = tree.alloc(make_element_type("p", None, &[]));
+        let span_id = tree.alloc(make_element_type("span", None, &[]));
+
+        tree.append_child(NodeId::ROOT, div_id);
+        tree.append_child(div_id, p_id);
+        tree.append_child(p_id, span_id);
+
+        // "div > p" should match p (p is direct child of div)
+        let selector = parse_selector("div > p").unwrap();
+        assert!(selector.matches_in_tree(&tree, p_id));
+
+        // "p > span" should match span
+        let selector2 = parse_selector("p > span").unwrap();
+        assert!(selector2.matches_in_tree(&tree, span_id));
+
+        // "div > span" should NOT match (span is grandchild, not child)
+        let selector3 = parse_selector("div > span").unwrap();
+        assert!(!selector3.matches_in_tree(&tree, span_id));
+    }
+
+    #[test]
+    fn test_matches_next_sibling_combinator() {
+        // [§ 16.3 Next-sibling combinator](https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators)
+        // Build: <div><h1></h1><p></p><span></span></div>
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element_type("div", None, &[]));
+        let h1_id = tree.alloc(make_element_type("h1", None, &[]));
+        let p_id = tree.alloc(make_element_type("p", None, &[]));
+        let span_id = tree.alloc(make_element_type("span", None, &[]));
+
+        tree.append_child(NodeId::ROOT, div_id);
+        tree.append_child(div_id, h1_id);
+        tree.append_child(div_id, p_id);
+        tree.append_child(div_id, span_id);
+
+        // "h1 + p" should match p (p immediately follows h1)
+        let selector = parse_selector("h1 + p").unwrap();
+        assert!(selector.matches_in_tree(&tree, p_id));
+
+        // "p + span" should match span
+        let selector2 = parse_selector("p + span").unwrap();
+        assert!(selector2.matches_in_tree(&tree, span_id));
+
+        // "h1 + span" should NOT match (span doesn't immediately follow h1)
+        let selector3 = parse_selector("h1 + span").unwrap();
+        assert!(!selector3.matches_in_tree(&tree, span_id));
+    }
+
+    #[test]
+    fn test_matches_subsequent_sibling_combinator() {
+        // [§ 16.4 Subsequent-sibling combinator](https://www.w3.org/TR/selectors-4/#general-sibling-combinators)
+        // Build: <div><h1></h1><p></p><span></span></div>
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element_type("div", None, &[]));
+        let h1_id = tree.alloc(make_element_type("h1", None, &[]));
+        let p_id = tree.alloc(make_element_type("p", None, &[]));
+        let span_id = tree.alloc(make_element_type("span", None, &[]));
+
+        tree.append_child(NodeId::ROOT, div_id);
+        tree.append_child(div_id, h1_id);
+        tree.append_child(div_id, p_id);
+        tree.append_child(div_id, span_id);
+
+        // "h1 ~ span" should match span (span follows h1, not immediately)
+        let selector = parse_selector("h1 ~ span").unwrap();
+        assert!(selector.matches_in_tree(&tree, span_id));
+
+        // "h1 ~ p" should match p
+        let selector2 = parse_selector("h1 ~ p").unwrap();
+        assert!(selector2.matches_in_tree(&tree, p_id));
+
+        // "span ~ p" should NOT match (p comes before span)
+        let selector3 = parse_selector("span ~ p").unwrap();
+        assert!(!selector3.matches_in_tree(&tree, p_id));
+    }
+
+    #[test]
+    fn test_matches_complex_combinator_chain() {
+        // Test multiple combinators: "div.container > ul li a"
+        // Build: <div class="container"><ul><li><a>link</a></li></ul></div>
+        let mut tree = DomTree::new();
+        let div_id = tree.alloc(make_element_type("div", None, &["container"]));
+        let ul_id = tree.alloc(make_element_type("ul", None, &[]));
+        let li_id = tree.alloc(make_element_type("li", None, &[]));
+        let a_id = tree.alloc(make_element_type("a", None, &[]));
+
+        tree.append_child(NodeId::ROOT, div_id);
+        tree.append_child(div_id, ul_id);
+        tree.append_child(ul_id, li_id);
+        tree.append_child(li_id, a_id);
+
+        // "div.container > ul li a" should match a
+        let selector = parse_selector("div.container > ul li a").unwrap();
+        assert!(selector.matches_in_tree(&tree, a_id));
+
+        // "div.container > ul > li a" should also match (li is direct child of ul)
+        let selector2 = parse_selector("div.container > ul > li a").unwrap();
+        assert!(selector2.matches_in_tree(&tree, a_id));
+
+        // "div.container > li a" should NOT match (li is not direct child of div)
+        let selector3 = parse_selector("div.container > li a").unwrap();
+        assert!(!selector3.matches_in_tree(&tree, a_id));
     }
 }
