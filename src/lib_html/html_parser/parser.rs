@@ -882,6 +882,20 @@ impl HTMLParser {
                 self.insert_html_element(token);
             }
 
+            // [§ 13.2.6.4.7 "in body" - Start tag "form"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "form""
+            // "If the form element pointer is not null, and there is no template element on the
+            //  stack of open elements, then this is a parse error; ignore the token."
+            // "Otherwise:"
+            // "If the stack of open elements has a p element in button scope, then close a p element."
+            // "Insert an HTML element for the token, and, if there is no template element on the
+            //  stack of open elements, set the form element pointer to point to the element created."
+            Token::StartTag { name, .. } if name == "form" => {
+                // NOTE: Simplified - we skip form element pointer tracking
+                self.close_element_if_in_scope("p");
+                self.insert_html_element(token);
+            }
+
             // [§ 13.2.6.4.7 "in body" - Start tag h1-h6](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             // "A start tag whose tag name is one of: "h1", "h2", "h3", "h4", "h5", "h6""
             // "If the stack of open elements has a p element in button scope, then close a p element."
@@ -1138,6 +1152,14 @@ impl HTMLParser {
                 // NOTE: This is a simplified version - the spec uses the Adoption Agency Algorithm
                 // for formatting elements, which is more complex.
                 self.pop_until_tag(name);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag "form"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "An end tag whose tag name is "form""
+            // (Complex handling involving form element pointer - simplified here)
+            Token::EndTag { name, .. } if name == "form" => {
+                // NOTE: Simplified - just pop until form
+                self.pop_until_tag("form");
             }
 
             // "An end tag whose tag name is "body""
