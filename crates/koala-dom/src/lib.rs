@@ -291,6 +291,40 @@ impl DomTree {
             _ => None,
         })
     }
+
+    /// [§ 3.1.1 The document element](https://html.spec.whatwg.org/multipage/dom.html#the-html-element-2)
+    ///
+    /// "The document element of a document is the element whose parent is that
+    /// document, if it exists; otherwise null."
+    ///
+    /// In practice for HTML documents, this is the `<html>` element.
+    #[must_use]
+    pub fn document_element(&self) -> Option<NodeId> {
+        self.children(NodeId::ROOT)
+            .iter()
+            .find(|&&id| matches!(self.get(id).map(|n| &n.node_type), Some(NodeType::Element(_))))
+            .copied()
+    }
+
+    /// [§ 3.1.3 The body element](https://html.spec.whatwg.org/multipage/dom.html#the-body-element-2)
+    ///
+    /// "The body element of a document is the first of the html element's children
+    /// that is either a body element or a frameset element, or null if there is
+    /// no such element."
+    #[must_use]
+    pub fn body(&self) -> Option<NodeId> {
+        let html = self.document_element()?;
+
+        self.children(html)
+            .iter()
+            .find(|&&id| {
+                self.as_element(id).is_some_and(|e| {
+                    let tag = e.tag_name.to_ascii_lowercase();
+                    tag == "body" || tag == "frameset"
+                })
+            })
+            .copied()
+    }
 }
 
 impl Default for DomTree {
