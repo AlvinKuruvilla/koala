@@ -350,10 +350,10 @@ impl eframe::App for BrowserApp {
         }
 
         // Top panel: Navigation bar
-        egui::TopBottomPanel::top("nav_bar")
+        let _ = egui::TopBottomPanel::top("nav_bar")
             .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::symmetric(12.0, 8.0)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                let _ = ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
                     // Navigation buttons with consistent styling
@@ -404,7 +404,7 @@ impl eframe::App for BrowserApp {
 
                     // URL bar with rounded frame
                     let url_bar_width = ui.available_width() - 100.0;
-                    egui::Frame::none()
+                    let _ = egui::Frame::none()
                         .fill(ui.visuals().extreme_bg_color)
                         .rounding(egui::Rounding::same(14.0))
                         .inner_margin(egui::Margin::symmetric(12.0, 6.0))
@@ -457,18 +457,18 @@ impl eframe::App for BrowserApp {
             });
 
         // Bottom panel: Status bar
-        egui::TopBottomPanel::bottom("status_bar")
+        let _ = egui::TopBottomPanel::bottom("status_bar")
             .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::symmetric(12.0, 4.0)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
+                let _ = ui.horizontal(|ui| {
+                    let _ = ui.label(
                         egui::RichText::new(&self.status_message)
                             .size(12.0)
                             .color(ui.visuals().text_color().gamma_multiply(0.7)),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let _ = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(page) = &self.page {
-                            ui.label(
+                            let _ = ui.label(
                                 egui::RichText::new(format!(
                                     "{} nodes • {} styled",
                                     page.dom.len(),
@@ -484,16 +484,16 @@ impl eframe::App for BrowserApp {
 
         // Right panel: Debug panel (if open)
         if self.debug_panel_open {
-            egui::SidePanel::right("debug_panel")
+            let _ = egui::SidePanel::right("debug_panel")
                 .min_width(350.0)
                 .default_width(400.0)
                 .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::same(12.0)))
                 .show(ctx, |ui| {
-                    ui.heading("Debug Panel");
+                    let _ = ui.heading("Debug Panel");
                     ui.add_space(8.0);
 
                     // Tab bar
-                    ui.horizontal(|ui| {
+                    let _ = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for (tab, label) in [
                             (DebugTab::Dom, "DOM"),
@@ -507,11 +507,11 @@ impl eframe::App for BrowserApp {
                             }
                         }
                     });
-                    ui.separator();
+                    let _ = ui.separator();
                     ui.add_space(4.0);
 
                     // Tab content
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+                    let _ = egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(page) = &self.page {
                             match self.debug_tab {
                                 DebugTab::Dom => self.render_debug_dom(ui, page),
@@ -521,7 +521,7 @@ impl eframe::App for BrowserApp {
                                 DebugTab::Source => self.render_debug_source(ui, page),
                             }
                         } else {
-                            ui.colored_label(
+                            let _ = ui.colored_label(
                                 ui.visuals().text_color().gamma_multiply(0.5),
                                 "No page loaded",
                             );
@@ -531,12 +531,12 @@ impl eframe::App for BrowserApp {
         }
 
         // Central panel: Page content or landing page
-        egui::CentralPanel::default()
+        let _ = egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::same(0.0)))
             .show(ctx, |ui| {
                 if let Some(page) = &self.page {
                     // Page content
-                    egui::Frame::none()
+                    let _ = egui::Frame::none()
                         .fill(if self.theme == Theme::Dark {
                             egui::Color32::from_rgb(28, 28, 30)
                         } else {
@@ -544,7 +544,7 @@ impl eframe::App for BrowserApp {
                         })
                         .inner_margin(egui::Margin::same(24.0))
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
+                            let _ = egui::ScrollArea::vertical().show(ui, |ui| {
                                 self.render_page_content(ui, page);
                             });
                         });
@@ -564,22 +564,22 @@ impl BrowserApp {
         // Center content vertically
         ui.add_space((available.y / 2.0 - 150.0).max(50.0));
 
-        ui.vertical_centered(|ui| {
+        let _ = ui.vertical_centered(|ui| {
             // Logo/Title
-            ui.heading(
+            let _ = ui.heading(
                 egui::RichText::new("🐨")
                     .size(80.0),
             );
             ui.add_space(16.0);
 
-            ui.heading(
+            let _ = ui.heading(
                 egui::RichText::new("Koala Browser")
                     .size(32.0)
                     .strong(),
             );
             ui.add_space(8.0);
 
-            ui.label(
+            let _ = ui.label(
                 egui::RichText::new("A from-scratch browser built for learning")
                     .size(16.0)
                     .color(ui.visuals().text_color().gamma_multiply(0.6)),
@@ -588,7 +588,7 @@ impl BrowserApp {
             ui.add_space(32.0);
 
             // Search/URL box
-            egui::Frame::none()
+            let _ = egui::Frame::none()
                 .fill(ui.visuals().extreme_bg_color)
                 .rounding(egui::Rounding::same(24.0))
                 .inner_margin(egui::Margin::symmetric(20.0, 12.0))
@@ -613,14 +613,14 @@ impl BrowserApp {
             ui.add_space(40.0);
 
             // Quick links
-            ui.label(
+            let _ = ui.label(
                 egui::RichText::new("Quick Links")
                     .size(14.0)
                     .color(ui.visuals().text_color().gamma_multiply(0.5)),
             );
             ui.add_space(16.0);
 
-            ui.horizontal(|ui| {
+            let _ = ui.horizontal(|ui| {
                 ui.add_space((available.x / 2.0 - 200.0).max(0.0));
                 ui.spacing_mut().item_spacing.x = 16.0;
 
@@ -641,7 +641,7 @@ impl BrowserApp {
             ui.add_space(60.0);
 
             // Keyboard shortcuts hint
-            ui.label(
+            let _ = ui.label(
                 egui::RichText::new("Press F12 for debug panel • Click 🌙/☀️ to toggle theme")
                     .size(12.0)
                     .color(ui.visuals().text_color().gamma_multiply(0.4)),
@@ -722,7 +722,7 @@ impl BrowserApp {
                                         egui::FontId::new(font_size as f32, egui::FontFamily::Proportional),
                                         text_color,
                                     );
-                                    ui.label(job);
+                                    let _ = ui.label(job);
                                 }
                             }
                             _ => {
@@ -739,16 +739,15 @@ impl BrowserApp {
             NodeType::Text(text) => {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    ui.label(trimmed);
+                    let _ = ui.label(trimmed);
                 }
             }
             NodeType::Comment(_) => {}
         }
     }
 
-    /// Debug panel: DOM tree view
     fn render_debug_dom(&self, ui: &mut egui::Ui, page: &PageState) {
-        ui.label(
+        let _ = ui.label(
             egui::RichText::new(format!("DOM Tree ({} nodes)", page.dom.len()))
                 .strong()
                 .size(13.0),
@@ -766,7 +765,7 @@ impl BrowserApp {
 
         match &node.node_type {
             NodeType::Document => {
-                ui.monospace(format!("{}#document", indent));
+                let _ = ui.monospace(format!("{}#document", indent));
             }
             NodeType::Element(data) => {
                 let mut label = format!("{}<{}", indent, data.tag_name);
@@ -780,12 +779,12 @@ impl BrowserApp {
 
                 let has_style = page.styles.contains_key(&id);
                 if has_style {
-                    ui.horizontal(|ui| {
-                        ui.monospace(&label);
-                        ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "●");
+                    let _ = ui.horizontal(|ui| {
+                        let _ = ui.monospace(&label);
+                        let _ = ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "●");
                     });
                 } else {
-                    ui.monospace(label);
+                    let _ = ui.monospace(label);
                 }
             }
             NodeType::Text(text) => {
@@ -795,7 +794,7 @@ impl BrowserApp {
                     text.trim().to_string()
                 };
                 if !preview.is_empty() {
-                    ui.colored_label(
+                    let _ = ui.colored_label(
                         ui.visuals().text_color().gamma_multiply(0.6),
                         format!("{}\"{}\"", indent, preview),
                     );
@@ -807,7 +806,7 @@ impl BrowserApp {
                 } else {
                     text.clone()
                 };
-                ui.colored_label(
+                let _ = ui.colored_label(
                     ui.visuals().text_color().gamma_multiply(0.4),
                     format!("{}<!-- {} -->", indent, preview),
                 );
@@ -819,9 +818,8 @@ impl BrowserApp {
         }
     }
 
-    /// Debug panel: Tokens view
     fn render_debug_tokens(&self, ui: &mut egui::Ui, page: &PageState) {
-        ui.label(
+        let _ = ui.label(
             egui::RichText::new(format!("HTML Tokens ({})", page.tokens.len()))
                 .strong()
                 .size(13.0),
@@ -829,33 +827,32 @@ impl BrowserApp {
         ui.add_space(8.0);
 
         for (i, token) in page.tokens.iter().enumerate() {
-            ui.monospace(format!("{:4}: {:?}", i, token));
+            let _ = ui.monospace(format!("{:4}: {:?}", i, token));
         }
     }
 
-    /// Debug panel: CSS view
     fn render_debug_css(&self, ui: &mut egui::Ui, page: &PageState) {
         if page.css_text.is_empty() {
-            ui.colored_label(
+            let _ = ui.colored_label(
                 ui.visuals().text_color().gamma_multiply(0.5),
                 "No CSS found in document",
             );
             return;
         }
 
-        ui.label(
+        let _ = ui.label(
             egui::RichText::new(format!("CSS ({} bytes)", page.css_text.len()))
                 .strong()
                 .size(13.0),
         );
         ui.add_space(8.0);
 
-        egui::Frame::none()
+        let _ = egui::Frame::none()
             .fill(ui.visuals().extreme_bg_color)
             .rounding(egui::Rounding::same(4.0))
             .inner_margin(egui::Margin::same(8.0))
             .show(ui, |ui| {
-                ui.add(
+                let _ = ui.add(
                     egui::TextEdit::multiline(&mut page.css_text.as_str())
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY),
@@ -863,9 +860,8 @@ impl BrowserApp {
             });
     }
 
-    /// Debug panel: Computed styles view
     fn render_debug_styles(&self, ui: &mut egui::Ui, page: &PageState) {
-        ui.label(
+        let _ = ui.label(
             egui::RichText::new(format!("Computed Styles ({} elements)", page.styles.len()))
                 .strong()
                 .size(13.0),
@@ -875,49 +871,49 @@ impl BrowserApp {
         for (node_id, style) in &page.styles {
             if let Some(node) = page.dom.get(*node_id) {
                 if let NodeType::Element(data) = &node.node_type {
-                    ui.collapsing(format!("<{}> (node {})", data.tag_name, node_id.0), |ui| {
-                        if let Some(ref color) = style.color {
-                            ui.monospace(format!(
-                                "color: #{:02x}{:02x}{:02x}",
-                                color.r, color.g, color.b
-                            ));
-                        }
-                        if let Some(ref bg) = style.background_color {
-                            ui.monospace(format!(
-                                "background-color: #{:02x}{:02x}{:02x}",
-                                bg.r, bg.g, bg.b
-                            ));
-                        }
-                        if let Some(ref fs) = style.font_size {
-                            ui.monospace(format!("font-size: {}px", fs.to_px()));
-                        }
-                        if let Some(ref m) = style.margin_top {
-                            ui.monospace(format!("margin-top: {}px", m.to_px()));
-                        }
-                        if let Some(ref p) = style.padding_top {
-                            ui.monospace(format!("padding-top: {}px", p.to_px()));
-                        }
-                    });
+                    let _ =
+                        ui.collapsing(format!("<{}> (node {})", data.tag_name, node_id.0), |ui| {
+                            if let Some(ref color) = style.color {
+                                let _ = ui.monospace(format!(
+                                    "color: #{:02x}{:02x}{:02x}",
+                                    color.r, color.g, color.b
+                                ));
+                            }
+                            if let Some(ref bg) = style.background_color {
+                                let _ = ui.monospace(format!(
+                                    "background-color: #{:02x}{:02x}{:02x}",
+                                    bg.r, bg.g, bg.b
+                                ));
+                            }
+                            if let Some(ref fs) = style.font_size {
+                                let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
+                            }
+                            if let Some(ref m) = style.margin_top {
+                                let _ = ui.monospace(format!("margin-top: {}px", m.to_px()));
+                            }
+                            if let Some(ref p) = style.padding_top {
+                                let _ = ui.monospace(format!("padding-top: {}px", p.to_px()));
+                            }
+                        });
                 }
             }
         }
     }
 
-    /// Debug panel: Source view
     fn render_debug_source(&self, ui: &mut egui::Ui, page: &PageState) {
-        ui.label(
+        let _ = ui.label(
             egui::RichText::new(format!("HTML Source ({} bytes)", page.html_source.len()))
                 .strong()
                 .size(13.0),
         );
         ui.add_space(8.0);
 
-        egui::Frame::none()
+        let _ = egui::Frame::none()
             .fill(ui.visuals().extreme_bg_color)
             .rounding(egui::Rounding::same(4.0))
             .inner_margin(egui::Margin::same(8.0))
             .show(ui, |ui| {
-                ui.add(
+                let _ = ui.add(
                     egui::TextEdit::multiline(&mut page.html_source.as_str())
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY),
