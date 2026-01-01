@@ -3,41 +3,61 @@
 //! A headless browser for testing and debugging.
 
 use anyhow::Result;
+use clap::Parser;
 use koala_browser::{load_document, parse_html_string, LoadedDocument};
 use koala_css::LayoutBox;
 use koala_html::print_tree;
-use std::env;
+
+/// Koala Browser CLI - A headless browser for testing and debugging
+#[derive(Parser, Debug)]
+#[command(name = "koala-cli")]
+#[command(author, version, about, long_about = None)]
+#[command(group = clap::ArgGroup::new("input").required(true))]
+#[command(after_help = r#"EXAMPLES:
+    # Parse a local file and show DOM tree
+    koala-cli ./index.html
+
+    # Fetch a URL and show DOM tree
+    koala-cli https://example.com
+
+    # Show layout tree for debugging CSS
+    koala-cli --layout https://example.com
+
+    # Parse inline HTML
+    koala-cli --html '<html><body><h1>Test</h1></body></html>'
+
+    # Parse inline HTML and show layout
+    koala-cli --html '<div style="margin: auto; width: 50vw">Centered</div>' --layout
+"#)]
+struct Cli {
+    /// Path to HTML file or URL to fetch and parse
+    #[arg(value_name = "FILE|URL", group = "input")]
+    path: Option<String>,
+
+    /// Parse HTML string directly instead of file/URL
+    #[arg(long, value_name = "HTML", group = "input")]
+    html: Option<String>,
+
+    /// Show computed layout tree with dimensions instead of DOM tree.
+    /// Uses a 1280x720 viewport. Useful for debugging CSS layout issues.
+    #[arg(long)]
+    layout: bool,
+}
 
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
 
-    if args.len() < 2 {
-        eprintln!("Usage: koala-cli <file.html | URL>");
-        eprintln!("       koala-cli --html '<html>...</html>'");
-        eprintln!("       koala-cli --layout <file.html | URL>  # Show layout tree");
-        std::process::exit(1);
-    }
-
-    // Check for --layout flag
-    let show_layout = args.contains(&"--layout".to_string());
-    let args_filtered: Vec<&String> = args.iter()
-        .filter(|a| *a != "--layout")
-        .collect();
-
-    let doc = if args_filtered.get(1) == Some(&&"--html".to_string()) {
-        if args_filtered.len() < 3 {
-            eprintln!("Error: --html requires an HTML string argument");
-            std::process::exit(1);
-        }
-        parse_html_string(args_filtered[2])
-    } else if let Some(path) = args_filtered.get(1) {
-        load_document(path).map_err(|e| anyhow::anyhow!("{}", e))?
+    // Determine the document source
+    let doc = if let Some(html_string) = cli.html {
+        parse_html_string(&html_string)
+    } else if let Some(path) = cli.path {
+        load_document(&path).map_err(|e| anyhow::anyhow!("{}", e))?
     } else {
-        eprintln!("Error: missing file path or URL");
-        std::process::exit(1);
+        // clap should prevent this, but just in case
+        anyhow::bail!("Either a file/URL path or --html must be provided");
     };
 
-    if show_layout {
+    if cli.layout {
         print_layout(&doc);
     } else {
         print_document(&doc);
@@ -77,7 +97,10 @@ fn print_layout(doc: &LoadedDocument) {
     let viewport_width = 1280.0;
     let viewport_height = 720.0;
 
-    println!("=== Layout Tree (viewport: {}x{}) ===\n", viewport_width, viewport_height);
+    println!(
+        "=== Layout Tree (viewport: {}x{}) ===\n",
+        viewport_width, viewport_height
+    );
 
     if let Some(ref layout_tree) = doc.layout_tree {
         // Clone and compute layout
@@ -107,7 +130,12 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
             // Try to get the element's tag name
             if let Some(element) = doc.dom.as_element(*node_id) {
                 format!("<{}> ({:?})", element.tag_name, node_id)
-            } else if doc.dom.get(*node_id).map(|n| matches!(n.node_type, koala_browser::dom::NodeType::Document)).unwrap_or(false) {
+            } else if doc
+                .dom
+                .get(*node_id)
+                .map(|n| matches!(n.node_type, koala_browser::dom::NodeType::Document))
+                .unwrap_or(false)
+            {
                 format!("Document ({:?})", node_id)
             } else {
                 format!("{:?}", node_id)
@@ -122,46 +150,35 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
     };
 
     // Print box info with dimensions
-    println!(
-        "{}[{}] {:?}",
-        indent,
-        name,
-        layout_box.display
-    );
+    println!("{}[{}] {:?}", indent, name, layout_box.display);
 
     // Print content box
     println!(
         "{}  content: x={:.1} y={:.1} w={:.1} h={:.1}",
-        indent,
-        dims.content.x,
-        dims.content.y,
-        dims.content.width,
-        dims.content.height
+        indent, dims.content.x, dims.content.y, dims.content.width, dims.content.height
     );
 
     // Print margins if non-zero
-    if dims.margin.top != 0.0 || dims.margin.right != 0.0
-        || dims.margin.bottom != 0.0 || dims.margin.left != 0.0 {
+    if dims.margin.top != 0.0
+        || dims.margin.right != 0.0
+        || dims.margin.bottom != 0.0
+        || dims.margin.left != 0.0
+    {
         println!(
             "{}  margin: t={:.1} r={:.1} b={:.1} l={:.1}",
-            indent,
-            dims.margin.top,
-            dims.margin.right,
-            dims.margin.bottom,
-            dims.margin.left
+            indent, dims.margin.top, dims.margin.right, dims.margin.bottom, dims.margin.left
         );
     }
 
     // Print padding if non-zero
-    if dims.padding.top != 0.0 || dims.padding.right != 0.0
-        || dims.padding.bottom != 0.0 || dims.padding.left != 0.0 {
+    if dims.padding.top != 0.0
+        || dims.padding.right != 0.0
+        || dims.padding.bottom != 0.0
+        || dims.padding.left != 0.0
+    {
         println!(
             "{}  padding: t={:.1} r={:.1} b={:.1} l={:.1}",
-            indent,
-            dims.padding.top,
-            dims.padding.right,
-            dims.padding.bottom,
-            dims.padding.left
+            indent, dims.padding.top, dims.padding.right, dims.padding.bottom, dims.padding.left
         );
     }
 
