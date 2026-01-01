@@ -1,0 +1,11 @@
+[package]
+name = "koala-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core browser API and shared functionality for the Koala browser"
+
+[dependencies]
+koala-dom.workspace = true
+koala-html.workspace = true
+koala-css.workspace = true

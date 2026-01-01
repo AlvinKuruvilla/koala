@@ -5,36 +5,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test Commands
 
 ```bash
-# Build
+# Build all crates
 cargo build
 cargo build --release
 
+# Build specific crate
+cargo build -p koala-html
+cargo build -p koala-css
+
 # Run tests
 cargo test                          # Run all tests
+cargo test -p koala-html            # Test specific crate
 cargo test test_name                # Run a specific test
-cargo test --lib                    # Run library tests only
 
 # Run the GUI browser
-cargo run --bin koala_gui
+cargo run --bin koala
 
 # Run the CLI tool
-cargo run --bin koala -- <file|url>
-cargo run --bin koala -- res/simple.html
-cargo run --bin koala -- res/simple.html --tokens    # Show HTML tokens
-cargo run --bin koala -- res/simple.html --css       # Show CSS output
-cargo run --bin koala -- res/simple.html --stats     # Show parsing stats
-cargo run --bin koala -- res/simple.html --verbose   # All debug info
-cargo run --bin koala -- --html '<h1>Test</h1>'      # Parse inline HTML
-cargo run --bin koala -- --interactive               # REPL mode
+cargo run --bin koala-cli -- <file.html>
+cargo run --bin koala-cli -- --html '<h1>Test</h1>'
 
 # Lint
-cargo clippy
+cargo clippy --workspace
 cargo fmt --check
 ```
 
 ## GUI Debugging
 
-The GUI (`koala_gui`) has built-in debugging features:
+The GUI (`koala`) has built-in debugging features:
 - **F12**: Toggle debug panel showing DOM tree, tokens, CSS, computed styles, and source
 - **Terminal logging**: All state changes print to stdout with `[Koala GUI]` prefix
 - Debug panel tabs: DOM | Tokens | CSS | Styles | Source
@@ -115,23 +113,26 @@ Focus on what you're working on *now*. Don't try to implement everything in one 
 
 ```
 koala/
-├── bin/
-│   ├── koala.rs              # CLI tool for parsing/debugging HTML & CSS
-│   └── koala_gui.rs          # egui-based GUI browser
-├── src/
-│   ├── lib.rs                # Library root
-│   ├── lib_html/
-│   │   ├── html_tokenizer/   # HTML5 tokenizer (spec: §13.2.5)
-│   │   └── html_parser/      # Tree construction (spec: §13.2.6)
-│   ├── lib_css/
-│   │   ├── css_tokenizer/    # CSS tokenizer (spec: css-syntax-3)
-│   │   ├── css_parser/       # CSS parser
-│   │   ├── css_selector/     # CSS selector matching
-│   │   ├── css_cascade/      # Style cascade & computation
-│   │   ├── css_style/        # Computed style structures
-│   │   └── layout.rs         # Layout engine
-│   └── lib_dom/              # Arena-based DOM tree with parent/sibling links
-└── res/                      # Test HTML files, icons
+├── crates/
+│   ├── koala-dom/        # Arena-based DOM tree with parent/sibling links
+│   ├── koala-html/       # HTML tokenizer and parser (WHATWG spec)
+│   ├── koala-css/        # CSS tokenizer, parser, selector, cascade
+│   └── koala-core/       # Shared browser API
+├── koala-cli/            # CLI tool for parsing/debugging
+├── koala-gui/            # egui-based GUI browser
+└── res/                  # Test HTML files
+```
+
+**Crate Dependencies:**
+```
+koala-dom          (no deps)
+    ↑
+koala-html         (depends on koala-dom)
+koala-css          (depends on koala-dom)
+    ↑
+koala-core         (depends on koala-dom, koala-html, koala-css)
+    ↑
+koala-cli/koala-gui
 ```
 
 **Data Flow:**
@@ -150,15 +151,16 @@ The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) travers
 ### Current Status
 
 - **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing, RCDATA/RAWTEXT states for raw text elements (`<style>`, `<title>`, `<textarea>`, etc.). Missing: character references, script data states
-- **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
-- **DOM**: Node, Element, Text, Comment types defined and populated by parser
+- **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. CSS combinator matching works. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
+- **DOM**: Arena-based tree with Node, Element, Text, Comment types. O(1) parent/sibling traversal.
+- **CSS**: Tokenizer, parser, selector matching (including combinators), cascade, and computed styles working
 - **GUI**: egui-based browser with URL bar, navigation, content rendering, and debug panel (F12)
 - **Rendering**: Basic — renders headings, paragraphs, text nodes with computed styles. Missing: full layout engine, styled text (bold/italic fonts)
 
 ### Dependencies
 
 - **egui/eframe** — Cross-platform GUI framework
-- **serde/serde_json** — JSON serialization for DOM output
+- **serde** — Serialization for computed styles
 - **strum/strum_macros** — Enum utilities for tokenizer states
 - **anyhow** — Error handling
 - **Boa** (planned) — JavaScript engine

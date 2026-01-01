@@ -1,0 +1,8 @@
+[package]
+name = "koala-dom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DOM tree implementation for the Koala browser"
+
+[dependencies]

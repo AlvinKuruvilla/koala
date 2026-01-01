@@ -1,0 +1,11 @@
+[package]
+name = "koala-html"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTML tokenizer and parser for the Koala browser"
+
+[dependencies]
+koala-dom.workspace = true
+strum.workspace = true
+strum_macros.workspace = true

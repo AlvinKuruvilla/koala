@@ -1,0 +1,13 @@
+[package]
+name = "koala-css"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CSS tokenizer, parser, selector, and cascade for the Koala browser"
+
+[dependencies]
+koala-dom.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+koala-html.workspace = true

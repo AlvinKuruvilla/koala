@@ -1,24 +1,31 @@
-[package]
-name = "koala"
+[workspace]
+resolver = "2"
+members = [
+    "crates/koala-dom",
+    "crates/koala-html",
+    "crates/koala-css",
+    "crates/koala-core",
+    "koala-cli",
+    "koala-gui",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
-[lib]
-crate-type = ["lib"]
+[workspace.dependencies]
+# Internal crates
+koala-dom = { path = "crates/koala-dom" }
+koala-html = { path = "crates/koala-html" }
+koala-css = { path = "crates/koala-css" }
+koala-core = { path = "crates/koala-core" }
 
-[dependencies]
-anyhow = "1.0.93"
+# External dependencies
+anyhow = "1.0"
 eframe = "0.29"
 egui = "0.29"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 strum = "0.26"
 strum_macros = "0.26"
-
-[[bin]]
-name = "koala"
-path = "bin/koala.rs"
-
-[[bin]]
-name = "koala_gui"
-path = "bin/koala_gui.rs"

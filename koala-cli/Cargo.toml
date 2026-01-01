@@ -1,0 +1,17 @@
+[package]
+name = "koala-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for the Koala browser"
+
+[[bin]]
+name = "koala-cli"
+path = "src/main.rs"
+
+[dependencies]
+koala-core.workspace = true
+koala-dom.workspace = true
+koala-html.workspace = true
+koala-css.workspace = true
+anyhow.workspace = true
