@@ -169,6 +169,11 @@ pub enum TokenizerState {
     NumericCharacterReferenceEnd,
 }
 
+/// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+///
+/// "Implementations must act as if they used the following state machine to tokenize HTML."
+///
+/// This struct maintains the state machine for tokenizing HTML input into tokens.
 pub struct HTMLTokenizer {
     pub(super) state: TokenizerState,
     pub(super) return_state: Option<TokenizerState>,
@@ -193,6 +198,11 @@ pub struct HTMLTokenizer {
     pub(super) temporary_buffer: String,
 }
 impl HTMLTokenizer {
+    /// Create a new tokenizer for the given input.
+    ///
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization):
+    /// "The tokenizer state machine consists of the states defined in the
+    /// following subsections. The initial state is the data state."
     pub fn new(input: String) -> Self {
         // [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
         // "The tokenizer state machine consists of the states defined in the
@@ -1829,6 +1839,9 @@ impl HTMLTokenizer {
         }
     }
 
+    /// Run the tokenizer to completion.
+    ///
+    /// Processes the input and populates the token stream.
     pub fn run(&mut self) {
         loop {
             // Each state begins by consuming the next input character,

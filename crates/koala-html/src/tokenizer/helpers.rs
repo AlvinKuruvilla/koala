@@ -47,7 +47,7 @@ impl HTMLTokenizer {
         }
     }
 
-    // Use peek to view the next codepoint at a given offset without advancing
+    /// Peek at a codepoint at the given offset from the current position without advancing.
     pub fn peek_codepoint(&self, offset: usize) -> Option<char> {
         let slice = &self.input[self.current_pos..];
         slice.chars().nth(offset)
@@ -159,14 +159,15 @@ impl HTMLTokenizer {
         }
     }
 
-    // "Emit the current input character as a character token."
-    // Emits a character token directly without going through current_token.
+    /// "Emit the current input character as a character token."
+    ///
+    /// Emits a character token directly without going through `current_token`.
     pub fn emit_character_token(&mut self, c: char) {
         let token = Token::new_character(c);
         self.token_stream.push(token);
     }
 
-    // "Emit an end-of-file token."
+    /// "Emit an end-of-file token."
     pub fn emit_eof_token(&mut self) {
         let token = Token::new_eof();
         self.token_stream.push(token);

@@ -57,11 +57,18 @@ pub enum InsertionMode {
     AfterAfterFrameset,
 }
 
-/// A parse error or warning encountered during parsing.
+/// [§ 13.2.2 Parse errors](https://html.spec.whatwg.org/multipage/parsing.html#parse-errors)
+///
+/// "This specification defines the parsing rules for HTML documents...
+/// The handling of parse errors is well-defined."
 #[derive(Debug, Clone)]
 pub struct ParseIssue {
+    /// Description of the parse error per the spec's error definitions.
     pub message: String,
+    /// Index into the token stream where this error was encountered.
     pub token_index: usize,
+    /// "Parse errors are only errors with the content—they are not, for instance,
+    /// errors in the syntax of the specification itself."
     pub is_error: bool,
 }
 
@@ -538,8 +545,8 @@ impl HTMLParser {
             Token::StartTag { name, .. }
                 if matches!(name.as_str(), "base" | "basefont" | "bgsound" | "link" | "meta") =>
             {
-                self.insert_html_element(token);
-                self.stack_of_open_elements.pop();
+                let _ = self.insert_html_element(token);
+                let _ = self.stack_of_open_elements.pop();
             }
 
             // "A start tag whose tag name is "title""
@@ -552,7 +559,7 @@ impl HTMLParser {
             // 3. "Let the original insertion mode be the current insertion mode."
             // 4. "Switch the insertion mode to "text"."
             Token::StartTag { name, .. } if name == "title" => {
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
                 // "Let the original insertion mode be the current insertion mode."
                 self.original_insertion_mode = Some(self.insertion_mode.clone());
                 self.insertion_mode = InsertionMode::Text;
@@ -571,7 +578,7 @@ impl HTMLParser {
             Token::StartTag { name, .. }
                 if matches!(name.as_str(), "style" | "noscript" | "noframes") =>
             {
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
                 // "Let the original insertion mode be the current insertion mode."
                 self.original_insertion_mode = Some(self.insertion_mode.clone());
                 self.insertion_mode = InsertionMode::Text;
@@ -586,7 +593,7 @@ impl HTMLParser {
             // 10. "Let the original insertion mode be the current insertion mode."
             // 11. "Switch the insertion mode to "text"."
             Token::StartTag { name, .. } if name == "script" => {
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
                 // "Let the original insertion mode be the current insertion mode."
                 self.original_insertion_mode = Some(self.insertion_mode.clone());
                 self.insertion_mode = InsertionMode::Text;
@@ -597,7 +604,7 @@ impl HTMLParser {
             // "Pop the current node (which will be the head element) off the stack of open elements."
             // "Switch the insertion mode to "after head"."
             Token::EndTag { name, .. } if name == "head" => {
-                self.stack_of_open_elements.pop();
+                let _ = self.stack_of_open_elements.pop();
                 self.insertion_mode = InsertionMode::AfterHead;
             }
 
@@ -623,7 +630,7 @@ impl HTMLParser {
     /// "Switch the insertion mode to "after head"."
     /// "Reprocess the token."
     fn handle_in_head_anything_else(&mut self, token: &Token) {
-        self.stack_of_open_elements.pop();
+        let _ = self.stack_of_open_elements.pop();
         self.insertion_mode = InsertionMode::AfterHead;
         self.reprocess_token(token);
     }
@@ -644,7 +651,7 @@ impl HTMLParser {
             // "Switch the insertion mode to the original insertion mode and reprocess the token."
             Token::EndOfFile => {
                 // Parse error (logged implicitly)
-                self.stack_of_open_elements.pop();
+                let _ = self.stack_of_open_elements.pop();
                 self.insertion_mode = self.original_insertion_mode.unwrap_or(InsertionMode::InBody);
                 // NOTE: Spec says to reprocess, but EOF is terminal so we just switch mode.
             }
@@ -656,7 +663,7 @@ impl HTMLParser {
             // "Pop the current node off the stack of open elements."
             // "Switch the insertion mode to the original insertion mode."
             Token::EndTag { .. } => {
-                self.stack_of_open_elements.pop();
+                let _ = self.stack_of_open_elements.pop();
                 self.insertion_mode = self.original_insertion_mode.unwrap_or(InsertionMode::InBody);
             }
 
@@ -702,7 +709,7 @@ impl HTMLParser {
             // "Set the frameset-ok flag to "not ok"."
             // "Switch the insertion mode to "in body"."
             Token::StartTag { name, .. } if name == "body" => {
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
                 self.insertion_mode = InsertionMode::InBody;
             }
 
@@ -822,7 +829,7 @@ impl HTMLParser {
             {
                 // "If the stack of open elements has a p element in button scope, then close a p element."
                 self.close_element_if_in_scope("p");
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "p"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -832,7 +839,7 @@ impl HTMLParser {
             Token::StartTag { name, .. } if name == "p" => {
                 // Close any existing <p> element first
                 self.close_element_if_in_scope("p");
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "form"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -846,7 +853,7 @@ impl HTMLParser {
             Token::StartTag { name, .. } if name == "form" => {
                 // NOTE: Simplified - we skip form element pointer tracking
                 self.close_element_if_in_scope("p");
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag h1-h6](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -864,11 +871,11 @@ impl HTMLParser {
                 if let Some(idx) = self.current_node() {
                     if let Some(tag) = self.get_tag_name(idx) {
                         if matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
-                            self.stack_of_open_elements.pop();
+                            let _ = self.stack_of_open_elements.pop();
                         }
                     }
                 }
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "a"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -880,7 +887,7 @@ impl HTMLParser {
             Token::StartTag { name, .. } if name == "a" => {
                 // NOTE: We skip the adoption agency algorithm for nested <a> tags
                 // and the list of active formatting elements for simplicity
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tags for formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -932,7 +939,7 @@ impl HTMLParser {
                 ) =>
             {
                 // NOTE: We skip the list of active formatting elements and adoption agency for simplicity
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -953,7 +960,7 @@ impl HTMLParser {
                 self.close_element_if_in_scope("li");
                 // Close any <p> in button scope
                 self.close_element_if_in_scope("p");
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tags "dd", "dt"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -963,7 +970,7 @@ impl HTMLParser {
                 self.close_element_if_in_scope("dd");
                 self.close_element_if_in_scope("dt");
                 self.close_element_if_in_scope("p");
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - End tags "dd", "dt", "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -984,7 +991,7 @@ impl HTMLParser {
             // foster parenting behavior, but basic tables will render.
             Token::StartTag { name, .. } if name == "table" => {
                 self.close_element_if_in_scope("p");
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
             }
 
             // Table-related start tags: tr, td, th, tbody, thead, tfoot, caption, colgroup, col
@@ -996,10 +1003,10 @@ impl HTMLParser {
                     "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption" | "colgroup" | "col"
                 ) =>
             {
-                self.insert_html_element(token);
+                let _ = self.insert_html_element(token);
                 // col and colgroup are void-like in tables
                 if matches!(name.as_str(), "col") {
-                    self.stack_of_open_elements.pop();
+                    let _ = self.stack_of_open_elements.pop();
                 }
             }
 
@@ -1032,8 +1039,8 @@ impl HTMLParser {
                     "area" | "br" | "embed" | "img" | "keygen" | "wbr" | "input" | "hr"
                 ) =>
             {
-                self.insert_html_element(token);
-                self.stack_of_open_elements.pop();
+                let _ = self.insert_html_element(token);
+                let _ = self.stack_of_open_elements.pop();
             }
 
             // [§ 13.2.6.4.7 "in body"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)

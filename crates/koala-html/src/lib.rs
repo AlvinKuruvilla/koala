@@ -21,7 +21,9 @@
 //! - Foster parenting
 //! - Adoption agency algorithm
 
+/// HTML parser and tree construction.
 pub mod parser;
+/// HTML tokenizer for converting input into tokens.
 pub mod tokenizer;
 
 pub use parser::{HTMLParser, InsertionMode, ParseIssue, print_tree};

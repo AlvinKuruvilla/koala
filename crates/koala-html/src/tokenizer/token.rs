@@ -11,11 +11,14 @@ use core::fmt;
 /// "a list of attributes, each of which has a name and a value"
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
+    /// "each of which has a name"
     pub name: String,
+    /// "and a value"
     pub value: String,
 }
 
 impl Attribute {
+    /// Create a new attribute with the given name and value.
     pub fn new(name: String, value: String) -> Self {
         Self { name, value }
     }
@@ -32,9 +35,13 @@ pub enum Token {
     /// (which is a distinct state from the empty string), and the force-quirks
     /// flag must be set to off (its other state is on)."
     Doctype {
+        /// "a name"
         name: Option<String>,
+        /// "a public identifier"
         public_identifier: Option<String>,
+        /// "a system identifier"
         system_identifier: Option<String>,
+        /// "a force-quirks flag"
         force_quirks: bool,
     },
 
@@ -43,22 +50,33 @@ pub enum Token {
     /// or end tag token is created, its self-closing flag must be unset (its
     /// other state is that it be set), and its attributes list must be empty."
     StartTag {
+        /// "a tag name"
         name: String,
+        /// "a self-closing flag"
         self_closing: bool,
+        /// "a list of attributes"
         attributes: Vec<Attribute>,
     },
 
     /// End tag token. Same structure as start tag per spec.
     EndTag {
+        /// "a tag name"
         name: String,
+        /// "a list of attributes"
         attributes: Vec<Attribute>,
     },
 
     /// "Comment and character tokens have data."
-    Comment { data: String },
+    Comment {
+        /// "data"
+        data: String,
+    },
 
     /// "Comment and character tokens have data."
-    Character { data: char },
+    Character {
+        /// "data"
+        data: char,
+    },
 
     /// End-of-file token signals the end of input.
     EndOfFile,
@@ -254,7 +272,7 @@ impl Token {
     pub fn remove_current_attribute(&mut self) {
         match self {
             Token::StartTag { attributes, .. } | Token::EndTag { attributes, .. } => {
-                attributes.pop();
+                let _ = attributes.pop();
             }
             _ => panic!("remove_current_attribute called on non-tag token"),
         }
