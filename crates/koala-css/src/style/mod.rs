@@ -120,15 +120,48 @@ pub enum LengthValue {
     /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
     /// "Equal to the computed value of the font-size property of the element"
     Em(f64),
+    /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+    /// "1vw = 1% of viewport width"
+    Vw(f64),
+    /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+    /// "1vh = 1% of viewport height"
+    Vh(f64),
     // TODO: Rem, Percent for future work
 }
 
 impl LengthValue {
-    /// Get the value in pixels.
+    /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
+    ///
+    /// Get the value in pixels for non-viewport units.
+    ///
+    /// NOTE: For viewport units (vw, vh), this returns 0.0 as a fallback.
+    /// Use `to_px_with_viewport()` instead when viewport dimensions are available.
     pub fn to_px(&self) -> f64 {
         match self {
+            // [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
             LengthValue::Px(px) => *px,
-            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX, // assuming 1em = default font size
+            // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+            // "Equal to the computed value of the font-size property of the element"
+            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
+            // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+            // Viewport units require viewport dimensions - return 0 as fallback.
+            // The layout engine should use to_px_with_viewport() instead.
+            LengthValue::Vw(_) | LengthValue::Vh(_) => 0.0,
+        }
+    }
+    /// Get the value in pixels, resolving viewport units.
+    ///
+    /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+    /// "The viewport-percentage lengths are relative to the size of the
+    /// initial containing block."
+    pub fn to_px_with_viewport(&self, viewport_width: f64, viewport_height: f64) -> f64 {
+        match self {
+            LengthValue::Px(px) => *px,
+            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
+            // "1vw = 1% of viewport width"
+            LengthValue::Vw(vw) => *vw * viewport_width / 100.0,
+            // "1vh = 1% of viewport height"
+            LengthValue::Vh(vh) => *vh * viewport_height / 100.0,
         }
     }
 }
@@ -395,6 +428,18 @@ pub struct ComputedStyle {
     pub border_bottom: Option<BorderValue>,
     /// [§ 4 'border-left'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_left: Option<BorderValue>,
+
+    /// [§ 10.2 'width'](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
+    ///
+    /// "This property specifies the content width of boxes."
+    /// "Value: <length> | <percentage> | auto | inherit"
+    pub width: Option<AutoLength>,
+
+    /// [§ 10.5 'height'](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+    ///
+    /// "This property specifies the content height of boxes."
+    /// "Value: <length> | <percentage> | auto | inherit"
+    pub height: Option<AutoLength>,
 }
 
 impl ComputedStyle {
@@ -495,6 +540,28 @@ impl ComputedStyle {
             "font-size" => {
                 if let Some(len) = parse_length_value(&decl.value) {
                     self.font_size = Some(self.resolve_length(len));
+                }
+            }
+            // [§ 10.2 'width'](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
+            //
+            // "This property specifies the content width of boxes."
+            // "Value: <length> | <percentage> | auto | inherit"
+            "width" => {
+                if let Some(first) = decl.value.first() {
+                    if let Some(auto_len) = parse_single_auto_length(first) {
+                        self.width = Some(self.resolve_auto_length(auto_len));
+                    }
+                }
+            }
+            // [§ 10.5 'height'](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+            //
+            // "This property specifies the content height of boxes."
+            // "Value: <length> | <percentage> | auto | inherit"
+            "height" => {
+                if let Some(first) = decl.value.first() {
+                    if let Some(auto_len) = parse_single_auto_length(first) {
+                        self.height = Some(self.resolve_auto_length(auto_len));
+                    }
                 }
             }
             unknown => {
@@ -727,14 +794,37 @@ fn parse_length_value(values: &[ComponentValue]) -> Option<LengthValue> {
     None
 }
 
-/// Parse a single component value as a length.
+/// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
+///
+/// "Lengths refer to distance measurements and are denoted by <length> in
+/// the property definitions."
+///
+/// Parse a single component value as a <length>.
 fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
     match v {
+        // [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
+        //
+        // "A dimension is a <number> immediately followed by a unit identifier."
         ComponentValue::Token(CSSToken::Dimension { value, unit, .. }) => {
+            // [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
+            // "1px = 1/96th of 1in"
             if unit.eq_ignore_ascii_case("px") {
                 Some(LengthValue::Px(*value))
-            } else if unit.eq_ignore_ascii_case("em") {
+            }
+            // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+            // "Equal to the computed value of the font-size property of the element"
+            else if unit.eq_ignore_ascii_case("em") {
                 Some(LengthValue::Em(*value))
+            }
+            // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+            // "1vw = 1% of viewport width"
+            else if unit.eq_ignore_ascii_case("vw") {
+                Some(LengthValue::Vw(*value))
+            }
+            // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+            // "1vh = 1% of viewport height"
+            else if unit.eq_ignore_ascii_case("vh") {
+                Some(LengthValue::Vh(*value))
             } else {
                 warn_once(
                     "CSS",
@@ -743,7 +833,7 @@ fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
                 None
             }
         }
-        // [§ 4.1.1](https://www.w3.org/TR/css-values-4/#lengths)
+        // [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
         // "0 can be written without a unit..."
         ComponentValue::Token(CSSToken::Number { value, .. }) if *value == 0.0 => {
             Some(LengthValue::Px(0.0))
@@ -1015,8 +1105,7 @@ mod tests {
         assert!(matches!(result, Some(AutoLength::Auto)));
 
         // Test parsing "AUTO" (case insensitive)
-        let auto_upper =
-            vec![ComponentValue::Token(CSSToken::Ident("AUTO".to_string()))];
+        let auto_upper = vec![ComponentValue::Token(CSSToken::Ident("AUTO".to_string()))];
         let result_upper = parse_auto_length_value(&auto_upper);
         assert!(result_upper.is_some());
         assert!(matches!(result_upper, Some(AutoLength::Auto)));
@@ -1034,5 +1123,28 @@ mod tests {
             result2,
             Some(AutoLength::Length(LengthValue::Px(_)))
         ));
+    }
+
+    #[test]
+    fn test_viewport_units() {
+        // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+        // "1vw = 1% of viewport width"
+        // "1vh = 1% of viewport height"
+
+        // Test vw: 60vw on a 1000px wide viewport = 600px
+        let vw = LengthValue::Vw(60.0);
+        assert_eq!(vw.to_px_with_viewport(1000.0, 800.0), 600.0);
+
+        // Test vh: 15vh on a 800px tall viewport = 120px
+        let vh = LengthValue::Vh(15.0);
+        assert_eq!(vh.to_px_with_viewport(1000.0, 800.0), 120.0);
+
+        // Test 100vw = full viewport width
+        let full_vw = LengthValue::Vw(100.0);
+        assert_eq!(full_vw.to_px_with_viewport(1280.0, 720.0), 1280.0);
+
+        // Test 100vh = full viewport height
+        let full_vh = LengthValue::Vh(100.0);
+        assert_eq!(full_vh.to_px_with_viewport(1280.0, 720.0), 720.0);
     }
 }

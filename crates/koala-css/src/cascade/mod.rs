@@ -184,6 +184,12 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         border_right: None,
         border_bottom: None,
         border_left: None,
+
+        // [§ 10.2 width](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
+        // [§ 10.5 height](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+        // "Inherited: no"
+        width: None,
+        height: None,
     }
 }
 
@@ -434,6 +440,13 @@ mod tests {
             crate::style::LengthValue::Em(_) => {
                 panic!("Expected border width in Px, got Em (should have been resolved)")
             }
+            crate::style::LengthValue::Vw(_) => {
+                panic!("Expected border width in Px, got Vw (should have been resolved)")
+            }
+            crate::style::LengthValue::Vh(_) => {
+                panic!("Expected border width in Px, got Vh (should have been resolved)")
+            }
+
         }
         assert_eq!(border.style, "solid");
         assert_eq!(border.color.r, 0xdd);
