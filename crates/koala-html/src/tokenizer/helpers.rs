@@ -7,6 +7,8 @@
 //! - RCDATA/RAWTEXT helpers
 //! - Attribute helpers
 
+use koala_common::warning::warn_once;
+
 use super::token::Token;
 use super::tokenizer::{HTMLTokenizer, TokenizerState};
 
@@ -259,8 +261,14 @@ impl HTMLTokenizer {
 // =============================================================================
 
 impl HTMLTokenizer {
+    /// [§ 13.2.2 Parse errors](https://html.spec.whatwg.org/multipage/parsing.html#parse-errors)
+    ///
+    /// Logs a parse error using the koala-common warning system.
+    /// Parse errors in HTML are not fatal - the parser recovers and continues.
     pub(super) fn log_parse_error(&self) {
-        // Debug output disabled
-        // println!("Parse error at position {}", self.current_pos);
+        warn_once(
+            "HTML Tokenizer",
+            &format!("parse error at position {}", self.current_pos),
+        );
     }
 }

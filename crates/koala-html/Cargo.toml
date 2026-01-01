@@ -6,6 +6,7 @@ license.workspace = true
 description = "HTML tokenizer and parser for the Koala browser"
 
 [dependencies]
+koala-common.workspace = true
 koala-dom.workspace = true
 strum.workspace = true
 strum_macros.workspace = true

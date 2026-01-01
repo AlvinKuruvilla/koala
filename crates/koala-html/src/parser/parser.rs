@@ -1,6 +1,8 @@
 use strum_macros::Display;
 
+use koala_common::warning::warn_once;
 use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
+
 use crate::tokenizer::{Attribute, Token};
 
 /// [§ 13.2.4.1 The insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode)
@@ -140,7 +142,10 @@ impl HTMLParser {
     }
 
     /// Record a parse warning (for unhandled but recoverable situations).
+    ///
+    /// Logs via koala-common's warning system and stores the issue for later retrieval.
     fn parse_warning(&mut self, message: &str) {
+        warn_once("HTML Parser", message);
         self.issues.push(ParseIssue {
             message: message.to_string(),
             token_index: self.token_index,

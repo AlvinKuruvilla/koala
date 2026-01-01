@@ -1695,6 +1695,7 @@ dependencies = [
 name = "koala-html"
 version = "0.1.0"
 dependencies = [
+ "koala-common",
  "koala-dom",
  "strum",
  "strum_macros",
