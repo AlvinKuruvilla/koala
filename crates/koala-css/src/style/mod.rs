@@ -9,7 +9,11 @@ use serde::Serialize;
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
 use koala_common::warning::warn_once;
-
+/// User agent default font size.
+/// [§ 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
+/// "Initial: medium" - we define medium as 16px per common browser convention.
+/// TODO: If this is user-agent defined we eed to parse this from the user agent at some point I would imagine
+const DEFAULT_FONT_SIZE_PX: f64 = 16.0;
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
 /// "Lengths refer to distance measurements and are denoted by <length> in the
 /// property definitions."
@@ -18,7 +22,10 @@ pub enum LengthValue {
     /// [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
     /// "1px = 1/96th of 1in"
     Px(f64),
-    // TODO: Em, Rem, Percent for future work
+    /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    /// "Equal to the computed value of the font-size property of the element"
+    Em(f64),
+    // TODO: Rem, Percent for future work
 }
 
 impl LengthValue {
@@ -26,6 +33,7 @@ impl LengthValue {
     pub fn to_px(&self) -> f64 {
         match self {
             LengthValue::Px(px) => *px,
+            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX, // assuming 1em = default font size
         }
     }
 }
@@ -221,11 +229,6 @@ impl ComputedStyle {
                     self.background_color = Some(color);
                 }
             }
-            "font-size" => {
-                if let Some(len) = parse_length_value(&decl.value) {
-                    self.font_size = Some(len);
-                }
-            }
             "font-family" => {
                 if let Some(family) = parse_font_family(&decl.value) {
                     self.font_family = Some(family);
@@ -288,6 +291,11 @@ impl ComputedStyle {
             }
             "background" => {
                 self.apply_background_shorthand(&decl.value);
+            }
+            "font-size" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.font_size = Some(self.resolve_length(len));
+                }
             }
             unknown => {
                 warn_once("CSS", &format!("unknown property '{unknown}'"));
@@ -443,6 +451,21 @@ impl ComputedStyle {
             self.background_color = Some(color);
         }
     }
+    /// Resolve relative length units (em) to absolute units (px).
+    /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    fn resolve_length(&self, len: LengthValue) -> LengthValue {
+        match len {
+            LengthValue::Em(em) => {
+                let base = self
+                    .font_size
+                    .as_ref()
+                    .map(|fs| fs.to_px())
+                    .unwrap_or(DEFAULT_FONT_SIZE_PX);
+                LengthValue::Px(em * base)
+            }
+            other => other,
+        }
+    }
 }
 
 /// [§ 4.2 RGB hex notation](https://www.w3.org/TR/css-color-4/#hex-notation)
@@ -483,6 +506,8 @@ fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
         ComponentValue::Token(CSSToken::Dimension { value, unit, .. }) => {
             if unit.eq_ignore_ascii_case("px") {
                 Some(LengthValue::Px(*value))
+            } else if unit.eq_ignore_ascii_case("em") {
+                Some(LengthValue::Em(*value))
             } else {
                 warn_once(
                     "CSS",

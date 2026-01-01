@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::parser::{Rule, StyleRule, Stylesheet};
-use crate::selector::{parse_selector, ParsedSelector, Specificity};
+use crate::selector::{ParsedSelector, Specificity, parse_selector};
 use crate::style::ComputedStyle;
 use koala_common::warning::warn_once;
 use koala_dom::{DomTree, NodeId, NodeType};
@@ -36,9 +36,10 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
             Rule::Style(style_rule) => {
                 // Try each selector in the rule (comma-separated selectors)
                 // For MVP, we just use the first valid one
-                let result = style_rule.selectors.iter().find_map(|sel| {
-                    parse_selector(&sel.text).map(|parsed| (parsed, style_rule))
-                });
+                let result = style_rule
+                    .selectors
+                    .iter()
+                    .find_map(|sel| parse_selector(&sel.text).map(|parsed| (parsed, style_rule)));
                 // Warn if all selectors in this rule failed to parse
                 if result.is_none() && !style_rule.selectors.is_empty() {
                     let selector_text = style_rule
@@ -47,7 +48,10 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
                         .map(|s| s.text.as_str())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    warn_once("CSS", &format!("failed to parse selector '{selector_text}'"));
+                    warn_once(
+                        "CSS",
+                        &format!("failed to parse selector '{selector_text}'"),
+                    );
                 }
                 result
             }
@@ -57,7 +61,13 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
 
     // Start with default inherited style (none)
     let initial_style = ComputedStyle::default();
-    compute_node_styles(tree, tree.root(), &parsed_rules, &initial_style, &mut styles);
+    compute_node_styles(
+        tree,
+        tree.root(),
+        &parsed_rules,
+        &initial_style,
+        &mut styles,
+    );
 
     styles
 }
@@ -404,8 +414,17 @@ mod tests {
 
         // Verify border properties
         let border = div_style.border_top.as_ref().unwrap();
-        let crate::style::LengthValue::Px(w) = border.width;
-        assert!((w - 1.0).abs() < 0.01);
+        match border.width {
+            crate::style::LengthValue::Px(w) => {
+                assert!(
+                    (w - 1.0).abs() < 0.01,
+                    "Expected border width ~1.0px, got {w}px"
+                )
+            }
+            crate::style::LengthValue::Em(_) => {
+                panic!("Expected border width in Px, got Em (should have been resolved)")
+            }
+        }
         assert_eq!(border.style, "solid");
         assert_eq!(border.color.r, 0xdd);
         assert_eq!(border.color.g, 0xdd);
@@ -415,8 +434,8 @@ mod tests {
     #[test]
     fn test_simple_html_full_pipeline() {
         // Integration test matching res/simple.html CSS
-        use koala_html::{HTMLParser, HTMLTokenizer};
         use crate::extract_style_content;
+        use koala_html::{HTMLParser, HTMLTokenizer};
 
         let html = r#"<!DOCTYPE html>
 <html lang="en">
@@ -496,7 +515,10 @@ mod tests {
         if let Some(body_id) = find_element(&tree, tree.root(), "body") {
             let body_style = styles.get(&body_id).unwrap();
             assert!(body_style.color.is_some(), "body should have color");
-            assert!(body_style.background_color.is_some(), "body should have background-color");
+            assert!(
+                body_style.background_color.is_some(),
+                "body should have background-color"
+            );
             assert!(body_style.margin_top.is_some(), "body should have margin");
         }
 
