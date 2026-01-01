@@ -1,5 +1,16 @@
+//! DOM tree implementation for the Koala browser.
+//!
+//! This crate provides an arena-based DOM tree structure following the
+//! [DOM Living Standard](https://dom.spec.whatwg.org/).
+//!
+//! # Design
+//!
+//! The tree uses arena allocation with [`NodeId`] indices for all relationships,
+//! providing O(1) access and traversal without borrow checker issues.
+
 use std::collections::{HashMap, HashSet};
 
+/// Map of attribute names to values for an element.
 pub type AttributesMap = HashMap<String, String>;
 
 /// A type-safe index into the DOM tree.
