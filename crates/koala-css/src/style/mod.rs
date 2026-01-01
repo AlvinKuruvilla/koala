@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
+use koala_common::warning::warn_once;
 
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
 /// "Lengths refer to distance measurements and are denoted by <length> in the
@@ -285,8 +286,8 @@ impl ComputedStyle {
             "border" => {
                 self.apply_border_shorthand(&decl.value);
             }
-            _ => {
-                // Unknown property - ignore for MVP
+            unknown => {
+                warn_once("CSS", &format!("unknown property '{unknown}'"));
             }
         }
     }
@@ -466,7 +467,7 @@ fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
             if unit.eq_ignore_ascii_case("px") {
                 Some(LengthValue::Px(*value))
             } else {
-                // TODO: other units (em, rem, %)
+                warn_once("CSS", &format!("unsupported unit '{unit}' in value {value}{unit}"));
                 None
             }
         }

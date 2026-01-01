@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use crate::parser::{Rule, StyleRule, Stylesheet};
 use crate::selector::{parse_selector, ParsedSelector, Specificity};
 use crate::style::ComputedStyle;
+use koala_common::warning::warn_once;
 use koala_dom::{DomTree, NodeId, NodeType};
 
 /// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
@@ -35,9 +36,20 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
             Rule::Style(style_rule) => {
                 // Try each selector in the rule (comma-separated selectors)
                 // For MVP, we just use the first valid one
-                style_rule.selectors.iter().find_map(|sel| {
+                let result = style_rule.selectors.iter().find_map(|sel| {
                     parse_selector(&sel.text).map(|parsed| (parsed, style_rule))
-                })
+                });
+                // Warn if all selectors in this rule failed to parse
+                if result.is_none() && !style_rule.selectors.is_empty() {
+                    let selector_text = style_rule
+                        .selectors
+                        .iter()
+                        .map(|s| s.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    warn_once("CSS", &format!("failed to parse selector '{selector_text}'"));
+                }
+                result
             }
             Rule::At(_) => None, // Skip at-rules for MVP
         })

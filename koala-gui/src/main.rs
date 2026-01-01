@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use eframe::egui;
+use koala_common::warning::clear_warnings;
 use koala_css::{canvas_background, compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer};
 use koala_dom::{DomTree, NodeId, NodeType};
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
@@ -203,6 +204,7 @@ impl BrowserApp {
     /// Navigate to a URL/path
     fn navigate(&mut self, path: &str) {
         // Clear CSS warnings for the new page
+        clear_warnings();
         self.css_warnings_logged.borrow_mut().clear();
 
         println!("[Koala GUI] Navigating to: {}", path);
