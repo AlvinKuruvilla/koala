@@ -937,14 +937,74 @@ impl LayoutBox {
         self.dimensions.border.right = border_right;
     }
 
-    /// [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
     ///
     /// Calculate the position of a block-level box.
+    ///
+    /// "Each box's left outer edge touches the left edge of the containing block
+    /// (for right-to-left formatting, right edges touch)."
     fn calculate_block_position(&mut self, containing_block: Rect) {
-        // TODO: Set x and y position
-        // x = containing_block.x + margin_left + border_left + padding_left
-        // y = containing_block.y (adjusted by caller for sibling offset)
-        todo!("Calculate block position")
+        // [§ 8.1 Box dimensions](https://www.w3.org/TR/CSS2/box.html#box-dimensions)
+        //
+        // The position we store is the content box position. The content box
+        // is nested inside padding, border, and margin boxes:
+        //
+        //   +-------------------------------------------+
+        //   |                 margin                    |
+        //   |   +-----------------------------------+   |
+        //   |   |             border                |   |
+        //   |   |   +---------------------------+   |   |
+        //   |   |   |         padding           |   |   |
+        //   |   |   |   +-------------------+   |   |   |
+        //   |   |   |   |     content       |   |   |   |
+        //   |   |   |   +-------------------+   |   |   |
+        //   |   |   +---------------------------+   |   |
+        //   |   +-----------------------------------+   |
+        //   +-------------------------------------------+
+        //
+        // The containing_block represents the content area of our parent.
+        // Our margin box is positioned within that area.
+
+        // STEP 1: Calculate the x position of the content box.
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // "Each box's left outer edge touches the left edge of the containing block."
+        //
+        // The left outer edge is the margin edge. So:
+        //   margin_edge.x = containing_block.x
+        //   content.x = margin_edge.x + margin.left + border.left + padding.left
+        //
+        // Note: margin.left was already computed in calculate_block_width and
+        // stored in self.dimensions.margin.left
+        self.dimensions.content.x = containing_block.x
+            + self.dimensions.margin.left
+            + self.dimensions.border.left
+            + self.dimensions.padding.left;
+
+        // STEP 2: Store the vertical box model values.
+        // (We only stored horizontal values in calculate_block_width)
+        // Must be done before calculating y position.
+        self.dimensions.margin.top = self.margin.top.to_px_or(0.0);
+        self.dimensions.margin.bottom = self.margin.bottom.to_px_or(0.0);
+        self.dimensions.border.top = self.border_width.top;
+        self.dimensions.border.bottom = self.border_width.bottom;
+        self.dimensions.padding.top = self.padding.top;
+        self.dimensions.padding.bottom = self.padding.bottom;
+
+        // STEP 3: Calculate the y position of the content box.
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // "In a block formatting context, boxes are laid out one after the other,
+        // vertically, beginning at the top of a containing block."
+        //
+        // The containing_block.y is passed in by the parent and already accounts
+        // for any siblings above us. So:
+        //   margin_edge.y = containing_block.y
+        //   content.y = margin_edge.y + margin.top + border.top + padding.top
+        self.dimensions.content.y = containing_block.y
+            + self.dimensions.margin.top
+            + self.dimensions.border.top
+            + self.dimensions.padding.top;
     }
 
     /// [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)

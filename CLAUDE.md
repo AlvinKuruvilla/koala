@@ -85,6 +85,54 @@ fn handle_tag_name_state(&mut self) {
 }
 ```
 
+#### Step-Level Algorithm Comments
+
+For multi-step algorithms (like CSS layout), use numbered STEP comments that map directly to the spec. This makes it easy to:
+1. Verify correctness against the spec
+2. Understand what each section of code is doing
+3. Know where to add code when implementing
+
+```rust
+fn calculate_block_width(&mut self, containing_block: Rect) {
+    // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+    //
+    // "The following constraints must hold among the used values..."
+
+    // STEP 1: Read the style values.
+    // Border and padding cannot be 'auto', only margins and width can.
+    let padding_left = self.padding.left;
+    // ...
+
+    // STEP 2: Handle over-constrained case.
+    // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+    //
+    // "If 'width' is not 'auto' and the total is larger than the width
+    // of the containing block, then any 'auto' values for margins are
+    // treated as zero."
+    if !width.is_auto() {
+        // ...
+    }
+
+    // STEP 3: Apply the constraint rules.
+    // RULE A: "If 'width' is set to 'auto'..."
+    if width.is_auto() {
+        // ...
+    }
+    // RULE B: "If both margins are 'auto'..."
+    else if margin_left.is_auto() && margin_right.is_auto() {
+        // ...
+    }
+
+    // STEP 4: Store the used values.
+    self.dimensions.content.width = used_width;
+}
+```
+
+When implementing new algorithms:
+1. First write out all the STEP comments with spec quotes (no code yet)
+2. Then implement each step one at a time
+3. Keep `todo!()` at the end until all steps are implemented
+
 #### What NOT to Do
 
 - Don't use banner-style section dividers like `// --------`
