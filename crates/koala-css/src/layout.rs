@@ -1090,16 +1090,47 @@ impl LayoutBox {
         // For now, we simply stack boxes without collapsing.
     }
 
-    /// [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+    /// [§ 10.6.3 Block-level, non-replaced elements in normal flow when 'overflow' computes to 'visible'](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
     ///
     /// Calculate the height of a block-level box.
     ///
-    /// For 'height: auto', the height is determined by the children.
+    /// "If 'height' is 'auto', the height depends on whether the element has
+    /// any block-level children and whether it has padding or borders."
     fn calculate_block_height(&mut self) {
-        // TODO: Calculate height
-        // For auto height: sum of children's margin boxes
-        // (margin collapsing not implemented yet)
-        todo!("Calculate block height")
+        // STEP 1: Check if height is explicitly specified.
+        // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+        //
+        // "If 'height' is not 'auto', then the used value is the specified
+        // value."
+        //
+        // If height is a length (not auto), use that value directly.
+        if let AutoOr::Length(h) = self.height {
+            self.dimensions.content.height = h;
+            return;
+        }
+
+        // STEP 2: Calculate 'auto' height from children.
+        // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+        //
+        // "If 'height' is 'auto', the height depends on whether the element
+        // has any block-level children..."
+        //
+        // For a block formatting context:
+        // "the bottom edge of the bottom (possibly collapsed) margin of its
+        // last in-flow child"
+        // NOTE: Margin collapsing is not yet implemented so we follow the simplified approach below:
+        // Simplified (no margin collapsing): Sum the margin box heights of
+        // all children:
+        //   auto_height = self.children.iter()
+        //       .map(|c| c.dimensions.margin_box().height)
+        //       .sum()
+        //
+        // Then: self.dimensions.content.height = auto_height
+        self.dimensions.content.height = self
+            .children
+            .iter()
+            .map(|c| c.dimensions.margin_box().height)
+            .sum();
     }
 }
 
