@@ -12,7 +12,7 @@ use std::fs;
 
 use eframe::egui;
 use koala_common::warning::clear_warnings;
-use koala_css::{canvas_background, compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer};
+use koala_css::{canvas_background, compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer, LayoutBox, Rect};
 use koala_dom::{DomTree, NodeId, NodeType};
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
 
@@ -162,6 +162,9 @@ struct PageState {
     /// Computed styles per node
     styles: HashMap<NodeId, ComputedStyle>,
 
+    /// Layout tree with computed box dimensions
+    layout_tree: Option<LayoutBox>,
+
     /// Any parse errors/warnings
     parse_issues: Vec<String>,
 }
@@ -280,6 +283,26 @@ impl BrowserApp {
             HashMap::new()
         };
 
+        // Build layout tree from DOM + styles
+        // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
+        //
+        // "The position and size of an element's box(es) are sometimes computed
+        // relative to a certain rectangle, called the containing block of the element."
+        //
+        // For the initial containing block, we use a default viewport size.
+        // TODO: Get actual viewport size from egui context
+        let mut layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());
+        if let Some(ref mut root) = layout_tree {
+            let initial_containing_block = Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,  // Default viewport width
+                height: 600.0, // Default viewport height
+            };
+            root.layout(initial_containing_block);
+            println!("[Koala GUI] Layout computed successfully");
+        }
+
         Ok(PageState {
             html_source,
             source_path: path.to_string(),
@@ -287,6 +310,7 @@ impl BrowserApp {
             dom,
             css_text,
             styles,
+            layout_tree,
             parse_issues,
         })
     }
@@ -683,7 +707,113 @@ impl BrowserApp {
 
     /// Render the parsed page content
     fn render_page_content(&self, ui: &mut egui::Ui, page: &PageState) {
-        self.render_node_content(ui, page, page.dom.root(), 0);
+        // Use layout tree if available, otherwise fall back to DOM walking
+        if let Some(ref layout_tree) = page.layout_tree {
+            self.render_layout_tree(ui, page, layout_tree);
+        } else {
+            self.render_node_content(ui, page, page.dom.root(), 0);
+        }
+    }
+
+    /// Render content using the computed layout tree
+    ///
+    /// [§ 9.1 The viewport](https://www.w3.org/TR/CSS2/visuren.html#viewport)
+    /// "User agents for continuous media generally offer users a viewport
+    /// through which users consult a document."
+    fn render_layout_tree(&self, ui: &mut egui::Ui, page: &PageState, layout_box: &LayoutBox) {
+        use koala_css::BoxType;
+
+        // Get the node ID for this box (if it's a principal box)
+        let node_id = match layout_box.box_type {
+            BoxType::Principal(id) => Some(id),
+            _ => None,
+        };
+
+        // Get computed style and node info
+        let (tag, style) = if let Some(id) = node_id {
+            let style = page.styles.get(&id);
+            let tag = page.dom.get(id).and_then(|n| {
+                if let NodeType::Element(data) = &n.node_type {
+                    Some(data.tag_name.to_lowercase())
+                } else {
+                    None
+                }
+            });
+            (tag, style)
+        } else {
+            (None, None)
+        };
+
+        // Skip non-visual elements
+        if let Some(ref t) = tag {
+            match t.as_str() {
+                "head" | "meta" | "title" | "link" | "script" | "style" => return,
+                _ => {}
+            }
+        }
+
+        // Determine text formatting from style
+        let font_size = style
+            .and_then(|s| s.font_size.as_ref())
+            .map(|fs| fs.to_px())
+            .unwrap_or_else(|| {
+                match tag.as_deref() {
+                    Some("h1") => 32.0,
+                    Some("h2") => 24.0,
+                    Some("h3") => 18.72,
+                    Some("h4") => 16.0,
+                    Some("h5") => 13.28,
+                    Some("h6") => 10.72,
+                    _ => 16.0,
+                }
+            });
+
+        let text_color = style
+            .and_then(|s| s.color.as_ref())
+            .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
+            .unwrap_or(ui.visuals().text_color());
+
+        // Check if this is a block element
+        let is_block = tag.as_deref().map_or(false, |t| {
+            matches!(
+                t,
+                "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "li"
+                    | "article" | "section" | "header" | "footer" | "main" | "nav"
+                    | "aside" | "blockquote" | "pre" | "body" | "html"
+            )
+        });
+
+        if is_block {
+            ui.add_space(6.0);
+        }
+
+        // Render text content for this node
+        if let Some(id) = node_id {
+            for &child_id in page.dom.children(id) {
+                if let Some(child_node) = page.dom.get(child_id) {
+                    if let NodeType::Text(text) = &child_node.node_type {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            let job = egui::text::LayoutJob::simple_singleline(
+                                trimmed.to_string(),
+                                egui::FontId::new(font_size as f32, egui::FontFamily::Proportional),
+                                text_color,
+                            );
+                            let _ = ui.label(job);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recursively render children from the layout tree
+        for child in &layout_box.children {
+            self.render_layout_tree(ui, page, child);
+        }
+
+        if is_block {
+            ui.add_space(6.0);
+        }
     }
 
     /// Recursively render a DOM node's content

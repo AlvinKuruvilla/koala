@@ -67,6 +67,7 @@ pub use style::{
     OuterDisplayType,
 };
 pub use tokenizer::{CSSToken, CSSTokenizer};
+pub use layout::{BoxDimensions, BoxType, EdgeSizes, LayoutBox, Rect};
 
 use koala_dom::{DomTree, NodeId, NodeType};
 

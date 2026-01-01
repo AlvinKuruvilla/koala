@@ -753,7 +753,10 @@ impl LayoutBox {
             OuterDisplayType::Inline => {
                 // TODO: Inline layout requires line box construction
                 // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
-                todo!("Inline layout not yet implemented")
+                //
+                // TEMPORARY: Fall back to block layout until inline is implemented.
+                // This is incorrect but allows the page to render.
+                self.layout_block(containing_block)
             }
             OuterDisplayType::RunIn => {
                 // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
