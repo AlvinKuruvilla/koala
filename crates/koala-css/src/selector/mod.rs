@@ -645,6 +645,22 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 current_ident.push(c);
             }
 
+            // [§ 4 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
+            // TODO: Implement pseudo-class selectors (:hover, :active, :focus, :link, :visited, etc.)
+            //
+            // [§ 11 Pseudo-elements](https://www.w3.org/TR/selectors-4/#pseudo-elements)
+            // TODO: Implement pseudo-element selectors (::before, ::after, etc.)
+            ':' => {
+                // Pseudo-classes and pseudo-elements are not yet implemented
+                return None;
+            }
+
+            // [§ 6.4 Attribute selectors](https://www.w3.org/TR/selectors-4/#attribute-selectors)
+            // TODO: Implement attribute selectors ([attr], [attr=value], etc.)
+            '[' => {
+                return None;
+            }
+
             // Unknown character - unsupported selector syntax
             _ => {
                 return None;

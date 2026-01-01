@@ -258,9 +258,10 @@ impl CSSParser {
                 Some(CSSToken::LeftBrace) => {
                     let _ = self.consume(); // {
 
-                    // Parse the selector from prelude tokens
-                    let selector_text = tokens_to_selector_string(&prelude_tokens);
-                    let selectors = vec![Selector { text: selector_text }];
+                    // Parse selectors from prelude tokens, splitting on commas
+                    // [§ 5.1 Selector Lists](https://www.w3.org/TR/selectors-4/#selector-list)
+                    // "A selector list is a comma-separated list of selectors"
+                    let selectors = split_selector_list(&prelude_tokens);
 
                     // Parse declarations from block contents
                     let declarations = self.consume_style_block_contents();
@@ -492,6 +493,36 @@ impl CSSParser {
     fn peek(&self) -> Option<&CSSToken> {
         self.tokens.get(self.position)
     }
+}
+
+/// [§ 5.1 Selector Lists](https://www.w3.org/TR/selectors-4/#selector-list)
+///
+/// Split prelude tokens into a list of selectors, separated by commas.
+/// "A selector list is a comma-separated list of selectors."
+fn split_selector_list(tokens: &[CSSToken]) -> Vec<Selector> {
+    let mut selectors = Vec::new();
+    let mut current = Vec::new();
+
+    for token in tokens {
+        if matches!(token, CSSToken::Comma) {
+            // End of current selector, start a new one
+            let text = tokens_to_selector_string(&current);
+            if !text.is_empty() {
+                selectors.push(Selector { text });
+            }
+            current.clear();
+        } else {
+            current.push(token.clone());
+        }
+    }
+
+    // Don't forget the last selector (after the last comma, or the only one)
+    let text = tokens_to_selector_string(&current);
+    if !text.is_empty() {
+        selectors.push(Selector { text });
+    }
+
+    selectors
 }
 
 /// Convert prelude tokens to a selector string.
