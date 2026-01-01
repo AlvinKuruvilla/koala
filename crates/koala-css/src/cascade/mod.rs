@@ -10,6 +10,8 @@ use crate::selector::{parse_selector, ParsedSelector, Specificity};
 use crate::style::ComputedStyle;
 use koala_dom::{DomTree, NodeId, NodeType};
 
+/// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
+///
 /// A matched rule with its specificity for cascade ordering.
 struct MatchedRule<'a> {
     specificity: Specificity,
@@ -48,7 +50,10 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
     styles
 }
 
+/// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
+///
 /// Recursively compute styles for a node and its children.
+/// Applies cascade sorting and specificity rules per the spec.
 fn compute_node_styles(
     tree: &DomTree,
     id: NodeId,
@@ -87,7 +92,7 @@ fn compute_node_styles(
             }
 
             // Store the computed style
-            styles.insert(id, computed.clone());
+            let _ = styles.insert(id, computed.clone());
 
             // Recurse to children with this element's computed style as inherited
             for &child_id in tree.children(id) {
@@ -172,10 +177,10 @@ mod tests {
     fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType {
         let mut attrs = AttributesMap::new();
         if let Some(id_val) = id {
-            attrs.insert("id".to_string(), id_val.to_string());
+            let _ = attrs.insert("id".to_string(), id_val.to_string());
         }
         if !classes.is_empty() {
-            attrs.insert("class".to_string(), classes.join(" "));
+            let _ = attrs.insert("class".to_string(), classes.join(" "));
         }
         NodeType::Element(ElementData {
             tag_name: tag.to_string(),

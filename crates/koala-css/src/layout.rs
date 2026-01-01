@@ -63,7 +63,9 @@ pub enum InnerDisplayType {
 /// [§ 2 Box Layout Modes](https://www.w3.org/TR/css-display-3/#the-display-properties)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DisplayValue {
+    /// "The outer display type, which dictates how the box participates in flow layout."
     pub outer: OuterDisplayType,
+    /// "The inner display type, which dictates how its descendant boxes are laid out."
     pub inner: InnerDisplayType,
 }
 
@@ -190,19 +192,33 @@ pub struct BoxDimensions {
     pub margin: EdgeSizes,
 }
 
+/// A rectangle positioned in 2D space.
+///
+/// [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
 #[derive(Debug, Clone, Default)]
 pub struct Rect {
+    /// Horizontal position of the top-left corner.
     pub x: f32,
+    /// Vertical position of the top-left corner.
     pub y: f32,
+    /// Width of the rectangle.
     pub width: f32,
+    /// Height of the rectangle.
     pub height: f32,
 }
 
+/// Edge sizes for padding, border, or margin.
+///
+/// [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
 #[derive(Debug, Clone, Default)]
 pub struct EdgeSizes {
+    /// Top edge size.
     pub top: f32,
+    /// Right edge size.
     pub right: f32,
+    /// Bottom edge size.
     pub bottom: f32,
+    /// Left edge size.
     pub left: f32,
 }
 
@@ -406,11 +422,16 @@ impl InlineFormattingContext {
     }
 }
 
-/// A node in the layout tree (render tree with computed layout)
+/// A node in the layout tree (render tree with computed layout).
+///
+/// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
 #[derive(Debug)]
 pub struct LayoutBox {
+    /// The computed dimensions of this box.
     pub dimensions: BoxDimensions,
+    /// The display type of this box.
     pub display: DisplayValue,
+    /// Child boxes in the layout tree.
     pub children: Vec<LayoutBox>,
 }
 

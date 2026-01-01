@@ -1,19 +1,19 @@
+//! CSS Token types per [CSS Syntax Level 3 § 4](https://www.w3.org/TR/css-syntax-3/#tokenization).
+//!
+//! "The output of the tokenization step is a stream of zero or more of the
+//! following tokens: <ident-token>, <function-token>, <at-keyword-token>,
+//! <hash-token>, <string-token>, <bad-string-token>, <url-token>,
+//! <bad-url-token>, <delim-token>, <number-token>, <percentage-token>,
+//! <dimension-token>, <unicode-range-token>, <whitespace-token>,
+//! <CDO-token>, <CDC-token>, <colon-token>, <semicolon-token>,
+//! <comma-token>, <[-token>, <]-token>, <(-token>, <)-token>, <{-token>,
+//! and <}-token>."
+
 use core::fmt;
 
-/// [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization)
+/// [§ 4.2 Definitions](https://www.w3.org/TR/css-syntax-3/#token-diagrams)
 ///
-/// "The output of the tokenization step is a stream of zero or more of the
-/// following tokens: <ident-token>, <function-token>, <at-keyword-token>,
-/// <hash-token>, <string-token>, <bad-string-token>, <url-token>,
-/// <bad-url-token>, <delim-token>, <number-token>, <percentage-token>,
-/// <dimension-token>, <unicode-range-token>, <whitespace-token>,
-/// <CDO-token>, <CDC-token>, <colon-token>, <semicolon-token>,
-/// <comma-token>, <[-token>, <]-token>, <(-token>, <)-token>, <{-token>,
-/// and <}-token>."
-
-/// [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization)
-///
-/// The type flag for hash tokens.
+/// "A <hash-token> with the type flag set to 'id'... or 'unrestricted'."
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HashType {
     /// "id" - the hash token's value is a valid identifier
@@ -22,9 +22,9 @@ pub enum HashType {
     Unrestricted,
 }
 
-/// [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization)
+/// [§ 4.2 Definitions](https://www.w3.org/TR/css-syntax-3/#token-diagrams)
 ///
-/// The type flag for number tokens.
+/// "A <number-token> has a type flag set to either 'integer' or 'number'."
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NumericType {
     /// "integer" - the number is an integer
@@ -33,9 +33,10 @@ pub enum NumericType {
     Number,
 }
 
-/// [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization)
+/// [§ 4.2 Definitions](https://www.w3.org/TR/css-syntax-3/#token-diagrams)
 ///
 /// CSS tokens as defined by the CSS Syntax Module Level 3 specification.
+/// Each variant corresponds to a token type in the spec's railroad diagrams.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CSSToken {
     /// "<ident-token>"
@@ -53,7 +54,12 @@ pub enum CSSToken {
     /// "<hash-token>"
     /// "has a value composed of one or more code points, preceded by U+0023 NUMBER SIGN (#)"
     /// "has a type flag set to either 'id' or 'unrestricted'"
-    Hash { value: String, hash_type: HashType },
+    Hash {
+        /// "a value composed of one or more code points"
+        value: String,
+        /// "a type flag set to either 'id' or 'unrestricted'"
+        hash_type: HashType,
+    },
 
     /// "<string-token>"
     /// "has a value composed of zero or more code points"
@@ -78,25 +84,35 @@ pub enum CSSToken {
     /// "<number-token>"
     /// "has a numeric value, and a type flag set to either 'integer' or 'number'"
     Number {
+        /// "a numeric value"
         value: f64,
+        /// The integer value if this is an integer type.
         int_value: Option<i64>,
+        /// "a type flag set to either 'integer' or 'number'"
         numeric_type: NumericType,
     },
 
     /// "<percentage-token>"
     /// "has a numeric value, and a type flag set to either 'integer' or 'number'"
     Percentage {
+        /// "a numeric value"
         value: f64,
+        /// The integer value if this is an integer type.
         int_value: Option<i64>,
+        /// "a type flag set to either 'integer' or 'number'"
         numeric_type: NumericType,
     },
 
     /// "<dimension-token>"
     /// "has a numeric value, a type flag, and a unit"
     Dimension {
+        /// "a numeric value"
         value: f64,
+        /// The integer value if this is an integer type.
         int_value: Option<i64>,
+        /// "a type flag set to either 'integer' or 'number'"
         numeric_type: NumericType,
+        /// "a unit"
         unit: String,
     },
 

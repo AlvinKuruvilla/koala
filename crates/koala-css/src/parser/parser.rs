@@ -1,27 +1,44 @@
+//! CSS Parser per [§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing).
+//!
+//! "The input to the parsing stage is a stream of tokens from the tokenization stage."
+//! This is a basic implementation that parses style rules.
+
 use crate::tokenizer::CSSToken;
 
-/// [§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing)
+/// [§ 5.4.4 Consume a declaration](https://www.w3.org/TR/css-syntax-3/#consume-a-declaration)
 ///
-/// CSS parser following the CSS Syntax Module Level 3 specification.
-/// This is a basic implementation that parses style rules.
-
-/// A CSS declaration (e.g., `color: red`)
+/// A CSS declaration (e.g., `color: red`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Declaration {
+    /// The property name.
     pub name: String,
+    /// The property value as component values.
     pub value: Vec<ComponentValue>,
+    /// Whether the declaration has `!important`.
     pub important: bool,
 }
 
-/// A component value in a declaration
+/// [§ 5.3.7 Consume a component value](https://www.w3.org/TR/css-syntax-3/#consume-a-component-value)
+///
+/// A component value in a declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComponentValue {
-    /// A preserved token
+    /// A preserved token.
     Token(CSSToken),
-    /// A function with its contents
-    Function { name: String, value: Vec<ComponentValue> },
-    /// A simple block
-    Block { token: char, value: Vec<ComponentValue> },
+    /// A function with its contents.
+    Function {
+        /// The function name.
+        name: String,
+        /// The function arguments.
+        value: Vec<ComponentValue>,
+    },
+    /// A simple block.
+    Block {
+        /// The opening token character.
+        token: char,
+        /// The block contents.
+        value: Vec<ComponentValue>,
+    },
 }
 
 /// A CSS selector (simplified representation)
@@ -31,31 +48,47 @@ pub struct Selector {
     pub text: String,
 }
 
-/// A CSS style rule (selector + declarations)
+/// [§ 5.4.3 Consume a qualified rule](https://www.w3.org/TR/css-syntax-3/#consume-a-qualified-rule)
+///
+/// A CSS style rule (selector + declarations).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StyleRule {
+    /// The list of selectors for this rule.
     pub selectors: Vec<Selector>,
+    /// The declarations in this rule block.
     pub declarations: Vec<Declaration>,
 }
 
-/// A CSS at-rule
+/// [§ 5.4.2 Consume an at-rule](https://www.w3.org/TR/css-syntax-3/#consume-an-at-rule)
+///
+/// A CSS at-rule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AtRule {
+    /// The at-keyword name (without the `@`).
     pub name: String,
+    /// The prelude component values.
     pub prelude: Vec<ComponentValue>,
+    /// The optional block contents.
     pub block: Option<Vec<ComponentValue>>,
 }
 
-/// A CSS rule (either a style rule or an at-rule)
+/// [§ 5.3.3 Consume a list of rules](https://www.w3.org/TR/css-syntax-3/#consume-list-of-rules)
+///
+/// A CSS rule (either a style rule or an at-rule).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rule {
+    /// A style rule (qualified rule).
     Style(StyleRule),
+    /// An at-rule.
     At(AtRule),
 }
 
-/// A parsed CSS stylesheet
+/// [§ 5.3.2 Parse a stylesheet](https://www.w3.org/TR/css-syntax-3/#parse-stylesheet)
+///
+/// A parsed CSS stylesheet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
+    /// The list of rules in the stylesheet.
     pub rules: Vec<Rule>,
 }
 
@@ -101,7 +134,7 @@ impl CSSParser {
                 // "<whitespace-token>"
                 // "Do nothing."
                 Some(CSSToken::Whitespace) => {
-                    self.consume();
+                    let _ = self.consume();
                 }
 
                 // "<EOF-token>"
@@ -114,7 +147,7 @@ impl CSSParser {
                 Some(CSSToken::CDO) | Some(CSSToken::CDC) => {
                     if top_level {
                         // "Do nothing."
-                        self.consume();
+                        let _ = self.consume();
                     } else {
                         // "Reconsume the current input token. Consume a qualified rule.
                         // If anything is returned, append it to the list of rules."
@@ -163,7 +196,7 @@ impl CSSParser {
                 // "<semicolon-token>"
                 // "Return the at-rule."
                 Some(CSSToken::Semicolon) => {
-                    self.consume();
+                    let _ = self.consume();
                     return Some(AtRule {
                         name,
                         prelude,
@@ -223,7 +256,7 @@ impl CSSParser {
                 // "Consume a simple block and assign it to the qualified rule's block.
                 // Return the qualified rule."
                 Some(CSSToken::LeftBrace) => {
-                    self.consume(); // {
+                    let _ = self.consume(); // {
 
                     // Parse the selector from prelude tokens
                     let selector_text = tokens_to_selector_string(&prelude_tokens);
@@ -234,7 +267,7 @@ impl CSSParser {
 
                     // Consume closing brace
                     if self.peek() == Some(&CSSToken::RightBrace) {
-                        self.consume();
+                        let _ = self.consume();
                     }
 
                     return Some(StyleRule {
@@ -269,7 +302,7 @@ impl CSSParser {
         loop {
             match self.peek() {
                 Some(token) if *token == ending_token => {
-                    self.consume();
+                    let _ = self.consume();
                     return value;
                 }
                 None | Some(CSSToken::EOF) => {
@@ -284,7 +317,9 @@ impl CSSParser {
         }
     }
 
-    /// Consume the contents of a style block (declarations).
+    /// [§ 5.4.4 Consume a style block's contents](https://www.w3.org/TR/css-syntax-3/#consume-style-block)
+    ///
+    /// "This algorithm consumes the content of a style block..."
     fn consume_style_block_contents(&mut self) -> Vec<Declaration> {
         self.consume_list_of_declarations()
     }
@@ -298,7 +333,7 @@ impl CSSParser {
                 // "<whitespace-token>" or "<semicolon-token>"
                 // "Do nothing."
                 Some(CSSToken::Whitespace) | Some(CSSToken::Semicolon) => {
-                    self.consume();
+                    let _ = self.consume();
                 }
 
                 // "<EOF-token>" or "<}-token>"
@@ -312,7 +347,7 @@ impl CSSParser {
                 // returned rule to the list of declarations."
                 Some(CSSToken::AtKeyword(_)) => {
                     // For simplicity, skip at-rules in declaration lists
-                    self.consume_at_rule();
+                    let _ = self.consume_at_rule();
                 }
 
                 // "<ident-token>"
@@ -329,14 +364,14 @@ impl CSSParser {
                 // the next input token is anything other than a <semicolon-token> or
                 // <EOF-token>, consume a component value and throw away the returned value."
                 Some(_) => {
-                    self.consume();
+                    let _ = self.consume();
                     while !matches!(
                         self.peek(),
                         None | Some(CSSToken::Semicolon)
                             | Some(CSSToken::RightBrace)
                             | Some(CSSToken::EOF)
                     ) {
-                        self.consume_component_value();
+                        let _ = self.consume_component_value();
                     }
                 }
             }
@@ -353,7 +388,7 @@ impl CSSParser {
 
         // "While the next input token is a <whitespace-token>, consume the next input token."
         while self.peek() == Some(&CSSToken::Whitespace) {
-            self.consume();
+            let _ = self.consume();
         }
 
         // "If the next input token is anything other than a <colon-token>, this is a parse error.
@@ -361,11 +396,11 @@ impl CSSParser {
         if self.peek() != Some(&CSSToken::Colon) {
             return None;
         }
-        self.consume(); // :
+        let _ = self.consume(); // :
 
         // "While the next input token is a <whitespace-token>, consume the next input token."
         while self.peek() == Some(&CSSToken::Whitespace) {
-            self.consume();
+            let _ = self.consume();
         }
 
         // "As long as the next input token is anything other than an <EOF-token>, consume a
@@ -420,7 +455,7 @@ impl CSSParser {
                 loop {
                     match self.peek() {
                         Some(CSSToken::RightParen) => {
-                            self.consume();
+                            let _ = self.consume();
                             break;
                         }
                         None | Some(CSSToken::EOF) => break,
@@ -443,8 +478,6 @@ impl CSSParser {
             None => None,
         }
     }
-
-    // Helper methods
 
     fn consume(&mut self) -> Option<&CSSToken> {
         if self.position < self.tokens.len() {
@@ -493,7 +526,7 @@ fn check_important(value: &[ComponentValue]) -> bool {
 
     // Skip trailing whitespace
     while let Some(ComponentValue::Token(CSSToken::Whitespace)) = iter.peek() {
-        iter.next();
+        let _ = iter.next();
     }
 
     // Check for ident "important"
@@ -504,7 +537,7 @@ fn check_important(value: &[ComponentValue]) -> bool {
 
     // Skip whitespace
     while let Some(ComponentValue::Token(CSSToken::Whitespace)) = iter.peek() {
-        iter.next();
+        let _ = iter.next();
     }
 
     // Check for !
@@ -521,7 +554,7 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
         value.last(),
         Some(ComponentValue::Token(CSSToken::Whitespace))
     ) {
-        value.pop();
+        let _ = value.pop();
     }
 
     // Check and remove "important"
@@ -529,14 +562,14 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
         value.last(),
         Some(ComponentValue::Token(CSSToken::Ident(s))) if s.eq_ignore_ascii_case("important")
     ) {
-        value.pop();
+        let _ = value.pop();
 
         // Remove whitespace
         while matches!(
             value.last(),
             Some(ComponentValue::Token(CSSToken::Whitespace))
         ) {
-            value.pop();
+            let _ = value.pop();
         }
 
         // Remove !
@@ -544,7 +577,7 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
             value.last(),
             Some(ComponentValue::Token(CSSToken::Delim('!')))
         ) {
-            value.pop();
+            let _ = value.pop();
         }
     }
 
@@ -553,7 +586,7 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
         value.last(),
         Some(ComponentValue::Token(CSSToken::Whitespace))
     ) {
-        value.pop();
+        let _ = value.pop();
     }
 
     value

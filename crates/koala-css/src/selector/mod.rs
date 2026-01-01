@@ -38,6 +38,7 @@ pub enum SimpleSelector {
 /// conditions on a single element."
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompoundSelector {
+    /// The list of simple selectors that make up this compound selector.
     pub simple_selectors: Vec<SimpleSelector>,
 }
 
@@ -122,7 +123,9 @@ impl Specificity {
 /// A parsed CSS selector ready for matching.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedSelector {
+    /// The complex selector (compound selectors with combinators).
     pub complex: ComplexSelector,
+    /// The specificity of this selector.
     pub specificity: Specificity,
 }
 
@@ -547,14 +550,14 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
 
                 // Consume all contiguous whitespace
                 while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
-                    chars.next();
+                    let _ = chars.next();
                 }
 
                 // Check what follows the whitespace
                 match chars.peek() {
                     // End of selector - just trailing whitespace
                     None => {
-                        flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
+                        let _ = flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
                     }
 
                     // [§ 16.2 Child combinator](https://www.w3.org/TR/selectors-4/#child-combinators)
@@ -593,7 +596,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 }
                 // Skip whitespace after combinator
                 while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
-                    chars.next();
+                    let _ = chars.next();
                 }
                 combinators_between.push(Combinator::Child);
             }
@@ -608,7 +611,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 }
                 // Skip whitespace after combinator
                 while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
-                    chars.next();
+                    let _ = chars.next();
                 }
                 combinators_between.push(Combinator::NextSibling);
             }
@@ -624,7 +627,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 }
                 // Skip whitespace after combinator
                 while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
-                    chars.next();
+                    let _ = chars.next();
                 }
                 combinators_between.push(Combinator::SubsequentSibling);
             }
@@ -652,7 +655,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
     // Flush final compound selector
     // [§ 17 Specificity](https://www.w3.org/TR/selectors-4/#specificity-rules)
     // "count the number of type selectors...in the selector (= C)"
-    flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
+    let _  = flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
 
     if compounds.is_empty() {
         return None;
@@ -707,10 +710,10 @@ mod tests {
     fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> ElementData {
         let mut attrs = HashMap::new();
         if let Some(id_val) = id {
-            attrs.insert("id".to_string(), id_val.to_string());
+            let _ = attrs.insert("id".to_string(), id_val.to_string());
         }
         if !classes.is_empty() {
-            attrs.insert("class".to_string(), classes.join(" "));
+            let _ = attrs.insert("class".to_string(), classes.join(" "));
         }
         ElementData {
             tag_name: tag.to_string(),
@@ -769,10 +772,8 @@ mod tests {
         assert!(selector.complex.combinators.is_empty());
     }
 
-    // =========================================================================
     // Combinator Parsing Tests
     // [§ 16 Combinators](https://www.w3.org/TR/selectors-4/#combinators)
-    // =========================================================================
 
     #[test]
     fn test_parse_descendant_combinator() {
@@ -923,9 +924,7 @@ mod tests {
         assert!(!complex.is_simple());
     }
 
-    // =========================================================================
     // Simple Selector Matching Tests
-    // =========================================================================
 
     #[test]
     fn test_match_type_selector() {
@@ -974,10 +973,8 @@ mod tests {
         assert!(!selector.matches(&wrong_class));
     }
 
-    // =========================================================================
     // Specificity Tests
     // [§ 17 Calculating Specificity](https://www.w3.org/TR/selectors-4/#specificity-rules)
-    // =========================================================================
 
     #[test]
     fn test_specificity_ordering() {
@@ -1020,10 +1017,8 @@ mod tests {
         assert_eq!(sel3.specificity, Specificity(1, 2, 3));
     }
 
-    // =========================================================================
     // Combinator Matching Tests (with DOM tree context)
     // [§ 16 Combinators](https://www.w3.org/TR/selectors-4/#combinators)
-    // =========================================================================
 
     use koala_dom::{AttributesMap, DomTree, NodeId, NodeType};
 
@@ -1031,12 +1026,12 @@ mod tests {
     fn make_element_type(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType {
         let mut attrs = AttributesMap::new();
         if let Some(id_val) = id {
-            attrs.insert("id".to_string(), id_val.to_string());
+            let _ = attrs.insert("id".to_string(), id_val.to_string());
         }
         if !classes.is_empty() {
-            attrs.insert("class".to_string(), classes.join(" "));
+            let _ = attrs.insert("class".to_string(), classes.join(" "));
         }
-        NodeType::Element(koala_dom::ElementData {
+        NodeType::Element(ElementData {
             tag_name: tag.to_string(),
             attrs,
         })

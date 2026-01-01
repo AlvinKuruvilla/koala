@@ -136,8 +136,8 @@ impl CSSTokenizer {
                 }
                 // "Otherwise, if the next 2 input code points are U+002D U+003E (->)..."
                 else if self.peek() == Some('-') && self.peek_at(1) == Some('>') {
-                    self.consume(); // -
-                    self.consume(); // >
+                    let _ = self.consume(); // -
+                    let _ = self.consume(); // >
                     CSSToken::CDC
                 }
                 // "Otherwise, if the input stream starts with an ident sequence..."
@@ -175,9 +175,9 @@ impl CSSTokenizer {
                     && self.peek_at(1) == Some('-')
                     && self.peek_at(2) == Some('-')
                 {
-                    self.consume(); // !
-                    self.consume(); // -
-                    self.consume(); // -
+                    let _ = self.consume(); // !
+                    let _ = self.consume(); // -
+                    let _ = self.consume(); // -
                     CSSToken::CDO
                 } else {
                     CSSToken::Delim('<')
@@ -256,13 +256,13 @@ impl CSSTokenizer {
     /// or up to an EOF code point."
     fn consume_comments(&mut self) {
         while self.peek() == Some('/') && self.peek_at(1) == Some('*') {
-            self.consume(); // /
-            self.consume(); // *
+            let _ = self.consume(); // /
+            let _ = self.consume(); // *
 
             loop {
                 match self.consume() {
                     Some('*') if self.peek() == Some('/') => {
-                        self.consume(); // /
+                        let _ = self.consume(); // /
                         break;
                     }
                     Some(_) => continue,
@@ -275,7 +275,7 @@ impl CSSTokenizer {
     /// Consume whitespace characters.
     fn consume_whitespace(&mut self) {
         while self.peek().map(is_whitespace).unwrap_or(false) {
-            self.consume();
+            let _ = self.consume();
         }
     }
 
@@ -314,7 +314,7 @@ impl CSSTokenizer {
                         // "Otherwise, if the next input code point is a newline,
                         // consume it."
                         Some('\n') => {
-                            self.consume();
+                            let _ = self.consume();
                         }
                         // "Otherwise, (the stream starts with a valid escape)
                         // consume an escaped code point and append the returned
@@ -357,7 +357,7 @@ impl CSSTokenizer {
         }
         // "Otherwise, if the next input code point is U+0025 PERCENTAGE SIGN (%)..."
         else if self.peek() == Some('%') {
-            self.consume();
+            let _ = self.consume();
             CSSToken::Percentage {
                 value,
                 int_value,
@@ -383,11 +383,11 @@ impl CSSTokenizer {
         // "If string's value is an ASCII case-insensitive match for 'url',
         // and the next input code point is U+0028 LEFT PARENTHESIS (()"
         if string.eq_ignore_ascii_case("url") && self.peek() == Some('(') {
-            self.consume(); // (
+            let _ = self.consume(); // (
 
             // Consume whitespace
             while self.peek().map(is_whitespace).unwrap_or(false) {
-                self.consume();
+                let _ = self.consume();
             }
 
             // "If the next one or two input code points are U+0022 QUOTATION MARK,
@@ -406,7 +406,7 @@ impl CSSTokenizer {
         }
         // "Otherwise, if the next input code point is U+0028 LEFT PARENTHESIS (()"
         else if self.peek() == Some('(') {
-            self.consume();
+            let _ = self.consume();
             // "Return a <function-token> with its value set to string."
             CSSToken::Function(string)
         }
@@ -443,7 +443,7 @@ impl CSSTokenizer {
                     self.consume_whitespace();
                     match self.peek() {
                         Some(')') => {
-                            self.consume();
+                            let _ = self.consume();
                             return CSSToken::Url(value);
                         }
                         None => {
@@ -493,7 +493,7 @@ impl CSSTokenizer {
                 Some(')') | None => return,
                 Some('\\') => {
                     if self.is_valid_escape(Some('\\'), self.peek()) {
-                        self.consume_escaped_code_point();
+                        let _ = self.consume_escaped_code_point();
                     }
                 }
                 _ => continue,
@@ -619,7 +619,7 @@ impl CSSTokenizer {
                 }
                 // "If the next input code point is whitespace, consume it."
                 if self.peek().map(is_whitespace).unwrap_or(false) {
-                    self.consume();
+                    let _ = self.consume();
                 }
                 // "Interpret the hex digits as a hexadecimal number."
                 let code_point = u32::from_str_radix(&hex, 16).unwrap_or(0xFFFD);
@@ -707,8 +707,6 @@ impl CSSTokenizer {
             _ => false,
         }
     }
-
-    // Helper methods
 
     /// Consume and return the next character.
     fn consume(&mut self) -> Option<char> {

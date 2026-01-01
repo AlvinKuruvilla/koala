@@ -33,10 +33,14 @@ impl LengthValue {
 /// sRGB color represented as RGBA components.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ColorValue {
+    /// "the red color channel" (0-255)
     pub r: u8,
+    /// "the green color channel" (0-255)
     pub g: u8,
+    /// "the blue color channel" (0-255)
     pub b: u8,
-    pub a: u8, // alpha, 255 = fully opaque
+    /// "the alpha channel" (0-255, 255 = fully opaque)
+    pub a: u8,
 }
 
 impl ColorValue {
@@ -141,11 +145,16 @@ impl ColorValue {
     }
 }
 
+/// [CSS Backgrounds and Borders § 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
+///
 /// Border value representing width, style, and color.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BorderValue {
+    /// [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
     pub width: LengthValue,
-    pub style: String, // "solid", "dashed", "dotted", etc.
+    /// [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
+    pub style: String,
+    /// [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
     pub color: ColorValue,
 }
 
@@ -157,31 +166,43 @@ pub struct BorderValue {
 /// All values are Option - None means "not set" (use inherited or initial value).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ComputedStyle {
-    // Text properties
+    /// [CSS Color § 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
     pub color: Option<ColorValue>,
+    /// [CSS Fonts § 3.1 'font-family'](https://www.w3.org/TR/css-fonts-4/#font-family-prop)
     pub font_family: Option<String>,
+    /// [CSS Fonts § 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
     pub font_size: Option<LengthValue>,
-    pub line_height: Option<f64>, // as ratio (e.g., 1.6)
+    /// [CSS Inline § 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
+    pub line_height: Option<f64>,
 
-    // Background
+    /// [CSS Backgrounds § 3.2 'background-color'](https://www.w3.org/TR/css-backgrounds-3/#background-color)
     pub background_color: Option<ColorValue>,
 
-    // Box model - margin
+    /// [CSS Box § 6.1 'margin-top'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_top: Option<LengthValue>,
+    /// [CSS Box § 6.1 'margin-right'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_right: Option<LengthValue>,
+    /// [CSS Box § 6.1 'margin-bottom'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_bottom: Option<LengthValue>,
+    /// [CSS Box § 6.1 'margin-left'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_left: Option<LengthValue>,
 
-    // Box model - padding
+    /// [CSS Box § 6.2 'padding-top'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_top: Option<LengthValue>,
+    /// [CSS Box § 6.2 'padding-right'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_right: Option<LengthValue>,
+    /// [CSS Box § 6.2 'padding-bottom'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_bottom: Option<LengthValue>,
+    /// [CSS Box § 6.2 'padding-left'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_left: Option<LengthValue>,
 
-    // Box model - border
+    /// [CSS Backgrounds § 4 'border-top'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_top: Option<BorderValue>,
+    /// [CSS Backgrounds § 4 'border-right'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_right: Option<BorderValue>,
+    /// [CSS Backgrounds § 4 'border-bottom'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_bottom: Option<BorderValue>,
+    /// [CSS Backgrounds § 4 'border-left'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_left: Option<BorderValue>,
 }
 
