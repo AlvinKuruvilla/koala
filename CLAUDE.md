@@ -1,4 +1,45 @@
-# Koala Browser
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Build & Test Commands
+
+```bash
+# Build
+cargo build
+cargo build --release
+
+# Run tests
+cargo test                          # Run all tests
+cargo test test_name                # Run a specific test
+cargo test --lib                    # Run library tests only
+
+# Run the GUI browser
+cargo run --bin koala_gui
+
+# Run the CLI tool
+cargo run --bin koala -- <file|url>
+cargo run --bin koala -- res/simple.html
+cargo run --bin koala -- res/simple.html --tokens    # Show HTML tokens
+cargo run --bin koala -- res/simple.html --css       # Show CSS output
+cargo run --bin koala -- res/simple.html --stats     # Show parsing stats
+cargo run --bin koala -- res/simple.html --verbose   # All debug info
+cargo run --bin koala -- --html '<h1>Test</h1>'      # Parse inline HTML
+cargo run --bin koala -- --interactive               # REPL mode
+
+# Lint
+cargo clippy
+cargo fmt --check
+```
+
+## GUI Debugging
+
+The GUI (`koala_gui`) has built-in debugging features:
+- **F12**: Toggle debug panel showing DOM tree, tokens, CSS, computed styles, and source
+- **Terminal logging**: All state changes print to stdout with `[Koala GUI]` prefix
+- Debug panel tabs: DOM | Tokens | CSS | Styles | Source
+
+## Project Overview
 
 A from-scratch web browser implementation in Rust, built for learning and understanding.
 
@@ -75,32 +116,52 @@ Focus on what you're working on *now*. Don't try to implement everything in one 
 ```
 koala/
 ├── bin/
-│   ├── koala.rs          # GUI application
-│   └── koala_cli.rs      # CLI for testing tokenizer
+│   ├── koala.rs              # CLI tool for parsing/debugging HTML & CSS
+│   └── koala_gui.rs          # egui-based GUI browser
 ├── src/
-│   ├── app/              # GUI (iced framework)
+│   ├── lib.rs                # Library root
 │   ├── lib_html/
 │   │   ├── html_tokenizer/   # HTML5 tokenizer (spec: §13.2.5)
 │   │   └── html_parser/      # Tree construction (spec: §13.2.6)
-│   ├── lib_css/              # CSS parsing (spec: css-syntax-3)
-│   │   ├── css_tokenizer/    # CSS tokenizer
-│   │   └── css_parser/       # CSS parser
-│   └── lib_dom/          # DOM node structures
-└── res/                  # Test files, icons
+│   ├── lib_css/
+│   │   ├── css_tokenizer/    # CSS tokenizer (spec: css-syntax-3)
+│   │   ├── css_parser/       # CSS parser
+│   │   ├── css_selector/     # CSS selector matching
+│   │   ├── css_cascade/      # Style cascade & computation
+│   │   ├── css_style/        # Computed style structures
+│   │   └── layout.rs         # Layout engine
+│   └── lib_dom/              # Arena-based DOM tree with parent/sibling links
+└── res/                      # Test HTML files, icons
 ```
+
+**Data Flow:**
+```
+HTML String → HTMLTokenizer → Tokens → HTMLParser → DomTree
+                                                        ↓
+CSS String  → CSSTokenizer  → Tokens → CSSParser  → Stylesheet
+                                                        ↓
+                                      css_cascade::compute_styles()
+                                                        ↓
+                                              HashMap<NodeId, ComputedStyle>
+```
+
+The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) traversal. Parent, child, and sibling relationships are stored as indices, avoiding borrow checker issues.
 
 ### Current Status
 
 - **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing, RCDATA/RAWTEXT states for raw text elements (`<style>`, `<title>`, `<textarea>`, etc.). Missing: character references, script data states
 - **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
 - **DOM**: Node, Element, Text, Comment types defined and populated by parser
-- **GUI**: iced-based browser chrome with SVG icons, dark mode support, pill-shaped URL bar
-- **Rendering**: Basic — renders headings, paragraphs, text nodes with proper theming. Missing: CSS parsing, layout engine, styled text (bold/italic fonts)
+- **GUI**: egui-based browser with URL bar, navigation, content rendering, and debug panel (F12)
+- **Rendering**: Basic — renders headings, paragraphs, text nodes with computed styles. Missing: full layout engine, styled text (bold/italic fonts)
 
 ### Dependencies
 
-- **iced** — GUI framework
-- **Boa** (planned) — JavaScript engine (we're not writing a JS engine from scratch)
+- **egui/eframe** — Cross-platform GUI framework
+- **serde/serde_json** — JSON serialization for DOM output
+- **strum/strum_macros** — Enum utilities for tokenizer states
+- **anyhow** — Error handling
+- **Boa** (planned) — JavaScript engine
 
 ## Code Style
 
