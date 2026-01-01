@@ -6,7 +6,8 @@
 //! - F12: Toggle debug panel
 //! - All state changes logged to terminal
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use eframe::egui;
@@ -125,6 +126,10 @@ struct BrowserApp {
 
     /// Current theme
     theme: Theme,
+
+    /// CSS properties we've warned about - (property, tag) pairs
+    /// Cleared on each page load to avoid spam
+    css_warnings_logged: RefCell<HashSet<(String, String)>>,
 }
 
 /// Parsed page state
@@ -175,6 +180,7 @@ impl BrowserApp {
             debug_tab: DebugTab::Dom,
             status_message: "Welcome to Koala Browser".to_string(),
             theme,
+            css_warnings_logged: RefCell::new(HashSet::new()),
         }
     }
 
@@ -186,6 +192,9 @@ impl BrowserApp {
 
     /// Navigate to a URL/path
     fn navigate(&mut self, path: &str) {
+        // Clear CSS warnings for the new page
+        self.css_warnings_logged.borrow_mut().clear();
+
         println!("[Koala GUI] Navigating to: {}", path);
         self.status_message = format!("Loading {}...", path);
 
@@ -682,6 +691,41 @@ impl BrowserApp {
                     _ => {}
                 }
 
+                // Warn about CSS properties we parse but don't render
+                if let Some(s) = style {
+                    // background-color only supported on body (via canvas_background)
+                    if tag != "body" {
+                        if let Some(bg) = &s.background_color {
+                            self.warn_unsupported_css(
+                                "background-color",
+                                &tag,
+                                &format!("#{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b),
+                            );
+                        }
+                    }
+
+                    // font-family is parsed but not applied
+                    if let Some(ff) = &s.font_family {
+                        self.warn_unsupported_css("font-family", &tag, ff);
+                    }
+
+                    // margin/padding are parsed but we use hardcoded spacing
+                    if s.margin_top.is_some()
+                        || s.margin_right.is_some()
+                        || s.margin_bottom.is_some()
+                        || s.margin_left.is_some()
+                    {
+                        self.warn_unsupported_css("margin", &tag, "(set)");
+                    }
+                    if s.padding_top.is_some()
+                        || s.padding_right.is_some()
+                        || s.padding_bottom.is_some()
+                        || s.padding_left.is_some()
+                    {
+                        self.warn_unsupported_css("padding", &tag, "(set)");
+                    }
+                }
+
                 // Determine text formatting
                 let (font_size, _is_bold) = match tag.as_str() {
                     "h1" => (32.0, true),
@@ -749,6 +793,19 @@ impl BrowserApp {
                 }
             }
             NodeType::Comment(_) => {}
+        }
+    }
+
+    /// Log a warning about an unsupported CSS property, but only once per (property, tag) pair
+    fn warn_unsupported_css(&self, property: &str, tag: &str, value: &str) {
+        let key = (property.to_string(), tag.to_string());
+        let mut logged = self.css_warnings_logged.borrow_mut();
+        if !logged.contains(&key) {
+            println!(
+                "[Koala CSS] Ignoring {}: {} on <{}> (not yet implemented)",
+                property, value, tag
+            );
+            let _ = logged.insert(key);
         }
     }
 
