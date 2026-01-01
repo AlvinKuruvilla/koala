@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use eframe::egui;
 use koala_browser::{load_document, LoadedDocument};
 use koala_common::warning::clear_warnings;
-use koala_css::{canvas_background, LayoutBox, Rect};
+use koala_css::{LayoutBox, Rect};
 use koala_dom::{NodeId, NodeType};
 
 fn main() -> eframe::Result<()> {
@@ -513,13 +513,23 @@ impl eframe::App for BrowserApp {
                         let page = self.page.as_mut().unwrap();
                         if page.last_layout_viewport != Some(viewport_size) {
                             if let Some(ref mut root) = page.doc.layout_tree {
+                                // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
+                                //
+                                // "The containing block in which the root element lives is a
+                                // rectangle called the initial containing block. For continuous
+                                // media, it has the dimensions of the viewport..."
                                 let initial_containing_block = Rect {
                                     x: 0.0,
                                     y: 0.0,
                                     width: viewport_size.0,
                                     height: viewport_size.1,
                                 };
-                                root.layout(initial_containing_block);
+                                // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+                                //
+                                // "The viewport-percentage lengths are relative to the size
+                                // of the initial containing block."
+                                let viewport = initial_containing_block;
+                                root.layout(initial_containing_block, viewport);
                                 page.last_layout_viewport = Some(viewport_size);
                                 println!(
                                     "[Koala GUI] Layout computed for viewport {}x{}",
@@ -534,22 +544,28 @@ impl eframe::App for BrowserApp {
 
                     // Page content
                     // [§ 2.11.2 The Canvas Background](https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds)
-                    let fill_color = canvas_background(&page.doc.dom, &page.doc.styles)
-                        .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
-                        .unwrap_or_else(|| {
-                            if self.theme == Theme::Dark {
-                                egui::Color32::from_rgb(28, 28, 30)
-                            } else {
-                                egui::Color32::WHITE
-                            }
-                        });
+                    //
+                    // "The background of the root element becomes the background of the canvas
+                    // and covers the entire canvas"
+                    //
+                    // We use a neutral background for the canvas, then paint the body's
+                    // background at its computed layout position.
+                    let canvas_color = if self.theme == Theme::Dark {
+                        egui::Color32::from_rgb(28, 28, 30)
+                    } else {
+                        egui::Color32::WHITE
+                    };
                     let _ = egui::Frame::none()
-                        .fill(fill_color)
-                        .inner_margin(egui::Margin::same(24.0))
+                        .fill(canvas_color)
+                        .inner_margin(egui::Margin::ZERO)
                         .show(ui, |ui| {
-                            let _ = egui::ScrollArea::vertical().show(ui, |ui| {
-                                self.render_page_content(ui, page);
-                            });
+                            // Use auto_shrink(false) to prevent ScrollArea from adding scrollbar
+                            // space that would make the content area narrower than the layout viewport.
+                            let _ = egui::ScrollArea::vertical()
+                                .auto_shrink(false)
+                                .show(ui, |ui| {
+                                    self.render_page_content(ui, page);
+                                });
                         });
                 } else {
                     // Landing page
@@ -662,12 +678,37 @@ impl BrowserApp {
         }
     }
 
-    /// Render content using the computed layout tree
+    /// Render content using the computed layout tree with absolute positioning
     ///
     /// [§ 9.1 The viewport](https://www.w3.org/TR/CSS2/visuren.html#viewport)
     /// "User agents for continuous media generally offer users a viewport
     /// through which users consult a document."
     fn render_layout_tree(&self, ui: &mut egui::Ui, page: &PageState, layout_box: &LayoutBox) {
+        // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
+        //
+        // Since we're using painter() for absolute positioning, we need to tell the
+        // ScrollArea about the total content height. We allocate this space upfront
+        // as an invisible rect so scrolling works correctly.
+        let total_height = layout_box.dimensions.margin_box().height;
+        let total_width = layout_box.dimensions.margin_box().width;
+        let (_response, _painter) = ui.allocate_painter(
+            egui::vec2(total_width, total_height),
+            egui::Sense::hover(),
+        );
+
+        // The origin is where document (0,0) maps to on screen
+        let origin = ui.clip_rect().min;
+        self.render_layout_box_absolute(ui, page, layout_box, origin);
+    }
+
+    /// Render a layout box using absolute positioning based on computed dimensions
+    fn render_layout_box_absolute(
+        &self,
+        ui: &mut egui::Ui,
+        page: &PageState,
+        layout_box: &LayoutBox,
+        origin: egui::Pos2,
+    ) {
         use koala_css::BoxType;
 
         // Get the node ID for this box (if it's a principal box)
@@ -699,6 +740,36 @@ impl BrowserApp {
             }
         }
 
+        // Get the layout dimensions
+        let dims = &layout_box.dimensions;
+
+        // Convert layout coordinates to screen coordinates
+        // The layout box's content rect position is relative to the viewport origin
+        let content_rect = egui::Rect::from_min_size(
+            egui::pos2(origin.x + dims.content.x, origin.y + dims.content.y),
+            egui::vec2(dims.content.width, dims.content.height),
+        );
+
+        // Paint background if this element has one
+        // [§ 2.1 background-color](https://www.w3.org/TR/css-backgrounds-3/#background-color)
+        if let Some(s) = style {
+            if let Some(ref bg) = s.background_color {
+                let bg_color = egui::Color32::from_rgb(bg.r, bg.g, bg.b);
+                // Paint at the padding box (content + padding)
+                let padding_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        origin.x + dims.content.x - dims.padding.left,
+                        origin.y + dims.content.y - dims.padding.top,
+                    ),
+                    egui::vec2(
+                        dims.content.width + dims.padding.left + dims.padding.right,
+                        dims.content.height + dims.padding.top + dims.padding.bottom,
+                    ),
+                );
+                let _ = ui.painter().rect_filled(padding_rect, 0.0, bg_color);
+            }
+        }
+
         // Determine text formatting from style
         let font_size = style
             .and_then(|s| s.font_size.as_ref())
@@ -720,33 +791,24 @@ impl BrowserApp {
             .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
             .unwrap_or(ui.visuals().text_color());
 
-        // Check if this is a block element
-        let is_block = tag.as_deref().map_or(false, |t| {
-            matches!(
-                t,
-                "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "li"
-                    | "article" | "section" | "header" | "footer" | "main" | "nav"
-                    | "aside" | "blockquote" | "pre" | "body" | "html"
-            )
-        });
-
-        if is_block {
-            ui.add_space(6.0);
-        }
-
-        // Render text content for this node
+        // Render text content for this node at the computed position
         if let Some(id) = node_id {
+            let mut text_y = content_rect.min.y;
             for &child_id in page.doc.dom.children(id) {
                 if let Some(child_node) = page.doc.dom.get(child_id) {
                     if let NodeType::Text(text) = &child_node.node_type {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
-                            let job = egui::text::LayoutJob::simple_singleline(
+                            // Paint text at the computed position
+                            let text_pos = egui::pos2(content_rect.min.x, text_y);
+                            let galley = ui.painter().layout(
                                 trimmed.to_string(),
                                 egui::FontId::new(font_size as f32, egui::FontFamily::Proportional),
                                 text_color,
+                                content_rect.width(),
                             );
-                            let _ = ui.label(job);
+                            ui.painter().galley(text_pos, galley.clone(), text_color);
+                            text_y += galley.rect.height() + 4.0; // Line spacing
                         }
                     }
                 }
@@ -755,12 +817,12 @@ impl BrowserApp {
 
         // Recursively render children from the layout tree
         for child in &layout_box.children {
-            self.render_layout_tree(ui, page, child);
+            self.render_layout_box_absolute(ui, page, child, origin);
         }
 
-        if is_block {
-            ui.add_space(6.0);
-        }
+        // Note: We don't need to call allocate_space() because we're using
+        // painter().rect_filled() which draws directly without affecting layout.
+        // The ScrollArea will size based on the content naturally.
     }
 
     /// Recursively render a DOM node's content
