@@ -3,53 +3,63 @@
 //! A headless browser for testing and debugging.
 
 use anyhow::Result;
-use koala_browser::parse_document;
-use koala_dom::DomTree;
+use koala_browser::{load_document, parse_html_string, LoadedDocument};
 use koala_html::print_tree;
 use std::env;
-use std::fs;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: koala-cli <file.html>");
+        eprintln!("Usage: koala-cli <file.html | URL>");
         eprintln!("       koala-cli --html '<html>...</html>'");
         std::process::exit(1);
     }
 
-    let html = if args[1] == "--html" {
+    let doc = if args[1] == "--html" {
         if args.len() < 3 {
             eprintln!("Error: --html requires an HTML string argument");
             std::process::exit(1);
         }
-        args[2].clone()
+        parse_html_string(&args[2])
     } else {
-        fs::read_to_string(&args[1])?
+        load_document(&args[1]).map_err(|e| anyhow::anyhow!("{}", e))?
     };
 
-    let (tree, stylesheet, styles) = parse_document(&html);
-
-    println!("=== DOM Tree ===");
-    print_tree(&tree, tree.root(), 0);
-
-    println!("\n=== Stylesheet ===");
-    println!("{} rules", stylesheet.rules.len());
-
-    println!("\n=== Computed Styles ===");
-    println!("{} styled elements", styles.len());
-    print_computed_styles(&tree, &styles);
+    print_document(&doc);
 
     Ok(())
 }
 
+/// Print document information to stdout.
+fn print_document(doc: &LoadedDocument) {
+    println!("=== DOM Tree ===");
+    print_tree(&doc.dom, doc.dom.root(), 0);
+
+    println!("\n=== Stylesheet ===");
+    println!("{} rules", doc.stylesheet.rules.len());
+
+    println!("\n=== Computed Styles ===");
+    println!("{} styled elements", doc.styles.len());
+    print_computed_styles(doc);
+
+    if doc.layout_tree.is_some() {
+        println!("\n=== Layout Tree ===");
+        println!("Layout tree built successfully");
+    }
+
+    if !doc.parse_issues.is_empty() {
+        println!("\n=== Parse Issues ===");
+        for issue in &doc.parse_issues {
+            println!("  - {}", issue);
+        }
+    }
+}
+
 /// Print computed styles for each element
-fn print_computed_styles(
-    tree: &DomTree,
-    styles: &std::collections::HashMap<koala_dom::NodeId, koala_css::style::ComputedStyle>,
-) {
-    for (node_id, style) in styles {
-        if let Some(element) = tree.as_element(*node_id) {
+fn print_computed_styles(doc: &LoadedDocument) {
+    for (node_id, style) in &doc.styles {
+        if let Some(element) = doc.dom.as_element(*node_id) {
             let tag = &element.tag_name;
             let mut props = Vec::new();
 
@@ -57,10 +67,10 @@ fn print_computed_styles(
                 props.push(format!("font-size: {}px", fs.to_px()));
             }
             if let Some(ref color) = style.color {
-                props.push(format!("color: #{:02x}{:02x}{:02x}", color.r, color.g, color.b));
+                props.push(format!("color: {}", color.to_hex_string()));
             }
             if let Some(ref bg) = style.background_color {
-                props.push(format!("background: #{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b));
+                props.push(format!("background: {}", bg.to_hex_string()));
             }
             if let Some(ref m) = style.margin_top {
                 props.push(format!("margin-top: {}px", m.to_px()));

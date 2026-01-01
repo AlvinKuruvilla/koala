@@ -247,6 +247,17 @@ impl ColorValue {
             _ => None,
         }
     }
+
+    /// Convert to hex string notation (#RRGGBB or #RRGGBBAA if alpha != 255)
+    ///
+    /// [§ 4.2 The RGB hexadecimal notations](https://www.w3.org/TR/css-color-4/#hex-notation)
+    pub fn to_hex_string(&self) -> String {
+        if self.a == 255 {
+            format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        } else {
+            format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
+        }
+    }
 }
 
 /// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)

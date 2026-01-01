@@ -7,14 +7,13 @@
 //! - All state changes logged to terminal
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::collections::HashSet;
 
 use eframe::egui;
+use koala_browser::{load_document, LoadedDocument};
 use koala_common::warning::clear_warnings;
-use koala_css::{canvas_background, compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer, LayoutBox, Rect};
-use koala_dom::{DomTree, NodeId, NodeType};
-use koala_html::{HTMLParser, HTMLTokenizer, Token};
+use koala_css::{canvas_background, LayoutBox, Rect};
+use koala_dom::{NodeId, NodeType};
 
 fn main() -> eframe::Result<()> {
     println!("[Koala GUI] Starting browser...");
@@ -142,34 +141,13 @@ struct BrowserApp {
     pending_navigation: Option<String>,
 }
 
-/// Parsed page state
+/// Parsed page state - wraps LoadedDocument with GUI-specific fields
 struct PageState {
-    /// Original HTML source
-    html_source: String,
-
-    /// Path/URL this was loaded from
-    source_path: String,
-
-    /// HTML tokens (for debugging)
-    tokens: Vec<Token>,
-
-    /// Parsed DOM tree
-    dom: DomTree,
-
-    /// Extracted CSS text
-    css_text: String,
-
-    /// Computed styles per node
-    styles: HashMap<NodeId, ComputedStyle>,
-
-    /// Layout tree with computed box dimensions
-    layout_tree: Option<LayoutBox>,
+    /// The loaded document from koala-browser
+    doc: LoadedDocument,
 
     /// Last viewport size used for layout (to detect when relayout is needed)
     last_layout_viewport: Option<(f32, f32)>,
-
-    /// Any parse errors/warnings
-    parse_issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -219,14 +197,14 @@ impl BrowserApp {
         match self.load_page(path) {
             Ok(page) => {
                 println!("[Koala GUI] Page loaded successfully");
-                println!("[Koala GUI]   - {} tokens", page.tokens.len());
-                println!("[Koala GUI]   - {} DOM nodes", page.dom.len());
-                println!("[Koala GUI]   - {} styled nodes", page.styles.len());
-                println!("[Koala GUI]   - {} bytes CSS", page.css_text.len());
+                println!("[Koala GUI]   - {} tokens", page.doc.tokens.len());
+                println!("[Koala GUI]   - {} DOM nodes", page.doc.dom.len());
+                println!("[Koala GUI]   - {} styled nodes", page.doc.styles.len());
+                println!("[Koala GUI]   - {} bytes CSS", page.doc.css_text.len());
 
-                if !page.parse_issues.is_empty() {
-                    println!("[Koala GUI]   - {} parse issues:", page.parse_issues.len());
-                    for issue in &page.parse_issues {
+                if !page.doc.parse_issues.is_empty() {
+                    println!("[Koala GUI]   - {} parse issues:", page.doc.parse_issues.len());
+                    for issue in &page.doc.parse_issues {
                         println!("[Koala GUI]     ! {}", issue);
                     }
                 }
@@ -251,83 +229,26 @@ impl BrowserApp {
     }
 
     /// Load and parse a page from a file path or URL
+    ///
+    /// Uses koala_browser::load_document for the actual loading/parsing.
     fn load_page(&self, path: &str) -> Result<PageState, String> {
-        let html_source = if path.starts_with("http://") || path.starts_with("https://") {
-            self.fetch_url(path)?
-        } else {
-            fs::read_to_string(path).map_err(|e| format!("Failed to read '{}': {}", path, e))?
-        };
+        let doc = load_document(path).map_err(|e| e.to_string())?;
 
-        println!("[Koala GUI] Parsing {} bytes of HTML", html_source.len());
-
-        // Tokenize
-        let mut tokenizer = HTMLTokenizer::new(html_source.clone());
-        tokenizer.run();
-        let tokens = tokenizer.into_tokens();
-        println!("[Koala GUI] Tokenized: {} tokens", tokens.len());
-
-        // Parse
-        let parser = HTMLParser::new(tokens.clone());
-        let (dom, issues) = parser.run_with_issues();
-        let parse_issues: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
-        println!("[Koala GUI] Parsed: {} nodes", dom.len());
-
-        // Extract and parse CSS
-        let css_text = extract_style_content(&dom);
-        let styles = if !css_text.is_empty() {
-            println!("[Koala GUI] Parsing {} bytes of CSS", css_text.len());
-            let mut css_tokenizer = CSSTokenizer::new(css_text.clone());
-            css_tokenizer.run();
-            let mut css_parser = CSSParser::new(css_tokenizer.into_tokens());
-            let stylesheet = css_parser.parse_stylesheet();
-            println!("[Koala GUI] CSS: {} rules", stylesheet.rules.len());
-            compute_styles(&dom, &stylesheet)
-        } else {
-            HashMap::new()
-        };
-
-        // Build layout tree from DOM + styles
-        // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
-        //
-        // "The position and size of an element's box(es) are sometimes computed
-        // relative to a certain rectangle, called the containing block of the element."
-        //
-        // Layout computation is deferred until rendering, when we have access to
-        // the actual viewport size from egui.
-        let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());
-        if layout_tree.is_some() {
+        println!("[Koala GUI] Parsing {} bytes of HTML", doc.html_source.len());
+        println!("[Koala GUI] Tokenized: {} tokens", doc.tokens.len());
+        println!("[Koala GUI] Parsed: {} nodes", doc.dom.len());
+        if !doc.css_text.is_empty() {
+            println!("[Koala GUI] Parsing {} bytes of CSS", doc.css_text.len());
+            println!("[Koala GUI] CSS: {} rules", doc.stylesheet.rules.len());
+        }
+        if doc.layout_tree.is_some() {
             println!("[Koala GUI] Layout tree built (layout pending)");
         }
 
         Ok(PageState {
-            html_source,
-            source_path: path.to_string(),
-            tokens,
-            dom,
-            css_text,
-            styles,
-            layout_tree,
+            doc,
             last_layout_viewport: None, // Will be set on first render
-            parse_issues,
         })
-    }
-
-    /// Fetch HTML from a URL using curl
-    fn fetch_url(&self, url: &str) -> Result<String, String> {
-        println!("[Koala GUI] Fetching URL: {}", url);
-        let output = std::process::Command::new("curl")
-            .args(["-sL", "--max-time", "10", url])
-            .output()
-            .map_err(|e| format!("Failed to run curl: {}", e))?;
-
-        if !output.status.success() {
-            return Err(format!(
-                "curl failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
-        String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8: {}", e))
     }
 
     fn go_back(&mut self) {
@@ -358,7 +279,7 @@ impl BrowserApp {
 
     fn refresh(&mut self) {
         if let Some(page) = &self.page {
-            let path = page.source_path.clone();
+            let path = page.doc.source_path.clone();
             println!("[Koala GUI] Refreshing: {}", path);
             self.navigate(&path);
         }
@@ -518,8 +439,8 @@ impl eframe::App for BrowserApp {
                             let _ = ui.label(
                                 egui::RichText::new(format!(
                                     "{} nodes • {} styled",
-                                    page.dom.len(),
-                                    page.styles.len()
+                                    page.doc.dom.len(),
+                                    page.doc.styles.len()
                                 ))
                                 .size(12.0)
                                 .color(ui.visuals().text_color().gamma_multiply(0.7)),
@@ -591,7 +512,7 @@ impl eframe::App for BrowserApp {
                     {
                         let page = self.page.as_mut().unwrap();
                         if page.last_layout_viewport != Some(viewport_size) {
-                            if let Some(ref mut root) = page.layout_tree {
+                            if let Some(ref mut root) = page.doc.layout_tree {
                                 let initial_containing_block = Rect {
                                     x: 0.0,
                                     y: 0.0,
@@ -613,7 +534,7 @@ impl eframe::App for BrowserApp {
 
                     // Page content
                     // [§ 2.11.2 The Canvas Background](https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds)
-                    let fill_color = canvas_background(&page.dom, &page.styles)
+                    let fill_color = canvas_background(&page.doc.dom, &page.doc.styles)
                         .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
                         .unwrap_or_else(|| {
                             if self.theme == Theme::Dark {
@@ -734,10 +655,10 @@ impl BrowserApp {
     /// Render the parsed page content
     fn render_page_content(&self, ui: &mut egui::Ui, page: &PageState) {
         // Use layout tree if available, otherwise fall back to DOM walking
-        if let Some(ref layout_tree) = page.layout_tree {
+        if let Some(ref layout_tree) = page.doc.layout_tree {
             self.render_layout_tree(ui, page, layout_tree);
         } else {
-            self.render_node_content(ui, page, page.dom.root(), 0);
+            self.render_node_content(ui, page, page.doc.dom.root(), 0);
         }
     }
 
@@ -757,8 +678,8 @@ impl BrowserApp {
 
         // Get computed style and node info
         let (tag, style) = if let Some(id) = node_id {
-            let style = page.styles.get(&id);
-            let tag = page.dom.get(id).and_then(|n| {
+            let style = page.doc.styles.get(&id);
+            let tag = page.doc.dom.get(id).and_then(|n| {
                 if let NodeType::Element(data) = &n.node_type {
                     Some(data.tag_name.to_lowercase())
                 } else {
@@ -815,8 +736,8 @@ impl BrowserApp {
 
         // Render text content for this node
         if let Some(id) = node_id {
-            for &child_id in page.dom.children(id) {
-                if let Some(child_node) = page.dom.get(child_id) {
+            for &child_id in page.doc.dom.children(id) {
+                if let Some(child_node) = page.doc.dom.get(child_id) {
                     if let NodeType::Text(text) = &child_node.node_type {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
@@ -844,19 +765,19 @@ impl BrowserApp {
 
     /// Recursively render a DOM node's content
     fn render_node_content(&self, ui: &mut egui::Ui, page: &PageState, id: NodeId, _depth: usize) {
-        let Some(node) = page.dom.get(id) else {
+        let Some(node) = page.doc.dom.get(id) else {
             return;
         };
 
         match &node.node_type {
             NodeType::Document => {
-                for &child_id in page.dom.children(id) {
+                for &child_id in page.doc.dom.children(id) {
                     self.render_node_content(ui, page, child_id, 0);
                 }
             }
             NodeType::Element(data) => {
                 let tag = data.tag_name.to_lowercase();
-                let style = page.styles.get(&id);
+                let style = page.doc.styles.get(&id);
 
                 // Skip non-visual elements
                 match tag.as_str() {
@@ -872,7 +793,7 @@ impl BrowserApp {
                             self.warn_unsupported_css(
                                 "background-color",
                                 &tag,
-                                &format!("#{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b),
+                                &bg.to_hex_string(),
                             );
                         }
                     }
@@ -939,8 +860,8 @@ impl BrowserApp {
                     ui.add_space(6.0);
                 }
 
-                for &child_id in page.dom.children(id) {
-                    let child = page.dom.get(child_id);
+                for &child_id in page.doc.dom.children(id) {
+                    let child = page.doc.dom.get(child_id);
                     if let Some(child_node) = child {
                         match &child_node.node_type {
                             NodeType::Text(text) => {
@@ -990,16 +911,16 @@ impl BrowserApp {
 
     fn render_debug_dom(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
-            egui::RichText::new(format!("DOM Tree ({} nodes)", page.dom.len()))
+            egui::RichText::new(format!("DOM Tree ({} nodes)", page.doc.dom.len()))
                 .strong()
                 .size(13.0),
         );
         ui.add_space(8.0);
-        self.render_debug_node(ui, page, page.dom.root(), 0);
+        self.render_debug_node(ui, page, page.doc.dom.root(), 0);
     }
 
     fn render_debug_node(&self, ui: &mut egui::Ui, page: &PageState, id: NodeId, depth: usize) {
-        let Some(node) = page.dom.get(id) else {
+        let Some(node) = page.doc.dom.get(id) else {
             return;
         };
 
@@ -1019,7 +940,7 @@ impl BrowserApp {
                 }
                 label.push('>');
 
-                let has_style = page.styles.contains_key(&id);
+                let has_style = page.doc.styles.contains_key(&id);
                 if has_style {
                     let _ = ui.horizontal(|ui| {
                         let _ = ui.monospace(&label);
@@ -1055,26 +976,26 @@ impl BrowserApp {
             }
         }
 
-        for &child_id in page.dom.children(id) {
+        for &child_id in page.doc.dom.children(id) {
             self.render_debug_node(ui, page, child_id, depth + 1);
         }
     }
 
     fn render_debug_tokens(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
-            egui::RichText::new(format!("HTML Tokens ({})", page.tokens.len()))
+            egui::RichText::new(format!("HTML Tokens ({})", page.doc.tokens.len()))
                 .strong()
                 .size(13.0),
         );
         ui.add_space(8.0);
 
-        for (i, token) in page.tokens.iter().enumerate() {
+        for (i, token) in page.doc.tokens.iter().enumerate() {
             let _ = ui.monospace(format!("{:4}: {:?}", i, token));
         }
     }
 
     fn render_debug_css(&self, ui: &mut egui::Ui, page: &PageState) {
-        if page.css_text.is_empty() {
+        if page.doc.css_text.is_empty() {
             let _ = ui.colored_label(
                 ui.visuals().text_color().gamma_multiply(0.5),
                 "No CSS found in document",
@@ -1083,7 +1004,7 @@ impl BrowserApp {
         }
 
         let _ = ui.label(
-            egui::RichText::new(format!("CSS ({} bytes)", page.css_text.len()))
+            egui::RichText::new(format!("CSS ({} bytes)", page.doc.css_text.len()))
                 .strong()
                 .size(13.0),
         );
@@ -1095,7 +1016,7 @@ impl BrowserApp {
             .inner_margin(egui::Margin::same(8.0))
             .show(ui, |ui| {
                 let _ = ui.add(
-                    egui::TextEdit::multiline(&mut page.css_text.as_str())
+                    egui::TextEdit::multiline(&mut page.doc.css_text.as_str())
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY),
                 );
@@ -1104,28 +1025,22 @@ impl BrowserApp {
 
     fn render_debug_styles(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
-            egui::RichText::new(format!("Computed Styles ({} elements)", page.styles.len()))
+            egui::RichText::new(format!("Computed Styles ({} elements)", page.doc.styles.len()))
                 .strong()
                 .size(13.0),
         );
         ui.add_space(8.0);
 
-        for (node_id, style) in &page.styles {
-            if let Some(node) = page.dom.get(*node_id) {
+        for (node_id, style) in &page.doc.styles {
+            if let Some(node) = page.doc.dom.get(*node_id) {
                 if let NodeType::Element(data) = &node.node_type {
                     let _ =
                         ui.collapsing(format!("<{}> (node {})", data.tag_name, node_id.0), |ui| {
                             if let Some(ref color) = style.color {
-                                let _ = ui.monospace(format!(
-                                    "color: #{:02x}{:02x}{:02x}",
-                                    color.r, color.g, color.b
-                                ));
+                                let _ = ui.monospace(format!("color: {}", color.to_hex_string()));
                             }
                             if let Some(ref bg) = style.background_color {
-                                let _ = ui.monospace(format!(
-                                    "background-color: #{:02x}{:02x}{:02x}",
-                                    bg.r, bg.g, bg.b
-                                ));
+                                let _ = ui.monospace(format!("background-color: {}", bg.to_hex_string()));
                             }
                             if let Some(ref fs) = style.font_size {
                                 let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
@@ -1144,7 +1059,7 @@ impl BrowserApp {
 
     fn render_debug_source(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
-            egui::RichText::new(format!("HTML Source ({} bytes)", page.html_source.len()))
+            egui::RichText::new(format!("HTML Source ({} bytes)", page.doc.html_source.len()))
                 .strong()
                 .size(13.0),
         );
@@ -1156,7 +1071,7 @@ impl BrowserApp {
             .inner_margin(egui::Margin::same(8.0))
             .show(ui, |ui| {
                 let _ = ui.add(
-                    egui::TextEdit::multiline(&mut page.html_source.as_str())
+                    egui::TextEdit::multiline(&mut page.doc.html_source.as_str())
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY),
                 );
