@@ -158,6 +158,12 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         line_height: parent.line_height,
 
         // Non-inherited properties start as None
+        //
+        // [§ 2 display](https://www.w3.org/TR/css-display-3/#the-display-properties)
+        // "Inherited: no"
+        display: None,
+        display_none: false,
+
         // [§ 3.2 background-color](https://www.w3.org/TR/css-backgrounds-3/#background-color)
         // "Inherited: no"
         background_color: None,

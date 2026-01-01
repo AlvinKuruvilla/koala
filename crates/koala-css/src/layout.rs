@@ -17,83 +17,11 @@
 //! 3. No display property handling (block, inline, none, etc.)
 //! 4. Tables rendered without table layout algorithm
 
-// [§ 2 Box Layout Modes: the display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
-//
-// "The display property defines an element's display type, which consists of
-// the two basic qualities of how an element generates boxes:
-//   - the inner display type, which defines the kind of formatting context
-//     it generates, dictating how its descendant boxes are laid out.
-//   - the outer display type, which dictates how the principal box itself
-//     participates in flow layout."
+use std::collections::HashMap;
 
-/// [§ 2.1 Outer Display Roles](https://www.w3.org/TR/css-display-3/#outer-role)
-///
-/// "The <display-outside> keywords specify the element's outer display type,
-/// which is essentially its principal box's role in flow layout."
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OuterDisplayType {
-    /// "The element generates a block-level box when placed in flow layout."
-    Block,
-    /// "The element generates an inline-level box when placed in flow layout."
-    Inline,
-    /// "The element generates a run-in box, which is a type of inline-level box."
-    RunIn,
-}
+use koala_dom::{DomTree, NodeId, NodeType};
 
-/// [§ 2.2 Inner Display Layout Models](https://www.w3.org/TR/css-display-3/#inner-model)
-///
-/// "The <display-inside> keywords specify the element's inner display type,
-/// which defines the type of formatting context that lays out its contents."
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum InnerDisplayType {
-    /// "The element lays out its contents using flow layout (block-and-inline layout)."
-    Flow,
-    /// "The element lays out its contents using flow layout (block-and-inline layout)."
-    /// Same as Flow but establishes a new block formatting context.
-    FlowRoot,
-    /// "The element lays out its contents using table layout."
-    Table,
-    /// "The element lays out its contents using flex layout."
-    Flex,
-    /// "The element lays out its contents using grid layout."
-    Grid,
-}
-
-/// Combined display value
-/// [§ 2 Box Layout Modes](https://www.w3.org/TR/css-display-3/#the-display-properties)
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DisplayValue {
-    /// "The outer display type, which dictates how the box participates in flow layout."
-    pub outer: OuterDisplayType,
-    /// "The inner display type, which dictates how its descendant boxes are laid out."
-    pub inner: InnerDisplayType,
-}
-
-impl DisplayValue {
-    /// `display: block` - block outer, flow inner
-    pub fn block() -> Self {
-        Self {
-            outer: OuterDisplayType::Block,
-            inner: InnerDisplayType::Flow,
-        }
-    }
-
-    /// `display: inline` - inline outer, flow inner
-    pub fn inline() -> Self {
-        Self {
-            outer: OuterDisplayType::Inline,
-            inner: InnerDisplayType::Flow,
-        }
-    }
-
-    /// `display: inline-block` - inline outer, flow-root inner
-    pub fn inline_block() -> Self {
-        Self {
-            outer: OuterDisplayType::Inline,
-            inner: InnerDisplayType::FlowRoot,
-        }
-    }
-}
+use crate::style::{ComputedStyle, DisplayValue};
 
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
@@ -421,12 +349,43 @@ impl InlineFormattingContext {
         todo!("Wrap to next line when inline content exceeds max_width")
     }
 }
+/// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
+///
+/// "The following sections describe the types of boxes that may be generated
+/// in CSS 2.1. A box's type affects, in part, its behavior in the visual
+/// formatting model."
+#[derive(Debug)]
+pub enum BoxType {
+    /// [§ 9.2 Principal box](https://www.w3.org/TR/css-display-3/#principal-box)
+    ///
+    /// "Most elements generate a single principal box."
+    /// Contains the NodeId to reference back to the DOM element.
+    Principal(NodeId),
 
+    /// [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
+    ///
+    /// "Any text that is directly contained inside a block container element
+    /// (not inside an inline element) must be treated as an anonymous inline
+    /// element."
+    ///
+    /// [§ 2.5 Text Runs](https://www.w3.org/TR/css-display-3/#text-nodes)
+    ///
+    /// "A text run is the most basic box generated."
+    AnonymousInline(String),
+
+    /// [§ 9.2.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+    ///
+    /// "In a document like this: <div>Some text<p>More text</p></div>
+    /// ...the 'Some text' part generates an anonymous block box."
+    AnonymousBlock,
+}
 /// A node in the layout tree (render tree with computed layout).
 ///
 /// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
 #[derive(Debug)]
 pub struct LayoutBox {
+    /// The type of box (principal, anonymous inline, anonymous block)
+    pub box_type: BoxType,
     /// The computed dimensions of this box.
     pub dimensions: BoxDimensions,
     /// The display type of this box.
@@ -440,8 +399,111 @@ impl LayoutBox {
     ///
     /// "The display property, determines the type of box or boxes that
     /// are generated for an element."
-    pub fn build_layout_tree(_dom_node: &koala_dom::Node) -> Option<LayoutBox> {
-        todo!("Build layout tree from DOM tree with computed styles")
+    pub fn build_layout_tree(
+        tree: &DomTree,
+        styles: &HashMap<NodeId, ComputedStyle>,
+        node_id: NodeId,
+    ) -> Option<LayoutBox> {
+        let Some(node) = tree.get(node_id) else {
+            return None;
+        };
+
+        match &node.node_type {
+            // [§ 9.1.1 The viewport](https://www.w3.org/TR/CSS2/visuren.html#viewport)
+            //
+            // "User agents for continuous media generally offer users a viewport
+            // (a window or other viewing area on the screen) through which users
+            // consult a document."
+            //
+            // The Document node serves as the initial containing block and
+            // establishes the root of the layout tree.
+            NodeType::Document => {
+                let mut children = Vec::new();
+                for &child_id in tree.children(node_id) {
+                    if let Some(child_box) = LayoutBox::build_layout_tree(tree, styles, child_id) {
+                        children.push(child_box);
+                    }
+                }
+                Some(LayoutBox {
+                    box_type: BoxType::Principal(node_id),
+                    dimensions: BoxDimensions::default(),
+                    display: DisplayValue::block(),
+                    children,
+                })
+            }
+            // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
+            //
+            // "An element's display type determines the type of principal box
+            // it generates."
+            NodeType::Element(data) => {
+                let tag = data.tag_name.to_lowercase();
+                let style = styles.get(&node_id);
+
+                // [§ 2.6 display: none](https://www.w3.org/TR/css-display-3/#valdef-display-none)
+                //
+                // "The element and its descendants generate no boxes or text runs."
+                //
+                // Check if CSS explicitly sets display: none
+                if let Some(s) = style {
+                    if s.display_none {
+                        return None;
+                    }
+                }
+
+                // [§ 2 The display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
+                //
+                // "The display property defines an element's display type..."
+                //
+                // Priority:
+                // 1. CSS-specified display value (from computed style)
+                // 2. User-agent default for the element
+                let display = style
+                    .and_then(|s| s.display)
+                    .or_else(|| default_display_for_element(&tag))?;
+
+                // Build children recursively
+                let mut children = Vec::new();
+                for &child_id in tree.children(node_id) {
+                    if let Some(child_box) = LayoutBox::build_layout_tree(tree, styles, child_id) {
+                        children.push(child_box);
+                    }
+                }
+
+                Some(LayoutBox {
+                    box_type: BoxType::Principal(node_id),
+                    dimensions: BoxDimensions::default(),
+                    display,
+                    children,
+                })
+            }
+            // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
+            //
+            // "Any text that is directly contained inside a block container element
+            // (not inside an inline element) must be treated as an anonymous inline
+            // element."
+            //
+            // [§ 2.5 Text Runs](https://www.w3.org/TR/css-display-3/#text-nodes)
+            //
+            // "A text run is the most basic inline-level content, consisting of a
+            // contiguous sequence of text."
+            NodeType::Text(text) => {
+                // [§ 4.3.1 White Space Phase I](https://www.w3.org/TR/css-text-3/#white-space-phase-1)
+                //
+                // Skip whitespace-only text nodes as they don't generate visible boxes.
+                // NOTE: Full implementation would handle white-space property.
+                if text.trim().is_empty() {
+                    return None;
+                }
+                Some(LayoutBox {
+                    box_type: BoxType::AnonymousInline(text.clone()),
+                    dimensions: BoxDimensions::default(),
+                    display: DisplayValue::inline(),
+                    children: Vec::new(),
+                })
+            }
+            // Comments do not generate boxes and are not part of the render tree.
+            NodeType::Comment(_) => None,
+        }
     }
 
     /// Perform layout on this box and its descendants
