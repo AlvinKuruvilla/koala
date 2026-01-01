@@ -206,25 +206,43 @@ impl HTMLParser {
         }
     }
 
+    /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction)
+    ///
+    /// "Reprocess the token" - process the same token again in a new insertion mode.
+    /// Used when switching modes requires the current token to be handled differently.
     fn reprocess_token(&mut self, token: &Token) {
         self.process_token(token);
     }
 
+    /// [§ 12.1.4 ASCII whitespace](https://infra.spec.whatwg.org/#ascii-whitespace)
+    ///
+    /// "ASCII whitespace is U+0009 TAB, U+000A LF, U+000C FF, U+000D CR,
+    /// or U+0020 SPACE."
     fn is_whitespace(c: char) -> bool {
         matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ')
     }
 
     /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#current-node)
+    ///
+    /// "The current node is the bottommost node in this stack of open elements."
     fn current_node(&self) -> Option<NodeId> {
         self.stack_of_open_elements.last().copied()
     }
 
-    /// Get the parent node for insertion.
+    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#creating-and-inserting-nodes)
+    ///
+    /// "The adjusted insertion location is the current node, if the stack
+    /// of open elements is not empty."
+    ///
+    /// NOTE: This is a simplified version. The full algorithm handles
+    /// foster parenting for table elements.
     fn insertion_location(&self) -> NodeId {
         self.current_node().unwrap_or(NodeId::ROOT)
     }
 
-    /// Create attributes map from token attributes.
+    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#creating-and-inserting-nodes)
+    ///
+    /// Convert token attributes to the AttributesMap used by ElementData.
     fn attributes_to_map(attributes: &[Attribute]) -> AttributesMap {
         attributes
             .iter()
@@ -232,7 +250,13 @@ impl HTMLParser {
             .collect()
     }
 
-    /// Create a new element node and return its NodeId.
+    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#create-an-element-for-the-token)
+    ///
+    /// "Create an element for a token"
+    ///
+    /// Creates a new element node in the DOM arena.
+    /// NOTE: This is a simplified version; full algorithm handles namespaces,
+    /// custom elements, and the "will execute script" flag.
     fn create_element(&mut self, tag_name: &str, attributes: &[Attribute]) -> NodeId {
         self.tree.alloc(NodeType::Element(ElementData {
             tag_name: tag_name.to_string(),
@@ -240,27 +264,38 @@ impl HTMLParser {
         }))
     }
 
-    /// Create a text node and return its NodeId.
+    /// [§ 13.2.6.1 Insert a character](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-character)
+    ///
+    /// Create a Text node with the given data.
     fn create_text_node(&mut self, data: String) -> NodeId {
         self.tree.alloc(NodeType::Text(data))
     }
 
-    /// Create a comment node and return its NodeId.
+    /// [§ 13.2.6.1 Insert a comment](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-comment)
+    ///
+    /// Create a Comment node with the given data.
     fn create_comment_node(&mut self, data: String) -> NodeId {
         self.tree.alloc(NodeType::Comment(data))
     }
 
-    /// Add a child to a parent node.
+    /// [§ 4.2.2 Append](https://dom.spec.whatwg.org/#concept-node-append)
+    ///
+    /// "To append a node to a parent, pre-insert node into parent before null."
     fn append_child(&mut self, parent_id: NodeId, child_id: NodeId) {
         self.tree.append_child(parent_id, child_id);
     }
 
     /// [§ 13.2.6.1 Insert a character](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-character)
+    ///
+    /// "When the steps below require the user agent to insert a character
+    /// while processing a token, the user agent must run the following steps..."
     fn insert_character(&mut self, c: char) {
+        // STEP 1: "Let the adjusted insertion location be the appropriate place
+        //         for inserting a node."
         let parent_id = self.insertion_location();
 
-        // "If there is a Text node immediately before the adjusted insertion
-        // location, then append data to that Text node's data."
+        // STEP 2: "If there is a Text node immediately before the adjusted
+        //         insertion location, then append data to that Text node's data."
         if let Some(&last_child_id) = self.tree.children(parent_id).last() {
             if let Some(arena_node) = self.tree.get_mut(last_child_id) {
                 if let NodeType::Text(ref mut text_data) = arena_node.node_type {
@@ -270,43 +305,76 @@ impl HTMLParser {
             }
         }
 
-        // Otherwise, create a new text node
+        // STEP 3: "Otherwise, create a new Text node whose data is data and
+        //         whose node document is the same as that of the element in
+        //         which the adjusted insertion location finds itself, and
+        //         insert the newly created node at the adjusted insertion location."
         let text_id = self.create_text_node(c.to_string());
         self.append_child(parent_id, text_id);
     }
 
-    /// Insert a comment node at the current insertion location.
+    /// [§ 13.2.6.1 Insert a comment](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-comment)
+    ///
+    /// "When the steps below require the user agent to insert a comment
+    /// while processing a comment token, optionally with an explicitly
+    /// insertion position position..."
     fn insert_comment(&mut self, data: &str) {
+        // STEP 1: "Let the adjusted insertion location be the appropriate place
+        //         for inserting a node."
         let parent_id = self.insertion_location();
+        // STEP 2: "Create a Comment node..."
         let comment_id = self.create_comment_node(data.to_string());
+        // STEP 3: "Insert the newly created node at the adjusted insertion location."
         self.append_child(parent_id, comment_id);
     }
 
-    /// Insert a comment as the last child of the document.
+    /// [§ 13.2.6.1 Insert a comment](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-comment)
+    ///
+    /// Insert a comment as the last child of the Document node.
+    /// Used for comments that appear after </html>.
     fn insert_comment_to_document(&mut self, data: &str) {
         let comment_id = self.create_comment_node(data.to_string());
         self.append_child(NodeId::ROOT, comment_id);
     }
 
     /// [§ 13.2.6.1 Insert an HTML element](https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element)
+    ///
+    /// "When the steps below require the user agent to insert an HTML element
+    /// for a token, the user agent must insert a foreign element for the token,
+    /// in the HTML namespace."
     fn insert_html_element(&mut self, token: &Token) -> NodeId {
         if let Token::StartTag { name, attributes, .. } = token {
+            // STEP 1: "Create an element for the token"
             let element_id = self.create_element(name, attributes);
+
+            // STEP 2: "Let the adjusted insertion location be the appropriate
+            //         place for inserting a node."
             let parent_id = self.insertion_location();
+
+            // STEP 3: "Append the new element to the node at the adjusted
+            //         insertion location."
             self.append_child(parent_id, element_id);
+
+            // STEP 4: "Push the element onto the stack of open elements."
             self.stack_of_open_elements.push(element_id);
+
             element_id
         } else {
             panic!("insert_html_element called with non-StartTag token");
         }
     }
 
-    /// Get the tag name of a node.
+    /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
+    ///
+    /// Get the tag name of a node (local name of the element).
     fn get_tag_name(&self, id: NodeId) -> Option<&str> {
         self.tree.as_element(id).map(|data| data.tag_name.as_str())
     }
 
-    /// Pop elements from the stack until we find one with the given tag name.
+    /// [§ 13.2.6.2 Parsing elements that contain only text](https://html.spec.whatwg.org/multipage/parsing.html#parsing-elements-that-contain-only-text)
+    ///
+    /// "Pop elements from the stack of open elements" until we find one
+    /// with the given tag name (inclusive).
     fn pop_until_tag(&mut self, tag_name: &str) {
         while let Some(id) = self.stack_of_open_elements.pop() {
             if self.get_tag_name(id) == Some(tag_name) {
@@ -315,7 +383,9 @@ impl HTMLParser {
         }
     }
 
-    /// Pop elements until one of the given tag names is found.
+    /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    ///
+    /// Pop elements until one of the given tag names is found (inclusive).
     /// Used for heading elements where any h1-h6 can close any other.
     fn pop_until_one_of(&mut self, tag_names: &[&str]) {
         while let Some(idx) = self.stack_of_open_elements.pop() {
@@ -327,17 +397,25 @@ impl HTMLParser {
         }
     }
 
-    /// Check if an element with the given tag name is in scope.
-    /// Simplified version - just checks if it's on the stack.
+    /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-scope)
+    ///
+    /// "The stack of open elements is said to have an element target node
+    /// in a specific scope..."
+    ///
+    /// NOTE: This is a simplified version that just checks if the element
+    /// is anywhere on the stack. The full algorithm checks against a list
+    /// of scope markers (e.g., table, html, template elements).
     fn has_element_in_scope(&self, tag_name: &str) -> bool {
         self.stack_of_open_elements
             .iter()
             .any(|&idx| self.get_tag_name(idx) == Some(tag_name))
     }
 
-    /// [§ 13.2.6.4.7 "in body" - implicit end tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-    /// Close an open element if present on the stack.
-    /// Used for elements like <li>, <p>, <dd>, <dt> that implicitly close.
+    /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    ///
+    /// "Generate implied end tags" and close an element if in scope.
+    /// Used for elements like <li>, <p>, <dd>, <dt> that implicitly close
+    /// when a new one is encountered.
     fn close_element_if_in_scope(&mut self, tag_name: &str) {
         if self.has_element_in_scope(tag_name) {
             self.pop_until_tag(tag_name);
@@ -431,16 +509,27 @@ impl HTMLParser {
         }
     }
 
-    /// "Anything else" branch for "before html" mode:
-    /// "Create an html element whose node document is the Document object. Append it to the
-    /// Document object. Put this element in the stack of open elements."
-    /// ...
-    /// "Switch the insertion mode to "before head", then reprocess the token."
+    /// [§ 13.2.6.4.2 The "before html" insertion mode - Anything else](https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode)
+    ///
+    /// "Anything else":
+    /// "Create an html element whose node document is the Document object.
+    /// Append it to the Document object. Put this element in the stack of
+    /// open elements. Switch the insertion mode to "before head", then
+    /// reprocess the token."
     fn handle_before_html_anything_else(&mut self, token: &Token) {
+        // STEP 1: "Create an html element whose node document is the Document object."
         let html_idx = self.create_element("html", &[]);
+
+        // STEP 2: "Append it to the Document object."
         self.append_child(NodeId::ROOT, html_idx);
+
+        // STEP 3: "Put this element in the stack of open elements."
         self.stack_of_open_elements.push(html_idx);
+
+        // STEP 4: "Switch the insertion mode to 'before head'."
         self.insertion_mode = InsertionMode::BeforeHead;
+
+        // STEP 5: "Reprocess the token."
         self.reprocess_token(token);
     }
 
@@ -497,18 +586,26 @@ impl HTMLParser {
         }
     }
 
-    /// "Anything else" branch for "before head" mode:
-    /// "Insert an HTML element for a "head" start tag token with no attributes."
-    /// "Set the head element pointer to the newly created head element."
-    /// "Switch the insertion mode to "in head"."
-    /// "Reprocess the current token."
+    /// [§ 13.2.6.4.3 The "before head" insertion mode - Anything else](https://html.spec.whatwg.org/multipage/parsing.html#the-before-head-insertion-mode)
+    ///
+    /// "Anything else":
+    /// "Insert an HTML element for a "head" start tag token with no attributes.
+    /// Set the head element pointer to the newly created head element.
+    /// Switch the insertion mode to "in head". Reprocess the current token."
     fn handle_before_head_anything_else(&mut self, token: &Token) {
+        // STEP 1: "Insert an HTML element for a 'head' start tag token with no attributes."
         let head_idx = self.create_element("head", &[]);
         let parent_idx = self.insertion_location();
         self.append_child(parent_idx, head_idx);
         self.stack_of_open_elements.push(head_idx);
+
+        // STEP 2: "Set the head element pointer to the newly created head element."
         self.head_element_pointer = Some(head_idx);
+
+        // STEP 3: "Switch the insertion mode to 'in head'."
         self.insertion_mode = InsertionMode::InHead;
+
+        // STEP 4: "Reprocess the current token."
         self.reprocess_token(token);
     }
 
@@ -630,13 +727,21 @@ impl HTMLParser {
         }
     }
 
-    /// "Anything else" branch for "in head" mode:
+    /// [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+    ///
+    /// "Anything else":
     /// "Pop the current node (which will be the head element) off the stack of open elements."
     /// "Switch the insertion mode to "after head"."
     /// "Reprocess the token."
     fn handle_in_head_anything_else(&mut self, token: &Token) {
+        // STEP 1: "Pop the current node (which will be the head element)
+        // off the stack of open elements."
         let _ = self.stack_of_open_elements.pop();
+
+        // STEP 2: "Switch the insertion mode to "after head"."
         self.insertion_mode = InsertionMode::AfterHead;
+
+        // STEP 3: "Reprocess the token."
         self.reprocess_token(token);
     }
 
@@ -739,16 +844,28 @@ impl HTMLParser {
         }
     }
 
-    /// "Anything else" branch for "after head" mode:
+    /// [§ 13.2.6.4.6 The "after head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-after-head-insertion-mode)
+    ///
+    /// "Anything else":
     /// "Insert an HTML element for a "body" start tag token with no attributes."
     /// "Switch the insertion mode to "in body"."
     /// "Reprocess the current token."
     fn handle_after_head_anything_else(&mut self, token: &Token) {
+        // STEP 1: "Insert an HTML element for a "body" start tag token with
+        // no attributes."
+        //
+        // [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element)
+        // We manually create the body element and insert it, since we don't
+        // have a real "body" start tag token.
         let body_idx = self.create_element("body", &[]);
         let parent_idx = self.insertion_location();
         self.append_child(parent_idx, body_idx);
         self.stack_of_open_elements.push(body_idx);
+
+        // STEP 2: "Switch the insertion mode to "in body"."
         self.insertion_mode = InsertionMode::InBody;
+
+        // STEP 3: "Reprocess the current token."
         self.reprocess_token(token);
     }
 

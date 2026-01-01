@@ -138,15 +138,28 @@ pub struct DomTree {
 }
 
 impl DomTree {
-    /// Create a new DOM tree with just the Document node.
+    /// [§ 4.5 Interface Document](https://dom.spec.whatwg.org/#interface-document)
+    ///
+    /// "A document is created by the 'create a document' algorithm."
+    ///
+    /// Create a new DOM tree with just the Document node at the root.
+    /// The Document node is always at index 0 (NodeId::ROOT).
     pub fn new() -> Self {
+        // STEP 1: Create the Document node.
+        // [§ 4.5](https://dom.spec.whatwg.org/#interface-document)
+        //
+        // "A document has an associated type... which is 'html' for HTML documents."
         let document = Node {
             node_type: NodeType::Document,
+            // STEP 2: Initialize all relationships to None.
+            // The Document has no parent (it is the root of the tree).
             parent: None,
             children: Vec::new(),
             next_sibling: None,
             prev_sibling: None,
         };
+
+        // STEP 3: Place Document at index 0 (NodeId::ROOT).
         DomTree {
             nodes: vec![document],
         }
@@ -177,10 +190,26 @@ impl DomTree {
         self.nodes.is_empty()
     }
 
-    /// Allocate a new node and return its ID.
-    /// The node is not yet attached to the tree.
+    /// [§ 4.4 Interface Node](https://dom.spec.whatwg.org/#interface-node)
+    ///
+    /// Allocate a new node in the arena and return its ID.
+    /// The node is not yet attached to the tree (no parent, no siblings).
+    ///
+    /// NOTE: This is an implementation detail of our arena-based tree.
+    /// The DOM spec doesn't have an explicit "allocate" concept; nodes are
+    /// created and inserted in a single operation. We separate these for
+    /// flexibility in tree construction.
     pub fn alloc(&mut self, node_type: NodeType) -> NodeId {
+        // STEP 1: Assign the next available index as the NodeId.
         let id = NodeId(self.nodes.len());
+
+        // STEP 2: Create the node with no relationships.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-parent)
+        //
+        // "An object that participates in a tree has a parent, which is
+        // either null or an object."
+        //
+        // Initially, parent and siblings are null until the node is inserted.
         self.nodes.push(Node {
             node_type,
             parent: None,
@@ -188,6 +217,8 @@ impl DomTree {
             next_sibling: None,
             prev_sibling: None,
         });
+
+        // STEP 3: Return the NodeId for later insertion.
         id
     }
 
@@ -195,22 +226,43 @@ impl DomTree {
     ///
     /// "To append a node to a parent, pre-insert node into parent before null."
     ///
-    /// Appends `child` as the last child of `parent`, updating all relationships.
+    /// [§ 4.2.1 Insert](https://dom.spec.whatwg.org/#concept-node-insert)
+    ///
+    /// The insert algorithm updates parent/child/sibling relationships.
+    /// This simplified implementation handles the common case of appending
+    /// to the end of the children list.
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        // Get the current last child of parent (if any) to set up sibling links
+        // STEP 1: Find the previous last child (if any) for sibling linking.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-child)
+        //
+        // "An object's last child is its last inclusive descendant that is
+        // also its child, or null if it has no children."
         let prev_last_child = self.nodes[parent.0].children.last().copied();
 
-        // Update parent's children list
+        // STEP 2: Add child to parent's children list.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-child)
+        //
+        // "An object A is called a child of an object B if B is A's parent."
         self.nodes[parent.0].children.push(child);
 
-        // Set child's parent
+        // STEP 3: Set child's parent pointer.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-parent)
+        //
+        // "An object that participates in a tree has a parent..."
         self.nodes[child.0].parent = Some(parent);
 
-        // Set up sibling links
+        // STEP 4: Update sibling links if there was a previous last child.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-next-sibling)
+        //
+        // "An object A's next sibling is the object immediately following A
+        // in the children of A's parent."
         if let Some(prev_id) = prev_last_child {
+            // The previous last child's next_sibling now points to the new child.
             self.nodes[prev_id.0].next_sibling = Some(child);
+            // The new child's prev_sibling points back to the previous last child.
             self.nodes[child.0].prev_sibling = Some(prev_id);
         }
+        // NOTE: If there was no previous child, child.prev_sibling remains None.
     }
 
     /// Get the parent of a node.
@@ -248,30 +300,58 @@ impl DomTree {
     /// "An object A is called a descendant of an object B, if either A is a
     /// child of B or A is a child of an object C that is a descendant of B."
     ///
-    /// Check if `descendant` is a descendant of `ancestor`.
+    /// Check if `descendant` is a descendant of `ancestor` by walking up
+    /// the parent chain.
     pub fn is_descendant_of(&self, descendant: NodeId, ancestor: NodeId) -> bool {
+        // STEP 1: Start at the descendant's parent.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-parent)
+        //
+        // "An object that participates in a tree has a parent..."
         let mut current = self.parent(descendant);
+
+        // STEP 2: Walk up the tree comparing each ancestor.
+        // Per the spec definition, A is a descendant of B if:
+        // - "A is a child of B" (direct parent), OR
+        // - "A is a child of an object C that is a descendant of B" (transitive)
         while let Some(id) = current {
+            // STEP 2a: Check if we've found the target ancestor.
             if id == ancestor {
                 return true;
             }
+            // STEP 2b: Move up to the next parent.
             current = self.parent(id);
         }
+
+        // STEP 3: Reached root without finding ancestor.
         false
     }
 
-    /// Iterate over all ancestors of a node, from parent to root.
+    /// [§ 4.2.5 Ancestor](https://dom.spec.whatwg.org/#concept-tree-ancestor)
+    ///
+    /// "An object A is called an ancestor of an object B if and only if B is
+    /// a descendant of A."
+    ///
+    /// Returns an iterator over all ancestors of a node, from parent to root.
+    /// The iterator yields NodeIds in order: parent, grandparent, ..., root.
     pub fn ancestors(&self, id: NodeId) -> AncestorIterator<'_> {
         AncestorIterator {
             tree: self,
+            // Start at the node's parent (the first ancestor).
             current: self.parent(id),
         }
     }
 
-    /// Iterate over preceding siblings (from immediately before to first child).
+    /// [§ 4.2.5 Previous sibling](https://dom.spec.whatwg.org/#concept-tree-previous-sibling)
+    ///
+    /// "An object A's previous sibling is the object immediately preceding A
+    /// in the children of A's parent."
+    ///
+    /// Returns an iterator over preceding siblings, from immediately before
+    /// to the first child of the parent.
     pub fn preceding_siblings(&self, id: NodeId) -> PrecedingSiblingIterator<'_> {
         PrecedingSiblingIterator {
             tree: self,
+            // Start at the node's previous sibling.
             current: self.prev_sibling(id),
         }
     }
@@ -300,7 +380,22 @@ impl DomTree {
     /// In practice for HTML documents, this is the `<html>` element.
     #[must_use]
     pub fn document_element(&self) -> Option<NodeId> {
-        self.children(NodeId::ROOT)
+        // STEP 1: Get children of the Document node.
+        // [§ 4.5](https://dom.spec.whatwg.org/#interface-document)
+        //
+        // The Document may have children like DOCTYPE, comments, and the
+        // document element (html).
+        let children = self.children(NodeId::ROOT);
+
+        // STEP 2: Find the first Element child.
+        // [§ 3.1.1](https://html.spec.whatwg.org/multipage/dom.html#the-html-element-2)
+        //
+        // "The document element of a document is the element whose parent
+        // is that document, if it exists; otherwise null."
+        //
+        // NOTE: Per spec, there should be at most one Element child of Document.
+        // DOCTYPE and Comment nodes are not Elements.
+        children
             .iter()
             .find(|&&id| matches!(self.get(id).map(|n| &n.node_type), Some(NodeType::Element(_))))
             .copied()
@@ -313,12 +408,29 @@ impl DomTree {
     /// no such element."
     #[must_use]
     pub fn body(&self) -> Option<NodeId> {
+        // STEP 1: Get the document element (html).
+        // [§ 3.1.1](https://html.spec.whatwg.org/multipage/dom.html#the-html-element-2)
+        //
+        // "The document element of a document is the element whose parent
+        // is that document..."
         let html = self.document_element()?;
 
+        // STEP 2: Search html's children for body or frameset.
+        // [§ 3.1.3](https://html.spec.whatwg.org/multipage/dom.html#the-body-element-2)
+        //
+        // "The body element of a document is the first of the html element's
+        // children that is either a body element or a frameset element..."
+        //
+        // NOTE: The spec says "first", so we iterate in document order and
+        // return the first match.
         self.children(html)
             .iter()
             .find(|&&id| {
                 self.as_element(id).is_some_and(|e| {
+                    // [§ 4.3.1](https://html.spec.whatwg.org/multipage/sections.html#the-body-element)
+                    // [§ 15.6](https://html.spec.whatwg.org/multipage/obsolete.html#frameset)
+                    //
+                    // Tag names are compared case-insensitively for HTML elements.
                     let tag = e.tag_name.to_ascii_lowercase();
                     tag == "body" || tag == "frameset"
                 })
@@ -333,7 +445,10 @@ impl Default for DomTree {
     }
 }
 
-/// Iterator over ancestors of a node.
+/// [§ 4.2.5 Ancestor](https://dom.spec.whatwg.org/#concept-tree-ancestor)
+///
+/// Iterator that walks up the tree from a node to the root.
+/// Each call to `next()` returns the next ancestor in the chain.
 pub struct AncestorIterator<'a> {
     tree: &'a DomTree,
     current: Option<NodeId>,
@@ -342,14 +457,23 @@ pub struct AncestorIterator<'a> {
 impl<'a> Iterator for AncestorIterator<'a> {
     type Item = NodeId;
 
+    /// [§ 4.2.5](https://dom.spec.whatwg.org/#concept-tree-ancestor)
+    ///
+    /// Return the current ancestor and advance to its parent.
+    /// Terminates when we reach a node with no parent (the root).
     fn next(&mut self) -> Option<Self::Item> {
+        // STEP 1: Return current node if any.
         let id = self.current?;
+        // STEP 2: Advance to the next ancestor (parent of current).
         self.current = self.tree.parent(id);
         Some(id)
     }
 }
 
-/// Iterator over preceding siblings of a node.
+/// [§ 4.2.5 Previous sibling](https://dom.spec.whatwg.org/#concept-tree-previous-sibling)
+///
+/// Iterator that walks backwards through siblings of a node.
+/// Each call to `next()` returns the next preceding sibling.
 pub struct PrecedingSiblingIterator<'a> {
     tree: &'a DomTree,
     current: Option<NodeId>,
@@ -358,8 +482,14 @@ pub struct PrecedingSiblingIterator<'a> {
 impl<'a> Iterator for PrecedingSiblingIterator<'a> {
     type Item = NodeId;
 
+    /// [§ 4.2.5](https://dom.spec.whatwg.org/#concept-tree-previous-sibling)
+    ///
+    /// Return the current sibling and advance to its previous sibling.
+    /// Terminates when we reach the first child (no previous sibling).
     fn next(&mut self) -> Option<Self::Item> {
+        // STEP 1: Return current sibling if any.
         let id = self.current?;
+        // STEP 2: Advance to the previous sibling.
         self.current = self.tree.prev_sibling(id);
         Some(id)
     }

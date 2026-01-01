@@ -366,7 +366,11 @@ mod tests {
         assert!(div_style.padding_left.is_some());
 
         // Verify values
-        if let Some(crate::style::LengthValue::Px(v)) = &div_style.margin_top {
+        // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+        // Margins can be 'auto' or a length. Here we expect a length value.
+        if let Some(crate::style::AutoLength::Length(crate::style::LengthValue::Px(v))) =
+            &div_style.margin_top
+        {
             assert!((v - 20.0).abs() < 0.01);
         }
         if let Some(crate::style::LengthValue::Px(v)) = &div_style.padding_top {

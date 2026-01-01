@@ -133,6 +133,57 @@ impl LengthValue {
     }
 }
 
+/// [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+///
+/// "Some properties can take the keyword 'auto' as a value. This keyword
+/// allows the user agent to compute the value based on other properties."
+///
+/// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+///
+/// "Value: <margin-width>{1,4} | inherit"
+/// "<margin-width> = <length> | <percentage> | auto"
+///
+/// This type represents a CSS value that can be either 'auto' or a specific length.
+/// Used for properties like margin where 'auto' has special meaning.
+///
+/// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+///
+/// "If both 'margin-left' and 'margin-right' are 'auto', their used values
+/// are equal. This horizontally centers the element with respect to the
+/// edges of the containing block."
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum AutoLength {
+    /// [§ 4.4](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+    ///
+    /// "The keyword 'auto'... allows the user agent to compute the value
+    /// based on other properties."
+    ///
+    /// The value is 'auto' and will be resolved during layout.
+    Auto,
+
+    /// A specific length value (px, em, etc.).
+    Length(LengthValue),
+}
+
+impl AutoLength {
+    /// Check if the value is 'auto'.
+    pub fn is_auto(&self) -> bool {
+        matches!(self, AutoLength::Auto)
+    }
+
+    /// Get the length value in pixels, or 0.0 if 'auto'.
+    ///
+    /// NOTE: When 'auto', this returns 0.0 as a fallback. The actual
+    /// resolved value depends on the layout algorithm (e.g., centering
+    /// for `margin: auto`). See [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth).
+    pub fn to_px(&self) -> f64 {
+        match self {
+            AutoLength::Auto => 0.0,
+            AutoLength::Length(len) => len.to_px(),
+        }
+    }
+}
+
 /// [§ 4 Color syntax](https://www.w3.org/TR/css-color-4/#color-syntax)
 /// sRGB color represented as RGBA components.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -311,13 +362,21 @@ pub struct ComputedStyle {
     pub background_color: Option<ColorValue>,
 
     /// [§ 6.1 'margin-top'](https://www.w3.org/TR/css-box-4/#margin-physical)
-    pub margin_top: Option<LengthValue>,
+    ///
+    /// Can be 'auto' or a specific length. 'auto' is resolved during layout.
+    pub margin_top: Option<AutoLength>,
     /// [§ 6.1 'margin-right'](https://www.w3.org/TR/css-box-4/#margin-physical)
-    pub margin_right: Option<LengthValue>,
+    ///
+    /// Can be 'auto' or a specific length. 'auto' is resolved during layout.
+    pub margin_right: Option<AutoLength>,
     /// [§ 6.1 'margin-bottom'](https://www.w3.org/TR/css-box-4/#margin-physical)
-    pub margin_bottom: Option<LengthValue>,
+    ///
+    /// Can be 'auto' or a specific length. 'auto' is resolved during layout.
+    pub margin_bottom: Option<AutoLength>,
     /// [§ 6.1 'margin-left'](https://www.w3.org/TR/css-box-4/#margin-physical)
-    pub margin_left: Option<LengthValue>,
+    ///
+    /// Can be 'auto' or a specific length. 'auto' is resolved during layout.
+    pub margin_left: Option<AutoLength>,
 
     /// [§ 6.2 'padding-top'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_top: Option<LengthValue>,
@@ -380,24 +439,28 @@ impl ComputedStyle {
             "margin" => {
                 self.apply_margin_shorthand(&decl.value);
             }
+            // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+            //
+            // "Value: <margin-width> | inherit"
+            // "<margin-width> = <length> | <percentage> | auto"
             "margin-top" => {
-                if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_top = Some(self.resolve_length(len));
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.margin_top = Some(self.resolve_auto_length(al));
                 }
             }
             "margin-right" => {
-                if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_right = Some(self.resolve_length(len));
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.margin_right = Some(self.resolve_auto_length(al));
                 }
             }
             "margin-bottom" => {
-                if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_bottom = Some(self.resolve_length(len));
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.margin_bottom = Some(self.resolve_auto_length(al));
                 }
             }
             "margin-left" => {
-                if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_left = Some(self.resolve_length(len));
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.margin_left = Some(self.resolve_auto_length(al));
                 }
             }
             "padding" => {
@@ -440,46 +503,62 @@ impl ComputedStyle {
         }
     }
 
-    /// [§ 6.3 Margins](https://www.w3.org/TR/css-box-4/#margins)
-    ///
     /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS21/box.html#margin-properties)
+    ///
     /// "The 'margin' property is a shorthand property for setting 'margin-top',
     /// 'margin-right', 'margin-bottom', and 'margin-left' at the same place in
     /// the style sheet."
+    ///
+    /// "Value: <margin-width>{1,4} | inherit"
+    /// "<margin-width> = <length> | <percentage> | auto"
     fn apply_margin_shorthand(&mut self, values: &[ComponentValue]) {
-        let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
+        // STEP 1: Parse all <margin-width> values from the declaration.
+        // [§ 8.3](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+        //
+        // "<margin-width> = <length> | <percentage> | auto"
+        let auto_lengths: Vec<AutoLength> =
+            values.iter().filter_map(parse_single_auto_length).collect();
 
-        match lengths.len() {
-            // "If there is only one component value, it applies to all sides."
+        // STEP 2: Apply the shorthand expansion rules.
+        // [§ 8.3](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+        //
+        // "If there is only one component value, it applies to all sides.
+        // If there are two values, the top and bottom margins are set to the
+        // first value and the right and left margins are set to the second.
+        // If there are three values, the top is set to the first value, the
+        // left and right are set to the second, and the bottom is set to the
+        // third. If there are four values, they apply to the top, right,
+        // bottom, and left, respectively."
+        match auto_lengths.len() {
+            // RULE 1-VALUE: "it applies to all sides."
             1 => {
-                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_right = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_bottom = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_left = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[0].clone()));
             }
-            // "If there are two values, the top and bottom margins are set to the
-            // first value and the right and left margins are set to the second."
+            // RULE 2-VALUE: "the top and bottom margins are set to the first value
+            //               and the right and left margins are set to the second."
             2 => {
-                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_bottom = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_right = Some(self.resolve_length(lengths[1].clone()));
-                self.margin_left = Some(self.resolve_length(lengths[1].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1].clone()));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[1].clone()));
             }
-            // "If there are three values, the top is set to the first value, the
-            // left and right are set to the second, and the bottom is set to the third."
+            // RULE 3-VALUE: "the top is set to the first value, the left and right
+            //               are set to the second, and the bottom is set to the third."
             3 => {
-                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_right = Some(self.resolve_length(lengths[1].clone()));
-                self.margin_left = Some(self.resolve_length(lengths[1].clone()));
-                self.margin_bottom = Some(self.resolve_length(lengths[2].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1].clone()));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[1].clone()));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2].clone()));
             }
-            // "If there are four values, they apply to the top, right, bottom, and
-            // left, respectively."
+            // RULE 4-VALUE: "they apply to the top, right, bottom, and left, respectively."
             4 => {
-                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
-                self.margin_right = Some(self.resolve_length(lengths[1].clone()));
-                self.margin_bottom = Some(self.resolve_length(lengths[2].clone()));
-                self.margin_left = Some(self.resolve_length(lengths[3].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1].clone()));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2].clone()));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[3].clone()));
             }
             _ => {}
         }
@@ -603,6 +682,17 @@ impl ComputedStyle {
             other => other,
         }
     }
+
+    /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    ///
+    /// Resolve relative length units (em) to absolute units (px) for AutoLength.
+    /// 'auto' values are preserved unchanged.
+    fn resolve_auto_length(&self, al: AutoLength) -> AutoLength {
+        match al {
+            AutoLength::Auto => AutoLength::Auto,
+            AutoLength::Length(len) => AutoLength::Length(self.resolve_length(len)),
+        }
+    }
 }
 
 /// [§ 4.2 RGB hex notation](https://www.w3.org/TR/css-color-4/#hex-notation)
@@ -660,6 +750,59 @@ fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
         }
         _ => None,
     }
+}
+
+/// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+///
+/// "Value: <margin-width>{1,4} | inherit"
+/// "<margin-width> = <length> | <percentage> | auto"
+///
+/// Parse a value that can be either 'auto' or a length.
+/// Used for margin properties where 'auto' has special meaning (centering).
+fn parse_auto_length_value(values: &[ComponentValue]) -> Option<AutoLength> {
+    // Iterate through component values to find the first valid <margin-width>
+    for v in values {
+        if let Some(al) = parse_single_auto_length(v) {
+            return Some(al);
+        }
+    }
+    None
+}
+
+/// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+///
+/// "<margin-width> = <length> | <percentage> | auto"
+///
+/// Parse a single component value as a <margin-width>.
+fn parse_single_auto_length(v: &ComponentValue) -> Option<AutoLength> {
+    // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+    //
+    // "<margin-width> = <length> | <percentage> | auto"
+    //
+    // The grammar allows three types of values. We check them in order:
+
+    // STEP 1: Check for 'auto' keyword.
+    // [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+    //
+    // "Some properties can take the keyword 'auto' as a value."
+    //
+    // For margins, 'auto' has special meaning during layout:
+    // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+    // "If both 'margin-left' and 'margin-right' are 'auto', their used values
+    // are equal. This horizontally centers the element..."
+    if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
+        if ident.eq_ignore_ascii_case("auto") {
+            return Some(AutoLength::Auto);
+        }
+    }
+
+    // STEP 2: Try to parse as a <length>.
+    // [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
+    //
+    // "Lengths refer to distance measurements..."
+    //
+    // NOTE: <percentage> is not yet implemented (TODO).
+    parse_single_length(v).map(AutoLength::Length)
 }
 
 /// Parse font-family value.
@@ -842,5 +985,54 @@ mod tests {
     fn test_length_px() {
         let len = LengthValue::Px(16.0);
         assert_eq!(len.to_px(), 16.0);
+    }
+
+    #[test]
+    fn test_auto_length() {
+        // [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+        // Test that AutoLength::Auto is properly handled
+        let auto = AutoLength::Auto;
+        assert!(auto.is_auto());
+        assert_eq!(auto.to_px(), 0.0); // auto resolves to 0 when asked for px
+
+        // Test that AutoLength::Length properly wraps a length
+        let len = AutoLength::Length(LengthValue::Px(20.0));
+        assert!(!len.is_auto());
+        assert_eq!(len.to_px(), 20.0);
+    }
+
+    #[test]
+    fn test_parse_margin_auto() {
+        // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+        // "<margin-width> = <length> | <percentage> | auto"
+        use crate::parser::ComponentValue;
+        use crate::tokenizer::{CSSToken, NumericType};
+
+        // Test parsing "auto" value
+        let auto_values = vec![ComponentValue::Token(CSSToken::Ident("auto".to_string()))];
+        let result = parse_auto_length_value(&auto_values);
+        assert!(result.is_some());
+        assert!(matches!(result, Some(AutoLength::Auto)));
+
+        // Test parsing "AUTO" (case insensitive)
+        let auto_upper =
+            vec![ComponentValue::Token(CSSToken::Ident("AUTO".to_string()))];
+        let result_upper = parse_auto_length_value(&auto_upper);
+        assert!(result_upper.is_some());
+        assert!(matches!(result_upper, Some(AutoLength::Auto)));
+
+        // Test parsing a length value
+        let length_values = vec![ComponentValue::Token(CSSToken::Dimension {
+            value: 20.0,
+            unit: "px".to_string(),
+            int_value: Some(20),
+            numeric_type: NumericType::Integer,
+        })];
+        let result2 = parse_auto_length_value(&length_values);
+        assert!(result2.is_some());
+        assert!(matches!(
+            result2,
+            Some(AutoLength::Length(LengthValue::Px(_)))
+        ));
     }
 }

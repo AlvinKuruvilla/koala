@@ -1,11 +1,13 @@
 //! Helper functions for the HTML tokenizer.
 //!
+//! [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+//!
 //! This module contains utility functions used throughout the tokenizer:
-//! - State transitions
-//! - Input/character handling
-//! - Token emission
-//! - RCDATA/RAWTEXT helpers
-//! - Attribute helpers
+//! - State transitions ("Switch to", "Reconsume in")
+//! - Input/character handling ("Consume the next input character")
+//! - Token emission ("Emit the current token")
+//! - RCDATA/RAWTEXT helpers for raw text elements
+//! - Attribute helpers for duplicate detection
 
 use koala_common::warning::warn_once;
 
@@ -17,16 +19,22 @@ use super::tokenizer::{HTMLTokenizer, TokenizerState};
 // =============================================================================
 
 impl HTMLTokenizer {
-    // "Switch to the X state"
-    // Transitions to a new state. The next character will be consumed on the next
-    // iteration of the main loop.
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    ///
+    /// "Switch to the X state"
+    ///
+    /// Transitions to a new state. The next character will be consumed on the
+    /// next iteration of the main loop.
     pub(super) fn switch_to(&mut self, new_state: TokenizerState) {
         self.state = new_state;
     }
 
-    // "Reconsume in the X state"
-    // Transitions to a new state without consuming the current character.
-    // The same character will be processed again in the new state.
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    ///
+    /// "Reconsume in the X state"
+    ///
+    /// Transitions to a new state without consuming the current character.
+    /// The same character will be processed again in the new state.
     pub(super) fn reconsume_in(&mut self, new_state: TokenizerState) {
         self.reconsume = true;
         self.state = new_state;
@@ -38,8 +46,12 @@ impl HTMLTokenizer {
 // =============================================================================
 
 impl HTMLTokenizer {
-    // "Consume the next input character"
-    // Returns the character at the current position and advances the position.
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    ///
+    /// "Consume the next input character"
+    ///
+    /// Returns the character at the current position and advances the position.
+    /// Returns None if we've reached the end of input.
     pub(super) fn consume(&mut self) -> Option<char> {
         if let Some(c) = self.input[self.current_pos..].chars().next() {
             self.current_pos += c.len_utf8();
@@ -49,12 +61,19 @@ impl HTMLTokenizer {
         }
     }
 
-    /// Peek at a codepoint at the given offset from the current position without advancing.
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    ///
+    /// Peek at a codepoint at the given offset from the current position without
+    /// consuming it. Used for lookahead operations like "the next few characters are".
     pub fn peek_codepoint(&self, offset: usize) -> Option<char> {
         let slice = &self.input[self.current_pos..];
         slice.chars().nth(offset)
     }
 
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    ///
+    /// "If the next few characters are..."
+    ///
     /// Check if the next few characters match the target string exactly.
     pub fn next_few_characters_are(&self, target: &str) -> bool {
         let target_chars: Vec<char> = target.chars().collect();
@@ -72,9 +91,12 @@ impl HTMLTokenizer {
         true
     }
 
-    /// Check if the next few characters match the target string (ASCII case-insensitive).
-    /// Used by [§ 13.2.5.42 Markup declaration open state](https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state)
-    /// for "ASCII case-insensitive match".
+    /// [§ 13.2.5.42 Markup declaration open state](https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state)
+    ///
+    /// "ASCII case-insensitive match for the word 'DOCTYPE'"
+    ///
+    /// Check if the next few characters match the target string using
+    /// ASCII case-insensitive comparison.
     pub fn next_few_characters_are_case_insensitive(&self, target: &str) -> bool {
         let target_chars: Vec<char> = target.chars().collect();
 
@@ -91,6 +113,8 @@ impl HTMLTokenizer {
         true
     }
 
+    /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
+    ///
     /// Consume the given string from the input.
     /// Caller must have already verified the characters are present.
     pub fn consume_string(&mut self, target: &str) {
@@ -99,7 +123,17 @@ impl HTMLTokenizer {
         self.current_pos += target.len();
     }
 
+    /// [§ 12.1.4 ASCII whitespace](https://infra.spec.whatwg.org/#ascii-whitespace)
+    ///
+    /// "ASCII whitespace is U+0009 TAB, U+000A LF, U+000C FF, U+000D CR,
+    /// or U+0020 SPACE."
+    ///
+    /// NOTE: HTML tokenizer uses a subset excluding CR (which is normalized earlier).
     pub(super) fn is_whitespace_char(input_char: char) -> bool {
+        // "U+0009 CHARACTER TABULATION (tab)"
+        // "U+000A LINE FEED (LF)"
+        // "U+000C FORM FEED (FF)"
+        // "U+0020 SPACE"
         matches!(input_char, ' ' | '\t' | '\n' | '\x0C')
     }
 }
@@ -183,9 +217,13 @@ impl HTMLTokenizer {
 impl HTMLTokenizer {
     /// [§ 13.2.5.11 RCDATA end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-name-state)
     /// [§ 13.2.5.14 RAWTEXT end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-name-state)
+    /// [§ 13.2.5.17 Script data end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-name-state)
     ///
-    // "An appropriate end tag token is an end tag token whose tag name matches the tag name
-    // of the last start tag to have been emitted from this tokenizer, if any."
+    /// "An appropriate end tag token is an end tag token whose tag name matches
+    /// the tag name of the last start tag to have been emitted from this
+    /// tokenizer, if any."
+    ///
+    /// Used to determine if `</title>` should close the current `<title>` element.
     pub(super) fn is_appropriate_end_tag_token(&self) -> bool {
         if let (Some(last_start_tag), Some(current_token)) =
             (&self.last_start_tag_name, &self.current_token)
@@ -197,36 +235,66 @@ impl HTMLTokenizer {
         false
     }
 
-    /// Helper for RCDATA end tag name state "anything else" branch.
+    /// [§ 13.2.5.11 RCDATA end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-end-tag-name-state)
+    ///
+    /// "Anything else":
+    /// "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character
+    /// token, and a character token for each of the characters in the temporary
+    /// buffer... Reconsume in the RCDATA state."
     pub(super) fn emit_rcdata_end_tag_name_anything_else(&mut self) {
+        // STEP 1: "Emit a U+003C LESS-THAN SIGN character token"
         self.emit_character_token('<');
+        // STEP 2: "Emit a U+002F SOLIDUS character token"
         self.emit_character_token('/');
+        // STEP 3: "Emit a character token for each of the characters in the temporary buffer"
         for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
             self.emit_character_token(c);
         }
+        // STEP 4: Discard the current end tag token
         self.current_token = None;
+        // STEP 5: "Reconsume in the RCDATA state"
         self.reconsume_in(TokenizerState::RCDATA);
     }
 
-    /// Helper for RAWTEXT end tag name state "anything else" branch.
+    /// [§ 13.2.5.14 RAWTEXT end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-end-tag-name-state)
+    ///
+    /// "Anything else":
+    /// "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character
+    /// token, and a character token for each of the characters in the temporary
+    /// buffer... Reconsume in the RAWTEXT state."
     pub(super) fn emit_rawtext_end_tag_name_anything_else(&mut self) {
+        // STEP 1: "Emit a U+003C LESS-THAN SIGN character token"
         self.emit_character_token('<');
+        // STEP 2: "Emit a U+002F SOLIDUS character token"
         self.emit_character_token('/');
+        // STEP 3: "Emit a character token for each of the characters in the temporary buffer"
         for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
             self.emit_character_token(c);
         }
+        // STEP 4: Discard the current end tag token
         self.current_token = None;
+        // STEP 5: "Reconsume in the RAWTEXT state"
         self.reconsume_in(TokenizerState::RAWTEXT);
     }
 
-    /// Helper for script data end tag name state "anything else" branch.
+    /// [§ 13.2.5.17 Script data end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-end-tag-name-state)
+    ///
+    /// "Anything else":
+    /// "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character
+    /// token, and a character token for each of the characters in the temporary
+    /// buffer... Reconsume in the script data state."
     pub(super) fn emit_script_data_end_tag_name_anything_else(&mut self) {
+        // STEP 1: "Emit a U+003C LESS-THAN SIGN character token"
         self.emit_character_token('<');
+        // STEP 2: "Emit a U+002F SOLIDUS character token"
         self.emit_character_token('/');
+        // STEP 3: "Emit a character token for each of the characters in the temporary buffer"
         for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
             self.emit_character_token(c);
         }
+        // STEP 4: Discard the current end tag token
         self.current_token = None;
+        // STEP 5: "Reconsume in the script data state"
         self.reconsume_in(TokenizerState::ScriptData);
     }
 }
@@ -236,9 +304,17 @@ impl HTMLTokenizer {
 // =============================================================================
 
 impl HTMLTokenizer {
+    /// [§ 13.2.5.33 Before attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state)
+    /// [§ 13.2.5.34 Attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#attribute-name-state)
+    ///
+    /// "When the user agent leaves the attribute name state... if there is
+    /// already an attribute on the token with the exact same name, then this
+    /// is a duplicate-attribute parse error and the new attribute must be
+    /// removed from the token."
+    ///
     /// Helper to check for duplicate attributes and handle the parse error.
     pub(super) fn check_duplicate_attribute(&mut self) {
-        // Check for duplicate first, then log error and remove if needed.
+        // STEP 1: Check if the current attribute name already exists on the token.
         // This avoids borrow checker issues by not holding a mutable borrow
         // while calling log_parse_error.
         let is_duplicate = self
@@ -248,7 +324,10 @@ impl HTMLTokenizer {
             .unwrap_or(false);
 
         if is_duplicate {
+            // STEP 2: "This is a duplicate-attribute parse error"
             self.log_parse_error();
+
+            // STEP 3: "The new attribute must be removed from the token"
             if let Some(ref mut token) = self.current_token {
                 token.remove_current_attribute();
             }

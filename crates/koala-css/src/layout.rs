@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::{ComputedStyle, DisplayValue, OuterDisplayType};
+use crate::style::{AutoLength, ComputedStyle, DisplayValue, OuterDisplayType};
 
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
@@ -633,6 +633,30 @@ impl LayoutBox {
         }
     }
 
+    /// [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+    ///
+    /// "Some properties can take the keyword 'auto' as a value. This keyword
+    /// allows the user agent to compute the value based on other properties."
+    ///
+    /// Convert a CSS AutoLength (from style computation) to a layout AutoOr
+    /// (used during layout calculations).
+    ///
+    /// - AutoLength::Auto → AutoOr::Auto (resolved during layout per § 10.3.3)
+    /// - AutoLength::Length → AutoOr::Length (concrete pixel value)
+    fn auto_length_to_auto_or(al: &AutoLength) -> AutoOr {
+        match al {
+            // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+            //
+            // 'auto' margins are resolved during layout. For example:
+            // "If both 'margin-left' and 'margin-right' are 'auto', their used
+            // values are equal. This horizontally centers the element..."
+            AutoLength::Auto => AutoOr::Auto,
+
+            // Concrete length value - convert to pixels for layout.
+            AutoLength::Length(len) => AutoOr::Length(len.to_px() as f32),
+        }
+    }
+
     /// [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
     ///
     /// Extract box model style values from the computed style.
@@ -656,28 +680,30 @@ impl LayoutBox {
         // "If the margin property is not set, the margin is 0."
         // "The value 'auto' is discussed in the section on calculating widths and margins."
         //
-        // NOTE: For now, we treat explicit lengths as Length and missing values as Auto.
-        // A full implementation would also parse 'auto' as an explicit value.
+        // Convert AutoLength to AutoOr:
+        // - AutoLength::Auto -> AutoOr::Auto (used for centering)
+        // - AutoLength::Length(len) -> AutoOr::Length(len.to_px())
+        // - None (not set) -> AutoOr::Length(0.0) (default margin is 0)
         let margin = AutoEdgeSizes {
             top: s
                 .margin_top
                 .as_ref()
-                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .map(|al| Self::auto_length_to_auto_or(al))
                 .unwrap_or(AutoOr::Length(0.0)),
             right: s
                 .margin_right
                 .as_ref()
-                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .map(|al| Self::auto_length_to_auto_or(al))
                 .unwrap_or(AutoOr::Length(0.0)),
             bottom: s
                 .margin_bottom
                 .as_ref()
-                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .map(|al| Self::auto_length_to_auto_or(al))
                 .unwrap_or(AutoOr::Length(0.0)),
             left: s
                 .margin_left
                 .as_ref()
-                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .map(|al| Self::auto_length_to_auto_or(al))
                 .unwrap_or(AutoOr::Length(0.0)),
         };
 

@@ -63,8 +63,8 @@ pub use cascade::compute_styles;
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{parse_selector, ParsedSelector, Specificity};
 pub use style::{
-    BorderValue, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
-    OuterDisplayType,
+    AutoLength, BorderValue, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType,
+    LengthValue, OuterDisplayType,
 };
 pub use tokenizer::{CSSToken, CSSTokenizer};
 pub use layout::{BoxDimensions, BoxType, EdgeSizes, LayoutBox, Rect};
