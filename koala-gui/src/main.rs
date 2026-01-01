@@ -18,6 +18,12 @@ use koala_html::{HTMLParser, HTMLTokenizer, Token};
 fn main() -> eframe::Result<()> {
     println!("[Koala GUI] Starting browser...");
 
+    // Parse command-line arguments for initial URL
+    let initial_url = std::env::args().nth(1);
+    if let Some(ref url) = initial_url {
+        println!("[Koala GUI] Will open: {}", url);
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
@@ -28,7 +34,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Koala Browser",
         options,
-        Box::new(|cc| Ok(Box::new(BrowserApp::new(&cc.egui_ctx)))),
+        Box::new(move |cc| Ok(Box::new(BrowserApp::new(&cc.egui_ctx, initial_url)))),
     )
 }
 
@@ -130,6 +136,9 @@ struct BrowserApp {
     /// CSS properties we've warned about - (property, tag) pairs
     /// Cleared on each page load to avoid spam
     css_warnings_logged: RefCell<HashSet<(String, String)>>,
+
+    /// URL to navigate to on first update (from command-line arg)
+    pending_navigation: Option<String>,
 }
 
 /// Parsed page state
@@ -166,13 +175,13 @@ enum DebugTab {
 }
 
 impl BrowserApp {
-    fn new(ctx: &egui::Context) -> Self {
+    fn new(ctx: &egui::Context, initial_url: Option<String>) -> Self {
         let theme = Theme::Dark;
         ctx.set_visuals(theme.visuals());
         println!("[Koala GUI] Browser initialized with {:?} theme", theme);
 
         Self {
-            url_input: String::new(),
+            url_input: initial_url.clone().unwrap_or_default(),
             history: Vec::new(),
             history_index: 0,
             page: None,
@@ -181,6 +190,7 @@ impl BrowserApp {
             status_message: "Welcome to Koala Browser".to_string(),
             theme,
             css_warnings_logged: RefCell::new(HashSet::new()),
+            pending_navigation: initial_url,
         }
     }
 
@@ -349,6 +359,11 @@ impl BrowserApp {
 
 impl eframe::App for BrowserApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle pending navigation from command-line argument
+        if let Some(url) = self.pending_navigation.take() {
+            self.navigate(&url);
+        }
+
         // Handle keyboard shortcuts
         if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
             self.debug_panel_open = !self.debug_panel_open;
