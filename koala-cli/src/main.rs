@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use koala_browser::parse_document;
+use koala_dom::DomTree;
 use koala_html::print_tree;
 use std::env;
 use std::fs;
@@ -37,6 +38,37 @@ fn main() -> Result<()> {
 
     println!("\n=== Computed Styles ===");
     println!("{} styled elements", styles.len());
+    print_computed_styles(&tree, &styles);
 
     Ok(())
+}
+
+/// Print computed styles for each element
+fn print_computed_styles(
+    tree: &DomTree,
+    styles: &std::collections::HashMap<koala_dom::NodeId, koala_css::style::ComputedStyle>,
+) {
+    for (node_id, style) in styles {
+        if let Some(element) = tree.as_element(*node_id) {
+            let tag = &element.tag_name;
+            let mut props = Vec::new();
+
+            if let Some(ref fs) = style.font_size {
+                props.push(format!("font-size: {}px", fs.to_px()));
+            }
+            if let Some(ref color) = style.color {
+                props.push(format!("color: #{:02x}{:02x}{:02x}", color.r, color.g, color.b));
+            }
+            if let Some(ref bg) = style.background_color {
+                props.push(format!("background: #{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b));
+            }
+            if let Some(ref m) = style.margin_top {
+                props.push(format!("margin-top: {}px", m.to_px()));
+            }
+
+            if !props.is_empty() {
+                println!("  <{}> {{ {} }}", tag, props.join("; "));
+            }
+        }
+    }
 }
