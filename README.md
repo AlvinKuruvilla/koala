@@ -24,6 +24,9 @@ cargo build
 # Run GUI browser
 cargo run --bin koala
 
+# Run GUI browser with a URL
+cargo run --bin koala -- https://example.com
+
 # Run CLI tool
 cargo run --bin koala-cli -- res/simple.html
 
@@ -36,10 +39,11 @@ cargo test
 ```
 koala/
 ├── crates/
+│   ├── koala-common/     # Shared utilities (warnings, etc.)
 │   ├── koala-dom/        # Arena-based DOM tree
 │   ├── koala-html/       # HTML tokenizer and parser
 │   ├── koala-css/        # CSS tokenizer, parser, selector, cascade
-│   └── koala-core/       # Shared browser API
+│   └── koala-browser/    # High-level browser API
 ├── koala-cli/            # CLI tool
 ├── koala-gui/            # GUI browser
 └── res/                  # Test files
