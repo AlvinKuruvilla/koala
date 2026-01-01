@@ -744,22 +744,28 @@ impl BrowserApp {
                 }
 
                 // Determine text formatting
-                let (font_size, _is_bold) = match tag.as_str() {
-                    "h1" => (32.0, true),
-                    "h2" => (26.0, true),
-                    "h3" => (22.0, true),
-                    "h4" => (18.0, true),
-                    "h5" => (16.0, true),
-                    "h6" => (14.0, true),
-                    "strong" | "b" => (14.0, true),
-                    _ => {
-                        let size = style
-                            .and_then(|s| s.font_size.as_ref())
-                            .map(|fs| fs.to_px())
-                            .unwrap_or(14.0);
-                        (size, false)
-                    }
-                };
+                // [§ 15.7 Font size](https://www.w3.org/TR/CSS21/fonts.html#font-size-props)
+                // CSS font-size takes precedence; fall back to user-agent defaults
+                let _is_heading_or_bold = matches!(
+                    tag.as_str(),
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "strong" | "b"
+                );
+                let font_size = style
+                    .and_then(|s| s.font_size.as_ref())
+                    .map(|fs| fs.to_px())
+                    .unwrap_or_else(|| {
+                        // User-agent default sizes when no CSS specified
+                        // [§ 15.3.1 HTML headings](https://html.spec.whatwg.org/#sections-and-headings)
+                        match tag.as_str() {
+                            "h1" => 32.0,
+                            "h2" => 24.0,
+                            "h3" => 18.72,
+                            "h4" => 16.0,
+                            "h5" => 13.28,
+                            "h6" => 10.72,
+                            _ => 16.0, // Default body text size
+                        }
+                    });
 
                 let text_color = style
                     .and_then(|s| s.color.as_ref())

@@ -245,22 +245,22 @@ impl ComputedStyle {
             }
             "margin-top" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_top = Some(len);
+                    self.margin_top = Some(self.resolve_length(len));
                 }
             }
             "margin-right" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_right = Some(len);
+                    self.margin_right = Some(self.resolve_length(len));
                 }
             }
             "margin-bottom" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_bottom = Some(len);
+                    self.margin_bottom = Some(self.resolve_length(len));
                 }
             }
             "margin-left" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.margin_left = Some(len);
+                    self.margin_left = Some(self.resolve_length(len));
                 }
             }
             "padding" => {
@@ -268,22 +268,22 @@ impl ComputedStyle {
             }
             "padding-top" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.padding_top = Some(len);
+                    self.padding_top = Some(self.resolve_length(len));
                 }
             }
             "padding-right" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.padding_right = Some(len);
+                    self.padding_right = Some(self.resolve_length(len));
                 }
             }
             "padding-bottom" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.padding_bottom = Some(len);
+                    self.padding_bottom = Some(self.resolve_length(len));
                 }
             }
             "padding-left" => {
                 if let Some(len) = parse_length_value(&decl.value) {
-                    self.padding_left = Some(len);
+                    self.padding_left = Some(self.resolve_length(len));
                 }
             }
             "border" => {
@@ -315,34 +315,34 @@ impl ComputedStyle {
         match lengths.len() {
             // "If there is only one component value, it applies to all sides."
             1 => {
-                self.margin_top = Some(lengths[0].clone());
-                self.margin_right = Some(lengths[0].clone());
-                self.margin_bottom = Some(lengths[0].clone());
-                self.margin_left = Some(lengths[0].clone());
+                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_right = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_bottom = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_left = Some(self.resolve_length(lengths[0].clone()));
             }
             // "If there are two values, the top and bottom margins are set to the
             // first value and the right and left margins are set to the second."
             2 => {
-                self.margin_top = Some(lengths[0].clone());
-                self.margin_bottom = Some(lengths[0].clone());
-                self.margin_right = Some(lengths[1].clone());
-                self.margin_left = Some(lengths[1].clone());
+                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_bottom = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_right = Some(self.resolve_length(lengths[1].clone()));
+                self.margin_left = Some(self.resolve_length(lengths[1].clone()));
             }
             // "If there are three values, the top is set to the first value, the
             // left and right are set to the second, and the bottom is set to the third."
             3 => {
-                self.margin_top = Some(lengths[0].clone());
-                self.margin_right = Some(lengths[1].clone());
-                self.margin_left = Some(lengths[1].clone());
-                self.margin_bottom = Some(lengths[2].clone());
+                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_right = Some(self.resolve_length(lengths[1].clone()));
+                self.margin_left = Some(self.resolve_length(lengths[1].clone()));
+                self.margin_bottom = Some(self.resolve_length(lengths[2].clone()));
             }
             // "If there are four values, they apply to the top, right, bottom, and
             // left, respectively."
             4 => {
-                self.margin_top = Some(lengths[0].clone());
-                self.margin_right = Some(lengths[1].clone());
-                self.margin_bottom = Some(lengths[2].clone());
-                self.margin_left = Some(lengths[3].clone());
+                self.margin_top = Some(self.resolve_length(lengths[0].clone()));
+                self.margin_right = Some(self.resolve_length(lengths[1].clone()));
+                self.margin_bottom = Some(self.resolve_length(lengths[2].clone()));
+                self.margin_left = Some(self.resolve_length(lengths[3].clone()));
             }
             _ => {}
         }
@@ -354,28 +354,28 @@ impl ComputedStyle {
 
         match lengths.len() {
             1 => {
-                self.padding_top = Some(lengths[0].clone());
-                self.padding_right = Some(lengths[0].clone());
-                self.padding_bottom = Some(lengths[0].clone());
-                self.padding_left = Some(lengths[0].clone());
+                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_right = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_bottom = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_left = Some(self.resolve_length(lengths[0].clone()));
             }
             2 => {
-                self.padding_top = Some(lengths[0].clone());
-                self.padding_bottom = Some(lengths[0].clone());
-                self.padding_right = Some(lengths[1].clone());
-                self.padding_left = Some(lengths[1].clone());
+                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_bottom = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_right = Some(self.resolve_length(lengths[1].clone()));
+                self.padding_left = Some(self.resolve_length(lengths[1].clone()));
             }
             3 => {
-                self.padding_top = Some(lengths[0].clone());
-                self.padding_right = Some(lengths[1].clone());
-                self.padding_left = Some(lengths[1].clone());
-                self.padding_bottom = Some(lengths[2].clone());
+                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_right = Some(self.resolve_length(lengths[1].clone()));
+                self.padding_left = Some(self.resolve_length(lengths[1].clone()));
+                self.padding_bottom = Some(self.resolve_length(lengths[2].clone()));
             }
             4 => {
-                self.padding_top = Some(lengths[0].clone());
-                self.padding_right = Some(lengths[1].clone());
-                self.padding_bottom = Some(lengths[2].clone());
-                self.padding_left = Some(lengths[3].clone());
+                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_right = Some(self.resolve_length(lengths[1].clone()));
+                self.padding_bottom = Some(self.resolve_length(lengths[2].clone()));
+                self.padding_left = Some(self.resolve_length(lengths[3].clone()));
             }
             _ => {}
         }
@@ -392,7 +392,7 @@ impl ComputedStyle {
             // Try to parse as length (width)
             if width.is_none() {
                 if let Some(len) = parse_single_length(v) {
-                    width = Some(len);
+                    width = Some(self.resolve_length(len));
                     continue;
                 }
             }
