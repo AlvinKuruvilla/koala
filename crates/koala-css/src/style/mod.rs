@@ -145,7 +145,7 @@ impl ColorValue {
     }
 }
 
-/// [CSS Backgrounds and Borders § 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
+/// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
 ///
 /// Border value representing width, style, and color.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -160,49 +160,49 @@ pub struct BorderValue {
 
 /// Computed styles for an element.
 ///
-/// [CSS Cascading Level 4 § 4.4 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
+/// [§ 4.4 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
 /// "The computed value is the result of resolving the specified value..."
 ///
 /// All values are Option - None means "not set" (use inherited or initial value).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ComputedStyle {
-    /// [CSS Color § 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
+    /// [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
     pub color: Option<ColorValue>,
-    /// [CSS Fonts § 3.1 'font-family'](https://www.w3.org/TR/css-fonts-4/#font-family-prop)
+    /// [§ 3.1 'font-family'](https://www.w3.org/TR/css-fonts-4/#font-family-prop)
     pub font_family: Option<String>,
-    /// [CSS Fonts § 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
+    /// [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
     pub font_size: Option<LengthValue>,
-    /// [CSS Inline § 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
+    /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
 
-    /// [CSS Backgrounds § 3.2 'background-color'](https://www.w3.org/TR/css-backgrounds-3/#background-color)
+    /// [§ 3.2 'background-color'](https://www.w3.org/TR/css-backgrounds-3/#background-color)
     pub background_color: Option<ColorValue>,
 
-    /// [CSS Box § 6.1 'margin-top'](https://www.w3.org/TR/css-box-4/#margin-physical)
+    /// [§ 6.1 'margin-top'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_top: Option<LengthValue>,
-    /// [CSS Box § 6.1 'margin-right'](https://www.w3.org/TR/css-box-4/#margin-physical)
+    /// [§ 6.1 'margin-right'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_right: Option<LengthValue>,
-    /// [CSS Box § 6.1 'margin-bottom'](https://www.w3.org/TR/css-box-4/#margin-physical)
+    /// [§ 6.1 'margin-bottom'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_bottom: Option<LengthValue>,
-    /// [CSS Box § 6.1 'margin-left'](https://www.w3.org/TR/css-box-4/#margin-physical)
+    /// [§ 6.1 'margin-left'](https://www.w3.org/TR/css-box-4/#margin-physical)
     pub margin_left: Option<LengthValue>,
 
-    /// [CSS Box § 6.2 'padding-top'](https://www.w3.org/TR/css-box-4/#padding-physical)
+    /// [§ 6.2 'padding-top'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_top: Option<LengthValue>,
-    /// [CSS Box § 6.2 'padding-right'](https://www.w3.org/TR/css-box-4/#padding-physical)
+    /// [§ 6.2 'padding-right'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_right: Option<LengthValue>,
-    /// [CSS Box § 6.2 'padding-bottom'](https://www.w3.org/TR/css-box-4/#padding-physical)
+    /// [§ 6.2 'padding-bottom'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_bottom: Option<LengthValue>,
-    /// [CSS Box § 6.2 'padding-left'](https://www.w3.org/TR/css-box-4/#padding-physical)
+    /// [§ 6.2 'padding-left'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_left: Option<LengthValue>,
 
-    /// [CSS Backgrounds § 4 'border-top'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+    /// [§ 4 'border-top'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_top: Option<BorderValue>,
-    /// [CSS Backgrounds § 4 'border-right'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+    /// [§ 4 'border-right'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_right: Option<BorderValue>,
-    /// [CSS Backgrounds § 4 'border-bottom'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+    /// [§ 4 'border-bottom'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_bottom: Option<BorderValue>,
-    /// [CSS Backgrounds § 4 'border-left'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+    /// [§ 4 'border-left'](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     pub border_left: Option<BorderValue>,
 }
 
@@ -291,7 +291,7 @@ impl ComputedStyle {
         }
     }
 
-    /// [CSS Box Model § 6.3 Margins](https://www.w3.org/TR/css-box-4/#margins)
+    /// [§ 6.3 Margins](https://www.w3.org/TR/css-box-4/#margins)
     /// The margin shorthand sets margin-top, margin-right, margin-bottom, margin-left.
     fn apply_margin_shorthand(&mut self, values: &[ComponentValue]) {
         let lengths: Vec<LengthValue> = values
@@ -332,7 +332,7 @@ impl ComputedStyle {
         }
     }
 
-    /// [CSS Box Model § 6.2 Padding](https://www.w3.org/TR/css-box-4/#paddings)
+    /// [§ 6.2 Padding](https://www.w3.org/TR/css-box-4/#paddings)
     fn apply_padding_shorthand(&mut self, values: &[ComponentValue]) {
         let lengths: Vec<LengthValue> = values
             .iter()
@@ -368,7 +368,7 @@ impl ComputedStyle {
         }
     }
 
-    /// [CSS Backgrounds § 3.1 border shorthand](https://www.w3.org/TR/css-backgrounds-3/#the-border-shorthands)
+    /// [§ 3.1 border shorthand](https://www.w3.org/TR/css-backgrounds-3/#the-border-shorthands)
     /// "border: 1px solid #ddd" sets all four borders
     fn apply_border_shorthand(&mut self, values: &[ComponentValue]) {
         let mut width: Option<LengthValue> = None;
@@ -496,7 +496,7 @@ fn parse_font_family(values: &[ComponentValue]) -> Option<String> {
     None
 }
 
-/// [CSS Line Layout § 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
+/// [§ 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
 /// Parse line-height as a unitless number or length.
 fn parse_line_height(values: &[ComponentValue]) -> Option<f64> {
     for v in values {

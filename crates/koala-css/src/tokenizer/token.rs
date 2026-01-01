@@ -1,4 +1,4 @@
-//! CSS Token types per [CSS Syntax Level 3 § 4](https://www.w3.org/TR/css-syntax-3/#tokenization).
+//! CSS Token types per [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization).
 //!
 //! "The output of the tokenization step is a stream of zero or more of the
 //! following tokens: <ident-token>, <function-token>, <at-keyword-token>,

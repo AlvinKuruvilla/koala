@@ -364,7 +364,7 @@ impl BoxDimensions {
     }
 }
 
-// [CSS 2.1 § 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
 
 /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
 ///
@@ -387,7 +387,7 @@ impl BlockFormattingContext {
     }
 }
 
-// [CSS 2.1 § 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
 
 /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
 ///
@@ -450,7 +450,7 @@ impl LayoutBox {
     }
 }
 
-// [CSS 2.1 § 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
+// [§ 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
 
 /// [§ 17.5 Visual layout of table contents](https://www.w3.org/TR/CSS2/tables.html#table-layout)
 ///

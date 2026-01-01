@@ -423,13 +423,13 @@ impl SimpleSelector {
 }
 
 /// Check if a character can start an identifier.
-/// [CSS Syntax Level 3 § 4.3.10](https://www.w3.org/TR/css-syntax-3/#ident-start-code-point)
+/// [§ 4.3.10 ident-start code point](https://www.w3.org/TR/css-syntax-3/#ident-start-code-point)
 fn is_ident_start_char(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_' || !c.is_ascii()
 }
 
 /// Check if a character can continue an identifier.
-/// [CSS Syntax Level 3 § 4.3.9](https://www.w3.org/TR/css-syntax-3/#ident-code-point)
+/// [§ 4.3.9 ident code point](https://www.w3.org/TR/css-syntax-3/#ident-code-point)
 fn is_ident_char(c: char) -> bool {
     is_ident_start_char(c) || c.is_ascii_digit() || c == '-'
 }
@@ -633,13 +633,13 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
             }
 
             // Identifier characters - part of type selector
-            // [CSS Syntax § 4.3.9-10](https://www.w3.org/TR/css-syntax-3/#ident-start-code-point)
+            // [§ 4.3.9-10 ident code points](https://www.w3.org/TR/css-syntax-3/#ident-start-code-point)
             // "An ident-start code point is a letter, a non-ASCII code point, or U+005F LOW LINE (_)."
             // First character must be an ident-start char or '-', continuation can be ident chars.
             _ if current_ident.is_empty() && (is_ident_start_char(c) || c == '-') => {
                 current_ident.push(c);
             }
-            // [CSS Syntax § 4.3.9](https://www.w3.org/TR/css-syntax-3/#ident-code-point)
+            // [§ 4.3.9 ident code point](https://www.w3.org/TR/css-syntax-3/#ident-code-point)
             // "An ident code point is an ident-start code point, a digit, or U+002D HYPHEN-MINUS (-)."
             _ if !current_ident.is_empty() && is_ident_char(c) => {
                 current_ident.push(c);

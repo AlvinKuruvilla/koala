@@ -119,28 +119,28 @@ fn compute_node_styles(
 fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
     ComputedStyle {
         // Inherited properties
-        // [CSS Color § 3.1 color](https://www.w3.org/TR/css-color-4/#the-color-property)
+        // [§ 3.1 color](https://www.w3.org/TR/css-color-4/#the-color-property)
         // "Inherited: yes"
         color: parent.color.clone(),
 
-        // [CSS Fonts § 3.1 font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop)
+        // [§ 3.1 font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop)
         // "Inherited: yes"
         font_family: parent.font_family.clone(),
 
-        // [CSS Fonts § 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
+        // [§ 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
         // "Inherited: yes"
         font_size: parent.font_size.clone(),
 
-        // [CSS Inline § 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
+        // [§ 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
         // "Inherited: yes"
         line_height: parent.line_height,
 
         // Non-inherited properties start as None
-        // [CSS Backgrounds § 3.2 background-color](https://www.w3.org/TR/css-backgrounds-3/#background-color)
+        // [§ 3.2 background-color](https://www.w3.org/TR/css-backgrounds-3/#background-color)
         // "Inherited: no"
         background_color: None,
 
-        // [CSS Box Model § margins/padding](https://www.w3.org/TR/css-box-4/)
+        // [§ 6 Box Model](https://www.w3.org/TR/css-box-4/)
         // "Inherited: no"
         margin_top: None,
         margin_right: None,

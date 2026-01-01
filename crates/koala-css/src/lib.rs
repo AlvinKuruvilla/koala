@@ -3,12 +3,12 @@
 //! # Scope
 //!
 //! This crate implements:
-//! - **CSS Tokenizer** ([CSS Syntax Level 3 § 4](https://www.w3.org/TR/css-syntax-3/#tokenization))
+//! - **CSS Tokenizer** ([§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization))
 //!   - All token types: ident, function, at-keyword, hash, string, url, number, dimension, etc.
 //!   - Comment handling
 //!   - Escape sequences
 //!
-//! - **CSS Parser** ([CSS Syntax Level 3 § 5](https://www.w3.org/TR/css-syntax-3/#parsing))
+//! - **CSS Parser** ([§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing))
 //!   - Stylesheet parsing
 //!   - Rule parsing (style rules and at-rules)
 //!   - Declaration parsing
@@ -46,13 +46,13 @@
 pub mod cascade;
 /// Box model and layout structures per [CSS Display Level 3](https://www.w3.org/TR/css-display-3/).
 pub mod layout;
-/// CSS parser per [CSS Syntax Level 3 § 5](https://www.w3.org/TR/css-syntax-3/#parsing).
+/// CSS parser per [§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing).
 pub mod parser;
 /// CSS selector parsing and matching per [Selectors Level 4](https://www.w3.org/TR/selectors-4/).
 pub mod selector;
 /// Computed style representation per [CSS Values Level 4](https://www.w3.org/TR/css-values-4/).
 pub mod style;
-/// CSS tokenizer per [CSS Syntax Level 3 § 4](https://www.w3.org/TR/css-syntax-3/#tokenization).
+/// CSS tokenizer per [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization).
 pub mod tokenizer;
 
 // Re-exports for convenience

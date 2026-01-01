@@ -1,6 +1,6 @@
 //! CSS parser module.
 
-/// CSS parser implementation per [CSS Syntax Level 3 § 5](https://www.w3.org/TR/css-syntax-3/#parsing).
+/// CSS parser implementation per [§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing).
 pub mod parser;
 
 pub use parser::{
