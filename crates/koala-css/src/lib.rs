@@ -42,6 +42,8 @@
 //! - Media queries
 //! - Full layout algorithm
 
+/// CSS backgrounds per [CSS Backgrounds and Borders Level 3](https://www.w3.org/TR/css-backgrounds-3/).
+pub mod backgrounds;
 /// CSS cascade and style computation per [CSS Cascading Level 4](https://www.w3.org/TR/css-cascade-4/).
 pub mod cascade;
 /// Box model and layout structures per [CSS Display Level 3](https://www.w3.org/TR/css-display-3/).
@@ -56,6 +58,7 @@ pub mod style;
 pub mod tokenizer;
 
 // Re-exports for convenience
+pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{parse_selector, ParsedSelector, Specificity};
