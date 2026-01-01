@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use eframe::egui;
-use koala_css::{compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer};
+use koala_css::{canvas_background, compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer};
 use koala_dom::{DomTree, NodeId, NodeType};
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
 
@@ -536,12 +536,18 @@ impl eframe::App for BrowserApp {
             .show(ctx, |ui| {
                 if let Some(page) = &self.page {
                     // Page content
+                    // [§ 2.11.2 The Canvas Background](https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds)
+                    let fill_color = canvas_background(&page.dom, &page.styles)
+                        .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
+                        .unwrap_or_else(|| {
+                            if self.theme == Theme::Dark {
+                                egui::Color32::from_rgb(28, 28, 30)
+                            } else {
+                                egui::Color32::WHITE
+                            }
+                        });
                     let _ = egui::Frame::none()
-                        .fill(if self.theme == Theme::Dark {
-                            egui::Color32::from_rgb(28, 28, 30)
-                        } else {
-                            egui::Color32::WHITE
-                        })
+                        .fill(fill_color)
                         .inner_margin(egui::Margin::same(24.0))
                         .show(ui, |ui| {
                             let _ = egui::ScrollArea::vertical().show(ui, |ui| {
