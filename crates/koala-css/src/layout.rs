@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::{ComputedStyle, DisplayValue};
+use crate::style::{ComputedStyle, DisplayValue, OuterDisplayType};
 
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
@@ -123,7 +123,7 @@ pub struct BoxDimensions {
 /// A rectangle positioned in 2D space.
 ///
 /// [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Rect {
     /// Horizontal position of the top-left corner.
     pub x: f32,
@@ -138,7 +138,7 @@ pub struct Rect {
 /// Edge sizes for padding, border, or margin.
 ///
 /// [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct EdgeSizes {
     /// Top edge size.
     pub top: f32,
@@ -349,6 +349,56 @@ impl InlineFormattingContext {
         todo!("Wrap to next line when inline content exceeds max_width")
     }
 }
+/// [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+///
+/// "Some properties can take the keyword 'auto' as a value. This keyword
+/// allows the user agent to compute the value based on other properties."
+///
+/// This enum represents a value that can either be 'auto' or a specific length.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AutoOr {
+    /// The value is 'auto' and must be resolved during layout.
+    Auto,
+    /// The value is a specific length in pixels.
+    Length(f32),
+}
+
+impl Default for AutoOr {
+    fn default() -> Self {
+        AutoOr::Auto
+    }
+}
+impl AutoOr {
+    /// Check if the value is 'auto'.
+    pub fn is_auto(&self) -> bool {
+        matches!(self, AutoOr::Auto)
+    }
+
+    /// Get the length value, or a default if 'auto'.
+    pub fn to_px_or(&self, default: f32) -> f32 {
+        match self {
+            AutoOr::Length(v) => *v,
+            AutoOr::Auto => default,
+        }
+    }
+}
+
+/// [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
+///
+/// Edge values where each side can be 'auto' or a specific length.
+/// Used for margins where 'auto' has special meaning (centering).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AutoEdgeSizes {
+    /// Top edge value.
+    pub top: AutoOr,
+    /// Right edge value.
+    pub right: AutoOr,
+    /// Bottom edge value.
+    pub bottom: AutoOr,
+    /// Left edge value.
+    pub left: AutoOr,
+}
+
 /// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
 ///
 /// "The following sections describe the types of boxes that may be generated
@@ -382,16 +432,66 @@ pub enum BoxType {
 /// A node in the layout tree (render tree with computed layout).
 ///
 /// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
+///
+/// "Each box is associated with its generating element."
+///
+/// The layout box stores both the computed style values (from the cascade)
+/// and the used values (resolved during layout).
 #[derive(Debug)]
 pub struct LayoutBox {
     /// The type of box (principal, anonymous inline, anonymous block)
     pub box_type: BoxType,
-    /// The computed dimensions of this box.
+
+    /// The computed dimensions of this box (used values after layout).
     pub dimensions: BoxDimensions,
+
     /// The display type of this box.
     pub display: DisplayValue,
+
     /// Child boxes in the layout tree.
     pub children: Vec<LayoutBox>,
+
+    // ===== Style values from the cascade =====
+    // These are the "specified" or "computed" values that may include 'auto'.
+    // During layout, these are resolved to concrete "used" values.
+    /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+    ///
+    /// "Margins can be negative, but there may be implementation-specific limits."
+    /// "The value 'auto' is discussed in the section on calculating widths and margins."
+    ///
+    /// Margins can be 'auto' (for centering) or a specific length.
+    pub margin: AutoEdgeSizes,
+
+    /// [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
+    ///
+    /// "Unlike margin properties, values for padding values cannot be negative."
+    /// "The padding properties do not allow 'auto' as a value."
+    ///
+    /// Padding is always a specific length (no auto).
+    pub padding: EdgeSizes,
+
+    /// [§ 8.5 Border properties](https://www.w3.org/TR/CSS2/box.html#border-properties)
+    ///
+    /// "The border properties specify the width, color, and style of the border."
+    ///
+    /// Border widths are always specific lengths (no auto).
+    pub border_width: EdgeSizes,
+
+    /// [§ 10.2 Content width: the 'width' property](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
+    ///
+    /// "This property specifies the content width of boxes."
+    /// "The value 'auto' means that the width depends on the values of other properties."
+    ///
+    /// Width can be 'auto' or a specific length.
+    pub width: AutoOr,
+
+    /// [§ 10.5 Content height: the 'height' property](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+    ///
+    /// "This property specifies the content height of boxes."
+    /// "The value 'auto' means that the height depends on the values of other properties."
+    ///
+    /// Height can be 'auto' or a specific length.
+    pub height: AutoOr,
 }
 
 impl LayoutBox {
@@ -429,6 +529,12 @@ impl LayoutBox {
                     dimensions: BoxDimensions::default(),
                     display: DisplayValue::block(),
                     children,
+                    // Document has no margin/padding/border
+                    margin: AutoEdgeSizes::default(),
+                    padding: EdgeSizes::default(),
+                    border_width: EdgeSizes::default(),
+                    width: AutoOr::Auto,
+                    height: AutoOr::Auto,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -469,11 +575,21 @@ impl LayoutBox {
                     }
                 }
 
+                // Extract style values from computed style
+                // [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
+                let (margin, padding, border_width, width, height) =
+                    Self::extract_box_style_values(style);
+
                 Some(LayoutBox {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
                     display,
                     children,
+                    margin,
+                    padding,
+                    border_width,
+                    width,
+                    height,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -499,6 +615,12 @@ impl LayoutBox {
                     dimensions: BoxDimensions::default(),
                     display: DisplayValue::inline(),
                     children: Vec::new(),
+                    // Anonymous inline boxes have no margin/padding/border
+                    margin: AutoEdgeSizes::default(),
+                    padding: EdgeSizes::default(),
+                    border_width: EdgeSizes::default(),
+                    width: AutoOr::Auto,
+                    height: AutoOr::Auto,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -506,9 +628,349 @@ impl LayoutBox {
         }
     }
 
-    /// Perform layout on this box and its descendants
-    pub fn layout(&mut self, _containing_width: f32) {
-        todo!("Recursively layout this box based on display type")
+    /// [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
+    ///
+    /// Extract box model style values from the computed style.
+    /// Returns (margin, padding, border_width, width, height).
+    fn extract_box_style_values(
+        style: Option<&ComputedStyle>,
+    ) -> (AutoEdgeSizes, EdgeSizes, EdgeSizes, AutoOr, AutoOr) {
+        let Some(s) = style else {
+            // No computed style - use defaults (all auto/zero)
+            return (
+                AutoEdgeSizes::default(),
+                EdgeSizes::default(),
+                EdgeSizes::default(),
+                AutoOr::Auto,
+                AutoOr::Auto,
+            );
+        };
+
+        // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+        //
+        // "If the margin property is not set, the margin is 0."
+        // "The value 'auto' is discussed in the section on calculating widths and margins."
+        //
+        // NOTE: For now, we treat explicit lengths as Length and missing values as Auto.
+        // A full implementation would also parse 'auto' as an explicit value.
+        let margin = AutoEdgeSizes {
+            top: s
+                .margin_top
+                .as_ref()
+                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .unwrap_or(AutoOr::Length(0.0)),
+            right: s
+                .margin_right
+                .as_ref()
+                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .unwrap_or(AutoOr::Length(0.0)),
+            bottom: s
+                .margin_bottom
+                .as_ref()
+                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .unwrap_or(AutoOr::Length(0.0)),
+            left: s
+                .margin_left
+                .as_ref()
+                .map(|l| AutoOr::Length(l.to_px() as f32))
+                .unwrap_or(AutoOr::Length(0.0)),
+        };
+
+        // [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
+        //
+        // "If the padding property is not set, the padding is 0."
+        let padding = EdgeSizes {
+            top: s
+                .padding_top
+                .as_ref()
+                .map(|l| l.to_px() as f32)
+                .unwrap_or(0.0),
+            right: s
+                .padding_right
+                .as_ref()
+                .map(|l| l.to_px() as f32)
+                .unwrap_or(0.0),
+            bottom: s
+                .padding_bottom
+                .as_ref()
+                .map(|l| l.to_px() as f32)
+                .unwrap_or(0.0),
+            left: s
+                .padding_left
+                .as_ref()
+                .map(|l| l.to_px() as f32)
+                .unwrap_or(0.0),
+        };
+
+        // [§ 8.5 Border properties](https://www.w3.org/TR/CSS2/box.html#border-properties)
+        //
+        // "The initial value of border width is 'medium' (implementation-defined)."
+        // For simplicity, we use the border width from BorderValue if present.
+        let border_width = EdgeSizes {
+            top: s
+                .border_top
+                .as_ref()
+                .map(|b| b.width.to_px() as f32)
+                .unwrap_or(0.0),
+            right: s
+                .border_right
+                .as_ref()
+                .map(|b| b.width.to_px() as f32)
+                .unwrap_or(0.0),
+            bottom: s
+                .border_bottom
+                .as_ref()
+                .map(|b| b.width.to_px() as f32)
+                .unwrap_or(0.0),
+            left: s
+                .border_left
+                .as_ref()
+                .map(|b| b.width.to_px() as f32)
+                .unwrap_or(0.0),
+        };
+
+        // TODO: Extract explicit width/height from computed style when implemented
+        let width = AutoOr::Auto;
+        let height = AutoOr::Auto;
+
+        (margin, padding, border_width, width, height)
+    }
+
+    /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    ///
+    /// "In a block formatting context, boxes are laid out one after the other,
+    /// vertically, beginning at the top of a containing block."
+    ///
+    /// This method lays out this box and all its descendants.
+    pub fn layout(&mut self, containing_block: Rect) {
+        match self.display.outer {
+            OuterDisplayType::Block => self.layout_block(containing_block),
+            OuterDisplayType::Inline => {
+                // TODO: Inline layout requires line box construction
+                // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+                todo!("Inline layout not yet implemented")
+            }
+            OuterDisplayType::RunIn => {
+                // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
+                todo!("Run-in layout not yet implemented")
+            }
+        }
+    }
+
+    /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+    ///
+    /// Layout algorithm for block-level boxes in normal flow.
+    fn layout_block(&mut self, containing_block: Rect) {
+        // STEP 1: Calculate width
+        // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+        //
+        // "The following constraints must hold among the used values of the
+        // other properties:
+        //
+        // 'margin-left' + 'border-left-width' + 'padding-left' + 'width' +
+        // 'padding-right' + 'border-right-width' + 'margin-right'
+        // = width of containing block"
+        //
+        // For now, we use the full containing block width (auto width behavior).
+        self.calculate_block_width(containing_block);
+
+        // STEP 2: Calculate horizontal position
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // "Each box's left outer edge touches the left edge of the
+        // containing block (for right-to-left formatting, right edges touch)."
+        self.calculate_block_position(containing_block);
+
+        // STEP 3: Layout children
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // "In a block formatting context, boxes are laid out one after the
+        // other, vertically, beginning at the top of a containing block."
+        self.layout_block_children();
+
+        // STEP 4: Calculate height
+        // [§ 10.6.3 Block-level non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+        //
+        // "If 'height' is 'auto', the height depends on whether the element
+        // has any block-level children and whether it has padding or borders."
+        //
+        // "...the height is the distance between the top content edge and the
+        // bottom edge of the last line box, if the box establishes an inline
+        // formatting context... or the bottom edge of the bottom margin of
+        // its last in-flow child, if the child's bottom margin does not
+        // collapse with the element's bottom margin"
+        self.calculate_block_height();
+    }
+
+    /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+    ///
+    /// Calculate the width of a block-level box.
+    fn calculate_block_width(&mut self, containing_block: Rect) {
+        // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+        //
+        // "The following constraints must hold among the used values of the
+        // other properties:
+        //
+        //   'margin-left' + 'border-left-width' + 'padding-left' + 'width' +
+        //   'padding-right' + 'border-right-width' + 'margin-right'
+        //   = width of containing block"
+
+        // STEP 1-4: Read the style values.
+        // Border and padding cannot be 'auto', only margins and width can.
+        let padding_left = self.padding.left;
+        let padding_right = self.padding.right;
+        let border_left = self.border_width.left;
+        let border_right = self.border_width.right;
+        let mut margin_left = self.margin.left;
+        let mut margin_right = self.margin.right;
+        let width = self.width;
+
+        // STEP 5: Handle over-constrained case
+        // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+        //
+        // "If 'width' is not 'auto' and 'border-left-width' + 'padding-left' +
+        // 'width' + 'padding-right' + 'border-right-width' (plus any of
+        // 'margin-left' or 'margin-right' that are not 'auto') is larger than
+        // the width of the containing block, then any 'auto' values for
+        // 'margin-left' or 'margin-right' are, for the following rules,
+        // treated as zero."
+        if !width.is_auto() {
+            let total = border_left
+                + padding_left
+                + width.to_px_or(0.0)
+                + padding_right
+                + border_right
+                + margin_left.to_px_or(0.0)
+                + margin_right.to_px_or(0.0);
+
+            if total > containing_block.width {
+                if margin_left.is_auto() {
+                    margin_left = AutoOr::Length(0.0);
+                }
+                if margin_right.is_auto() {
+                    margin_right = AutoOr::Length(0.0);
+                }
+            }
+        }
+
+        // STEP 6: Apply the constraint rules to calculate used values.
+        let used_width: f32;
+        let used_margin_left: f32;
+        let used_margin_right: f32;
+
+        // RULE A: "If 'width' is set to 'auto', any other 'auto' values become
+        //         '0' and 'width' follows from the resulting equality."
+        if width.is_auto() {
+            used_margin_left = margin_left.to_px_or(0.0);
+            used_margin_right = margin_right.to_px_or(0.0);
+            used_width = containing_block.width
+                - used_margin_left
+                - used_margin_right
+                - border_left
+                - border_right
+                - padding_left
+                - padding_right;
+        }
+        // RULE B: "If both 'margin-left' and 'margin-right' are 'auto', their
+        //         used values are equal. This horizontally centers the element
+        //         with respect to the edges of the containing block."
+        else if margin_left.is_auto() && margin_right.is_auto() {
+            used_width = width.to_px_or(0.0);
+            let remaining = containing_block.width
+                - used_width
+                - border_left
+                - border_right
+                - padding_left
+                - padding_right;
+            used_margin_left = remaining / 2.0;
+            used_margin_right = remaining / 2.0;
+        }
+        // RULE C: "If there is exactly one value specified as 'auto', its used
+        //         value follows from the equality."
+        else if margin_left.is_auto() {
+            used_width = width.to_px_or(0.0);
+            used_margin_right = margin_right.to_px_or(0.0);
+            used_margin_left = containing_block.width
+                - used_width
+                - used_margin_right
+                - border_left
+                - border_right
+                - padding_left
+                - padding_right;
+        } else if margin_right.is_auto() {
+            used_width = width.to_px_or(0.0);
+            used_margin_left = margin_left.to_px_or(0.0);
+            used_margin_right = containing_block.width
+                - used_width
+                - used_margin_left
+                - border_left
+                - border_right
+                - padding_left
+                - padding_right;
+        }
+        // RULE D: "If all of the above have a computed value other than 'auto',
+        //         the values are said to be 'over-constrained' and one of the
+        //         used values will have to be different from its computed value.
+        //         If the 'direction' property of the containing block has the
+        //         value 'ltr', the specified value of 'margin-right' is ignored
+        //         and the value is calculated so as to make the equality true."
+        else {
+            used_width = width.to_px_or(0.0);
+            used_margin_left = margin_left.to_px_or(0.0);
+            // Over-constrained: adjust margin-right to satisfy the equation (assuming LTR)
+            used_margin_right = containing_block.width
+                - used_width
+                - used_margin_left
+                - border_left
+                - border_right
+                - padding_left
+                - padding_right;
+        }
+
+        // STEP 7: Store the used values in self.dimensions
+        self.dimensions.content.width = used_width;
+        self.dimensions.margin.left = used_margin_left;
+        self.dimensions.margin.right = used_margin_right;
+        self.dimensions.padding.left = padding_left;
+        self.dimensions.padding.right = padding_right;
+        self.dimensions.border.left = border_left;
+        self.dimensions.border.right = border_right;
+    }
+
+    /// [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    ///
+    /// Calculate the position of a block-level box.
+    fn calculate_block_position(&mut self, containing_block: Rect) {
+        // TODO: Set x and y position
+        // x = containing_block.x + margin_left + border_left + padding_left
+        // y = containing_block.y (adjusted by caller for sibling offset)
+        todo!("Calculate block position")
+    }
+
+    /// [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    ///
+    /// Layout children in a block formatting context.
+    ///
+    /// "The vertical distance between two sibling boxes is determined by the
+    /// 'margin' properties. Vertical margins between adjacent block-level
+    /// boxes in a block formatting context collapse."
+    fn layout_block_children(&mut self) {
+        // TODO: Iterate over children, laying out each one
+        // Track current_y position, advancing by each child's margin box height
+        // Pass our content box as the containing block for children
+        todo!("Layout block children")
+    }
+
+    /// [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+    ///
+    /// Calculate the height of a block-level box.
+    ///
+    /// For 'height: auto', the height is determined by the children.
+    fn calculate_block_height(&mut self) {
+        // TODO: Calculate height
+        // For auto height: sum of children's margin boxes
+        // (margin collapsing not implemented yet)
+        todo!("Calculate block height")
     }
 }
 
