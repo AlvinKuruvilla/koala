@@ -184,7 +184,7 @@ impl HTMLTokenizer {
     // "An appropriate end tag token is an end tag token whose tag name matches the tag name
     // of the last start tag to have been emitted from this tokenizer, if any."
     pub(super) fn is_appropriate_end_tag_token(&self) -> bool {
-        if let (Some(ref last_start_tag), Some(ref current_token)) =
+        if let (Some(last_start_tag), Some(current_token)) =
             (&self.last_start_tag_name, &self.current_token)
         {
             if let Token::EndTag { name, .. } = current_token {

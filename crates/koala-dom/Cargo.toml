@@ -6,3 +6,6 @@ license.workspace = true
 description = "DOM tree implementation for the Koala browser"
 
 [dependencies]
+
+[lints]
+workspace = true

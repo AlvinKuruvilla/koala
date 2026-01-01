@@ -9,3 +9,6 @@ description = "HTML tokenizer and parser for the Koala browser"
 koala-dom.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
+
+[lints]
+workspace = true

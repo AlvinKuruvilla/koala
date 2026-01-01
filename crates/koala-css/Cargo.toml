@@ -11,3 +11,6 @@ serde.workspace = true
 
 [dev-dependencies]
 koala-html.workspace = true
+
+[lints]
+workspace = true

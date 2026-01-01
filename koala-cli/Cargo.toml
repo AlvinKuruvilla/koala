@@ -15,3 +15,6 @@ koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true
 anyhow.workspace = true
+
+[lints]
+workspace = true

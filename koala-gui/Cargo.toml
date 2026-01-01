@@ -17,3 +17,6 @@ koala-css.workspace = true
 eframe.workspace = true
 egui.workspace = true
 anyhow.workspace = true
+
+[lints]
+workspace = true

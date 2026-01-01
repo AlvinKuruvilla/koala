@@ -128,7 +128,7 @@ impl Token {
     pub fn append_to_doctype_name(&mut self, c: char) {
         match self {
             Token::Doctype { name, .. } => {
-                if let Some(ref mut n) = name {
+                if let Some(n) = name {
                     n.push(c);
                 } else {
                     *name = Some(c.to_string());

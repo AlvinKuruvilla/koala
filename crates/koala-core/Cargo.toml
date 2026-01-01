@@ -9,3 +9,6 @@ description = "Core browser API and shared functionality for the Koala browser"
 koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true
+
+[lints]
+workspace = true
