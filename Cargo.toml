@@ -1,10 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/koala-common",
     "crates/koala-dom",
     "crates/koala-html",
     "crates/koala-css",
-    "crates/koala-core",
+    "crates/koala-browser",
     "koala-cli",
     "koala-gui",
 ]
@@ -16,10 +17,11 @@ license = "MIT"
 
 [workspace.dependencies]
 # Internal crates
+koala-common = { path = "crates/koala-common" }
 koala-dom = { path = "crates/koala-dom" }
 koala-html = { path = "crates/koala-html" }
 koala-css = { path = "crates/koala-css" }
-koala-core = { path = "crates/koala-core" }
+koala-browser = { path = "crates/koala-browser" }
 
 # External dependencies
 anyhow = "1.0"

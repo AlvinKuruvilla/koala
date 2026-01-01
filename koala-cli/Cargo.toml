@@ -10,7 +10,7 @@ name = "koala-cli"
 path = "src/main.rs"
 
 [dependencies]
-koala-core.workspace = true
+koala-browser.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true

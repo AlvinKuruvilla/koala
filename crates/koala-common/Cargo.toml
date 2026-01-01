@@ -1,0 +1,11 @@
+[package]
+name = "koala-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Common utilities for the Koala browser"
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-//! Core browser API for the Koala browser.
+//! High-level browser API for the Koala browser.
 //!
 //! # Scope
 //!

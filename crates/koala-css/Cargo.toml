@@ -6,6 +6,7 @@ license.workspace = true
 description = "CSS tokenizer, parser, selector, and cascade for the Koala browser"
 
 [dependencies]
+koala-common.workspace = true
 koala-dom.workspace = true
 serde.workspace = true
 

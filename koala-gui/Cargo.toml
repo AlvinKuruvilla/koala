@@ -10,7 +10,8 @@ name = "koala"
 path = "src/main.rs"
 
 [dependencies]
-koala-core.workspace = true
+koala-common.workspace = true
+koala-browser.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true

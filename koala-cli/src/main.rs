@@ -3,7 +3,7 @@
 //! A headless browser for testing and debugging.
 
 use anyhow::Result;
-use koala_core::parse_document;
+use koala_browser::parse_document;
 use koala_html::print_tree;
 use std::env;
 use std::fs;
