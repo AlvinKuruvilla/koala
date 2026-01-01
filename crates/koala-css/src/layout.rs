@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::{AutoLength, ComputedStyle, DisplayValue, OuterDisplayType};
+use crate::style::{AutoLength, ComputedStyle, DisplayValue, LengthValue, OuterDisplayType};
 
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
@@ -148,6 +148,127 @@ pub struct EdgeSizes {
     pub bottom: f32,
     /// Left edge size.
     pub left: f32,
+}
+
+/// [§ 6 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
+///
+/// "The computed value is the result of resolving the specified value...
+/// as far as possible without laying out the document."
+///
+/// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+///
+/// "The computed value of a <length> where... the viewport size is needed
+/// to resolve the value, is the specified value."
+///
+/// Edge sizes storing unresolved length values.
+/// These are resolved to pixels during layout when viewport is available.
+#[derive(Debug, Clone, Default)]
+pub struct UnresolvedEdgeSizes {
+    /// Top edge (unresolved).
+    pub top: Option<LengthValue>,
+    /// Right edge (unresolved).
+    pub right: Option<LengthValue>,
+    /// Bottom edge (unresolved).
+    pub bottom: Option<LengthValue>,
+    /// Left edge (unresolved).
+    pub left: Option<LengthValue>,
+}
+
+impl UnresolvedEdgeSizes {
+    /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
+    ///
+    /// "The used value is the result of taking the computed value and
+    /// completing any remaining calculations to make it the absolute
+    /// theoretical value used in the layout of the document."
+    ///
+    /// Resolve to concrete pixel values using viewport dimensions.
+    pub fn resolve(&self, viewport: Rect) -> EdgeSizes {
+        EdgeSizes {
+            top: self
+                .top
+                .as_ref()
+                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .unwrap_or(0.0),
+            right: self
+                .right
+                .as_ref()
+                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .unwrap_or(0.0),
+            bottom: self
+                .bottom
+                .as_ref()
+                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .unwrap_or(0.0),
+            left: self
+                .left
+                .as_ref()
+                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .unwrap_or(0.0),
+        }
+    }
+}
+
+/// [§ 6 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
+///
+/// Edge sizes storing unresolved auto-or-length values.
+/// Used for margins where 'auto' has special meaning (centering).
+#[derive(Debug, Clone, Default)]
+pub struct UnresolvedAutoEdgeSizes {
+    /// Top edge (unresolved, can be auto).
+    pub top: Option<AutoLength>,
+    /// Right edge (unresolved, can be auto).
+    pub right: Option<AutoLength>,
+    /// Bottom edge (unresolved, can be auto).
+    pub bottom: Option<AutoLength>,
+    /// Left edge (unresolved, can be auto).
+    pub left: Option<AutoLength>,
+}
+
+impl UnresolvedAutoEdgeSizes {
+    /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
+    ///
+    /// Resolve to AutoOr values using viewport dimensions.
+    /// 'auto' is preserved for later resolution during width/margin calculation.
+    pub fn resolve(&self, viewport: Rect) -> AutoEdgeSizes {
+        AutoEdgeSizes {
+            top: self
+                .top
+                .as_ref()
+                .map(|al| Self::resolve_auto_length(al, viewport))
+                .unwrap_or(AutoOr::Length(0.0)),
+            right: self
+                .right
+                .as_ref()
+                .map(|al| Self::resolve_auto_length(al, viewport))
+                .unwrap_or(AutoOr::Length(0.0)),
+            bottom: self
+                .bottom
+                .as_ref()
+                .map(|al| Self::resolve_auto_length(al, viewport))
+                .unwrap_or(AutoOr::Length(0.0)),
+            left: self
+                .left
+                .as_ref()
+                .map(|al| Self::resolve_auto_length(al, viewport))
+                .unwrap_or(AutoOr::Length(0.0)),
+        }
+    }
+
+    /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
+    ///
+    /// Resolve a single AutoLength to AutoOr using viewport dimensions.
+    fn resolve_auto_length(al: &AutoLength, viewport: Rect) -> AutoOr {
+        match al {
+            // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+            //
+            // 'auto' is preserved - it will be resolved during width calculation.
+            AutoLength::Auto => AutoOr::Auto,
+            // Resolve length using viewport for vw/vh units.
+            AutoLength::Length(len) => AutoOr::Length(
+                len.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32,
+            ),
+        }
+    }
 }
 
 impl BoxDimensions {
@@ -409,7 +530,7 @@ pub struct AutoEdgeSizes {
 /// "The following sections describe the types of boxes that may be generated
 /// in CSS 2.1. A box's type affects, in part, its behavior in the visual
 /// formatting model."
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BoxType {
     /// [§ 9.2 Principal box](https://www.w3.org/TR/css-display-3/#principal-box)
     ///
@@ -442,7 +563,7 @@ pub enum BoxType {
 ///
 /// The layout box stores both the computed style values (from the cascade)
 /// and the used values (resolved during layout).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LayoutBox {
     /// The type of box (principal, anonymous inline, anonymous block)
     pub box_type: BoxType,
@@ -456,47 +577,51 @@ pub struct LayoutBox {
     /// Child boxes in the layout tree.
     pub children: Vec<LayoutBox>,
 
-    // ===== Style values from the cascade =====
-    // These are the "specified" or "computed" values that may include 'auto'.
-    // During layout, these are resolved to concrete "used" values.
+    // ===== Computed style values (unresolved) =====
+    // [§ 6 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
+    //
+    // These are the "computed" values from the cascade. Viewport-relative units
+    // (vw, vh) are stored unresolved here and resolved to "used" values during
+    // layout when the viewport dimensions are available.
+
     /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
     ///
     /// "Margins can be negative, but there may be implementation-specific limits."
     /// "The value 'auto' is discussed in the section on calculating widths and margins."
     ///
-    /// Margins can be 'auto' (for centering) or a specific length.
-    pub margin: AutoEdgeSizes,
+    /// Computed margin values (unresolved). Resolved during layout.
+    pub margin: UnresolvedAutoEdgeSizes,
 
     /// [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
     ///
     /// "Unlike margin properties, values for padding values cannot be negative."
     /// "The padding properties do not allow 'auto' as a value."
     ///
-    /// Padding is always a specific length (no auto).
-    pub padding: EdgeSizes,
+    /// Computed padding values (unresolved). Resolved during layout.
+    pub padding: UnresolvedEdgeSizes,
 
     /// [§ 8.5 Border properties](https://www.w3.org/TR/CSS2/box.html#border-properties)
     ///
     /// "The border properties specify the width, color, and style of the border."
     ///
-    /// Border widths are always specific lengths (no auto).
-    pub border_width: EdgeSizes,
+    /// Computed border-width values (unresolved). Resolved during layout.
+    pub border_width: UnresolvedEdgeSizes,
 
     /// [§ 10.2 Content width: the 'width' property](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
     ///
     /// "This property specifies the content width of boxes."
     /// "The value 'auto' means that the width depends on the values of other properties."
     ///
-    /// Width can be 'auto' or a specific length.
-    pub width: AutoOr,
+    /// Computed width value (unresolved). None means 'auto'.
+    pub width: Option<AutoLength>,
 
     /// [§ 10.5 Content height: the 'height' property](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
     ///
     /// "This property specifies the content height of boxes."
     /// "The value 'auto' means that the height depends on the values of other properties."
     ///
-    /// Height can be 'auto' or a specific length.
-    pub height: AutoOr,
+    /// Computed height value (unresolved). None means 'auto'.
+    pub height: Option<AutoLength>,
 }
 
 impl LayoutBox {
@@ -534,12 +659,12 @@ impl LayoutBox {
                     dimensions: BoxDimensions::default(),
                     display: DisplayValue::block(),
                     children,
-                    // Document has no margin/padding/border
-                    margin: AutoEdgeSizes::default(),
-                    padding: EdgeSizes::default(),
-                    border_width: EdgeSizes::default(),
-                    width: AutoOr::Auto,
-                    height: AutoOr::Auto,
+                    // Document has no margin/padding/border (all None = 0 when resolved)
+                    margin: UnresolvedAutoEdgeSizes::default(),
+                    padding: UnresolvedEdgeSizes::default(),
+                    border_width: UnresolvedEdgeSizes::default(),
+                    width: None,
+                    height: None,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -620,12 +745,12 @@ impl LayoutBox {
                     dimensions: BoxDimensions::default(),
                     display: DisplayValue::inline(),
                     children: Vec::new(),
-                    // Anonymous inline boxes have no margin/padding/border
-                    margin: AutoEdgeSizes::default(),
-                    padding: EdgeSizes::default(),
-                    border_width: EdgeSizes::default(),
-                    width: AutoOr::Auto,
-                    height: AutoOr::Auto,
+                    // Anonymous inline boxes have no margin/padding/border (all None = 0 when resolved)
+                    margin: UnresolvedAutoEdgeSizes::default(),
+                    padding: UnresolvedEdgeSizes::default(),
+                    border_width: UnresolvedEdgeSizes::default(),
+                    width: None,
+                    height: None,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -633,45 +758,37 @@ impl LayoutBox {
         }
     }
 
-    /// [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
+    /// [§ 6 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
     ///
-    /// "Some properties can take the keyword 'auto' as a value. This keyword
-    /// allows the user agent to compute the value based on other properties."
+    /// "The computed value is the result of resolving the specified value...
+    /// as far as possible without laying out the document."
     ///
-    /// Convert a CSS AutoLength (from style computation) to a layout AutoOr
-    /// (used during layout calculations).
-    ///
-    /// - AutoLength::Auto → AutoOr::Auto (resolved during layout per § 10.3.3)
-    /// - AutoLength::Length → AutoOr::Length (concrete pixel value)
-    fn auto_length_to_auto_or(al: &AutoLength) -> AutoOr {
-        match al {
-            // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
-            //
-            // 'auto' margins are resolved during layout. For example:
-            // "If both 'margin-left' and 'margin-right' are 'auto', their used
-            // values are equal. This horizontally centers the element..."
-            AutoLength::Auto => AutoOr::Auto,
-
-            // Concrete length value - convert to pixels for layout.
-            AutoLength::Length(len) => AutoOr::Length(len.to_px() as f32),
-        }
-    }
-
     /// [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
     ///
-    /// Extract box model style values from the computed style.
-    /// Returns (margin, padding, border_width, width, height).
+    /// Extract box model computed values from the style.
+    /// These are unresolved values - viewport units (vw, vh) are preserved
+    /// and resolved during layout when viewport dimensions are available.
+    ///
+    /// Returns (margin, padding, border_width, width, height) as unresolved values.
     fn extract_box_style_values(
         style: Option<&ComputedStyle>,
-    ) -> (AutoEdgeSizes, EdgeSizes, EdgeSizes, AutoOr, AutoOr) {
+    ) -> (
+        UnresolvedAutoEdgeSizes,
+        UnresolvedEdgeSizes,
+        UnresolvedEdgeSizes,
+        Option<AutoLength>,
+        Option<AutoLength>,
+    ) {
         let Some(s) = style else {
-            // No computed style - use defaults (all auto/zero)
+            // [§ 6 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
+            //
+            // No computed style - use defaults (None for all, resolved to 0 during layout).
             return (
-                AutoEdgeSizes::default(),
-                EdgeSizes::default(),
-                EdgeSizes::default(),
-                AutoOr::Auto,
-                AutoOr::Auto,
+                UnresolvedAutoEdgeSizes::default(),
+                UnresolvedEdgeSizes::default(),
+                UnresolvedEdgeSizes::default(),
+                None,
+                None,
             );
         };
 
@@ -680,89 +797,49 @@ impl LayoutBox {
         // "If the margin property is not set, the margin is 0."
         // "The value 'auto' is discussed in the section on calculating widths and margins."
         //
-        // Convert AutoLength to AutoOr:
-        // - AutoLength::Auto -> AutoOr::Auto (used for centering)
-        // - AutoLength::Length(len) -> AutoOr::Length(len.to_px())
-        // - None (not set) -> AutoOr::Length(0.0) (default margin is 0)
-        let margin = AutoEdgeSizes {
-            top: s
-                .margin_top
-                .as_ref()
-                .map(|al| Self::auto_length_to_auto_or(al))
-                .unwrap_or(AutoOr::Length(0.0)),
-            right: s
-                .margin_right
-                .as_ref()
-                .map(|al| Self::auto_length_to_auto_or(al))
-                .unwrap_or(AutoOr::Length(0.0)),
-            bottom: s
-                .margin_bottom
-                .as_ref()
-                .map(|al| Self::auto_length_to_auto_or(al))
-                .unwrap_or(AutoOr::Length(0.0)),
-            left: s
-                .margin_left
-                .as_ref()
-                .map(|al| Self::auto_length_to_auto_or(al))
-                .unwrap_or(AutoOr::Length(0.0)),
+        // Store unresolved AutoLength values. Resolution happens during layout.
+        let margin = UnresolvedAutoEdgeSizes {
+            top: s.margin_top.clone(),
+            right: s.margin_right.clone(),
+            bottom: s.margin_bottom.clone(),
+            left: s.margin_left.clone(),
         };
 
         // [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
         //
         // "If the padding property is not set, the padding is 0."
-        let padding = EdgeSizes {
-            top: s
-                .padding_top
-                .as_ref()
-                .map(|l| l.to_px() as f32)
-                .unwrap_or(0.0),
-            right: s
-                .padding_right
-                .as_ref()
-                .map(|l| l.to_px() as f32)
-                .unwrap_or(0.0),
-            bottom: s
-                .padding_bottom
-                .as_ref()
-                .map(|l| l.to_px() as f32)
-                .unwrap_or(0.0),
-            left: s
-                .padding_left
-                .as_ref()
-                .map(|l| l.to_px() as f32)
-                .unwrap_or(0.0),
+        //
+        // Store unresolved LengthValue values. Resolution happens during layout.
+        let padding = UnresolvedEdgeSizes {
+            top: s.padding_top.clone(),
+            right: s.padding_right.clone(),
+            bottom: s.padding_bottom.clone(),
+            left: s.padding_left.clone(),
         };
 
         // [§ 8.5 Border properties](https://www.w3.org/TR/CSS2/box.html#border-properties)
         //
         // "The initial value of border width is 'medium' (implementation-defined)."
-        // For simplicity, we use the border width from BorderValue if present.
-        let border_width = EdgeSizes {
-            top: s
-                .border_top
-                .as_ref()
-                .map(|b| b.width.to_px() as f32)
-                .unwrap_or(0.0),
-            right: s
-                .border_right
-                .as_ref()
-                .map(|b| b.width.to_px() as f32)
-                .unwrap_or(0.0),
-            bottom: s
-                .border_bottom
-                .as_ref()
-                .map(|b| b.width.to_px() as f32)
-                .unwrap_or(0.0),
-            left: s
-                .border_left
-                .as_ref()
-                .map(|b| b.width.to_px() as f32)
-                .unwrap_or(0.0),
+        //
+        // Extract the width LengthValue from BorderValue. Resolution happens during layout.
+        let border_width = UnresolvedEdgeSizes {
+            top: s.border_top.as_ref().map(|b| b.width.clone()),
+            right: s.border_right.as_ref().map(|b| b.width.clone()),
+            bottom: s.border_bottom.as_ref().map(|b| b.width.clone()),
+            left: s.border_left.as_ref().map(|b| b.width.clone()),
         };
 
-        // TODO: Extract explicit width/height from computed style when implemented
-        let width = AutoOr::Auto;
-        let height = AutoOr::Auto;
+        // [§ 10.2 Content width](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
+        //
+        // "This property specifies the content width of boxes."
+        // None means 'auto' - width is calculated during layout.
+        let width = s.width.clone();
+
+        // [§ 10.5 Content height](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+        //
+        // "This property specifies the content height of boxes."
+        // None means 'auto' - height depends on content.
+        let height = s.height.clone();
 
         (margin, padding, border_width, width, height)
     }
@@ -772,17 +849,24 @@ impl LayoutBox {
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
     ///
+    /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
+    ///
+    /// "The used value is the result of taking the computed value and
+    /// completing any remaining calculations to make it the absolute
+    /// theoretical value used in the layout of the document."
+    ///
     /// This method lays out this box and all its descendants.
-    pub fn layout(&mut self, containing_block: Rect) {
+    /// The viewport is needed to resolve viewport-relative units (vw, vh).
+    pub fn layout(&mut self, containing_block: Rect, viewport: Rect) {
         match self.display.outer {
-            OuterDisplayType::Block => self.layout_block(containing_block),
+            OuterDisplayType::Block => self.layout_block(containing_block, viewport),
             OuterDisplayType::Inline => {
                 // TODO: Inline layout requires line box construction
                 // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
                 //
                 // TEMPORARY: Fall back to block layout until inline is implemented.
                 // This is incorrect but allows the page to render.
-                self.layout_block(containing_block)
+                self.layout_block(containing_block, viewport)
             }
             OuterDisplayType::RunIn => {
                 // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
@@ -794,7 +878,7 @@ impl LayoutBox {
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
     ///
     /// Layout algorithm for block-level boxes in normal flow.
-    fn layout_block(&mut self, containing_block: Rect) {
+    fn layout_block(&mut self, containing_block: Rect, viewport: Rect) {
         // STEP 1: Calculate width
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
         //
@@ -806,21 +890,21 @@ impl LayoutBox {
         // = width of containing block"
         //
         // For now, we use the full containing block width (auto width behavior).
-        self.calculate_block_width(containing_block);
+        self.calculate_block_width(containing_block, viewport);
 
         // STEP 2: Calculate horizontal position
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "Each box's left outer edge touches the left edge of the
         // containing block (for right-to-left formatting, right edges touch)."
-        self.calculate_block_position(containing_block);
+        self.calculate_block_position(containing_block, viewport);
 
         // STEP 3: Layout children
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the
         // other, vertically, beginning at the top of a containing block."
-        self.layout_block_children();
+        self.layout_block_children(viewport);
 
         // STEP 4: Calculate height
         // [§ 10.6.3 Block-level non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
@@ -833,13 +917,13 @@ impl LayoutBox {
         // formatting context... or the bottom edge of the bottom margin of
         // its last in-flow child, if the child's bottom margin does not
         // collapse with the element's bottom margin"
-        self.calculate_block_height();
+        self.calculate_block_height(viewport);
     }
 
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
     ///
     /// Calculate the width of a block-level box.
-    fn calculate_block_width(&mut self, containing_block: Rect) {
+    fn calculate_block_width(&mut self, containing_block: Rect, viewport: Rect) {
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
         //
         // "The following constraints must hold among the used values of the
@@ -849,17 +933,33 @@ impl LayoutBox {
         //   'padding-right' + 'border-right-width' + 'margin-right'
         //   = width of containing block"
 
-        // STEP 1-4: Read the style values.
-        // Border and padding cannot be 'auto', only margins and width can.
-        let padding_left = self.padding.left;
-        let padding_right = self.padding.right;
-        let border_left = self.border_width.left;
-        let border_right = self.border_width.right;
-        let mut margin_left = self.margin.left;
-        let mut margin_right = self.margin.right;
-        let width = self.width;
+        // STEP 1: Resolve computed values to used values.
+        // [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
+        //
+        // "The used value is the result of taking the computed value and
+        // completing any remaining calculations to make it the absolute
+        // theoretical value used in the layout of the document."
+        //
+        // Viewport units (vw, vh) are resolved here using the viewport dimensions.
+        let resolved_padding = self.padding.resolve(viewport);
+        let resolved_border = self.border_width.resolve(viewport);
+        let resolved_margin = self.margin.resolve(viewport);
 
-        // STEP 5: Handle over-constrained case
+        // STEP 2: Read the resolved values.
+        // Border and padding cannot be 'auto', only margins and width can.
+        let padding_left = resolved_padding.left;
+        let padding_right = resolved_padding.right;
+        let border_left = resolved_border.left;
+        let border_right = resolved_border.right;
+        let mut margin_left = resolved_margin.left;
+        let mut margin_right = resolved_margin.right;
+
+        // Resolve width: None means 'auto'
+        let width = self.width.as_ref().map_or(AutoOr::Auto, |al| {
+            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport)
+        });
+
+        // STEP 3: Handle over-constrained case
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
         //
         // "If 'width' is not 'auto' and 'border-left-width' + 'padding-left' +
@@ -887,7 +987,7 @@ impl LayoutBox {
             }
         }
 
-        // STEP 6: Apply the constraint rules to calculate used values.
+        // STEP 4: Apply the constraint rules to calculate used values.
         let used_width: f32;
         let used_margin_left: f32;
         let used_margin_right: f32;
@@ -961,10 +1061,11 @@ impl LayoutBox {
                 - padding_right;
         }
 
-        // STEP 7: Store the used values in self.dimensions
+        // STEP 5: Store the used values in self.dimensions
         self.dimensions.content.width = used_width;
         self.dimensions.margin.left = used_margin_left;
         self.dimensions.margin.right = used_margin_right;
+
         self.dimensions.padding.left = padding_left;
         self.dimensions.padding.right = padding_right;
         self.dimensions.border.left = border_left;
@@ -977,7 +1078,7 @@ impl LayoutBox {
     ///
     /// "Each box's left outer edge touches the left edge of the containing block
     /// (for right-to-left formatting, right edges touch)."
-    fn calculate_block_position(&mut self, containing_block: Rect) {
+    fn calculate_block_position(&mut self, containing_block: Rect, viewport: Rect) {
         // [§ 8.1 Box dimensions](https://www.w3.org/TR/CSS2/box.html#box-dimensions)
         //
         // The position we store is the content box position. The content box
@@ -1015,15 +1116,21 @@ impl LayoutBox {
             + self.dimensions.border.left
             + self.dimensions.padding.left;
 
-        // STEP 2: Store the vertical box model values.
+        // STEP 2: Resolve and store the vertical box model values.
+        // [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
+        //
         // (We only stored horizontal values in calculate_block_width)
         // Must be done before calculating y position.
-        self.dimensions.margin.top = self.margin.top.to_px_or(0.0);
-        self.dimensions.margin.bottom = self.margin.bottom.to_px_or(0.0);
-        self.dimensions.border.top = self.border_width.top;
-        self.dimensions.border.bottom = self.border_width.bottom;
-        self.dimensions.padding.top = self.padding.top;
-        self.dimensions.padding.bottom = self.padding.bottom;
+        let resolved_padding = self.padding.resolve(viewport);
+        let resolved_border = self.border_width.resolve(viewport);
+        let resolved_margin = self.margin.resolve(viewport);
+
+        self.dimensions.margin.top = resolved_margin.top.to_px_or(0.0);
+        self.dimensions.margin.bottom = resolved_margin.bottom.to_px_or(0.0);
+        self.dimensions.border.top = resolved_border.top;
+        self.dimensions.border.bottom = resolved_border.bottom;
+        self.dimensions.padding.top = resolved_padding.top;
+        self.dimensions.padding.bottom = resolved_padding.bottom;
 
         // STEP 3: Calculate the y position of the content box.
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -1047,7 +1154,7 @@ impl LayoutBox {
     ///
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
-    fn layout_block_children(&mut self) {
+    fn layout_block_children(&mut self, viewport: Rect) {
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the other,
@@ -1079,7 +1186,7 @@ impl LayoutBox {
         // STEP 3: Layout each child.
         // For each child box:
         //   a. Create a containing block rect with current_y as the y position
-        //   b. Call child.layout(containing_block) to layout the child
+        //   b. Call child.layout(containing_block, viewport) to layout the child
         //   c. The child will calculate its own width, position, and height
         //
         // Note: We iterate over `self.children` but need mutable access to each child.
@@ -1092,8 +1199,8 @@ impl LayoutBox {
                 height: f32::MAX, // Height is unconstrained for normal flow
             };
 
-            // b. Layout the child
-            child.layout(child_containing_block);
+            // b. Layout the child (viewport is passed through for resolving vw/vh)
+            child.layout(child_containing_block, viewport);
 
             // STEP 4: Advance the Y position.
             // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -1125,20 +1232,64 @@ impl LayoutBox {
     ///
     /// "If 'height' is 'auto', the height depends on whether the element has
     /// any block-level children and whether it has padding or borders."
-    fn calculate_block_height(&mut self) {
+    fn calculate_block_height(&mut self, viewport: Rect) {
         // STEP 1: Check if height is explicitly specified.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
         // "If 'height' is not 'auto', then the used value is the specified
         // value."
         //
-        // If height is a length (not auto), use that value directly.
-        if let AutoOr::Length(h) = self.height {
-            self.dimensions.content.height = h;
+        // If height is a length (not auto), resolve it and use that value directly.
+        if let Some(AutoLength::Length(l)) = &self.height {
+            // [§ 6.1.1 Specified, computed, and actual values](https://www.w3.org/TR/CSS2/cascade.html#value-stages)
+            //
+            // Resolve the computed value to a used value using the viewport.
+            self.dimensions.content.height =
+                l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32;
             return;
         }
 
-        // STEP 2: Calculate 'auto' height from children.
+        // STEP 2: Handle anonymous inline boxes (text content).
+        // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
+        //
+        // "Any text that is directly contained inside a block container element
+        // (not inside an inline element) must be treated as an anonymous inline
+        // element."
+        //
+        // [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
+        //
+        // "For inline boxes, this [contribution to line box height] is their
+        // 'line-height'."
+        //
+        // "The height of the inline box encloses all glyphs and their half-leading
+        // on each side and is thus exactly 'line-height'."
+        if let BoxType::AnonymousInline(ref text) = self.box_type {
+            if !text.trim().is_empty() {
+                // [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
+                //
+                // "The 'line-height' property specifies the minimal height of line boxes
+                // within the element."
+                //
+                // The default value for 'line-height' is 'normal', which the spec says:
+                // "Tells user agents to set the used value to a 'reasonable' value based
+                // on the font of the element. The value has the same meaning as <number>.
+                // We recommend a used value for 'normal' between 1.0 to 1.2."
+                //
+                // Using 1.2 * default font size (16px) = 19.2px, rounded to 20px.
+                // Adding 4px line spacing for readability.
+                const DEFAULT_LINE_HEIGHT: f32 = 24.0;
+
+                // Count lines in text content.
+                // NOTE: This is a simplification. Proper implementation would wrap
+                // text based on available width and font metrics.
+                let line_count = text.lines().count().max(1);
+
+                self.dimensions.content.height = (line_count as f32) * DEFAULT_LINE_HEIGHT;
+                return;
+            }
+        }
+
+        // STEP 3: Calculate 'auto' height from children.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
         // "If 'height' is 'auto', the height depends on whether the element
@@ -1147,7 +1298,10 @@ impl LayoutBox {
         // For a block formatting context:
         // "the bottom edge of the bottom (possibly collapsed) margin of its
         // last in-flow child"
-        // NOTE: Margin collapsing is not yet implemented so we follow the simplified approach below:
+        //
+        // NOTE: Margin collapsing is not yet implemented so we follow the
+        // simplified approach below:
+        //
         // Simplified (no margin collapsing): Sum the margin box heights of
         // all children:
         //   auto_height = self.children.iter()
