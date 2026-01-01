@@ -114,10 +114,11 @@ Focus on what you're working on *now*. Don't try to implement everything in one 
 ```
 koala/
 ├── crates/
+│   ├── koala-common/     # Shared utilities (warnings, error types)
 │   ├── koala-dom/        # Arena-based DOM tree with parent/sibling links
 │   ├── koala-html/       # HTML tokenizer and parser (WHATWG spec)
 │   ├── koala-css/        # CSS tokenizer, parser, selector, cascade
-│   └── koala-core/       # Shared browser API
+│   └── koala-browser/    # High-level browser API
 ├── koala-cli/            # CLI tool for parsing/debugging
 ├── koala-gui/            # egui-based GUI browser
 └── res/                  # Test HTML files
@@ -125,14 +126,15 @@ koala/
 
 **Crate Dependencies:**
 ```
+koala-common       (no deps - shared utilities)
 koala-dom          (no deps)
     ↑
 koala-html         (depends on koala-dom)
-koala-css          (depends on koala-dom)
+koala-css          (depends on koala-common, koala-dom)
     ↑
-koala-core         (depends on koala-dom, koala-html, koala-css)
+koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css)
     ↑
-koala-cli/koala-gui
+koala-cli/koala-gui (depends on koala-common, koala-browser, etc.)
 ```
 
 **Data Flow:**
