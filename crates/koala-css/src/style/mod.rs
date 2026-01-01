@@ -286,6 +286,9 @@ impl ComputedStyle {
             "border" => {
                 self.apply_border_shorthand(&decl.value);
             }
+            "background" => {
+                self.apply_background_shorthand(&decl.value);
+            }
             unknown => {
                 warn_once("CSS", &format!("unknown property '{unknown}'"));
             }
@@ -293,37 +296,41 @@ impl ComputedStyle {
     }
 
     /// [§ 6.3 Margins](https://www.w3.org/TR/css-box-4/#margins)
-    /// The margin shorthand sets margin-top, margin-right, margin-bottom, margin-left.
+    ///
+    /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS21/box.html#margin-properties)
+    /// "The 'margin' property is a shorthand property for setting 'margin-top',
+    /// 'margin-right', 'margin-bottom', and 'margin-left' at the same place in
+    /// the style sheet."
     fn apply_margin_shorthand(&mut self, values: &[ComponentValue]) {
-        let lengths: Vec<LengthValue> = values
-            .iter()
-            .filter_map(parse_single_length)
-            .collect();
+        let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
 
         match lengths.len() {
+            // "If there is only one component value, it applies to all sides."
             1 => {
-                // All sides same
                 self.margin_top = Some(lengths[0].clone());
                 self.margin_right = Some(lengths[0].clone());
                 self.margin_bottom = Some(lengths[0].clone());
                 self.margin_left = Some(lengths[0].clone());
             }
+            // "If there are two values, the top and bottom margins are set to the
+            // first value and the right and left margins are set to the second."
             2 => {
-                // vertical | horizontal
                 self.margin_top = Some(lengths[0].clone());
                 self.margin_bottom = Some(lengths[0].clone());
                 self.margin_right = Some(lengths[1].clone());
                 self.margin_left = Some(lengths[1].clone());
             }
+            // "If there are three values, the top is set to the first value, the
+            // left and right are set to the second, and the bottom is set to the third."
             3 => {
-                // top | horizontal | bottom
                 self.margin_top = Some(lengths[0].clone());
                 self.margin_right = Some(lengths[1].clone());
                 self.margin_left = Some(lengths[1].clone());
                 self.margin_bottom = Some(lengths[2].clone());
             }
+            // "If there are four values, they apply to the top, right, bottom, and
+            // left, respectively."
             4 => {
-                // top | right | bottom | left
                 self.margin_top = Some(lengths[0].clone());
                 self.margin_right = Some(lengths[1].clone());
                 self.margin_bottom = Some(lengths[2].clone());
@@ -335,10 +342,7 @@ impl ComputedStyle {
 
     /// [§ 6.2 Padding](https://www.w3.org/TR/css-box-4/#paddings)
     fn apply_padding_shorthand(&mut self, values: &[ComponentValue]) {
-        let lengths: Vec<LengthValue> = values
-            .iter()
-            .filter_map(parse_single_length)
-            .collect();
+        let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
 
         match lengths.len() {
             1 => {
@@ -426,6 +430,19 @@ impl ComputedStyle {
             self.border_left = Some(border);
         }
     }
+    /// [§ 3.10 Background](https://www.w3.org/TR/css-backgrounds-3/#background)
+    ///
+    /// "The 'background' property is a shorthand property for setting most
+    /// background properties at the same place in the style sheet."
+    ///
+    /// TODO: Currently only handles background-color. Full shorthand supports:
+    /// background-image, background-position, background-size, background-repeat,
+    /// background-attachment, background-origin, background-clip
+    fn apply_background_shorthand(&mut self, values: &[ComponentValue]) {
+        if let Some(color) = parse_color_value(values) {
+            self.background_color = Some(color);
+        }
+    }
 }
 
 /// [§ 4.2 RGB hex notation](https://www.w3.org/TR/css-color-4/#hex-notation)
@@ -467,7 +484,10 @@ fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
             if unit.eq_ignore_ascii_case("px") {
                 Some(LengthValue::Px(*value))
             } else {
-                warn_once("CSS", &format!("unsupported unit '{unit}' in value {value}{unit}"));
+                warn_once(
+                    "CSS",
+                    &format!("unsupported unit '{unit}' in value {value}{unit}"),
+                );
                 None
             }
         }
@@ -526,36 +546,78 @@ mod tests {
     #[test]
     fn test_color_from_hex_6() {
         let color = ColorValue::from_hex("#ff0000").unwrap();
-        assert_eq!(color, ColorValue { r: 255, g: 0, b: 0, a: 255 });
+        assert_eq!(
+            color,
+            ColorValue {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
     }
 
     #[test]
     fn test_color_from_hex_3() {
         let color = ColorValue::from_hex("#f00").unwrap();
-        assert_eq!(color, ColorValue { r: 255, g: 0, b: 0, a: 255 });
+        assert_eq!(
+            color,
+            ColorValue {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
     }
 
     #[test]
     fn test_color_from_hex_mixed_case() {
         let color = ColorValue::from_hex("#FfA500").unwrap();
-        assert_eq!(color, ColorValue { r: 255, g: 165, b: 0, a: 255 });
+        assert_eq!(
+            color,
+            ColorValue {
+                r: 255,
+                g: 165,
+                b: 0,
+                a: 255
+            }
+        );
     }
 
     #[test]
     fn test_color_from_hex_without_hash() {
         let color = ColorValue::from_hex("00ff00").unwrap();
-        assert_eq!(color, ColorValue { r: 0, g: 255, b: 0, a: 255 });
+        assert_eq!(
+            color,
+            ColorValue {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255
+            }
+        );
     }
 
     #[test]
     fn test_color_from_named() {
         assert_eq!(
             ColorValue::from_named("white"),
-            Some(ColorValue { r: 255, g: 255, b: 255, a: 255 })
+            Some(ColorValue {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255
+            })
         );
         assert_eq!(
             ColorValue::from_named("BLACK"),
-            Some(ColorValue { r: 0, g: 0, b: 0, a: 255 })
+            Some(ColorValue {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255
+            })
         );
         assert_eq!(ColorValue::from_named("unknown"), None);
     }
