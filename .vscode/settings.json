@@ -21,7 +21,25 @@
         }
       ]
     },
-    "(//\\s*\"[^\"]*\")" : {
+    "(///?\\s*(?:\\d+\\.?\\s+|[-*]\\s+)?\".*\")" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#6BCDFF",
+          "fontStyle": "italic"
+        }
+      ]
+    },
+    "(///?\\s*(?:\\d+\\.?\\s+|[-*]\\s+)?\"[^\"]*$)" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#6BCDFF",
+          "fontStyle": "italic"
+        }
+      ]
+    },
+    "(///?\\s+[^\"]*\"$)" : {
       "filterLanguageRegex": "rust",
       "decorations": [
         {
@@ -36,6 +54,16 @@
         {
           "color": "#BD93F9",
           "backgroundColor": "rgba(189, 147, 249, 0.1)",
+          "isWholeLine": true
+        }
+      ]
+    },
+    "(//!.*)" : {
+      "filterLanguageRegex": "rust",
+      "decorations": [
+        {
+          "color": "#50FA7B",
+          "backgroundColor": "rgba(80, 250, 123, 0.08)",
           "isWholeLine": true
         }
       ]
