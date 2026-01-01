@@ -165,6 +165,9 @@ struct PageState {
     /// Layout tree with computed box dimensions
     layout_tree: Option<LayoutBox>,
 
+    /// Last viewport size used for layout (to detect when relayout is needed)
+    last_layout_viewport: Option<(f32, f32)>,
+
     /// Any parse errors/warnings
     parse_issues: Vec<String>,
 }
@@ -289,18 +292,11 @@ impl BrowserApp {
         // "The position and size of an element's box(es) are sometimes computed
         // relative to a certain rectangle, called the containing block of the element."
         //
-        // For the initial containing block, we use a default viewport size.
-        // TODO: Get actual viewport size from egui context
-        let mut layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());
-        if let Some(ref mut root) = layout_tree {
-            let initial_containing_block = Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 800.0,  // Default viewport width
-                height: 600.0, // Default viewport height
-            };
-            root.layout(initial_containing_block);
-            println!("[Koala GUI] Layout computed successfully");
+        // Layout computation is deferred until rendering, when we have access to
+        // the actual viewport size from egui.
+        let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());
+        if layout_tree.is_some() {
+            println!("[Koala GUI] Layout tree built (layout pending)");
         }
 
         Ok(PageState {
@@ -311,6 +307,7 @@ impl BrowserApp {
             css_text,
             styles,
             layout_tree,
+            last_layout_viewport: None, // Will be set on first render
             parse_issues,
         })
     }
@@ -584,7 +581,36 @@ impl eframe::App for BrowserApp {
         let _ = egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::same(0.0)))
             .show(ctx, |ui| {
-                if let Some(page) = &self.page {
+                if self.page.is_some() {
+                    // Get actual viewport size from egui
+                    // [§ 9.1.1 The viewport](https://www.w3.org/TR/CSS2/visuren.html#viewport)
+                    let available = ui.available_size();
+                    let viewport_size = (available.x, available.y);
+
+                    // Recompute layout if viewport changed (mutable borrow scope)
+                    {
+                        let page = self.page.as_mut().unwrap();
+                        if page.last_layout_viewport != Some(viewport_size) {
+                            if let Some(ref mut root) = page.layout_tree {
+                                let initial_containing_block = Rect {
+                                    x: 0.0,
+                                    y: 0.0,
+                                    width: viewport_size.0,
+                                    height: viewport_size.1,
+                                };
+                                root.layout(initial_containing_block);
+                                page.last_layout_viewport = Some(viewport_size);
+                                println!(
+                                    "[Koala GUI] Layout computed for viewport {}x{}",
+                                    viewport_size.0 as u32, viewport_size.1 as u32
+                                );
+                            }
+                        }
+                    }
+
+                    // Now borrow immutably for rendering
+                    let page = self.page.as_ref().unwrap();
+
                     // Page content
                     // [§ 2.11.2 The Canvas Background](https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds)
                     let fill_color = canvas_background(&page.dom, &page.styles)
