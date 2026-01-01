@@ -290,6 +290,11 @@ impl BoxDimensions {
                 + self.border.bottom,
         }
     }
+    /// [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
+    /// "The content box contains the actual content of the element."
+    pub fn content_box(&self) -> Rect {
+        self.content
+    }
 }
 
 // [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -1007,18 +1012,82 @@ impl LayoutBox {
             + self.dimensions.padding.top;
     }
 
-    /// [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
     ///
     /// Layout children in a block formatting context.
     ///
-    /// "The vertical distance between two sibling boxes is determined by the
-    /// 'margin' properties. Vertical margins between adjacent block-level
-    /// boxes in a block formatting context collapse."
+    /// "In a block formatting context, boxes are laid out one after the other,
+    /// vertically, beginning at the top of a containing block."
     fn layout_block_children(&mut self) {
-        // TODO: Iterate over children, laying out each one
-        // Track current_y position, advancing by each child's margin box height
-        // Pass our content box as the containing block for children
-        todo!("Layout block children")
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // "In a block formatting context, boxes are laid out one after the other,
+        // vertically, beginning at the top of a containing block. The vertical
+        // distance between two sibling boxes is determined by the 'margin'
+        // properties. Vertical margins between adjacent block-level boxes in a
+        // block formatting context collapse."
+
+        // STEP 1: Determine the containing block for children.
+        // [§ 10.1 Definition of containing block](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+        //
+        // "For other elements, if the element's position is 'relative' or 'static',
+        // the containing block is formed by the content edge of the nearest
+        // block container ancestor box."
+        //
+        // Our content box becomes the containing block for our children.
+        // Children will be positioned relative to our content area.
+        let content_box = self.dimensions.content_box();
+
+        // STEP 2: Initialize the current Y position.
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // "...boxes are laid out one after the other, vertically, beginning at
+        // the top of a containing block."
+        //
+        // Start at the top of our content box (y = 0 relative to content area,
+        // but we pass absolute coordinates to children).
+        let mut current_y = content_box.y;
+        // STEP 3: Layout each child.
+        // For each child box:
+        //   a. Create a containing block rect with current_y as the y position
+        //   b. Call child.layout(containing_block) to layout the child
+        //   c. The child will calculate its own width, position, and height
+        //
+        // Note: We iterate over `self.children` but need mutable access to each child.
+        for child in &mut self.children {
+            // a. Create containing block for child
+            let child_containing_block = Rect {
+                x: content_box.x,
+                y: current_y,
+                width: content_box.width,
+                height: f32::MAX, // Height is unconstrained for normal flow
+            };
+
+            // b. Layout the child
+            child.layout(child_containing_block);
+
+            // STEP 4: Advance the Y position.
+            // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+            //
+            // "The vertical distance between two sibling boxes is determined by the
+            // 'margin' properties."
+            //
+            // After laying out each child, advance current_y by the child's margin
+            // box height:
+            //   current_y += child.dimensions.margin_box().height
+            //
+            // This positions the next sibling below the current one.
+            current_y += child.dimensions.margin_box().height;
+        }
+
+        // STEP 5: Handle margin collapsing (NOT YET IMPLEMENTED).
+        // [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+        //
+        // "In CSS, the adjoining margins of two or more boxes can combine to
+        // form a single margin. Margins that combine this way are said to collapse."
+        //
+        // NOTE: Margin collapsing is complex and not implemented yet.
+        // For now, we simply stack boxes without collapsing.
     }
 
     /// [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
