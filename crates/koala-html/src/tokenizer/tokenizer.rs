@@ -1838,6 +1838,35 @@ impl HTMLTokenizer {
             }
         }
     }
+    fn handle_numeric_character_reference_state(&mut self) {
+        // Consume the next input character:
+        match self.current_input_character {
+            // ASCII alphanumeric
+            // If the character reference was consumed as part of an attribute, then append the current input character to the current attribute's value. Otherwise, emit the current input character as a character token.
+            Some(c) if c.is_ascii_alphanumeric() => {
+                if self.is_consumed_as_part_of_attribute() {
+                    if let Some(ref mut token) = self.current_token {
+                        token.append_to_current_attribute_value(c);
+                    }
+                } else {
+                    self.emit_character_token(c);
+                }
+            }
+            // U+003B SEMICOLON (;)
+            // This is an unknown-named-character-reference parse error. Reconsume in the return state.
+            Some(';') => {
+                self.log_parse_error();
+                let return_state = self.return_state.take().unwrap();
+                self.reconsume_in(return_state);
+            }
+            // Anything else
+            // Reconsume in the return state.
+            _ => {
+                let return_state = self.return_state.take().unwrap();
+                self.reconsume_in(return_state);
+            }
+        }
+    }
 
     /// Run the tokenizer to completion.
     ///
@@ -2465,7 +2494,7 @@ impl HTMLTokenizer {
                 //   - "X" or "x": switch to HexadecimalCharacterReferenceStart
                 //   - Anything else: reconsume in DecimalCharacterReferenceStart
                 TokenizerState::NumericCharacterReference => {
-                    todo!("NumericCharacterReference state - see STEP 8")
+                    self.handle_numeric_character_reference_state()
                 }
 
                 // STEP 9: Hexadecimal start - expect hex digits after "&#x"
