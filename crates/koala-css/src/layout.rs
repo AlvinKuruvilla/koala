@@ -436,6 +436,41 @@ impl BlockFormattingContext {
     /// "The vertical distance between two sibling boxes is determined by
     /// the 'margin' properties. Vertical margins between adjacent block-level
     /// boxes in a block formatting context collapse."
+    ///
+    /// TODO: Implement block box layout algorithm:
+    ///
+    /// STEP 1: Calculate the used width of the block
+    ///   [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+    ///   "The following constraints must hold among the used values of the other properties:"
+    ///   'margin-left' + 'border-left-width' + 'padding-left' + 'width' +
+    ///   'padding-right' + 'border-right-width' + 'margin-right' = width of containing block
+    ///
+    ///   // If width is not 'auto' and total > containing_width, treat auto margins as 0
+    ///   // If exactly one value is 'auto', solve for that value
+    ///   // If width is 'auto', any other 'auto' values become 0, width fills remaining
+    ///   // If no 'auto' values, margin-right becomes 'auto' (overconstrained)
+    ///
+    /// STEP 2: Determine the horizontal position
+    ///   // box.x = containing_block.x + margin_left + border_left + padding_left
+    ///
+    /// STEP 3: Determine the vertical position
+    ///   // box.y = self.current_y + margin_top (after collapsing)
+    ///   // See margin collapsing rules in § 8.3.1
+    ///
+    /// STEP 4: Layout child boxes recursively
+    ///   // For block children: create new BFC or use current
+    ///   // For inline children: create IFC, layout inline content
+    ///   // Track the height consumed by children
+    ///
+    /// STEP 5: Calculate the used height
+    ///   [§ 10.6.3 Block-level non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+    ///   // If 'height' is 'auto': height = distance from top content edge to bottom of last child
+    ///   // If 'height' is a length: use that value
+    ///   // If 'height' is a percentage and containing block height is definite: compute percentage
+    ///
+    /// STEP 6: Update BFC state for next sibling
+    ///   // self.current_y += box.margin_box().height
+    ///   // Handle margin collapsing with next sibling
     pub fn layout_block_box(&mut self, _box_dims: &mut BoxDimensions) {
         todo!("Layout a block-level box in block formatting context")
     }
