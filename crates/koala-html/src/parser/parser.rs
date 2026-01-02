@@ -1620,6 +1620,33 @@ impl HTMLParser {
                 let _ = self.insert_html_element(token);
             }
 
+            // [§ 13.2.6.4.7 "in body" - Start tags "pre", "listing"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "A start tag whose tag name is one of: "pre", "listing""
+            Token::StartTag { name, .. } if matches!(name.as_str(), "pre" | "listing") => {
+                // STEP 1: Close any p element in button scope.
+                // "If the stack of open elements has a p element in button scope, then close a p element."
+                self.close_element_if_in_scope("p");
+
+                // STEP 2: Insert the element.
+                // "Insert an HTML element for the token."
+                let _ = self.insert_html_element(token);
+
+                // STEP 3: Skip leading newline.
+                // "If the next token is a U+000A LINE FEED (LF) character token, then ignore that
+                //  token and move on to the next one. (Newlines at the start of pre blocks are
+                //  ignored as an authoring convenience.)"
+                //
+                // NOTE: This requires peeking at the next token, which our current architecture
+                // doesn't support. The tokenizer would need to expose a peek method, or we'd need
+                // to track state to skip the next LF in process_token.
+                // TODO: Implement LF skipping for pre/listing start tags
+
+                // STEP 4: Set frameset-ok flag.
+                // "Set the frameset-ok flag to "not ok"."
+                // TODO: self.frameset_ok = false;
+            }
+
             // [§ 13.2.6.4.7 "in body" - Start tag h1-h6](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             // "A start tag whose tag name is one of: "h1", "h2", "h3", "h4", "h5", "h6""
             // "If the stack of open elements has a p element in button scope, then close a p element."
