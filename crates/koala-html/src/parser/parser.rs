@@ -2220,6 +2220,25 @@ impl HTMLParser {
                 // Otherwise: parse error, ignore the token (stray end tag)
             }
 
+            // [§ 13.2.6.4.7 "in body" - End tags "svg", "math"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // These are foreign content elements. End tags fall under "Any other end tag" rules:
+            // [§ 13.2.6.4.7 Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // 1. "Initialize node to be the current node (the bottommost node of the stack)."
+            // 2. "Loop: If node is an HTML element with the same tag name as the token, then:"
+            //    a. "Generate implied end tags, except for HTML elements with the same tag name."
+            //    b. "If node is not the current node, then this is a parse error."
+            //    c. "Pop all the nodes from the current node up to node, including node, then stop."
+            // 3. "Otherwise, if node is in the special category, parse error; ignore the token."
+            // 4. "Set node to the previous entry in the stack of open elements."
+            // 5. "Return to the step labeled loop."
+            Token::EndTag { name, .. } if matches!(name.as_str(), "svg" | "math") => {
+                if self.has_element_in_scope(name) {
+                    self.pop_until_tag(name);
+                }
+                // Otherwise: parse error, ignore the token
+            }
+
             // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             //
             // For formatting elements, the spec uses the Adoption Agency Algorithm:
