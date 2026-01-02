@@ -126,7 +126,24 @@ pub enum LengthValue {
     /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
     /// "1vh = 1% of viewport height"
     Vh(f64),
-    // TODO: Rem, Percent for future work
+    // TODO: Implement additional length units:
+    //
+    // STEP 1: Add rem unit
+    // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    // "Equal to the computed value of the font-size property of the root element."
+    // Rem(f64),
+    //
+    // STEP 2: Add percentage values
+    // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
+    // "A <percentage> value is denoted by <percentage>, and consists of a <number>
+    // immediately followed by a percent sign '%'."
+    // Percent(f64),
+    //
+    // STEP 3: Add calc() function support
+    // [§ 8.1 calc()](https://www.w3.org/TR/css-values-4/#calc-notation)
+    // "The calc() function allows mathematical expressions with addition (+),
+    // subtraction (-), multiplication (*), division (/), and parentheses."
+    // Calc(Box<CalcExpr>),
 }
 
 impl LengthValue {
@@ -327,7 +344,21 @@ impl ColorValue {
                 b: 0,
                 a: 0,
             }),
-            // TODO: Add more named colors as needed
+            // TODO: Implement full CSS named color list
+            // [§ 6.1 Named Colors](https://www.w3.org/TR/css-color-4/#named-colors)
+            //
+            // STEP 1: Add basic color keywords (16 HTML colors)
+            //   aqua, fuchsia, lime, maroon, navy, olive, purple, silver, teal
+            //
+            // STEP 2: Add extended color keywords (X11 colors, ~140 total)
+            //   [§ 6.1](https://www.w3.org/TR/css-color-4/#named-colors)
+            //   aliceblue, antiquewhite, aquamarine, azure, beige, bisque, ...
+            //
+            // STEP 3: Add system colors
+            //   [§ 6.2 System Colors](https://www.w3.org/TR/css-color-4/#css-system-colors)
+            //   Canvas, CanvasText, LinkText, VisitedText, ActiveText, ...
+            //
+            // Consider: Generate from a build script or use a lookup table
             _ => None,
         }
     }
@@ -778,7 +809,33 @@ fn parse_single_color(v: &ComponentValue) -> Option<ColorValue> {
     match v {
         ComponentValue::Token(CSSToken::Hash { value, .. }) => ColorValue::from_hex(value),
         ComponentValue::Token(CSSToken::Ident(name)) => ColorValue::from_named(name),
-        // TODO: rgb(), rgba(), hsl() functions
+        // TODO: Implement color functions
+        // [§ 4 Representing Colors](https://www.w3.org/TR/css-color-4/#color-functions)
+        //
+        // STEP 1: Parse rgb() and rgba() functions
+        // [§ 4.1 The RGB functions](https://www.w3.org/TR/css-color-4/#funcdef-rgb)
+        // "rgb() = rgb( <percentage>{3} [ / <alpha-value> ]? ) |
+        //          rgb( <number>{3} [ / <alpha-value> ]? )"
+        // Examples: rgb(255, 0, 0), rgb(100% 0% 0%), rgb(255 0 0 / 50%)
+        //
+        // ComponentValue::Function { name, value } if name == "rgb" || name == "rgba" => {
+        //     parse_rgb_function(value)
+        // }
+        //
+        // STEP 2: Parse hsl() and hsla() functions
+        // [§ 4.2 The HSL functions](https://www.w3.org/TR/css-color-4/#funcdef-hsl)
+        // "hsl() = hsl( <hue> <percentage> <percentage> [ / <alpha-value> ]? )"
+        // Examples: hsl(120, 100%, 50%), hsl(120deg 100% 50%)
+        //
+        // ComponentValue::Function { name, value } if name == "hsl" || name == "hsla" => {
+        //     parse_hsl_function(value)
+        // }
+        //
+        // STEP 3: Parse hwb() function
+        // [§ 4.3 The HWB functions](https://www.w3.org/TR/css-color-4/#funcdef-hwb)
+        //
+        // STEP 4: Parse lab(), lch(), oklch() functions (future)
+        // [§ 4.4-4.7](https://www.w3.org/TR/css-color-4/#lab-colors)
         _ => None,
     }
 }

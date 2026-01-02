@@ -462,6 +462,29 @@ impl InlineFormattingContext {
     /// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
     /// "Horizontal margins, borders, and padding are respected between
     /// inline boxes."
+    ///
+    /// TODO: Implement inline box layout:
+    ///
+    /// STEP 1: Calculate the inline box's content width
+    ///   - For text: measure text width using font metrics
+    ///   - For replaced elements (img): use intrinsic width
+    ///
+    /// STEP 2: Add horizontal margin, border, padding
+    ///   // inline_box_width = margin_left + border_left + padding_left
+    ///   //                  + content_width
+    ///   //                  + padding_right + border_right + margin_right
+    ///
+    /// STEP 3: Check if box fits on current line
+    ///   // if current_x + inline_box_width > line_box_width {
+    ///   //     self.wrap_line();
+    ///   // }
+    ///
+    /// STEP 4: Position box horizontally
+    ///   // box.x = self.current_x;
+    ///   // self.current_x += inline_box_width;
+    ///
+    /// STEP 5: Calculate vertical alignment within line box
+    ///   // Based on vertical-align property (baseline, top, middle, etc.)
     pub fn layout_inline_box(&mut self, _box_dims: &mut BoxDimensions) {
         todo!("Layout an inline-level box in inline formatting context")
     }
@@ -471,6 +494,23 @@ impl InlineFormattingContext {
     /// than the width of the line box containing them, their horizontal
     /// distribution within the line box is determined by the 'text-align'
     /// property."
+    ///
+    /// TODO: Implement line wrapping:
+    ///
+    /// STEP 1: Finalize current line box
+    ///   // Calculate line box height from tallest inline box
+    ///   // Apply text-align for horizontal distribution
+    ///   // self.line_boxes.push(current_line);
+    ///
+    /// STEP 2: Start new line
+    ///   // self.current_x = 0;
+    ///   // self.current_y += line_box_height;
+    ///   // self.current_line = Vec::new();
+    ///
+    /// STEP 3: Handle word breaking
+    ///   // [§ 5.5.1 Line Breaking](https://www.w3.org/TR/css-text-3/#line-breaking)
+    ///   // Check for soft wrap opportunities (whitespace, hyphens)
+    ///   // Handle overflow-wrap: break-word
     pub fn wrap_line(&mut self) {
         todo!("Wrap to next line when inline content exceeds max_width")
     }
@@ -861,11 +901,37 @@ impl LayoutBox {
         match self.display.outer {
             OuterDisplayType::Block => self.layout_block(containing_block, viewport),
             OuterDisplayType::Inline => {
-                // TODO: Inline layout requires line box construction
+                // TODO: Implement proper inline layout with line box construction
                 // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
                 //
+                // Proper inline layout requires:
+                //
+                // STEP 1: Create or get parent's InlineFormattingContext
+                //   // let ifc = parent.get_or_create_ifc();
+                //
+                // STEP 2: Add this inline box to the line
+                //   // ifc.add_inline_box(self);
+                //   // This may trigger line wrapping if box doesn't fit
+                //
+                // STEP 3: For inline boxes with children, recursively add children
+                //   // for child in self.children {
+                //   //     match child.display.outer {
+                //   //         Inline => ifc.add_inline_box(child),
+                //   //         Block => {
+                //   //             // Breaks the line, starts block formatting
+                //   //             ifc.break_line();
+                //   //             child.layout_block(...);
+                //   //             ifc.new_line_after_block();
+                //   //         }
+                //   //     }
+                //   // }
+                //
+                // STEP 4: Calculate inline box dimensions from font metrics
+                //   // self.dimensions.content.width = text_width;
+                //   // self.dimensions.content.height = line_height;
+                //
                 // TEMPORARY: Fall back to block layout until inline is implemented.
-                // This is incorrect but allows the page to render.
+                // This causes inline elements to stack vertically instead of horizontally.
                 self.layout_block(containing_block, viewport)
             }
             OuterDisplayType::RunIn => {
@@ -1222,8 +1288,35 @@ impl LayoutBox {
         // "In CSS, the adjoining margins of two or more boxes can combine to
         // form a single margin. Margins that combine this way are said to collapse."
         //
-        // NOTE: Margin collapsing is complex and not implemented yet.
-        // For now, we simply stack boxes without collapsing.
+        // TODO: Implement margin collapsing:
+        //
+        // fn collapse_margins(&mut self) {
+        //     // STEP 1: Identify adjoining margins
+        //     // "Two margins are adjoining if and only if:"
+        //     //   - Both belong to in-flow block-level boxes in same BFC
+        //     //   - No line boxes, clearance, padding, or border separate them
+        //     //   - Both belong to vertically-adjacent box edges
+        //
+        //     // STEP 2: Calculate collapsed margin value
+        //     // "When two or more margins collapse, the resulting margin width is
+        //     //  the maximum of the collapsing margins' widths."
+        //     // let collapsed = margins.iter().map(|m| m.abs()).max();
+        //     //
+        //     // "If there are no positive margins, the maximum of the absolute
+        //     //  values of the adjoining margins is deducted from zero."
+        //     // For negative margins: collapsed = max_positive + min_negative
+        //
+        //     // STEP 3: Handle parent-child collapsing
+        //     // "If a box has margin-top that collapses with its first child's
+        //     //  margin-top..."
+        //
+        //     // STEP 4: Handle empty boxes
+        //     // "A box with zero min-height, zero or auto computed height, no
+        //     //  inline content, and no border or padding... collapses its
+        //     //  margin-top with its margin-bottom."
+        // }
+        //
+        // NOTE: For now, we simply stack boxes without collapsing.
     }
 
     /// [§ 10.6.3 Block-level, non-replaced elements in normal flow when 'overflow' computes to 'visible'](https://www.w3.org/TR/CSS2/visudet.html#normal-block)

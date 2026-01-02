@@ -525,7 +525,18 @@ fn split_selector_list(tokens: &[CSSToken]) -> Vec<Selector> {
     selectors
 }
 
-/// Convert prelude tokens to a selector string.
+/// Convert prelude tokens to a selector string representation.
+///
+/// [§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing) describes how CSS
+/// is parsed into component values and tokens. Selectors appear as the prelude
+/// of qualified rules.
+///
+/// [§ 9 Serialization](https://www.w3.org/TR/css-syntax-3/#serialization) defines
+/// how tokens are serialized back to strings. This function performs a simplified
+/// serialization for our selector matching purposes.
+///
+/// NOTE: This is an implementation helper, not a full spec-compliant serializer.
+/// It handles the common token types found in selectors.
 fn tokens_to_selector_string(tokens: &[CSSToken]) -> String {
     let mut s = String::new();
     for token in tokens {
@@ -552,35 +563,58 @@ fn tokens_to_selector_string(tokens: &[CSSToken]) -> String {
 }
 
 /// Check if the value ends with !important.
+///
+/// [§ 6.4.2 Important declarations](https://www.w3.org/TR/css-cascade-4/#importance)
+///
+/// "A declaration is important if it has a !important annotation, i.e.
+/// if the last two (non-whitespace, non-comment) tokens in its value are
+/// a <delim-token> with the value "!" followed by an <ident-token> with
+/// a value that is an ASCII case-insensitive match for "important"."
+///
+/// STEP 1: Skip trailing whitespace in the value.
+/// STEP 2: Check for <ident-token> "important".
+/// STEP 3: Skip any whitespace between "!" and "important".
+/// STEP 4: Check for <delim-token> "!".
 fn check_important(value: &[ComponentValue]) -> bool {
     let mut iter = value.iter().rev().peekable();
 
-    // Skip trailing whitespace
+    // STEP 1: Skip trailing whitespace
     while let Some(ComponentValue::Token(CSSToken::Whitespace)) = iter.peek() {
         let _ = iter.next();
     }
 
-    // Check for ident "important"
+    // STEP 2: Check for ident "important"
     match iter.next() {
         Some(ComponentValue::Token(CSSToken::Ident(s))) if s.eq_ignore_ascii_case("important") => {}
         _ => return false,
     }
 
-    // Skip whitespace
+    // STEP 3: Skip whitespace between ! and important
     while let Some(ComponentValue::Token(CSSToken::Whitespace)) = iter.peek() {
         let _ = iter.next();
     }
 
-    // Check for !
+    // STEP 4: Check for !
     matches!(
         iter.next(),
         Some(ComponentValue::Token(CSSToken::Delim('!')))
     )
 }
 
-/// Remove trailing whitespace and !important from value.
+/// Remove trailing whitespace and !important from a declaration value.
+///
+/// [§ 6.4.2 Important declarations](https://www.w3.org/TR/css-cascade-4/#importance)
+///
+/// After detecting !important annotation, this function removes it from the
+/// value so the remaining tokens represent the actual property value.
+///
+/// STEP 1: Remove trailing whitespace.
+/// STEP 2: Remove "important" ident token.
+/// STEP 3: Remove whitespace between ! and important.
+/// STEP 4: Remove "!" delim token.
+/// STEP 5: Remove any remaining trailing whitespace.
 fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
-    // Remove trailing whitespace
+    // STEP 1: Remove trailing whitespace
     while matches!(
         value.last(),
         Some(ComponentValue::Token(CSSToken::Whitespace))
@@ -588,14 +622,14 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
         let _ = value.pop();
     }
 
-    // Check and remove "important"
+    // STEP 2: Check and remove "important"
     if matches!(
         value.last(),
         Some(ComponentValue::Token(CSSToken::Ident(s))) if s.eq_ignore_ascii_case("important")
     ) {
         let _ = value.pop();
 
-        // Remove whitespace
+        // STEP 3: Remove whitespace between ! and important
         while matches!(
             value.last(),
             Some(ComponentValue::Token(CSSToken::Whitespace))
@@ -603,7 +637,7 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
             let _ = value.pop();
         }
 
-        // Remove !
+        // STEP 4: Remove !
         if matches!(
             value.last(),
             Some(ComponentValue::Token(CSSToken::Delim('!')))
@@ -612,7 +646,7 @@ fn trim_important(mut value: Vec<ComponentValue>) -> Vec<ComponentValue> {
         }
     }
 
-    // Remove trailing whitespace again
+    // STEP 5: Remove trailing whitespace again
     while matches!(
         value.last(),
         Some(ComponentValue::Token(CSSToken::Whitespace))
