@@ -1795,6 +1795,76 @@ impl HTMLParser {
                 // TODO: Set the frameset-ok flag to "not ok".
             }
 
+            // [§ 13.2.6.4.7 "in body" - Start tags "applet", "marquee", "object"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is one of: "applet", "marquee", "object""
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            // "Insert a marker at the end of the list of active formatting elements."
+            // "Set the frameset-ok flag to "not ok"."
+            Token::StartTag { name, .. }
+                if matches!(name.as_str(), "applet" | "marquee" | "object") =>
+            {
+                self.reconstruct_active_formatting_elements();
+                let _ = self.insert_html_element(token);
+                todo!("Insert marker at end of active formatting elements list");
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "select"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "select""
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            // "Set the frameset-ok flag to "not ok"."
+            // "If the insertion mode is one of "in table", "in caption", "in table body",
+            //  "in row", or "in cell", then switch the insertion mode to "in select in table"."
+            // "Otherwise, switch the insertion mode to "in select"."
+            Token::StartTag { name, .. } if name == "select" => {
+                self.reconstruct_active_formatting_elements();
+                let _ = self.insert_html_element(token);
+                todo!("Switch to InSelect or InSelectInTable insertion mode");
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tags "optgroup", "option"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is one of: "optgroup", "option""
+            // "If the current node is an option element, then pop the current node off the stack."
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            Token::StartTag { name, .. } if matches!(name.as_str(), "optgroup" | "option") => {
+                // Close current option if any
+                if let Some(&node_id) = self.stack_of_open_elements.last() {
+                    if self.get_tag_name(node_id) == Some("option") {
+                        let _ = self.stack_of_open_elements.pop();
+                    }
+                }
+                self.reconstruct_active_formatting_elements();
+                let _ = self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "iframe"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "iframe""
+            // "Set the frameset-ok flag to "not ok"."
+            // "Follow the generic raw text element parsing algorithm."
+            Token::StartTag { name, .. } if name == "iframe" => {
+                let _ = self.insert_html_element(token);
+                self.original_insertion_mode = Some(self.insertion_mode);
+                self.insertion_mode = InsertionMode::Text;
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "textarea"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "A start tag whose tag name is "textarea""
+            // "Insert an HTML element for the token."
+            // "If the next token is a U+000A LINE FEED (LF) character token, then ignore that token."
+            // "Switch the tokenizer to the RCDATA state."
+            // "Let the original insertion mode be the current insertion mode."
+            // "Set the frameset-ok flag to "not ok"."
+            // "Switch the insertion mode to "text"."
+            // NOTE: Tokenizer state switching handled by tokenizer based on tag name.
+            Token::StartTag { name, .. } if name == "textarea" => {
+                let _ = self.insert_html_element(token);
+                // TODO: Skip next LF if present
+                self.original_insertion_mode = Some(self.insertion_mode);
+                self.insertion_mode = InsertionMode::Text;
+            }
+
             // [§ 13.2.6.4.7 "in body" - End tags "dd", "dt", "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             Token::EndTag { name, .. } if matches!(name.as_str(), "dd" | "dt" | "li") => {
                 self.pop_until_tag(name);
@@ -2043,6 +2113,68 @@ impl HTMLParser {
             Token::EndTag { name, .. } if name == "p" => {
                 // NOTE: We skip the scope check for simplicity
                 self.pop_until_tag("p");
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag "applet", "marquee", "object"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "An end tag whose tag name is one of: "applet", "marquee", "object""
+            // "If the stack of open elements does not have an element in scope that is an HTML
+            //  element with the same tag name as that of the token, then this is a parse error;
+            //  ignore the token."
+            // "Otherwise, run these steps:"
+            // 1. "Generate implied end tags."
+            // 2. "If the current node is not an HTML element with the same tag name as that of
+            //     the token, then this is a parse error."
+            // 3. "Pop elements from the stack of open elements until an HTML element with the
+            //     same tag name as the token has been popped from the stack."
+            // 4. "Clear the list of active formatting elements up to the last marker."
+            Token::EndTag { name, .. }
+                if matches!(name.as_str(), "applet" | "marquee" | "object") =>
+            {
+                if self.has_element_in_scope(name) {
+                    // TODO: generate_implied_end_tags() before popping
+                    self.pop_until_tag(name);
+                    todo!("Clear active formatting elements up to last marker");
+                }
+                // Otherwise: parse error, ignore the token
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag "template"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // "An end tag whose tag name is "template""
+            // "Process the token using the rules for the "in head" insertion mode."
+            Token::EndTag { name, .. } if name == "template" => {
+                self.handle_in_head_mode(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag "select"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // NOTE: This end tag should only appear when in InSelect mode.
+            // Seeing it in InBody means we never switched modes properly.
+            Token::EndTag { name, .. } if name == "select" => {
+                if self.has_element_in_scope("select") {
+                    self.pop_until_tag("select");
+                    todo!("</select> in InBody - should have been in InSelect mode");
+                }
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tags "optgroup", "option"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // NOTE: These end tags should only appear when in InSelect mode.
+            Token::EndTag { name, .. } if matches!(name.as_str(), "optgroup" | "option") => {
+                if self.has_element_in_scope(name) {
+                    self.pop_until_tag(name);
+                    todo!("</optgroup> or </option> in InBody - should have been in InSelect mode");
+                }
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tag "iframe", "noembed", "noframes"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // These are raw text elements, end tags follow "any other end tag" rules.
+            // NOTE: Simplified implementation.
+            Token::EndTag { name, .. }
+                if matches!(name.as_str(), "iframe" | "noembed" | "noframes" | "noscript") =>
+            {
+                if self.has_element_in_scope(name) {
+                    // TODO: generate_implied_end_tags(Some(name)) before popping
+                    self.pop_until_tag(name);
+                }
+                // Otherwise: parse error, ignore the token (stray end tag)
             }
 
             // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
