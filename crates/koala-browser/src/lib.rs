@@ -8,19 +8,23 @@
 //! - **Render Tree** - styled DOM ready for layout
 //! - **Layout Tree** - box tree with computed dimensions
 //! - **Software Rendering** - headless screenshot generation
+//! - **JavaScript Execution** - inline script execution via Boa
 //!
 //! # Not Yet Implemented
 //!
-//! - JavaScript integration
 //! - Resource loading (images, fonts, etc.)
+//! - External script loading (`<script src="...">`)
+//! - DOM manipulation from JavaScript
 
 pub mod renderer;
 
 pub use koala_dom as dom;
 pub use koala_html as html;
 pub use koala_css as css;
+pub use koala_js as js;
 
 use koala_dom::{DomTree, NodeId};
+use koala_js::JsRuntime;
 use koala_css::{
     compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer, LayoutBox,
     Stylesheet,
@@ -61,6 +65,9 @@ pub struct LoadedDocument {
 
     /// Parse issues/warnings
     pub parse_issues: Vec<String>,
+
+    /// JavaScript runtime for this document
+    pub js_runtime: JsRuntime,
 }
 
 /// Error type for document loading.
@@ -128,7 +135,7 @@ pub fn parse_html_string(html: &str) -> LoadedDocument {
     // Parse HTML
     let parser = HTMLParser::new(tokens.clone());
     let (dom, issues) = parser.run_with_issues();
-    let parse_issues: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
+    let mut parse_issues: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
 
     // Extract and parse CSS
     let css_text = extract_style_content(&dom);
@@ -147,6 +154,16 @@ pub fn parse_html_string(html: &str) -> LoadedDocument {
     // Build layout tree
     let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());
 
+    // Execute JavaScript
+    // [§ 4.12.1.1 Processing model](https://html.spec.whatwg.org/multipage/scripting.html)
+    let mut js_runtime = JsRuntime::new();
+    let scripts = extract_inline_scripts(&dom);
+    for script in scripts {
+        if let Err(e) = js_runtime.execute(&script) {
+            parse_issues.push(format!("JavaScript error: {e}"));
+        }
+    }
+
     LoadedDocument {
         html_source: html.to_string(),
         source_path: String::new(),
@@ -157,7 +174,49 @@ pub fn parse_html_string(html: &str) -> LoadedDocument {
         styles,
         layout_tree,
         parse_issues,
+        js_runtime,
     }
+}
+
+/// Extract inline script content from the DOM.
+///
+/// [§ 4.12.1 The script element](https://html.spec.whatwg.org/multipage/scripting.html#the-script-element)
+///
+/// Finds all `<script>` elements without a `src` attribute and extracts their
+/// text content. Scripts are returned in document order.
+fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
+    let mut scripts = Vec::new();
+
+    // Walk the DOM in document order
+    for node_id in dom.iter_all() {
+        // Check if this is a <script> element
+        if let Some(element) = dom.as_element(node_id) {
+            if element.tag_name.eq_ignore_ascii_case("script") {
+                // Skip external scripts (those with src attribute)
+                // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
+                // "If the element has a src content attribute..."
+                if element.attrs.contains_key("src") {
+                    continue;
+                }
+
+                // Collect text content from child text nodes
+                // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
+                // "...the script block's source is the value of the text content..."
+                let mut script_text = String::new();
+                for child_id in dom.children(node_id) {
+                    if let Some(text) = dom.as_text(*child_id) {
+                        script_text.push_str(text);
+                    }
+                }
+
+                if !script_text.is_empty() {
+                    scripts.push(script_text);
+                }
+            }
+        }
+    }
+
+    scripts
 }
 
 /// Fetch HTML content from a URL using reqwest.

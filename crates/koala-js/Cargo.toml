@@ -1,0 +1,13 @@
+[package]
+name = "koala-js"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JavaScript engine integration for the Koala browser"
+
+[dependencies]
+koala-dom.workspace = true
+boa_engine.workspace = true
+
+[lints]
+workspace = true
