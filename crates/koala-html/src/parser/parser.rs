@@ -5,6 +5,217 @@ use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 
 use crate::tokenizer::{Attribute, Token};
 
+// =============================================================================
+// Foreign Content Attribute Adjustments
+// [§ 13.2.6.3](https://html.spec.whatwg.org/multipage/parsing.html#creating-and-inserting-nodes)
+// =============================================================================
+
+/// [§ 13.2.6.3 Adjust SVG attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes)
+///
+/// "When the steps below require the user agent to adjust SVG attributes for a
+/// token, then, if the attribute's name is one of the names in the first column
+/// of the following table, set the attribute's name to the name in the second
+/// column."
+///
+/// This fixes case-sensitivity: HTML lowercases all attribute names during
+/// tokenization, but SVG has case-sensitive attribute names.
+const SVG_ATTRIBUTE_ADJUSTMENTS: &[(&str, &str)] = &[
+    ("attributename", "attributeName"),
+    ("attributetype", "attributeType"),
+    ("basefrequency", "baseFrequency"),
+    ("baseprofile", "baseProfile"),
+    ("calcmode", "calcMode"),
+    ("clippathunits", "clipPathUnits"),
+    ("diffuseconstant", "diffuseConstant"),
+    ("edgemode", "edgeMode"),
+    ("filterunits", "filterUnits"),
+    ("glyphref", "glyphRef"),
+    ("gradienttransform", "gradientTransform"),
+    ("gradientunits", "gradientUnits"),
+    ("kernelmatrix", "kernelMatrix"),
+    ("kernelunitlength", "kernelUnitLength"),
+    ("keypoints", "keyPoints"),
+    ("keysplines", "keySplines"),
+    ("keytimes", "keyTimes"),
+    ("lengthadjust", "lengthAdjust"),
+    ("limitingconeangle", "limitingConeAngle"),
+    ("markerheight", "markerHeight"),
+    ("markerunits", "markerUnits"),
+    ("markerwidth", "markerWidth"),
+    ("maskcontentunits", "maskContentUnits"),
+    ("maskunits", "maskUnits"),
+    ("numoctaves", "numOctaves"),
+    ("pathlength", "pathLength"),
+    ("patterncontentunits", "patternContentUnits"),
+    ("patterntransform", "patternTransform"),
+    ("patternunits", "patternUnits"),
+    ("pointsatx", "pointsAtX"),
+    ("pointsaty", "pointsAtY"),
+    ("pointsatz", "pointsAtZ"),
+    ("preservealpha", "preserveAlpha"),
+    ("preserveaspectratio", "preserveAspectRatio"),
+    ("primitiveunits", "primitiveUnits"),
+    ("refx", "refX"),
+    ("refy", "refY"),
+    ("repeatcount", "repeatCount"),
+    ("repeatdur", "repeatDur"),
+    ("requiredextensions", "requiredExtensions"),
+    ("requiredfeatures", "requiredFeatures"),
+    ("specularconstant", "specularConstant"),
+    ("specularexponent", "specularExponent"),
+    ("spreadmethod", "spreadMethod"),
+    ("startoffset", "startOffset"),
+    ("stddeviation", "stdDeviation"),
+    ("stitchtiles", "stitchTiles"),
+    ("surfacescale", "surfaceScale"),
+    ("systemlanguage", "systemLanguage"),
+    ("tablevalues", "tableValues"),
+    ("targetx", "targetX"),
+    ("targety", "targetY"),
+    ("textlength", "textLength"),
+    ("viewbox", "viewBox"),
+    ("viewtarget", "viewTarget"),
+    ("xchannelselector", "xChannelSelector"),
+    ("ychannelselector", "yChannelSelector"),
+    ("zoomandpan", "zoomAndPan"),
+];
+
+/// [§ 13.2.6.3 Adjust MathML attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes)
+///
+/// "When the steps below require the user agent to adjust MathML attributes for
+/// a token, then, if the attribute's name is 'definitionurl', set the
+/// attribute's name to 'definitionURL'."
+const MATHML_ATTRIBUTE_ADJUSTMENTS: &[(&str, &str)] = &[("definitionurl", "definitionURL")];
+
+/// [§ 13.2.6.3 Adjust foreign attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-foreign-attributes)
+///
+/// "When the steps below require the user agent to adjust foreign attributes
+/// for a token, then, if any of the attributes on the token match the strings
+/// in the first column of the following table, let the attribute be a namespaced
+/// attribute, with the prefix being the string in the second column, the local
+/// name being the string in the third column, and the namespace being the
+/// namespace in the fourth column."
+///
+/// Format: (attribute_name, prefix, local_name, namespace)
+///
+/// NOTE: Our current DOM doesn't support namespaced attributes, so we just
+/// adjust the attribute name to include the prefix for now.
+const FOREIGN_ATTRIBUTE_ADJUSTMENTS: &[(&str, &str, &str, &str)] = &[
+    // XLink namespace attributes
+    (
+        "xlink:actuate",
+        "xlink",
+        "actuate",
+        "http://www.w3.org/1999/xlink",
+    ),
+    (
+        "xlink:arcrole",
+        "xlink",
+        "arcrole",
+        "http://www.w3.org/1999/xlink",
+    ),
+    (
+        "xlink:href",
+        "xlink",
+        "href",
+        "http://www.w3.org/1999/xlink",
+    ),
+    (
+        "xlink:role",
+        "xlink",
+        "role",
+        "http://www.w3.org/1999/xlink",
+    ),
+    (
+        "xlink:show",
+        "xlink",
+        "show",
+        "http://www.w3.org/1999/xlink",
+    ),
+    (
+        "xlink:title",
+        "xlink",
+        "title",
+        "http://www.w3.org/1999/xlink",
+    ),
+    (
+        "xlink:type",
+        "xlink",
+        "type",
+        "http://www.w3.org/1999/xlink",
+    ),
+    // XML namespace attributes
+    ("xml:lang", "xml", "lang", "http://www.w3.org/XML/1998/namespace"),
+    (
+        "xml:space",
+        "xml",
+        "space",
+        "http://www.w3.org/XML/1998/namespace",
+    ),
+    // XMLNS namespace attributes
+    ("xmlns", "", "xmlns", "http://www.w3.org/2000/xmlns/"),
+    (
+        "xmlns:xlink",
+        "xmlns",
+        "xlink",
+        "http://www.w3.org/2000/xmlns/",
+    ),
+];
+
+/// [§ 13.2.6.3 Adjust SVG attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes)
+///
+/// Adjust attribute names for SVG elements to restore proper casing.
+fn adjust_svg_attributes(attributes: &mut [Attribute]) {
+    for attr in attributes.iter_mut() {
+        for &(from, to) in SVG_ATTRIBUTE_ADJUSTMENTS {
+            if attr.name == from {
+                attr.name = to.to_string();
+                break;
+            }
+        }
+    }
+}
+
+/// [§ 13.2.6.3 Adjust MathML attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes)
+///
+/// Adjust attribute names for MathML elements to restore proper casing.
+fn adjust_mathml_attributes(attributes: &mut [Attribute]) {
+    for attr in attributes.iter_mut() {
+        for &(from, to) in MATHML_ATTRIBUTE_ADJUSTMENTS {
+            if attr.name == from {
+                attr.name = to.to_string();
+                break;
+            }
+        }
+    }
+}
+
+/// [§ 13.2.6.3 Adjust foreign attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-foreign-attributes)
+///
+/// Adjust namespaced attributes (xlink:href, xml:lang, xmlns, etc.).
+///
+/// NOTE: Our DOM doesn't currently support namespaced attributes with separate
+/// prefix/localName/namespace. For now, we ensure the attribute name is in the
+/// correct format (e.g., "xlink:href"). Full namespace support would require
+/// DOM changes to store namespace information per attribute.
+fn adjust_foreign_attributes(attributes: &mut [Attribute]) {
+    for attr in attributes.iter_mut() {
+        for &(from, prefix, local_name, _namespace) in FOREIGN_ATTRIBUTE_ADJUSTMENTS {
+            if attr.name == from {
+                // Ensure the attribute name is properly formatted
+                // For now, we just keep the prefixed form since our DOM doesn't
+                // support separate namespace storage
+                if prefix.is_empty() {
+                    attr.name = local_name.to_string();
+                } else {
+                    attr.name = format!("{}:{}", prefix, local_name);
+                }
+                break;
+            }
+        }
+    }
+}
+
 /// [§ 13.2.4.1 The insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode)
 ///
 /// "The insertion mode is a state variable that controls the primary operation
@@ -1855,52 +2066,80 @@ impl HTMLParser {
             //    If the token has its self-closing flag set, pop the current node off the
             //    stack of open elements and acknowledge the token's self-closing flag."
             //
-            // TODO: Implement full foreign content handling:
-            //
-            // NOTE: Current simplified implementation treats SVG/MathML as regular HTML
-            // elements without namespace handling. This works for basic cases but won't
-            // correctly handle SVG-specific elements or attributes.
-            Token::StartTag { name, .. } if name == "svg" => {
+            // NOTE: Current implementation adjusts attributes per spec but treats the
+            // element as HTML (no namespace). Full foreign content parsing (§ 13.2.6.5)
+            // is not yet implemented.
+            Token::StartTag {
+                name,
+                attributes,
+                self_closing,
+            } if name == "svg" => {
                 // STEP 1: Reconstruct the active formatting elements, if any.
                 //   [§ 13.2.4.3](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)
                 self.reconstruct_active_formatting_elements();
-                //
+
                 // STEP 2: Adjust attributes for foreign content
-                //   [§ 13.2.6.3 Adjust MathML attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes)
-                //   [§ 13.2.6.3 Adjust SVG attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes)
-                //   [§ 13.2.6.3 Adjust foreign attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-foreign-attributes)
-                //
-                //   For MathML: adjust "definitionurl" -> "definitionURL"
-                //   For SVG: adjust case-sensitive attribute names like:
-                //     "attributename" -> "attributeName"
-                //     "viewbox" -> "viewBox"
-                //     "preserveaspectratio" -> "preserveAspectRatio"
-                //   For foreign attributes: handle namespaced attributes like:
-                //     "xlink:href" -> xlink namespace
-                //     "xml:lang" -> xml namespace
-                //
+                //   [§ 13.2.6.3](https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes)
+                let mut adjusted_attributes = attributes.clone();
+                adjust_svg_attributes(&mut adjusted_attributes);
+                adjust_foreign_attributes(&mut adjusted_attributes);
+
                 // STEP 3: Insert a foreign element for the token
-                //   [§ 13.2.6.1 Insert a foreign element](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element)
-                //   // For <math>: use MathML namespace "http://www.w3.org/1998/Math/MathML"
-                //   // For <svg>: use SVG namespace "http://www.w3.org/2000/svg"
-                //   // let element = self.create_element_for_token(token, namespace);
-                //   // self.insert_element(element);
-                //
+                //   [§ 13.2.6.1](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element)
+                //   NOTE: We insert as HTML element since our DOM doesn't support namespaces yet.
+                //   Full implementation would use SVG namespace "http://www.w3.org/2000/svg"
+                let adjusted_token = Token::StartTag {
+                    name: name.clone(),
+                    attributes: adjusted_attributes,
+                    self_closing: *self_closing,
+                };
+                let element_id = self.insert_html_element(&adjusted_token);
+
                 // STEP 4: Handle self-closing flag
-                //   // if token.self_closing {
-                //   //     self.stack_of_open_elements.pop();
-                //   //     // Acknowledge the self-closing flag
-                //   // }
-                //
-                // STEP 5: If not self-closing, switch to foreign content parsing
-                //   [§ 13.2.6.5 The rules for parsing tokens in foreign content](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign)
-                //   // Future tokens are processed by handle_in_foreign_content() until
-                //   // we pop back to an HTML element or encounter specific integration points.
-                //
+                //   "If the token has its self-closing flag set, pop the current node off
+                //    the stack of open elements and acknowledge the token's self-closing flag."
+                if *self_closing {
+                    let _ = self.stack_of_open_elements.pop();
+                    // NOTE: Acknowledging the self-closing flag prevents a parse error.
+                    // Since we don't track parse errors for this, we just pop.
+                }
+
+                // STEP 5: If not self-closing, future tokens should be processed by
+                //   "in foreign content" rules (§ 13.2.6.5). This is not yet implemented.
+                //   For now, we continue processing as HTML which works for simple cases.
+                let _ = element_id;
             }
 
-            Token::StartTag { name, .. } if name == "math" => {
-                let _ = self.insert_html_element(token);
+            Token::StartTag {
+                name,
+                attributes,
+                self_closing,
+            } if name == "math" => {
+                // STEP 1: Reconstruct the active formatting elements, if any.
+                self.reconstruct_active_formatting_elements();
+
+                // STEP 2: Adjust attributes for foreign content
+                //   [§ 13.2.6.3](https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes)
+                let mut adjusted_attributes = attributes.clone();
+                adjust_mathml_attributes(&mut adjusted_attributes);
+                adjust_foreign_attributes(&mut adjusted_attributes);
+
+                // STEP 3: Insert a foreign element for the token
+                //   NOTE: We insert as HTML element since our DOM doesn't support namespaces yet.
+                //   Full implementation would use MathML namespace "http://www.w3.org/1998/Math/MathML"
+                let adjusted_token = Token::StartTag {
+                    name: name.clone(),
+                    attributes: adjusted_attributes,
+                    self_closing: *self_closing,
+                };
+                let element_id = self.insert_html_element(&adjusted_token);
+
+                // STEP 4: Handle self-closing flag
+                if *self_closing {
+                    let _ = self.stack_of_open_elements.pop();
+                }
+
+                let _ = element_id;
             }
 
             // Unhandled tokens - panic to surface missing implementations
