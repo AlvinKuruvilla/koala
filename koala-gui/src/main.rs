@@ -18,7 +18,7 @@ use clap::Parser;
 use eframe::egui;
 use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
 use koala_common::warning::clear_warnings;
-use koala_css::{LayoutBox, Rect};
+use koala_css::{LayoutBox, Rect, ResolutionContext};
 use koala_dom::{NodeId, NodeType};
 use koala_html::print_tree;
 
@@ -1007,9 +1007,10 @@ impl BrowserApp {
         }
 
         // Determine text formatting from style
+        let ctx = ResolutionContext::default();
         let font_size = style
             .and_then(|s| s.font_size.as_ref())
-            .map(|fs| fs.to_px())
+            .map(|fs| fs.to_px(&ctx))
             .unwrap_or_else(|| {
                 match tag.as_deref() {
                     Some("h1") => 32.0,
@@ -1125,9 +1126,10 @@ impl BrowserApp {
                     tag.as_str(),
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "strong" | "b"
                 );
+                let ctx = ResolutionContext::default();
                 let font_size = style
                     .and_then(|s| s.font_size.as_ref())
-                    .map(|fs| fs.to_px())
+                    .map(|fs| fs.to_px(&ctx))
                     .unwrap_or_else(|| {
                         // User-agent default sizes when no CSS specified
                         // [§ 15.3.1 HTML headings](https://html.spec.whatwg.org/#sections-and-headings)
@@ -1340,14 +1342,19 @@ impl BrowserApp {
                             if let Some(ref bg) = style.background_color {
                                 let _ = ui.monospace(format!("background-color: {}", bg.to_hex_string()));
                             }
+                            let ctx = ResolutionContext::default();
                             if let Some(ref fs) = style.font_size {
-                                let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
+                                let _ = ui.monospace(format!("font-size: {}px", fs.to_px(&ctx)));
                             }
                             if let Some(ref m) = style.margin_top {
-                                let _ = ui.monospace(format!("margin-top: {}px", m.to_px()));
+                                if let Some(len) = m.as_length() {
+                                    let _ = ui.monospace(format!("margin-top: {}px", len.to_px(&ctx)));
+                                } else {
+                                    let _ = ui.monospace("margin-top: auto");
+                                }
                             }
                             if let Some(ref p) = style.padding_top {
-                                let _ = ui.monospace(format!("padding-top: {}px", p.to_px()));
+                                let _ = ui.monospace(format!("padding-top: {}px", p.to_px(&ctx)));
                             }
                         });
                 }

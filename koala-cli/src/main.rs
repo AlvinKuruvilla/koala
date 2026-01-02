@@ -5,7 +5,7 @@
 use anyhow::Result;
 use clap::Parser;
 use koala_browser::{LoadedDocument, load_document, parse_html_string, renderer::Renderer};
-use koala_css::LayoutBox;
+use koala_css::{LayoutBox, ResolutionContext};
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
@@ -388,6 +388,7 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
 
 /// Print computed styles for each element
 fn print_computed_styles(doc: &LoadedDocument) {
+    let ctx = ResolutionContext::default();
     for (node_id, style) in &doc.styles {
         let Some(element) = doc.dom.as_element(*node_id) else {
             continue;
@@ -398,7 +399,10 @@ fn print_computed_styles(doc: &LoadedDocument) {
 
         // Collect style properties
         if let Some(ref fs) = style.font_size {
-            props.push(format_style_prop("font-size", &format!("{}px", fs.to_px())));
+            props.push(format_style_prop(
+                "font-size",
+                &format!("{}px", fs.to_px(&ctx)),
+            ));
         }
         if let Some(ref color) = style.color {
             props.push(format_style_prop("color", &color.to_hex_string()));
@@ -407,16 +411,19 @@ fn print_computed_styles(doc: &LoadedDocument) {
             props.push(format_style_prop("background", &bg.to_hex_string()));
         }
         if let Some(ref m) = style.margin_top {
-            if m.to_px() != 0.0 {
-                props.push(format_style_prop("margin-top", &format!("{}px", m.to_px())));
+            if let Some(len) = m.as_length() {
+                let px = len.to_px(&ctx);
+                if px != 0.0 {
+                    props.push(format_style_prop("margin-top", &format!("{}px", px)));
+                }
             }
         }
         if let Some(ref m) = style.margin_bottom {
-            if m.to_px() != 0.0 {
-                props.push(format_style_prop(
-                    "margin-bottom",
-                    &format!("{}px", m.to_px()),
-                ));
+            if let Some(len) = m.as_length() {
+                let px = len.to_px(&ctx);
+                if px != 0.0 {
+                    props.push(format_style_prop("margin-bottom", &format!("{}px", px)));
+                }
             }
         }
         if let Some(ref d) = style.display {

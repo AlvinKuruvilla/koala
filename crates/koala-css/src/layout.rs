@@ -21,7 +21,8 @@ use std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::{AutoLength, ComputedStyle, DisplayValue, LengthValue, OuterDisplayType};
+use crate::style::ComputedStyle;
+use crate::values::{AutoLength, DisplayValue, LengthValue, OuterDisplayType, ResolutionContext};
 
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
@@ -183,34 +184,27 @@ impl UnresolvedEdgeSizes {
     ///
     /// Resolve to concrete pixel values using viewport dimensions.
     pub fn resolve(&self, viewport: Rect) -> EdgeSizes {
+        let ctx = ResolutionContext::with_viewport(viewport.width as f64, viewport.height as f64);
         EdgeSizes {
             top: self
                 .top
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
+                .map(|l| l.to_px(&ctx) as f32)
                 .unwrap_or(0.0),
             right: self
                 .right
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
+                .map(|l| l.to_px(&ctx) as f32)
                 .unwrap_or(0.0),
             bottom: self
                 .bottom
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
+                .map(|l| l.to_px(&ctx) as f32)
                 .unwrap_or(0.0),
             left: self
                 .left
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
+                .map(|l| l.to_px(&ctx) as f32)
                 .unwrap_or(0.0),
         }
     }
@@ -266,15 +260,14 @@ impl UnresolvedAutoEdgeSizes {
     ///
     /// Resolve a single AutoLength to AutoOr using viewport dimensions.
     fn resolve_auto_length(al: &AutoLength, viewport: Rect) -> AutoOr {
+        let ctx = ResolutionContext::with_viewport(viewport.width as f64, viewport.height as f64);
         match al {
             // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
             //
             // 'auto' is preserved - it will be resolved during width calculation.
             AutoLength::Auto => AutoOr::Auto,
             // Resolve length using viewport for vw/vh units.
-            AutoLength::Length(len) => AutoOr::Length(
-                len.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32,
-            ),
+            AutoLength::Length(len) => AutoOr::Length(len.to_px(&ctx) as f32),
         }
     }
 }
@@ -1379,8 +1372,9 @@ impl LayoutBox {
             // [§ 6.1.1 Specified, computed, and actual values](https://www.w3.org/TR/CSS2/cascade.html#value-stages)
             //
             // Resolve the computed value to a used value using the viewport.
-            self.dimensions.content.height =
-                l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32;
+            let ctx =
+                ResolutionContext::with_viewport(viewport.width as f64, viewport.height as f64);
+            self.dimensions.content.height = l.to_px(&ctx) as f32;
             return;
         }
 

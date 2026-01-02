@@ -9,7 +9,8 @@ use std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId};
 
-use crate::style::{ColorValue, ComputedStyle};
+use crate::style::ComputedStyle;
+use crate::values::ColorValue;
 
 /// [§ 2.11.2 The Canvas Background and the HTML `<body>` Element](https://www.w3.org/TR/css-backgrounds-3/#special-backgrounds)
 ///

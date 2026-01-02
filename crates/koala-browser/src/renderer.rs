@@ -6,7 +6,7 @@ use crate::LoadedDocument;
 use fontdue::{Font, FontSettings};
 use anyhow::Result;
 use image::{ImageBuffer, Rgba, RgbaImage};
-use koala_css::{BoxType, ComputedStyle, LayoutBox};
+use koala_css::{BoxType, ComputedStyle, LayoutBox, ResolutionContext};
 use std::path::Path;
 
 /// Common system font paths to search for a default font.
@@ -119,9 +119,11 @@ impl Renderer {
                 .unwrap_or(Rgba([0, 0, 0, 255]));
 
             // Get font size from style or default
+            let ctx =
+                ResolutionContext::with_viewport(self.width as f64, self.height as f64);
             let font_size = style
                 .and_then(|s| s.font_size.as_ref())
-                .map(|fs| fs.to_px() as f32)
+                .map(|fs| fs.to_px(&ctx) as f32)
                 .unwrap_or(16.0);
 
             self.draw_text(
@@ -186,9 +188,11 @@ impl Renderer {
                 .unwrap_or(Rgba([0, 0, 0, 255]));
 
             // Get font size from effective style or default
+            let ctx =
+                ResolutionContext::with_viewport(self.width as f64, self.height as f64);
             let font_size = effective_style
                 .and_then(|s| s.font_size.as_ref())
-                .map(|fs| fs.to_px() as f32)
+                .map(|fs| fs.to_px(&ctx) as f32)
                 .unwrap_or(16.0);
 
             self.draw_text(

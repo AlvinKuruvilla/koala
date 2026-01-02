@@ -1,396 +1,27 @@
-//! CSS Computed Style representation and value parsing
+//! CSS Computed Style representation and value parsing.
 //!
-//! This module implements CSS value types and computed style representation per:
+//! This module implements computed style aggregation and CSS value parsing per:
+//! - [CSS Cascading Level 4](https://www.w3.org/TR/css-cascade-4/)
 //! - [CSS Values and Units Level 4](https://www.w3.org/TR/css-values-4/)
-//! - [CSS Color Level 4](https://www.w3.org/TR/css-color-4/)
-//! - [CSS Display Module Level 3](https://www.w3.org/TR/css-display-3/)
+//!
+//! Value types are defined in the [`crate::values`] module.
 
 use serde::Serialize;
 
-// [§ 2 Box Layout Modes: the display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
-//
-// "The display property defines an element's display type, which consists of
-// the two basic qualities of how an element generates boxes:
-//   - the inner display type, which defines the kind of formatting context
-//     it generates, dictating how its descendant boxes are laid out.
-//   - the outer display type, which dictates how the principal box itself
-//     participates in flow layout."
-
-/// [§ 2.1 Outer Display Roles](https://www.w3.org/TR/css-display-3/#outer-role)
-///
-/// "The <display-outside> keywords specify the element's outer display type,
-/// which is essentially its principal box's role in flow layout."
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub enum OuterDisplayType {
-    /// "The element generates a block-level box when placed in flow layout."
-    Block,
-    /// "The element generates an inline-level box when placed in flow layout."
-    Inline,
-    /// "The element generates a run-in box, which is a type of inline-level box."
-    RunIn,
-}
-
-/// [§ 2.2 Inner Display Layout Models](https://www.w3.org/TR/css-display-3/#inner-model)
-///
-/// "The <display-inside> keywords specify the element's inner display type,
-/// which defines the type of formatting context that lays out its contents."
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub enum InnerDisplayType {
-    /// "The element lays out its contents using flow layout (block-and-inline layout)."
-    Flow,
-    /// "The element lays out its contents using flow layout (block-and-inline layout)."
-    /// Same as Flow but establishes a new block formatting context.
-    FlowRoot,
-    /// "The element lays out its contents using table layout."
-    Table,
-    /// "The element lays out its contents using flex layout."
-    Flex,
-    /// "The element lays out its contents using grid layout."
-    Grid,
-}
-
-/// Combined display value
-/// [§ 2 Box Layout Modes](https://www.w3.org/TR/css-display-3/#the-display-properties)
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct DisplayValue {
-    /// "The outer display type, which dictates how the box participates in flow layout."
-    pub outer: OuterDisplayType,
-    /// "The inner display type, which dictates how its descendant boxes are laid out."
-    pub inner: InnerDisplayType,
-}
-
-impl DisplayValue {
-    /// `display: block` - block outer, flow inner
-    pub fn block() -> Self {
-        Self {
-            outer: OuterDisplayType::Block,
-            inner: InnerDisplayType::Flow,
-        }
-    }
-
-    /// `display: inline` - inline outer, flow inner
-    pub fn inline() -> Self {
-        Self {
-            outer: OuterDisplayType::Inline,
-            inner: InnerDisplayType::Flow,
-        }
-    }
-
-    /// `display: inline-block` - inline outer, flow-root inner
-    pub fn inline_block() -> Self {
-        Self {
-            outer: OuterDisplayType::Inline,
-            inner: InnerDisplayType::FlowRoot,
-        }
-    }
-
-    /// `display: flex` - block outer, flex inner
-    pub fn flex() -> Self {
-        Self {
-            outer: OuterDisplayType::Block,
-            inner: InnerDisplayType::Flex,
-        }
-    }
-
-    /// `display: grid` - block outer, grid inner
-    pub fn grid() -> Self {
-        Self {
-            outer: OuterDisplayType::Block,
-            inner: InnerDisplayType::Grid,
-        }
-    }
-}
-
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
+use crate::values::{
+    AutoLength, BorderValue, ColorValue, DisplayValue, LengthValue, DEFAULT_FONT_SIZE_PX,
+};
 use koala_common::warning::warn_once;
-/// User agent default font size.
-/// [§ 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
-/// "Initial: medium" - we define medium as 16px per common browser convention.
-/// TODO: If this is user-agent defined we eed to parse this from the user agent at some point I would imagine
-const DEFAULT_FONT_SIZE_PX: f64 = 16.0;
-/// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
-/// "Lengths refer to distance measurements and are denoted by <length> in the
-/// property definitions."
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum LengthValue {
-    /// [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
-    /// "1px = 1/96th of 1in"
-    Px(f64),
-    /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
-    /// "Equal to the computed value of the font-size property of the element"
-    Em(f64),
-    /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
-    /// "1vw = 1% of viewport width"
-    Vw(f64),
-    /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
-    /// "1vh = 1% of viewport height"
-    Vh(f64),
-    // TODO: Implement additional length units:
-    //
-    // STEP 1: Add rem unit
-    // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
-    // "Equal to the computed value of the font-size property of the root element."
-    // Rem(f64),
-    //
-    // STEP 2: Add percentage values
-    // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
-    // "A <percentage> value is denoted by <percentage>, and consists of a <number>
-    // immediately followed by a percent sign '%'."
-    // Percent(f64),
-    //
-    // STEP 3: Add calc() function support
-    // [§ 8.1 calc()](https://www.w3.org/TR/css-values-4/#calc-notation)
-    // "The calc() function allows mathematical expressions with addition (+),
-    // subtraction (-), multiplication (*), division (/), and parentheses."
-    // Calc(Box<CalcExpr>),
-}
 
-impl LengthValue {
-    /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
-    ///
-    /// Get the value in pixels for non-viewport units.
-    ///
-    /// NOTE: For viewport units (vw, vh), this returns 0.0 as a fallback.
-    /// Use `to_px_with_viewport()` instead when viewport dimensions are available.
-    pub fn to_px(&self) -> f64 {
-        match self {
-            // [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
-            LengthValue::Px(px) => *px,
-            // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
-            // "Equal to the computed value of the font-size property of the element"
-            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
-            // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
-            // Viewport units require viewport dimensions - return 0 as fallback.
-            // The layout engine should use to_px_with_viewport() instead.
-            LengthValue::Vw(_) | LengthValue::Vh(_) => 0.0,
-        }
-    }
-    /// Get the value in pixels, resolving viewport units.
-    ///
-    /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
-    /// "The viewport-percentage lengths are relative to the size of the
-    /// initial containing block."
-    pub fn to_px_with_viewport(&self, viewport_width: f64, viewport_height: f64) -> f64 {
-        match self {
-            LengthValue::Px(px) => *px,
-            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
-            // "1vw = 1% of viewport width"
-            LengthValue::Vw(vw) => *vw * viewport_width / 100.0,
-            // "1vh = 1% of viewport height"
-            LengthValue::Vh(vh) => *vh * viewport_height / 100.0,
-        }
-    }
-}
-
-/// [§ 4.4 Automatic values](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
-///
-/// "Some properties can take the keyword 'auto' as a value. This keyword
-/// allows the user agent to compute the value based on other properties."
-///
-/// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
-///
-/// "Value: <margin-width>{1,4} | inherit"
-/// "<margin-width> = <length> | <percentage> | auto"
-///
-/// This type represents a CSS value that can be either 'auto' or a specific length.
-/// Used for properties like margin where 'auto' has special meaning.
-///
-/// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
-///
-/// "If both 'margin-left' and 'margin-right' are 'auto', their used values
-/// are equal. This horizontally centers the element with respect to the
-/// edges of the containing block."
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum AutoLength {
-    /// [§ 4.4](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
-    ///
-    /// "The keyword 'auto'... allows the user agent to compute the value
-    /// based on other properties."
-    ///
-    /// The value is 'auto' and will be resolved during layout.
-    Auto,
-
-    /// A specific length value (px, em, etc.).
-    Length(LengthValue),
-}
-
-impl AutoLength {
-    /// Check if the value is 'auto'.
-    pub fn is_auto(&self) -> bool {
-        matches!(self, AutoLength::Auto)
-    }
-
-    /// Get the length value in pixels, or 0.0 if 'auto'.
-    ///
-    /// NOTE: When 'auto', this returns 0.0 as a fallback. The actual
-    /// resolved value depends on the layout algorithm (e.g., centering
-    /// for `margin: auto`). See [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth).
-    pub fn to_px(&self) -> f64 {
-        match self {
-            AutoLength::Auto => 0.0,
-            AutoLength::Length(len) => len.to_px(),
-        }
-    }
-}
-
-/// [§ 4 Color syntax](https://www.w3.org/TR/css-color-4/#color-syntax)
-/// sRGB color represented as RGBA components.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ColorValue {
-    /// "the red color channel" (0-255)
-    pub r: u8,
-    /// "the green color channel" (0-255)
-    pub g: u8,
-    /// "the blue color channel" (0-255)
-    pub b: u8,
-    /// "the alpha channel" (0-255, 255 = fully opaque)
-    pub a: u8,
-}
-
-impl ColorValue {
-    /// [§ 4.2 The RGB hexadecimal notations](https://www.w3.org/TR/css-color-4/#hex-notation)
-    /// "The syntax of a <hex-color> is a <hash-token> token whose value consists of
-    /// 3, 4, 6, or 8 hexadecimal digits."
-    pub fn from_hex(hex: &str) -> Option<Self> {
-        let hex = hex.strip_prefix('#').unwrap_or(hex);
-        match hex.len() {
-            // [§ 4.2.1]
-            // "The three-digit RGB notation (#RGB) is converted into six-digit form (#RRGGBB)
-            // by replicating digits, not by adding zeros."
-            3 => {
-                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
-                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
-                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                Some(ColorValue { r, g, b, a: 255 })
-            }
-            // Four-digit RGBA notation (#RGBA)
-            4 => {
-                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
-                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
-                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                let a = u8::from_str_radix(&hex[3..4].repeat(2), 16).ok()?;
-                Some(ColorValue { r, g, b, a })
-            }
-            // Six-digit RGB notation (#RRGGBB)
-            6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                Some(ColorValue { r, g, b, a: 255 })
-            }
-            // Eight-digit RGBA notation (#RRGGBBAA)
-            8 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-                Some(ColorValue { r, g, b, a })
-            }
-            _ => None,
-        }
-    }
-
-    /// [§ 6.1 Named Colors](https://www.w3.org/TR/css-color-4/#named-colors)
-    /// "CSS defines a large set of named colors..."
-    pub fn from_named(name: &str) -> Option<Self> {
-        // MVP: Common colors from the named color table
-        match name.to_ascii_lowercase().as_str() {
-            "white" => Some(ColorValue {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
-            }),
-            "black" => Some(ColorValue {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 255,
-            }),
-            "red" => Some(ColorValue {
-                r: 255,
-                g: 0,
-                b: 0,
-                a: 255,
-            }),
-            "green" => Some(ColorValue {
-                r: 0,
-                g: 128,
-                b: 0,
-                a: 255,
-            }),
-            "blue" => Some(ColorValue {
-                r: 0,
-                g: 0,
-                b: 255,
-                a: 255,
-            }),
-            "yellow" => Some(ColorValue {
-                r: 255,
-                g: 255,
-                b: 0,
-                a: 255,
-            }),
-            "gray" | "grey" => Some(ColorValue {
-                r: 128,
-                g: 128,
-                b: 128,
-                a: 255,
-            }),
-            "transparent" => Some(ColorValue {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 0,
-            }),
-            // TODO: Implement full CSS named color list
-            // [§ 6.1 Named Colors](https://www.w3.org/TR/css-color-4/#named-colors)
-            //
-            // STEP 1: Add basic color keywords (16 HTML colors)
-            //   aqua, fuchsia, lime, maroon, navy, olive, purple, silver, teal
-            //
-            // STEP 2: Add extended color keywords (X11 colors, ~140 total)
-            //   [§ 6.1](https://www.w3.org/TR/css-color-4/#named-colors)
-            //   aliceblue, antiquewhite, aquamarine, azure, beige, bisque, ...
-            //
-            // STEP 3: Add system colors
-            //   [§ 6.2 System Colors](https://www.w3.org/TR/css-color-4/#css-system-colors)
-            //   Canvas, CanvasText, LinkText, VisitedText, ActiveText, ...
-            //
-            // Consider: Generate from a build script or use a lookup table
-            _ => None,
-        }
-    }
-
-    /// Convert to hex string notation (#RRGGBB or #RRGGBBAA if alpha != 255)
-    ///
-    /// [§ 4.2 The RGB hexadecimal notations](https://www.w3.org/TR/css-color-4/#hex-notation)
-    pub fn to_hex_string(&self) -> String {
-        if self.a == 255 {
-            format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
-        } else {
-            format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
-        }
-    }
-}
-
-/// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
-///
-/// Border value representing width, style, and color.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct BorderValue {
-    /// [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
-    pub width: LengthValue,
-    /// [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
-    pub style: String,
-    /// [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
-    pub color: ColorValue,
-}
+// Re-export value types for convenience (prefer importing from crate::values directly)
+pub use crate::values::{LengthOrPercentage, Percentage, ResolutionContext};
 
 /// Computed styles for an element.
 ///
 /// [§ 4.4 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
+///
 /// "The computed value is the result of resolving the specified value..."
 ///
 /// All values are Option - None means "not set" (use inherited or initial value).
@@ -696,6 +327,7 @@ impl ComputedStyle {
     }
 
     /// [§ 3.1 border shorthand](https://www.w3.org/TR/css-backgrounds-3/#the-border-shorthands)
+    ///
     /// "border: 1px solid #ddd" sets all four borders
     fn apply_border_shorthand(&mut self, values: &[ComponentValue]) {
         let mut width: Option<LengthValue> = None;
@@ -752,6 +384,7 @@ impl ComputedStyle {
             self.border_left = Some(border);
         }
     }
+
     /// [§ 3.10 Background](https://www.w3.org/TR/css-backgrounds-3/#background)
     ///
     /// "The 'background' property is a shorthand property for setting most
@@ -765,15 +398,25 @@ impl ComputedStyle {
             self.background_color = Some(color);
         }
     }
-    /// Resolve relative length units (em) to absolute units (px).
+
+    /// Resolve relative length units (em) to absolute units (px) during cascade.
+    ///
     /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    ///
+    /// NOTE: This is a partial resolution during cascade. Full resolution to used
+    /// values (including viewport units) happens during layout via [`ResolutionContext`].
     fn resolve_length(&self, len: LengthValue) -> LengthValue {
         match len {
             LengthValue::Em(em) => {
+                // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+                //
+                // "em: Equal to the computed value of the font-size property of the
+                // element on which it is used."
+                let ctx = ResolutionContext::default();
                 let base = self
                     .font_size
                     .as_ref()
-                    .map(|fs| fs.to_px())
+                    .map(|fs| fs.to_px(&ctx))
                     .unwrap_or(DEFAULT_FONT_SIZE_PX);
                 LengthValue::Px(em * base)
             }
@@ -793,7 +436,12 @@ impl ComputedStyle {
     }
 }
 
+// ============================================================================
+// Parsing Functions
+// ============================================================================
+
 /// [§ 4.2 RGB hex notation](https://www.w3.org/TR/css-color-4/#hex-notation)
+///
 /// Parse a color value from component values.
 fn parse_color_value(values: &[ComponentValue]) -> Option<ColorValue> {
     for v in values {
@@ -841,6 +489,7 @@ fn parse_single_color(v: &ComponentValue) -> Option<ColorValue> {
 }
 
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
+///
 /// Parse a length value from component values.
 fn parse_length_value(values: &[ComponentValue]) -> Option<LengthValue> {
     for v in values {
@@ -872,6 +521,11 @@ fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
             // "Equal to the computed value of the font-size property of the element"
             else if unit.eq_ignore_ascii_case("em") {
                 Some(LengthValue::Em(*value))
+            }
+            // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+            // "Equal to the computed value of font-size on the root element"
+            else if unit.eq_ignore_ascii_case("rem") {
+                Some(LengthValue::Rem(*value))
             }
             // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
             // "1vw = 1% of viewport width"
@@ -970,6 +624,7 @@ fn parse_font_family(values: &[ComponentValue]) -> Option<String> {
 }
 
 /// [§ 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
+///
 /// Parse line-height as a unitless number or length.
 fn parse_line_height(values: &[ComponentValue]) -> Option<f64> {
     for v in values {

@@ -246,6 +246,9 @@ fn test_border_parsing() {
         koala_css::LengthValue::Em(_) => {
             panic!("Expected border width in Px, got Em (should have been resolved)")
         }
+        koala_css::LengthValue::Rem(_) => {
+            panic!("Expected border width in Px, got Rem (should have been resolved)")
+        }
         koala_css::LengthValue::Vw(_) => {
             panic!("Expected border width in Px, got Vw (should have been resolved)")
         }

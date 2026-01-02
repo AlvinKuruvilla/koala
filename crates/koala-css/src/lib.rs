@@ -52,10 +52,12 @@ pub mod layout;
 pub mod parser;
 /// CSS selector parsing and matching per [Selectors Level 4](https://www.w3.org/TR/selectors-4/).
 pub mod selector;
-/// Computed style representation per [CSS Values Level 4](https://www.w3.org/TR/css-values-4/).
+/// Computed style representation per [CSS Cascading Level 4](https://www.w3.org/TR/css-cascade-4/).
 pub mod style;
 /// CSS tokenizer per [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization).
 pub mod tokenizer;
+/// CSS value types and resolution per [CSS Values and Units Level 4](https://www.w3.org/TR/css-values-4/).
+pub mod values;
 
 // Re-exports for convenience
 pub use backgrounds::canvas_background;
@@ -63,11 +65,12 @@ pub use cascade::compute_styles;
 pub use layout::{BoxDimensions, BoxType, EdgeSizes, LayoutBox, Rect};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{ParsedSelector, Specificity, parse_selector};
-pub use style::{
-    AutoLength, BorderValue, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType,
-    LengthValue, OuterDisplayType,
-};
+pub use style::ComputedStyle;
 pub use tokenizer::{CSSToken, CSSTokenizer};
+pub use values::{
+    AutoLength, BorderValue, ColorValue, DisplayValue, InnerDisplayType, LengthOrPercentage,
+    LengthValue, OuterDisplayType, Percentage, ResolutionContext, DEFAULT_FONT_SIZE_PX,
+};
 
 // External stylesheet support - see extract_all_stylesheets() for main entry point
 // NOTE: fetch_external_stylesheet() is stubbed with todo!() - implement to enable external CSS
