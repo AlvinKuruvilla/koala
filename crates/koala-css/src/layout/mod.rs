@@ -1,0 +1,112 @@
+//! CSS Layout Engine
+//!
+//! This module implements the CSS Visual Formatting Model for laying out
+//! the render tree.
+//!
+//! # Relevant Specifications
+//!
+//! - [CSS Display Module Level 3](https://www.w3.org/TR/css-display-3/)
+//! - [CSS Box Model Module Level 3](https://www.w3.org/TR/css-box-3/)
+//! - [CSS 2.1 Visual Formatting Model](https://www.w3.org/TR/CSS2/visuren.html)
+//!
+//! # Module Structure
+//!
+//! - [`box_model`] - Box dimensions, rectangles, and edge sizes
+//! - [`values`] - Unresolved and auto value types
+//! - [`formatting_context`] - Block and inline formatting contexts
+//! - [`layout_box`] - Layout box types and layout algorithms
+//! - [`table`] - Table layout algorithm
+
+pub mod box_model;
+pub mod formatting_context;
+pub mod layout_box;
+pub mod table;
+pub mod values;
+
+// Re-exports for convenience
+pub use box_model::{BoxDimensions, EdgeSizes, Rect};
+pub use formatting_context::{BlockFormattingContext, InlineFormattingContext};
+pub use layout_box::{BoxType, LayoutBox};
+pub use table::TableLayout;
+pub use values::{AutoEdgeSizes, AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
+
+use crate::style::DisplayValue;
+
+// [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
+// defines the default CSS styles for HTML elements.
+
+/// [§ 15.3.1 Hidden elements](https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements)
+/// [§ 15.3.2 The page](https://html.spec.whatwg.org/multipage/rendering.html#the-page)
+/// [§ 15.3.3 Flow content](https://html.spec.whatwg.org/multipage/rendering.html#flow-content-3)
+///
+/// Returns the default display value for an HTML element.
+pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
+    // [§ 15.3.1 Hidden elements]
+    // "The following elements must have their display set to none:"
+    // area, base, basefont, datalist, head, link, meta, noembed,
+    // noframes, param, rp, script, style, template, title
+    let hidden = [
+        "area", "base", "basefont", "datalist", "head", "link", "meta", "noembed", "noframes",
+        "param", "rp", "script", "style", "template", "title",
+    ];
+    if hidden.contains(&tag_name) {
+        return None; // display: none
+    }
+
+    // [§ 15.3.3 Flow content]
+    // Block-level elements by default
+    let block_elements = [
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "body",
+        "center",
+        "dd",
+        "details",
+        "dialog",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hgroup",
+        "hr",
+        "html",
+        "legend",
+        "li",
+        "listing",
+        "main",
+        "menu",
+        "nav",
+        "ol",
+        "p",
+        "plaintext",
+        "pre",
+        "search",
+        "section",
+        "summary",
+        "ul",
+        "xmp",
+    ];
+    if block_elements.contains(&tag_name) {
+        return Some(DisplayValue::block());
+    }
+
+    // Inline elements (default)
+    // a, abbr, acronym, b, bdi, bdo, big, br, cite, code, data, del, dfn,
+    // em, font, i, img, ins, kbd, label, mark, nobr, q, ruby, s, samp,
+    // small, span, strike, strong, sub, sup, time, tt, u, var, wbr
+    Some(DisplayValue::inline())
+}
