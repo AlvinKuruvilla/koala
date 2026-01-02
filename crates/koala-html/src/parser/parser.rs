@@ -2291,6 +2291,7 @@ impl HTMLParser {
                         | "bdo"
                         | "wbr"
                         | "nobr"
+                        | "label"
                 ) =>
             {
                 // Simplified: just pop until matching tag (works for properly nested content)
