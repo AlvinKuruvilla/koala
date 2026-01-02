@@ -1850,6 +1850,41 @@ impl HTMLParser {
                 self.handle_in_head_mode(token);
             }
 
+            // [§ 13.2.6.4.7 "in body" - Start tag "noscript"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // The behavior depends on whether the scripting flag is enabled or disabled.
+            // Since this browser has no JavaScript engine, scripting is effectively disabled.
+            Token::StartTag { name, .. } if name == "noscript" => {
+                // CASE A: If the scripting flag is ENABLED:
+                // "Follow the generic raw text element parsing algorithm."
+                //
+                // [§ 13.2.6.3 Generic raw text element parsing algorithm](https://html.spec.whatwg.org/multipage/parsing.html#generic-raw-text-element-parsing-algorithm):
+                //   1. Insert an HTML element for the token.
+                //   2. Let the original insertion mode be the current insertion mode.
+                //   3. Switch the insertion mode to "text".
+                //
+                // (This treats <noscript> contents as raw text, not parsed HTML)
+
+                // CASE B: If the scripting flag is DISABLED (our case):
+                // "Reconstruct the active formatting elements, if any."
+                // "Insert an HTML element for the token."
+                // "Switch the insertion mode to "in head noscript"."
+                //
+                // (This parses <noscript> contents as HTML since scripts won't run)
+
+                // STEP 1: Reconstruct active formatting elements.
+                // "Reconstruct the active formatting elements, if any."
+                self.reconstruct_active_formatting_elements();
+
+                // STEP 2: Insert the noscript element.
+                // "Insert an HTML element for the token."
+                let _ = self.insert_html_element(token);
+
+                // STEP 3: Switch insertion mode.
+                // "Switch the insertion mode to "in head noscript"."
+                self.insertion_mode = InsertionMode::InHeadNoscript;
+            }
+
             // "An end tag whose tag name is one of: "address", "article", "aside", "blockquote",
             // "button", "center", "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption",
             // "figure", "footer", "header", "hgroup", "listing", "main", "menu", "nav", "ol", "pre",
