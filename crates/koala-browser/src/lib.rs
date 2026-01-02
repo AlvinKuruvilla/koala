@@ -28,7 +28,7 @@ use koala_css::{
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
 use std::collections::HashMap;
 use std::fs;
-use std::process::Command;
+use std::time::Duration;
 
 /// A fully loaded and parsed document.
 ///
@@ -87,7 +87,7 @@ impl std::error::Error for LoadError {}
 ///
 /// This is the main entry point for loading a document. It handles:
 /// - File reading for local paths
-/// - URL fetching via curl for http:// and https:// URLs
+/// - URL fetching for http:// and https:// URLs
 /// - HTML parsing and tokenization
 /// - CSS extraction and parsing
 /// - Style computation
@@ -160,21 +160,27 @@ pub fn parse_html_string(html: &str) -> LoadedDocument {
     }
 }
 
-/// Fetch HTML content from a URL using curl.
+/// Fetch HTML content from a URL using reqwest.
 fn fetch_url(url: &str) -> Result<String, LoadError> {
-    let output = Command::new("curl")
-        .args(["-sL", "--max-time", "10", url])
-        .output()
-        .map_err(|e| LoadError::NetworkError(format!("Failed to run curl: {}", e)))?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| LoadError::NetworkError(format!("Failed to create HTTP client: {e}")))?;
 
-    if !output.status.success() {
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|e| LoadError::NetworkError(format!("Request failed: {e}")))?;
+
+    if !response.status().is_success() {
         return Err(LoadError::NetworkError(format!(
-            "curl failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "HTTP error: {}",
+            response.status()
         )));
     }
 
-    String::from_utf8(output.stdout)
-        .map_err(|e| LoadError::NetworkError(format!("Invalid UTF-8: {}", e)))
+    response
+        .text()
+        .map_err(|e| LoadError::NetworkError(format!("Failed to read response body: {e}")))
 }
 
