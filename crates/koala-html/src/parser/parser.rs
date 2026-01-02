@@ -2148,22 +2148,33 @@ impl HTMLParser {
             }
 
             // [§ 13.2.6.4.7 "in body" - End tag "select"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            // NOTE: This end tag should only appear when in InSelect mode.
-            // Seeing it in InBody means we never switched modes properly.
+            //
+            // "An end tag whose tag name is "select""
+            // "Parse error."
+            // "If the stack of open elements does not have a select element in select scope,
+            //  ignore the token. (fragment case)"
+            // "Otherwise:"
+            // "Pop elements from the stack of open elements until a select element has been
+            //  popped from the stack."
+            // "Reset the insertion mode appropriately."
             Token::EndTag { name, .. } if name == "select" => {
+                // NOTE: Using has_element_in_scope instead of select scope (simplified)
                 if self.has_element_in_scope("select") {
                     self.pop_until_tag("select");
-                    todo!("</select> in InBody - should have been in InSelect mode");
+                    // TODO: Reset the insertion mode appropriately
                 }
+                // Otherwise: ignore the token (fragment case or parse error)
             }
 
             // [§ 13.2.6.4.7 "in body" - End tags "optgroup", "option"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            // NOTE: These end tags should only appear when in InSelect mode.
+            //
+            // These fall under "Any other end tag" rules since there's no specific
+            // handler in InBody mode. Using simplified pop-until-tag behavior.
             Token::EndTag { name, .. } if matches!(name.as_str(), "optgroup" | "option") => {
                 if self.has_element_in_scope(name) {
                     self.pop_until_tag(name);
-                    todo!("</optgroup> or </option> in InBody - should have been in InSelect mode");
                 }
+                // Otherwise: ignore the token
             }
 
             // [§ 13.2.6.4.7 "in body" - End tag "iframe", "noembed", "noframes"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
