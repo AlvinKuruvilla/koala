@@ -2,11 +2,14 @@
 //!
 //! A headless browser for testing and debugging.
 
+mod renderer;
+
 use anyhow::Result;
 use clap::Parser;
 use koala_browser::{load_document, parse_html_string, LoadedDocument};
 use koala_css::LayoutBox;
 use koala_html::print_tree;
+use std::path::PathBuf;
 
 /// Koala Browser CLI - A headless browser for testing and debugging
 #[derive(Parser, Debug)]
@@ -28,6 +31,12 @@ use koala_html::print_tree;
 
     # Parse inline HTML and show layout
     koala-cli --html '<div style="margin: auto; width: 50vw">Centered</div>' --layout
+
+    # Take a screenshot of a webpage
+    koala-cli -S screenshot.png https://example.com
+
+    # Screenshot with custom viewport size
+    koala-cli --screenshot output.png --width 1920 --height 1080 https://example.com
 "#)]
 struct Cli {
     /// Path to HTML file or URL to fetch and parse
@@ -42,6 +51,19 @@ struct Cli {
     /// Uses a 1280x720 viewport. Useful for debugging CSS layout issues.
     #[arg(long)]
     layout: bool,
+
+    /// Take a screenshot and save to the specified file (PNG format).
+    /// Renders the page to an image for visual debugging without the GUI.
+    #[arg(short = 'S', long, value_name = "FILE")]
+    screenshot: Option<PathBuf>,
+
+    /// Viewport width for screenshot (default: 1280)
+    #[arg(long, default_value = "1280")]
+    width: u32,
+
+    /// Viewport height for screenshot (default: 720)
+    #[arg(long, default_value = "720")]
+    height: u32,
 }
 
 fn main() -> Result<()> {
@@ -57,11 +79,48 @@ fn main() -> Result<()> {
         anyhow::bail!("Either a file/URL path or --html must be provided");
     };
 
+    // Handle screenshot mode
+    if let Some(ref output_path) = cli.screenshot {
+        take_screenshot(&doc, output_path, cli.width, cli.height)?;
+        println!("Screenshot saved to: {}", output_path.display());
+        return Ok(());
+    }
+
     if cli.layout {
         print_layout(&doc);
     } else {
         print_document(&doc);
     }
+
+    Ok(())
+}
+
+/// Take a screenshot of the rendered page and save to file.
+fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, height: u32) -> Result<()> {
+    use renderer::Renderer;
+
+    let viewport = koala_css::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: width as f32,
+        height: height as f32,
+    };
+
+    // Get the layout tree and compute layout
+    let layout_tree = doc
+        .layout_tree
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No layout tree available"))?;
+
+    let mut layout = layout_tree.clone();
+    layout.layout(viewport, viewport);
+
+    // Create renderer and paint
+    let mut renderer = Renderer::new(width, height);
+    renderer.render(&layout, doc);
+
+    // Save to file
+    renderer.save(output_path)?;
 
     Ok(())
 }
