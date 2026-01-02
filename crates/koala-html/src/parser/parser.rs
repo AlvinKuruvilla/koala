@@ -74,6 +74,37 @@ pub struct ParseIssue {
     pub is_error: bool,
 }
 
+/// [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#the-list-of-active-formatting-elements)
+///
+/// "The list of active formatting elements... is used to handle mis-nested
+/// formatting element tags."
+///
+/// The list contains entries that are either elements or markers.
+#[derive(Debug, Clone)]
+pub enum ActiveFormattingElement {
+    /// A formatting element entry.
+    ///
+    /// "The list contains elements in the formatting category..."
+    /// Formatting elements are: a, b, big, code, em, font, i, nobr, s, small,
+    /// strike, strong, tt, u.
+    Element {
+        /// The NodeId of the element in the DOM tree.
+        node_id: NodeId,
+        /// The original token, kept to recreate the element if needed during
+        /// the adoption agency algorithm or when reconstructing.
+        token: Token,
+    },
+    /// A marker entry.
+    ///
+    /// "A marker is an entry in the list of active formatting elements that is
+    /// distinct from any element."
+    ///
+    /// Markers are pushed when entering: applet, object, marquee, template,
+    /// td, th, caption. They scope the list so that formatting elements from
+    /// outside these elements don't affect content inside.
+    Marker,
+}
+
 /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction)
 ///
 /// The HTML parser builds a DOM tree from a stream of tokens.
@@ -91,6 +122,14 @@ pub struct HTMLParser {
 
     /// [§ 13.2.4.4 The element pointers](https://html.spec.whatwg.org/multipage/parsing.html#the-element-pointers)
     head_element_pointer: Option<NodeId>,
+
+    /// [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#the-list-of-active-formatting-elements)
+    ///
+    /// "The list of active formatting elements... is used to handle mis-nested
+    /// formatting element tags."
+    ///
+    /// Initially, the list is empty.
+    active_formatting_elements: Vec<ActiveFormattingElement>,
 
     /// DOM tree with parent/sibling pointers.
     /// NodeId::ROOT (index 0) is the Document node.
@@ -121,6 +160,7 @@ impl HTMLParser {
             original_insertion_mode: None,
             stack_of_open_elements: Vec::new(),
             head_element_pointer: None,
+            active_formatting_elements: Vec::new(),
             tree: DomTree::new(),
             tokens,
             token_index: 0,
@@ -271,7 +311,9 @@ impl HTMLParser {
 
             // STEP 13: AfterAfterFrameset mode - final frameset state
             //   [§ 13.2.6.4.23](https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-frameset-insertion-mode)
-            InsertionMode::AfterAfterFrameset => todo!("AfterAfterFrameset mode - see STEP 13 above"),
+            InsertionMode::AfterAfterFrameset => {
+                todo!("AfterAfterFrameset mode - see STEP 13 above")
+            }
         }
     }
 
@@ -412,7 +454,10 @@ impl HTMLParser {
     /// for a token, the user agent must insert a foreign element for the token,
     /// in the HTML namespace."
     fn insert_html_element(&mut self, token: &Token) -> NodeId {
-        if let Token::StartTag { name, attributes, .. } = token {
+        if let Token::StartTag {
+            name, attributes, ..
+        } = token
+        {
             // STEP 1: "Create an element for the token"
             let element_id = self.create_element(name, attributes);
 
@@ -589,7 +634,111 @@ impl HTMLParser {
             self.pop_until_tag(tag_name);
         }
     }
+    /// [§ 13.2.4.3 Reconstruct the active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)
+    ///
+    /// "When the steps below require the UA to reconstruct the active formatting
+    /// elements, the UA must perform the following steps:"
+    ///
+    /// This algorithm has two phases:
+    /// - Rewind phase (steps 4-6): Walk backwards to find where to start
+    /// - Create phase (steps 7-10): Walk forwards, creating elements
+    fn reconstruct_active_formatting_elements(&mut self) {
+        // STEP 1: "If there are no entries in the list of active formatting
+        //          elements, then there is nothing to reconstruct; stop this
+        //          algorithm."
+        if self.active_formatting_elements.is_empty() {
+            return;
+        }
 
+        // STEP 2: "If the last (most recently added) entry in the list of active
+        //          formatting elements is a marker, or if it is an element that
+        //          is in the stack of open elements, then there is nothing to
+        //          reconstruct; stop this algorithm."
+        if let Some(last) = self.active_formatting_elements.last() {
+            match last {
+                ActiveFormattingElement::Marker => return,
+                ActiveFormattingElement::Element { node_id, .. } => {
+                    if self.stack_of_open_elements.contains(node_id) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        // STEP 3: "Let entry be the last (most recently added) element in the
+        //          list of active formatting elements."
+        let mut entry_index = self.active_formatting_elements.len() - 1;
+
+        // STEP 4-6: Rewind phase
+        // "Rewind: If there are no entries before entry in the list of active
+        //  formatting elements, then jump to the step labeled create."
+        loop {
+            // STEP 4: If at the beginning, jump to create (don't decrement)
+            if entry_index == 0 {
+                break;
+            }
+
+            // STEP 5: "Let entry be the entry one earlier than entry in the list
+            //          of active formatting elements."
+            entry_index -= 1;
+
+            // STEP 6: "If entry is neither a marker nor an element that is also
+            //          in the stack of open elements, go to the step labeled rewind."
+            match &self.active_formatting_elements[entry_index] {
+                ActiveFormattingElement::Marker => {
+                    // Found marker, advance one position and start creating
+                    entry_index += 1;
+                    break;
+                }
+                ActiveFormattingElement::Element { node_id, .. } => {
+                    if self.stack_of_open_elements.contains(node_id) {
+                        // Found element in stack, advance one position and start creating
+                        entry_index += 1;
+                        break;
+                    }
+                    // Otherwise continue rewinding (implicit via loop)
+                }
+            }
+        }
+
+        // STEP 7-10: Create phase (advance and create loop)
+        // "Advance: Let entry be the element one later than entry in the list
+        //  of active formatting elements."
+        loop {
+            // STEP 8: "Create: Insert an HTML element for the token for which
+            //          the element entry was created, to obtain new element."
+            //
+            // Clone the token first to avoid borrow checker issues
+            let token = match &self.active_formatting_elements[entry_index] {
+                ActiveFormattingElement::Element { token, .. } => token.clone(),
+                ActiveFormattingElement::Marker => {
+                    // Shouldn't happen after rewind, but handle gracefully
+                    entry_index += 1;
+                    if entry_index >= self.active_formatting_elements.len() {
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            let new_element_id = self.insert_html_element(&token);
+
+            // STEP 9: "Replace the entry for entry in the list with an entry
+            //          for new element."
+            self.active_formatting_elements[entry_index] = ActiveFormattingElement::Element {
+                node_id: new_element_id,
+                token,
+            };
+
+            // STEP 10: "If the entry for new element in the list of active
+            //           formatting elements is not the last entry in the list,
+            //           return to the step labeled advance."
+            entry_index += 1;
+            if entry_index >= self.active_formatting_elements.len() {
+                break;
+            }
+        }
+    }
     /// [§ 13.2.6.4.1 The "initial" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode)
     fn handle_initial_mode(&mut self, token: &Token) {
         match token {
@@ -651,7 +800,9 @@ impl HTMLParser {
             // of open elements."
             // ...
             // "Switch the insertion mode to "before head"."
-            Token::StartTag { name, attributes, .. } if name == "html" => {
+            Token::StartTag {
+                name, attributes, ..
+            } if name == "html" => {
                 let html_idx = self.create_element(name, attributes);
                 self.append_child(NodeId::ROOT, html_idx);
                 self.stack_of_open_elements.push(html_idx);
@@ -813,7 +964,10 @@ impl HTMLParser {
             // stack of open elements."
             // ...
             Token::StartTag { name, .. }
-                if matches!(name.as_str(), "base" | "basefont" | "bgsound" | "link" | "meta") =>
+                if matches!(
+                    name.as_str(),
+                    "base" | "basefont" | "bgsound" | "link" | "meta"
+                ) =>
             {
                 let _ = self.insert_html_element(token);
                 let _ = self.stack_of_open_elements.pop();
@@ -930,7 +1084,9 @@ impl HTMLParser {
             Token::EndOfFile => {
                 // Parse error (logged implicitly)
                 let _ = self.stack_of_open_elements.pop();
-                self.insertion_mode = self.original_insertion_mode.unwrap_or(InsertionMode::InBody);
+                self.insertion_mode = self
+                    .original_insertion_mode
+                    .unwrap_or(InsertionMode::InBody);
                 // NOTE: Spec says to reprocess, but EOF is terminal so we just switch mode.
             }
 
@@ -942,7 +1098,9 @@ impl HTMLParser {
             // "Switch the insertion mode to the original insertion mode."
             Token::EndTag { .. } => {
                 let _ = self.stack_of_open_elements.pop();
-                self.insertion_mode = self.original_insertion_mode.unwrap_or(InsertionMode::InBody);
+                self.insertion_mode = self
+                    .original_insertion_mode
+                    .unwrap_or(InsertionMode::InBody);
             }
 
             // NOTE: Start tags and other tokens should not appear in text mode
@@ -1372,7 +1530,14 @@ impl HTMLParser {
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
-                    "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption" | "colgroup" | "col"
+                    "tr" | "td"
+                        | "th"
+                        | "tbody"
+                        | "thead"
+                        | "tfoot"
+                        | "caption"
+                        | "colgroup"
+                        | "col"
                 ) =>
             {
                 let _ = self.insert_html_element(token);
@@ -1386,7 +1551,14 @@ impl HTMLParser {
             Token::EndTag { name, .. }
                 if matches!(
                     name.as_str(),
-                    "table" | "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption"
+                    "table"
+                        | "tr"
+                        | "td"
+                        | "th"
+                        | "tbody"
+                        | "thead"
+                        | "tfoot"
+                        | "caption"
                         | "colgroup"
                 ) =>
             {
@@ -1422,8 +1594,16 @@ impl HTMLParser {
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
-                    "base" | "basefont" | "bgsound" | "link" | "meta" | "noframes" | "script"
-                        | "style" | "template" | "title"
+                    "base"
+                        | "basefont"
+                        | "bgsound"
+                        | "link"
+                        | "meta"
+                        | "noframes"
+                        | "script"
+                        | "style"
+                        | "template"
+                        | "title"
                 ) =>
             {
                 self.handle_in_head_mode(token);
@@ -1580,10 +1760,35 @@ impl HTMLParser {
             Token::EndTag { name, .. }
                 if matches!(
                     name.as_str(),
-                    "span" | "a" | "b" | "i" | "em" | "strong" | "small" | "s" | "cite"
-                        | "q" | "dfn" | "abbr" | "ruby" | "rt" | "rp" | "data" | "time"
-                        | "code" | "var" | "samp" | "kbd" | "sub" | "sup" | "u" | "mark"
-                        | "bdi" | "bdo" | "wbr" | "nobr"
+                    "span"
+                        | "a"
+                        | "b"
+                        | "i"
+                        | "em"
+                        | "strong"
+                        | "small"
+                        | "s"
+                        | "cite"
+                        | "q"
+                        | "dfn"
+                        | "abbr"
+                        | "ruby"
+                        | "rt"
+                        | "rp"
+                        | "data"
+                        | "time"
+                        | "code"
+                        | "var"
+                        | "samp"
+                        | "kbd"
+                        | "sub"
+                        | "sup"
+                        | "u"
+                        | "mark"
+                        | "bdi"
+                        | "bdo"
+                        | "wbr"
+                        | "nobr"
                 ) =>
             {
                 // Simplified: just pop until matching tag (works for properly nested content)
@@ -1632,6 +1837,70 @@ impl HTMLParser {
             // 2. "Stop parsing."
             Token::EndOfFile => {
                 self.stopped = true;
+            }
+
+            // ===== FOREIGN CONTENT (SVG and MathML) =====
+            //
+            // [§ 13.2.6.4.7 "in body" - A start tag whose tag name is "math"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // [§ 13.2.6.4.7 "in body" - A start tag whose tag name is "svg"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "A start tag whose tag name is 'math'":
+            // "A start tag whose tag name is 'svg'":
+            //   "Reconstruct the active formatting elements, if any.
+            //    Adjust MathML attributes for the token. (This fixes the case of MathML
+            //    attributes that are not all lowercase.)
+            //    Adjust foreign attributes for the token. (This fixes the use of namespaced
+            //    attributes, in particular XLink.)
+            //    Insert a foreign element for the token, in the [MathML/SVG] namespace.
+            //    If the token has its self-closing flag set, pop the current node off the
+            //    stack of open elements and acknowledge the token's self-closing flag."
+            //
+            // TODO: Implement full foreign content handling:
+            //
+            // NOTE: Current simplified implementation treats SVG/MathML as regular HTML
+            // elements without namespace handling. This works for basic cases but won't
+            // correctly handle SVG-specific elements or attributes.
+            Token::StartTag { name, .. } if name == "svg" => {
+                // STEP 1: Reconstruct the active formatting elements, if any.
+                //   [§ 13.2.4.3](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)
+                self.reconstruct_active_formatting_elements();
+                //
+                // STEP 2: Adjust attributes for foreign content
+                //   [§ 13.2.6.3 Adjust MathML attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes)
+                //   [§ 13.2.6.3 Adjust SVG attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes)
+                //   [§ 13.2.6.3 Adjust foreign attributes](https://html.spec.whatwg.org/multipage/parsing.html#adjust-foreign-attributes)
+                //
+                //   For MathML: adjust "definitionurl" -> "definitionURL"
+                //   For SVG: adjust case-sensitive attribute names like:
+                //     "attributename" -> "attributeName"
+                //     "viewbox" -> "viewBox"
+                //     "preserveaspectratio" -> "preserveAspectRatio"
+                //   For foreign attributes: handle namespaced attributes like:
+                //     "xlink:href" -> xlink namespace
+                //     "xml:lang" -> xml namespace
+                //
+                // STEP 3: Insert a foreign element for the token
+                //   [§ 13.2.6.1 Insert a foreign element](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element)
+                //   // For <math>: use MathML namespace "http://www.w3.org/1998/Math/MathML"
+                //   // For <svg>: use SVG namespace "http://www.w3.org/2000/svg"
+                //   // let element = self.create_element_for_token(token, namespace);
+                //   // self.insert_element(element);
+                //
+                // STEP 4: Handle self-closing flag
+                //   // if token.self_closing {
+                //   //     self.stack_of_open_elements.pop();
+                //   //     // Acknowledge the self-closing flag
+                //   // }
+                //
+                // STEP 5: If not self-closing, switch to foreign content parsing
+                //   [§ 13.2.6.5 The rules for parsing tokens in foreign content](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign)
+                //   // Future tokens are processed by handle_in_foreign_content() until
+                //   // we pop back to an HTML element or encounter specific integration points.
+                //
+            }
+
+            Token::StartTag { name, .. } if name == "math" => {
+                let _ = self.insert_html_element(token);
             }
 
             // Unhandled tokens - panic to surface missing implementations
@@ -1794,8 +2063,8 @@ pub fn print_tree(tree: &DomTree, id: NodeId, indent: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koala_dom::Node;
     use crate::tokenizer::HTMLTokenizer;
+    use koala_dom::Node;
 
     /// Helper to parse HTML and return the DOM tree
     fn parse(html: &str) -> DomTree {
@@ -1920,9 +2189,7 @@ mod tests {
         let element_names: Vec<_> = tree
             .children(body_id)
             .iter()
-            .filter_map(|&child_id| {
-                tree.as_element(child_id).map(|data| data.tag_name.as_str())
-            })
+            .filter_map(|&child_id| tree.as_element(child_id).map(|data| data.tag_name.as_str()))
             .collect();
 
         assert!(element_names.contains(&"input"));
@@ -2033,7 +2300,10 @@ mod tests {
         let div_id = find_element(&tree, NodeId::ROOT, "div").unwrap();
         let div = get_node(&tree, div_id);
         if let NodeType::Element(data) = &div.node_type {
-            assert_eq!(data.attrs.get("data-value"), Some(&"single quoted".to_string()));
+            assert_eq!(
+                data.attrs.get("data-value"),
+                Some(&"single quoted".to_string())
+            );
         }
         assert_eq!(text_content(&tree, div_id), "Hello");
 
