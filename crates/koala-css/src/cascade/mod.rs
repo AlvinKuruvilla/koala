@@ -446,7 +446,6 @@ mod tests {
             crate::style::LengthValue::Vh(_) => {
                 panic!("Expected border width in Px, got Vh (should have been resolved)")
             }
-
         }
         assert_eq!(border.style, "solid");
         assert_eq!(border.color.r, 0xdd);

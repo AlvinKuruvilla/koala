@@ -552,8 +552,7 @@ impl CSSTokenizer {
         }
 
         // "If the next 2 input code points are U+002E FULL STOP (.) followed by a digit..."
-        if self.peek() == Some('.')
-            && self.peek_at(1).map(|c| c.is_ascii_digit()).unwrap_or(false)
+        if self.peek() == Some('.') && self.peek_at(1).map(|c| c.is_ascii_digit()).unwrap_or(false)
         {
             // "Consume them. Append them to repr. Set type to 'number'."
             repr.push(self.consume().unwrap()); // .
@@ -895,7 +894,11 @@ mod tests {
         let tokens = tokenize("42");
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
-            CSSToken::Number { value, int_value, numeric_type } => {
+            CSSToken::Number {
+                value,
+                int_value,
+                numeric_type,
+            } => {
                 assert_eq!(*value, 42.0);
                 assert_eq!(*int_value, Some(42));
                 assert_eq!(*numeric_type, NumericType::Integer);
@@ -909,7 +912,11 @@ mod tests {
         let tokens = tokenize("-10");
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
-            CSSToken::Number { value, int_value, numeric_type } => {
+            CSSToken::Number {
+                value,
+                int_value,
+                numeric_type,
+            } => {
                 assert_eq!(*value, -10.0);
                 assert_eq!(*int_value, Some(-10));
                 assert_eq!(*numeric_type, NumericType::Integer);
@@ -923,7 +930,11 @@ mod tests {
         let tokens = tokenize("3.14");
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
-            CSSToken::Number { value, numeric_type, .. } => {
+            CSSToken::Number {
+                value,
+                numeric_type,
+                ..
+            } => {
                 assert!((value - 3.14).abs() < 0.001);
                 assert_eq!(*numeric_type, NumericType::Number);
             }
@@ -1088,7 +1099,7 @@ mod tests {
 
     #[test]
     fn test_escaped_character() {
-        let tokens = tokenize("\\41 ");  // \41 is 'A' in hex
+        let tokens = tokenize("\\41 "); // \41 is 'A' in hex
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
             CSSToken::Ident(name) => assert_eq!(name, "A"),
@@ -1101,7 +1112,11 @@ mod tests {
         let tokens = tokenize("1e10");
         assert_eq!(tokens.len(), 2);
         match &tokens[0] {
-            CSSToken::Number { value, numeric_type, .. } => {
+            CSSToken::Number {
+                value,
+                numeric_type,
+                ..
+            } => {
                 assert_eq!(*value, 1e10);
                 assert_eq!(*numeric_type, NumericType::Number);
             }

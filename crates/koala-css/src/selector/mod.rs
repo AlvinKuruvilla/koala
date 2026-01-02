@@ -543,8 +543,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
             // to check for explicit combinators (>, +, ~) that might follow.
             ' ' | '\t' | '\n' | '\r' => {
                 // Skip leading whitespace
-                if current_ident.is_empty() && current_compound.is_empty() && compounds.is_empty()
-                {
+                if current_ident.is_empty() && current_compound.is_empty() && compounds.is_empty() {
                     continue;
                 }
 
@@ -557,7 +556,11 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 match chars.peek() {
                     // End of selector - just trailing whitespace
                     None => {
-                        let _ = flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
+                        let _ = flush_compound(
+                            &mut current_ident,
+                            &mut current_compound,
+                            &mut compounds,
+                        );
                     }
 
                     // [§ 16.2 Child combinator](https://www.w3.org/TR/selectors-4/#child-combinators)
@@ -671,7 +674,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
     // Flush final compound selector
     // [§ 17 Specificity](https://www.w3.org/TR/selectors-4/#specificity-rules)
     // "count the number of type selectors...in the selector (= C)"
-    let _  = flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
+    let _ = flush_compound(&mut current_ident, &mut current_compound, &mut compounds);
 
     if compounds.is_empty() {
         return None;
@@ -868,7 +871,10 @@ mod tests {
         ));
 
         assert_eq!(selector.complex.combinators.len(), 1);
-        assert_eq!(selector.complex.combinators[0].0, Combinator::SubsequentSibling);
+        assert_eq!(
+            selector.complex.combinators[0].0,
+            Combinator::SubsequentSibling
+        );
 
         assert_eq!(selector.specificity, Specificity(0, 0, 2));
     }

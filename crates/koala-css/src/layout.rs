@@ -187,22 +187,30 @@ impl UnresolvedEdgeSizes {
             top: self
                 .top
                 .as_ref()
-                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .map(|l| {
+                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
+                })
                 .unwrap_or(0.0),
             right: self
                 .right
                 .as_ref()
-                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .map(|l| {
+                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
+                })
                 .unwrap_or(0.0),
             bottom: self
                 .bottom
                 .as_ref()
-                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .map(|l| {
+                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
+                })
                 .unwrap_or(0.0),
             left: self
                 .left
                 .as_ref()
-                .map(|l| l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32)
+                .map(|l| {
+                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
+                })
                 .unwrap_or(0.0),
         }
     }
@@ -658,7 +666,6 @@ pub struct LayoutBox {
     // These are the "computed" values from the cascade. Viewport-relative units
     // (vw, vh) are stored unresolved here and resolved to "used" values during
     // layout when the viewport dimensions are available.
-
     /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
     ///
     /// "Margins can be negative, but there may be implementation-specific limits."

@@ -409,9 +409,7 @@ impl CSSParser {
         let mut value = Vec::new();
         while !matches!(
             self.peek(),
-            None | Some(CSSToken::EOF)
-                | Some(CSSToken::Semicolon)
-                | Some(CSSToken::RightBrace)
+            None | Some(CSSToken::EOF) | Some(CSSToken::Semicolon) | Some(CSSToken::RightBrace)
         ) {
             if let Some(v) = self.consume_component_value() {
                 value.push(v);
