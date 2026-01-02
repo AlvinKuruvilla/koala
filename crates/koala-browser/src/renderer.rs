@@ -2,11 +2,11 @@
 //!
 //! Renders a LayoutBox tree to a pixel buffer using fontdue for text rasterization.
 
-use anyhow::Result;
+use crate::LoadedDocument;
 use fontdue::{Font, FontSettings};
+use anyhow::Result;
 use image::{ImageBuffer, Rgba, RgbaImage};
-use koala_browser::LoadedDocument;
-use koala_css::{BoxType, LayoutBox};
+use koala_css::{BoxType, ComputedStyle, LayoutBox};
 use std::path::Path;
 
 /// Common system font paths to search for a default font.
@@ -145,7 +145,7 @@ impl Renderer {
         &mut self,
         layout_box: &LayoutBox,
         doc: &LoadedDocument,
-        parent_style: Option<&koala_css::ComputedStyle>,
+        parent_style: Option<&ComputedStyle>,
     ) {
         let dims = &layout_box.dimensions;
 

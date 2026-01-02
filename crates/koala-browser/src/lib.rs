@@ -7,11 +7,14 @@
 //! - **Style Computation** - integrate CSS with DOM
 //! - **Render Tree** - styled DOM ready for layout
 //! - **Layout Tree** - box tree with computed dimensions
+//! - **Software Rendering** - headless screenshot generation
 //!
 //! # Not Yet Implemented
 //!
 //! - JavaScript integration
 //! - Resource loading (images, fonts, etc.)
+
+pub mod renderer;
 
 pub use koala_dom as dom;
 pub use koala_html as html;

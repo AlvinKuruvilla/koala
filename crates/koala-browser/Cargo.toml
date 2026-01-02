@@ -10,6 +10,9 @@ koala-common.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true
+anyhow.workspace = true
+fontdue = "0.9"
+image = "0.25"
 
 [lints]
 workspace = true

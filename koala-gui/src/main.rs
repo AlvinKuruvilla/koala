@@ -5,21 +5,256 @@
 //! Debug features:
 //! - F12: Toggle debug panel
 //! - All state changes logged to terminal
+//!
+//! Headless mode:
+//! - koala -H file.html     # Print DOM/layout info
+//! - koala -S out.png URL   # Take screenshot
 
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
+use clap::Parser;
 use eframe::egui;
-use koala_browser::{load_document, LoadedDocument};
+use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
 use koala_common::warning::clear_warnings;
 use koala_css::{LayoutBox, Rect};
 use koala_dom::{NodeId, NodeType};
+use koala_html::print_tree;
 
-fn main() -> eframe::Result<()> {
+/// Koala Browser - A from-scratch web browser built for learning
+#[derive(Parser, Debug)]
+#[command(name = "koala")]
+#[command(author, version, about, long_about = None)]
+#[command(after_help = r#"EXAMPLES:
+    # Open browser GUI
+    koala
+
+    # Open browser with a file
+    koala ./index.html
+
+    # Headless mode: print DOM tree
+    koala -H https://example.com
+
+    # Headless mode: print layout tree
+    koala -H --layout https://example.com
+
+    # Take a screenshot
+    koala -S screenshot.png https://example.com
+
+    # Screenshot with custom viewport
+    koala -S output.png --width 1920 --height 1080 https://example.com
+
+    # Parse inline HTML
+    koala --html '<h1>Test</h1>'
+"#)]
+struct Cli {
+    /// Path to HTML file or URL to open
+    #[arg(value_name = "FILE|URL")]
+    path: Option<String>,
+
+    /// Parse HTML string directly instead of file/URL
+    #[arg(long, value_name = "HTML")]
+    html: Option<String>,
+
+    /// Run in headless mode (no GUI, print to terminal)
+    #[arg(short = 'H', long)]
+    headless: bool,
+
+    /// Show computed layout tree with dimensions (headless mode)
+    #[arg(long)]
+    layout: bool,
+
+    /// Take a screenshot and save to the specified file (PNG format)
+    #[arg(short = 'S', long, value_name = "FILE")]
+    screenshot: Option<PathBuf>,
+
+    /// Viewport width for screenshot (default: 1280)
+    #[arg(long, default_value = "1280")]
+    width: u32,
+
+    /// Viewport height for screenshot (default: 720)
+    #[arg(long, default_value = "720")]
+    height: u32,
+}
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    // Screenshot mode
+    if let Some(ref output_path) = cli.screenshot {
+        let doc = load_doc(&cli)?;
+        take_screenshot(&doc, output_path, cli.width, cli.height)?;
+        println!("Screenshot saved to: {}", output_path.display());
+        return Ok(());
+    }
+
+    // Headless mode
+    if cli.headless {
+        let doc = load_doc(&cli)?;
+        if cli.layout {
+            print_layout(&doc);
+        } else {
+            print_document(&doc);
+        }
+        return Ok(());
+    }
+
+    // GUI mode
+    run_gui(cli.path.or(cli.html))
+}
+
+/// Load document from CLI arguments
+fn load_doc(cli: &Cli) -> anyhow::Result<LoadedDocument> {
+    if let Some(ref html_string) = cli.html {
+        Ok(parse_html_string(html_string))
+    } else if let Some(ref path) = cli.path {
+        load_document(path).map_err(|e| anyhow::anyhow!("{}", e))
+    } else {
+        anyhow::bail!("Headless/screenshot mode requires a file path, URL, or --html")
+    }
+}
+
+/// Take a screenshot of the rendered page
+fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, height: u32) -> anyhow::Result<()> {
+    let viewport = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: width as f32,
+        height: height as f32,
+    };
+
+    let layout_tree = doc
+        .layout_tree
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No layout tree available"))?;
+
+    let mut layout = layout_tree.clone();
+    layout.layout(viewport, viewport);
+
+    let mut renderer = Renderer::new(width, height);
+    renderer.render(&layout, doc);
+    renderer.save(output_path)?;
+
+    Ok(())
+}
+
+/// Print document information to stdout (headless mode)
+fn print_document(doc: &LoadedDocument) {
+    println!("=== DOM Tree ===");
+    print_tree(&doc.dom, doc.dom.root(), 0);
+
+    println!("\n=== Stylesheet ===");
+    println!("{} rules", doc.stylesheet.rules.len());
+
+    println!("\n=== Computed Styles ===");
+    println!("{} styled elements", doc.styles.len());
+
+    if doc.layout_tree.is_some() {
+        println!("\n=== Layout Tree ===");
+        println!("Layout tree built successfully");
+    }
+
+    if !doc.parse_issues.is_empty() {
+        println!("\n=== Parse Issues ===");
+        for issue in &doc.parse_issues {
+            println!("  - {}", issue);
+        }
+    }
+}
+
+/// Print layout tree with computed dimensions (headless mode)
+fn print_layout(doc: &LoadedDocument) {
+    let viewport_width = 1280.0;
+    let viewport_height = 720.0;
+
+    println!(
+        "=== Layout Tree (viewport: {}x{}) ===\n",
+        viewport_width, viewport_height
+    );
+
+    if let Some(ref layout_tree) = doc.layout_tree {
+        let mut layout = layout_tree.clone();
+        let viewport = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: viewport_width,
+            height: viewport_height,
+        };
+        layout.layout(viewport, viewport);
+        print_layout_box(&layout, 0, doc);
+    } else {
+        println!("No layout tree available");
+    }
+}
+
+/// Recursively print a layout box with its dimensions
+fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) {
+    let indent = "  ".repeat(depth);
+    let dims = &layout_box.dimensions;
+
+    let name = match &layout_box.box_type {
+        koala_css::BoxType::Principal(node_id) => {
+            if let Some(element) = doc.dom.as_element(*node_id) {
+                format!("<{}> ({:?})", element.tag_name, node_id)
+            } else if doc
+                .dom
+                .get(*node_id)
+                .map(|n| matches!(n.node_type, NodeType::Document))
+                .unwrap_or(false)
+            {
+                format!("Document ({:?})", node_id)
+            } else {
+                format!("{:?}", node_id)
+            }
+        }
+        koala_css::BoxType::AnonymousBlock => "AnonymousBlock".to_string(),
+        koala_css::BoxType::AnonymousInline(text) => {
+            let preview: String = text.chars().take(30).collect();
+            let suffix = if text.len() > 30 { "..." } else { "" };
+            format!("Text(\"{}{}\")", preview.replace('\n', "\\n"), suffix)
+        }
+    };
+
+    println!("{}[{}] {:?}", indent, name, layout_box.display);
+    println!(
+        "{}  content: x={:.1} y={:.1} w={:.1} h={:.1}",
+        indent, dims.content.x, dims.content.y, dims.content.width, dims.content.height
+    );
+
+    if dims.margin.top != 0.0
+        || dims.margin.right != 0.0
+        || dims.margin.bottom != 0.0
+        || dims.margin.left != 0.0
+    {
+        println!(
+            "{}  margin: t={:.1} r={:.1} b={:.1} l={:.1}",
+            indent, dims.margin.top, dims.margin.right, dims.margin.bottom, dims.margin.left
+        );
+    }
+
+    if dims.padding.top != 0.0
+        || dims.padding.right != 0.0
+        || dims.padding.bottom != 0.0
+        || dims.padding.left != 0.0
+    {
+        println!(
+            "{}  padding: t={:.1} r={:.1} b={:.1} l={:.1}",
+            indent, dims.padding.top, dims.padding.right, dims.padding.bottom, dims.padding.left
+        );
+    }
+
+    println!();
+
+    for child in &layout_box.children {
+        print_layout_box(child, depth + 1, doc);
+    }
+}
+
+/// Run the GUI browser
+fn run_gui(initial_url: Option<String>) -> anyhow::Result<()> {
     println!("[Koala GUI] Starting browser...");
 
-    // Parse command-line arguments for initial URL
-    let initial_url = std::env::args().nth(1);
     if let Some(ref url) = initial_url {
         println!("[Koala GUI] Will open: {}", url);
     }
@@ -36,6 +271,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(BrowserApp::new(&cc.egui_ctx, initial_url)))),
     )
+    .map_err(|e| anyhow::anyhow!("GUI error: {}", e))
 }
 
 /// Application theme

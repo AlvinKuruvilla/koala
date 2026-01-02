@@ -2,11 +2,9 @@
 //!
 //! A headless browser for testing and debugging.
 
-mod renderer;
-
 use anyhow::Result;
 use clap::Parser;
-use koala_browser::{load_document, parse_html_string, LoadedDocument};
+use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
 use koala_css::LayoutBox;
 use koala_html::print_tree;
 use std::path::PathBuf;
@@ -97,8 +95,6 @@ fn main() -> Result<()> {
 
 /// Take a screenshot of the rendered page and save to file.
 fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, height: u32) -> Result<()> {
-    use renderer::Renderer;
-
     let viewport = koala_css::Rect {
         x: 0.0,
         y: 0.0,
