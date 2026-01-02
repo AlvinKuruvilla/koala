@@ -1448,9 +1448,9 @@ impl HTMLParser {
             // "Insert the character."
             // "Set the frameset-ok flag to "not ok"."
             Token::Character { data } => {
-                // NOTE: We skip "reconstruct the active formatting elements" as we don't
-                // implement the list of active formatting elements.
+                self.reconstruct_active_formatting_elements();
                 self.insert_character(*data);
+                // TODO: Set the frameset-ok flag to "not ok
             }
 
             // "A comment token"
