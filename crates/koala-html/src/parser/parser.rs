@@ -1348,15 +1348,15 @@ impl HTMLParser {
                 // Parse error. Ignore the token.
             }
 
-              // Anything else
+            // Anything else
             _ => {
-              // TODO: Parse error.
+                // TODO: Parse error.
 
-              // Pop the current node (which will be a noscript element) from the stack of open elements; the new current node will be a head element.
+                // Pop the current node (which will be a noscript element) from the stack of open elements; the new current node will be a head element.
                 let _ = self.stack_of_open_elements.pop();
-              // Switch the insertion mode to "in head".
+                // Switch the insertion mode to "in head".
                 self.insertion_mode = InsertionMode::InHead;
-              // Reprocess the token.
+                // Reprocess the token.
                 self.reprocess_token(token);
             }
         }
@@ -1810,17 +1810,19 @@ impl HTMLParser {
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "select"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
             // "A start tag whose tag name is "select""
-            // "Reconstruct the active formatting elements, if any."
-            // "Insert an HTML element for the token."
-            // "Set the frameset-ok flag to "not ok"."
-            // "If the insertion mode is one of "in table", "in caption", "in table body",
-            //  "in row", or "in cell", then switch the insertion mode to "in select in table"."
-            // "Otherwise, switch the insertion mode to "in select"."
             Token::StartTag { name, .. } if name == "select" => {
+                // STEP 1: Reconstruct the active formatting elements.
+                // "Reconstruct the active formatting elements, if any."
                 self.reconstruct_active_formatting_elements();
+
+                // STEP 2: Insert the select element.
+                // "Insert an HTML element for the token."
                 let _ = self.insert_html_element(token);
-                todo!("Switch to InSelect or InSelectInTable insertion mode");
+
+                // TODO: STEP 3: Set the frameset-ok flag.
+                // "Set the frameset-ok flag to "not ok"."
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tags "optgroup", "option"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -2168,7 +2170,10 @@ impl HTMLParser {
             // These are raw text elements, end tags follow "any other end tag" rules.
             // NOTE: Simplified implementation.
             Token::EndTag { name, .. }
-                if matches!(name.as_str(), "iframe" | "noembed" | "noframes" | "noscript") =>
+                if matches!(
+                    name.as_str(),
+                    "iframe" | "noembed" | "noframes" | "noscript"
+                ) =>
             {
                 if self.has_element_in_scope(name) {
                     // TODO: generate_implied_end_tags(Some(name)) before popping
