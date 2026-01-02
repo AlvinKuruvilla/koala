@@ -4,10 +4,11 @@
 
 use anyhow::Result;
 use clap::Parser;
-use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
+use koala_browser::{LoadedDocument, load_document, parse_html_string, renderer::Renderer};
 use koala_css::LayoutBox;
-use koala_html::print_tree;
-use std::path::PathBuf;
+use koala_dom::{DomTree, NodeId, NodeType};
+use owo_colors::OwoColorize;
+use std::path::{Path, PathBuf};
 
 /// Koala Browser CLI - A headless browser for testing and debugging
 #[derive(Parser, Debug)]
@@ -94,7 +95,13 @@ fn main() -> Result<()> {
 }
 
 /// Take a screenshot of the rendered page and save to file.
-fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, height: u32) -> Result<()> {
+#[allow(clippy::cast_precision_loss)] // viewport dimensions don't need full u32 precision
+fn take_screenshot(
+    doc: &LoadedDocument,
+    output_path: &Path,
+    width: u32,
+    height: u32,
+) -> Result<()> {
     let viewport = koala_css::Rect {
         x: 0.0,
         y: 0.0,
@@ -121,44 +128,138 @@ fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, heig
     Ok(())
 }
 
+/// Print a section header with formatting.
+fn print_header(title: &str) {
+    println!();
+    println!("{}", format!("─── {title} ───").cyan().bold());
+}
+
+/// Print a sub-header for sections.
+fn print_subheader(text: &str) {
+    println!("    {}", text.dimmed());
+}
+
 /// Print document information to stdout.
 fn print_document(doc: &LoadedDocument) {
-    println!("=== DOM Tree ===");
-    print_tree(&doc.dom, doc.dom.root(), 0);
+    print_header("DOM Tree");
+    print_dom_tree(&doc.dom, doc.dom.root(), 0);
 
-    println!("\n=== Stylesheet ===");
-    println!("{} rules", doc.stylesheet.rules.len());
+    print_header("Stylesheet");
+    let rule_count = doc.stylesheet.rules.len();
+    if rule_count == 0 {
+        print_subheader("No CSS rules");
+    } else {
+        print_subheader(&format!(
+            "{} rule{}",
+            rule_count,
+            if rule_count == 1 { "" } else { "s" }
+        ));
+    }
 
-    println!("\n=== Computed Styles ===");
-    println!("{} styled elements", doc.styles.len());
-    print_computed_styles(doc);
+    print_header("Computed Styles");
+    let style_count = doc.styles.len();
+    if style_count == 0 {
+        print_subheader("No styled elements");
+    } else {
+        print_subheader(&format!(
+            "{} styled element{}",
+            style_count,
+            if style_count == 1 { "" } else { "s" }
+        ));
+        println!();
+        print_computed_styles(doc);
+    }
 
     if doc.layout_tree.is_some() {
-        println!("\n=== Layout Tree ===");
-        println!("Layout tree built successfully");
+        print_header("Layout");
+        print_subheader("Layout tree built successfully");
     }
 
     if !doc.parse_issues.is_empty() {
-        println!("\n=== Parse Issues ===");
+        print_header("Parse Issues");
         for issue in &doc.parse_issues {
-            println!("  - {}", issue);
+            println!("    {} {}", "!".yellow(), issue);
         }
     }
+
+    println!();
+}
+
+/// Print colorized DOM tree.
+fn print_dom_tree(tree: &DomTree, id: NodeId, indent: usize) {
+    let prefix = "  ".repeat(indent);
+    let Some(node) = tree.get(id) else { return };
+
+    match &node.node_type {
+        NodeType::Document => {
+            println!("{}{}", prefix, "Document".blue().bold());
+        }
+        NodeType::Element(data) => {
+            if data.attrs.is_empty() {
+                println!("{}{}", prefix, format!("<{}>", data.tag_name).green());
+            } else {
+                let tag_open = format!("<{}", data.tag_name);
+                print!("{}{}", prefix, tag_open.green());
+                for (key, value) in &data.attrs {
+                    if value.is_empty() {
+                        print!(" {}", key.yellow());
+                    } else {
+                        print!(
+                            " {}{}{}{}{}",
+                            key.yellow(),
+                            "=".dimmed(),
+                            "\"".dimmed(),
+                            value.magenta(),
+                            "\"".dimmed()
+                        );
+                    }
+                }
+                println!("{}", ">".green());
+            }
+        }
+        NodeType::Text(data) => {
+            let display = format_text_content(data);
+            if !display.trim().is_empty() || display.contains("\\n") {
+                println!(
+                    "{}{}{}{}",
+                    prefix,
+                    "\"".dimmed(),
+                    display.white(),
+                    "\"".dimmed()
+                );
+            }
+        }
+        NodeType::Comment(data) => {
+            println!(
+                "{}{}{}{}",
+                prefix,
+                "<!-- ".dimmed(),
+                data.dimmed().italic(),
+                " -->".dimmed()
+            );
+        }
+    }
+
+    for &child_id in tree.children(id) {
+        print_dom_tree(tree, child_id, indent + 1);
+    }
+}
+
+/// Format text content for display, showing whitespace characters.
+fn format_text_content(text: &str) -> String {
+    text.replace('\n', "\\n").replace(' ', "\u{00B7}")
 }
 
 /// Print layout tree with computed dimensions.
 fn print_layout(doc: &LoadedDocument) {
-    // Default viewport size (same as what we'd use in the GUI)
     let viewport_width = 1280.0;
     let viewport_height = 720.0;
 
-    println!(
-        "=== Layout Tree (viewport: {}x{}) ===\n",
-        viewport_width, viewport_height
-    );
+    print_header("Layout Tree");
+    print_subheader(&format!("viewport: {viewport_width}x{viewport_height}"));
+    println!();
 
     if let Some(ref layout_tree) = doc.layout_tree {
-        // Clone and compute layout
         let mut layout = layout_tree.clone();
         let viewport = koala_css::Rect {
             x: 0.0,
@@ -170,8 +271,10 @@ fn print_layout(doc: &LoadedDocument) {
 
         print_layout_box(&layout, 0, doc);
     } else {
-        println!("No layout tree available");
+        println!("    {}", "No layout tree available".dimmed());
     }
+
+    println!();
 }
 
 /// Recursively print a layout box with its dimensions.
@@ -182,35 +285,65 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
     // Get box name with tag if available
     let name = match &layout_box.box_type {
         koala_css::BoxType::Principal(node_id) => {
-            // Try to get the element's tag name
             if let Some(element) = doc.dom.as_element(*node_id) {
-                format!("<{}> ({:?})", element.tag_name, node_id)
+                format!("<{}>", element.tag_name)
             } else if doc
                 .dom
                 .get(*node_id)
-                .map(|n| matches!(n.node_type, koala_browser::dom::NodeType::Document))
-                .unwrap_or(false)
+                .is_some_and(|n| matches!(n.node_type, NodeType::Document))
             {
-                format!("Document ({:?})", node_id)
+                "Document".to_string()
             } else {
-                format!("{:?}", node_id)
+                format!("{node_id:?}")
             }
         }
         koala_css::BoxType::AnonymousBlock => "AnonymousBlock".to_string(),
         koala_css::BoxType::AnonymousInline(text) => {
-            let preview: String = text.chars().take(30).collect();
-            let suffix = if text.len() > 30 { "..." } else { "" };
-            format!("Text(\"{}{}\")", preview.replace('\n', "\\n"), suffix)
+            let preview: String = text.chars().take(25).collect();
+            let suffix = if text.len() > 25 { "..." } else { "" };
+            format!("\"{}{}\"", preview.replace('\n', "\\n"), suffix)
         }
     };
 
-    // Print box info with dimensions
-    println!("{}[{}] {:?}", indent, name, layout_box.display);
+    // Format display type
+    let display_str = format!("{:?}", layout_box.display);
 
-    // Print content box
+    // Print box header
+    match &layout_box.box_type {
+        koala_css::BoxType::Principal(_) => {
+            println!(
+                "{}{}  {}",
+                indent,
+                name.green().bold(),
+                display_str.dimmed()
+            );
+        }
+        koala_css::BoxType::AnonymousBlock => {
+            println!("{}{}  {}", indent, name.blue(), display_str.dimmed());
+        }
+        koala_css::BoxType::AnonymousInline(_) => {
+            println!(
+                "{}{}  {}",
+                indent,
+                name.white().dimmed(),
+                display_str.dimmed()
+            );
+        }
+    }
+
+    // Print content box dimensions
     println!(
-        "{}  content: x={:.1} y={:.1} w={:.1} h={:.1}",
-        indent, dims.content.x, dims.content.y, dims.content.width, dims.content.height
+        "{}  {} {}{} {}{} {}{} {}{}",
+        indent,
+        "content:".cyan(),
+        "x=".dimmed(),
+        format!("{:.0}", dims.content.x).yellow(),
+        "y=".dimmed(),
+        format!("{:.0}", dims.content.y).yellow(),
+        "w=".dimmed(),
+        format!("{:.0}", dims.content.width).yellow(),
+        "h=".dimmed(),
+        format!("{:.0}", dims.content.height).yellow(),
     );
 
     // Print margins if non-zero
@@ -220,8 +353,13 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
         || dims.margin.left != 0.0
     {
         println!(
-            "{}  margin: t={:.1} r={:.1} b={:.1} l={:.1}",
-            indent, dims.margin.top, dims.margin.right, dims.margin.bottom, dims.margin.left
+            "{}  {} [{} {} {} {}]",
+            indent,
+            "margin:".cyan(),
+            format!("{:.0}", dims.margin.top).magenta(),
+            format!("{:.0}", dims.margin.right).magenta(),
+            format!("{:.0}", dims.margin.bottom).magenta(),
+            format!("{:.0}", dims.margin.left).magenta(),
         );
     }
 
@@ -232,12 +370,15 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
         || dims.padding.left != 0.0
     {
         println!(
-            "{}  padding: t={:.1} r={:.1} b={:.1} l={:.1}",
-            indent, dims.padding.top, dims.padding.right, dims.padding.bottom, dims.padding.left
+            "{}  {} [{} {} {} {}]",
+            indent,
+            "padding:".cyan(),
+            format!("{:.0}", dims.padding.top).magenta(),
+            format!("{:.0}", dims.padding.right).magenta(),
+            format!("{:.0}", dims.padding.bottom).magenta(),
+            format!("{:.0}", dims.padding.left).magenta(),
         );
     }
-
-    println!();
 
     // Print children
     for child in &layout_box.children {
@@ -248,26 +389,54 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
 /// Print computed styles for each element
 fn print_computed_styles(doc: &LoadedDocument) {
     for (node_id, style) in &doc.styles {
-        if let Some(element) = doc.dom.as_element(*node_id) {
-            let tag = &element.tag_name;
-            let mut props = Vec::new();
+        let Some(element) = doc.dom.as_element(*node_id) else {
+            continue;
+        };
 
-            if let Some(ref fs) = style.font_size {
-                props.push(format!("font-size: {}px", fs.to_px()));
-            }
-            if let Some(ref color) = style.color {
-                props.push(format!("color: {}", color.to_hex_string()));
-            }
-            if let Some(ref bg) = style.background_color {
-                props.push(format!("background: {}", bg.to_hex_string()));
-            }
-            if let Some(ref m) = style.margin_top {
-                props.push(format!("margin-top: {}px", m.to_px()));
-            }
+        let tag = &element.tag_name;
+        let mut props = Vec::new();
 
-            if !props.is_empty() {
-                println!("  <{}> {{ {} }}", tag, props.join("; "));
+        // Collect style properties
+        if let Some(ref fs) = style.font_size {
+            props.push(format_style_prop("font-size", &format!("{}px", fs.to_px())));
+        }
+        if let Some(ref color) = style.color {
+            props.push(format_style_prop("color", &color.to_hex_string()));
+        }
+        if let Some(ref bg) = style.background_color {
+            props.push(format_style_prop("background", &bg.to_hex_string()));
+        }
+        if let Some(ref m) = style.margin_top {
+            if m.to_px() != 0.0 {
+                props.push(format_style_prop("margin-top", &format!("{}px", m.to_px())));
             }
         }
+        if let Some(ref m) = style.margin_bottom {
+            if m.to_px() != 0.0 {
+                props.push(format_style_prop(
+                    "margin-bottom",
+                    &format!("{}px", m.to_px()),
+                ));
+            }
+        }
+        if let Some(ref d) = style.display {
+            let display_str = format!("{:?}/{:?}", d.outer, d.inner);
+            props.push(format_style_prop("display", &display_str.to_lowercase()));
+        }
+
+        if !props.is_empty() {
+            println!(
+                "    {} {} {} {}",
+                format!("<{tag}>").green(),
+                "{".dimmed(),
+                props.join(&format!("{} ", ";".dimmed())),
+                "}".dimmed()
+            );
+        }
     }
+}
+
+/// Format a single style property with colorization.
+fn format_style_prop(name: &str, value: &str) -> String {
+    format!("{}{} {}", name.cyan(), ":".dimmed(), value.yellow())
 }

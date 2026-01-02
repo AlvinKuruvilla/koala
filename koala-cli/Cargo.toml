@@ -16,6 +16,7 @@ koala-html.workspace = true
 koala-css.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
+owo-colors.workspace = true
 
 [lints]
 workspace = true
