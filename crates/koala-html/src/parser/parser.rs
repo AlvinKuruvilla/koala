@@ -145,7 +145,12 @@ const FOREIGN_ATTRIBUTE_ADJUSTMENTS: &[(&str, &str, &str, &str)] = &[
         "http://www.w3.org/1999/xlink",
     ),
     // XML namespace attributes
-    ("xml:lang", "xml", "lang", "http://www.w3.org/XML/1998/namespace"),
+    (
+        "xml:lang",
+        "xml",
+        "lang",
+        "http://www.w3.org/XML/1998/namespace",
+    ),
     (
         "xml:space",
         "xml",
@@ -1685,6 +1690,31 @@ impl HTMLParser {
                 self.close_element_if_in_scope("dt");
                 self.close_element_if_in_scope("p");
                 let _ = self.insert_html_element(token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Start tag "button"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "A start tag whose tag name is "button""
+            Token::StartTag { name, .. } if name == "button" => {
+                // STEP 1: Close any existing button in scope.
+                if self.has_element_in_scope("button") {
+                    // "If the stack of open elements has a button element in scope, then this is a
+                    //  parse error; run these substeps:
+                    //    TODO: 1. Generate implied end tags.
+                    //    2. Pop elements from the stack of open elements until a button element
+                    //       has been popped from the stack."
+                    self.pop_until_tag("button");
+                }
+                // STEP 2: Reconstruct active formatting elements.
+                // "Reconstruct the active formatting elements, if any."
+                self.reconstruct_active_formatting_elements();
+
+                // STEP 3: Insert the button element.
+                // "Insert an HTML element for the token."
+                let _ = self.insert_html_element(token);
+
+                // STEP 4: Set frameset-ok flag.
+                // TODO: Set the frameset-ok flag to "not ok".
             }
 
             // [§ 13.2.6.4.7 "in body" - End tags "dd", "dt", "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
