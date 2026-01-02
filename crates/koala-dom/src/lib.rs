@@ -11,6 +11,19 @@
 use std::collections::{HashMap, HashSet};
 
 /// Map of attribute names to values for an element.
+///
+/// [§ 4.9.1 Interface Attr](https://dom.spec.whatwg.org/#interface-attr)
+/// "An Attr object represents an attribute of an Element object."
+///
+/// [§ 4.9.2 Interface NamedNodeMap](https://dom.spec.whatwg.org/#interface-namednodemap)
+/// "A NamedNodeMap has an associated element (an element)."
+///
+/// NOTE: This is a simplified representation. Full DOM spec compliance would require:
+/// - Namespace URI and namespace prefix per attribute
+/// - Attr node objects with ownerElement references
+/// - NamedNodeMap interface with getNamedItem/setNamedItem methods
+///
+/// We use a simple String->String map since we don't currently need namespace support.
 pub type AttributesMap = HashMap<String, String>;
 
 /// A type-safe index into the DOM tree.
