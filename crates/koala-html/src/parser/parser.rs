@@ -184,25 +184,94 @@ impl HTMLParser {
             InsertionMode::BeforeHtml => self.handle_before_html_mode(token),
             InsertionMode::BeforeHead => self.handle_before_head_mode(token),
             InsertionMode::InHead => self.handle_in_head_mode(token),
-            InsertionMode::InHeadNoscript => todo!("InHeadNoscript mode"),
+            InsertionMode::InHeadNoscript => {
+                // TODO: [§ 13.2.6.4.5](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inheadnoscript)
+                todo!("InHeadNoscript mode")
+            }
             InsertionMode::AfterHead => self.handle_after_head_mode(token),
             InsertionMode::InBody => self.handle_in_body_mode(token),
             InsertionMode::Text => self.handle_text_mode(token),
-            InsertionMode::InTable => todo!("InTable mode"),
-            InsertionMode::InTableText => todo!("InTableText mode"),
-            InsertionMode::InCaption => todo!("InCaption mode"),
-            InsertionMode::InColumnGroup => todo!("InColumnGroup mode"),
-            InsertionMode::InTableBody => todo!("InTableBody mode"),
-            InsertionMode::InRow => todo!("InRow mode"),
-            InsertionMode::InCell => todo!("InCell mode"),
-            InsertionMode::InSelect => todo!("InSelect mode"),
-            InsertionMode::InSelectInTable => todo!("InSelectInTable mode"),
-            InsertionMode::InTemplate => todo!("InTemplate mode"),
+
+            // ===== TABLE PARSING MODES =====
+            // [§ 13.2.6.4.9-15](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable)
+            //
+            // Table parsing is complex due to:
+            // - Foster parenting (misplaced content moves outside table)
+            // - Pending table character tokens
+            // - Multiple nested table elements (table, tbody, tr, td, th, caption, colgroup)
+            //
+            // TODO: Implement table parsing in this order:
+            //
+            // STEP 1: InTable mode - handles <table>, <caption>, <colgroup>, <tbody>, <tr>
+            //   [§ 13.2.6.4.9](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable)
+            //   - "A start tag whose tag name is 'caption'" -> push, switch to InCaption
+            //   - "A start tag whose tag name is 'colgroup'" -> switch to InColumnGroup
+            //   - "A start tag whose tag name is one of: 'tbody', 'tfoot', 'thead'" -> switch to InTableBody
+            //   - Foster parenting for misplaced content
+            InsertionMode::InTable => todo!("InTable mode - see STEP 1 above"),
+
+            // STEP 2: InTableText mode - accumulates character tokens in table context
+            //   [§ 13.2.6.4.10](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext)
+            //   - Accumulate character tokens
+            //   - On other token: flush characters (foster parent if non-whitespace)
+            InsertionMode::InTableText => todo!("InTableText mode - see STEP 2 above"),
+
+            // STEP 3: InCaption mode - handles content inside <caption>
+            //   [§ 13.2.6.4.11](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incaption)
+            InsertionMode::InCaption => todo!("InCaption mode - see STEP 3 above"),
+
+            // STEP 4: InColumnGroup mode - handles <col> elements
+            //   [§ 13.2.6.4.12](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolumngroup)
+            InsertionMode::InColumnGroup => todo!("InColumnGroup mode - see STEP 4 above"),
+
+            // STEP 5: InTableBody mode - handles <tbody>, <thead>, <tfoot>
+            //   [§ 13.2.6.4.13](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
+            //   - "A start tag whose tag name is 'tr'" -> insert element, switch to InRow
+            //   - "A start tag whose tag name is one of: 'th', 'td'" -> act as if 'tr', reprocess
+            InsertionMode::InTableBody => todo!("InTableBody mode - see STEP 5 above"),
+
+            // STEP 6: InRow mode - handles <tr> and its children
+            //   [§ 13.2.6.4.14](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow)
+            //   - "A start tag whose tag name is one of: 'th', 'td'" -> switch to InCell
+            InsertionMode::InRow => todo!("InRow mode - see STEP 6 above"),
+
+            // STEP 7: InCell mode - handles <td> and <th> content
+            //   [§ 13.2.6.4.15](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incell)
+            //   - Process most tokens using InBody rules
+            //   - Special handling for table-related end tags
+            InsertionMode::InCell => todo!("InCell mode - see STEP 7 above"),
+
+            // ===== FORM ELEMENT MODES =====
+            //
+            // STEP 8: InSelect mode - handles <select> and <option>/<optgroup>
+            //   [§ 13.2.6.4.16](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselect)
+            InsertionMode::InSelect => todo!("InSelect mode - see STEP 8 above"),
+
+            // STEP 9: InSelectInTable mode - select inside table context
+            //   [§ 13.2.6.4.17](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselectintable)
+            InsertionMode::InSelectInTable => todo!("InSelectInTable mode - see STEP 9 above"),
+
+            // STEP 10: InTemplate mode - handles <template> content
+            //   [§ 13.2.6.4.18](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intemplate)
+            //   - Uses a stack of template insertion modes
+            InsertionMode::InTemplate => todo!("InTemplate mode - see STEP 10 above"),
             InsertionMode::AfterBody => self.handle_after_body_mode(token),
-            InsertionMode::InFrameset => todo!("InFrameset mode"),
-            InsertionMode::AfterFrameset => todo!("AfterFrameset mode"),
+
+            // ===== FRAMESET MODES (Low Priority - rarely used) =====
+            //
+            // STEP 11: InFrameset mode - handles <frameset> and <frame>
+            //   [§ 13.2.6.4.20](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inframeset)
+            InsertionMode::InFrameset => todo!("InFrameset mode - see STEP 11 above"),
+
+            // STEP 12: AfterFrameset mode - after </frameset>
+            //   [§ 13.2.6.4.21](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterframeset)
+            InsertionMode::AfterFrameset => todo!("AfterFrameset mode - see STEP 12 above"),
+
             InsertionMode::AfterAfterBody => self.handle_after_after_body_mode(token),
-            InsertionMode::AfterAfterFrameset => todo!("AfterAfterFrameset mode"),
+
+            // STEP 13: AfterAfterFrameset mode - final frameset state
+            //   [§ 13.2.6.4.23](https://html.spec.whatwg.org/multipage/parsing.html#the-after-after-frameset-insertion-mode)
+            InsertionMode::AfterAfterFrameset => todo!("AfterAfterFrameset mode - see STEP 13 above"),
         }
     }
 
@@ -371,41 +440,111 @@ impl HTMLParser {
         self.tree.as_element(id).map(|data| data.tag_name.as_str())
     }
 
-    /// [§ 13.2.6.2 Parsing elements that contain only text](https://html.spec.whatwg.org/multipage/parsing.html#parsing-elements-that-contain-only-text)
+    /// [§ 13.2.4.2 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
     ///
-    /// "Pop elements from the stack of open elements" until we find one
-    /// with the given tag name (inclusive).
+    /// Pop elements from the stack of open elements until we find one
+    /// with the given tag name (inclusive). This is a common operation
+    /// referenced throughout § 13.2.6 tree construction.
+    ///
+    /// STEP 1: Pop the current node from the stack.
+    /// STEP 2: If popped node matches target tag name, stop.
+    /// STEP 3: Otherwise, repeat from STEP 1.
     fn pop_until_tag(&mut self, tag_name: &str) {
         while let Some(id) = self.stack_of_open_elements.pop() {
+            // STEP 2: Check if we've reached the target element
             if self.get_tag_name(id) == Some(tag_name) {
                 break;
             }
+            // STEP 3: Continue popping
         }
     }
 
     /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
     ///
     /// Pop elements until one of the given tag names is found (inclusive).
-    /// Used for heading elements where any h1-h6 can close any other.
+    ///
+    /// Used for heading elements per spec: "If the stack of open elements has
+    /// an h1, h2, h3, h4, h5, or h6 element in scope, then...pop elements from
+    /// the stack of open elements until an h1, h2, h3, h4, h5, or h6 element
+    /// has been popped from the stack."
+    ///
+    /// STEP 1: Pop the current node from the stack.
+    /// STEP 2: If popped node matches any target tag name, stop.
+    /// STEP 3: Otherwise, repeat from STEP 1.
     fn pop_until_one_of(&mut self, tag_names: &[&str]) {
         while let Some(idx) = self.stack_of_open_elements.pop() {
             if let Some(name) = self.get_tag_name(idx) {
+                // STEP 2: Check if we've reached any of the target elements
                 if tag_names.contains(&name) {
                     break;
                 }
             }
+            // STEP 3: Continue popping
         }
     }
 
-    /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-scope)
+    /// [§ 13.2.4.2 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-scope)
     ///
-    /// "The stack of open elements is said to have an element target node
-    /// in a specific scope..."
+    /// "The stack of open elements is said to have an element target node in a
+    /// specific scope consisting of a list of element types list when the
+    /// following algorithm terminates in a match state:"
     ///
-    /// NOTE: This is a simplified version that just checks if the element
-    /// is anywhere on the stack. The full algorithm checks against a list
-    /// of scope markers (e.g., table, html, template elements).
+    /// STEP 1: "Initialize node to be the current node (the bottommost node
+    ///          of the stack)."
+    ///
+    /// STEP 2: "If node is the target node, terminate in a match state."
+    ///
+    /// STEP 3: "Otherwise, if node is one of the element types in list,
+    ///          terminate in a failure state."
+    ///
+    /// STEP 4: "Otherwise, set node to the previous entry in the stack of
+    ///          open elements and return to step 2."
+    ///
+    /// The scope markers for "has an element in scope" (default scope) are:
+    /// - applet, caption, html, table, td, th, marquee, object, template
+    /// - MathML: mi, mo, mn, ms, mtext, annotation-xml
+    /// - SVG: foreignObject, desc, title
+    ///
+    /// Other scope types add additional markers:
+    /// - "has an element in list item scope": adds ol, ul
+    /// - "has an element in button scope": adds button
+    /// - "has an element in table scope": html, table, template only
+    /// - "has an element in select scope": optgroup, option only (inverted)
+    ///
+    /// NOTE: Current implementation is simplified - checks if element exists
+    /// anywhere on stack without respecting scope boundaries. Full implementation
+    /// would require checking against scope marker lists above.
     fn has_element_in_scope(&self, tag_name: &str) -> bool {
+        // TODO: Implement proper scope checking algorithm:
+        //
+        // STEP 1: Initialize node to be the current node (bottommost on stack).
+        //         let mut node_index = self.stack_of_open_elements.len() - 1;
+        //
+        // STEP 2: Loop:
+        //         let node = self.stack_of_open_elements[node_index];
+        //         let node_tag = self.get_tag_name(node);
+        //
+        //         // STEP 2a: If node is the target, return true (match state)
+        //         if node_tag == Some(tag_name) {
+        //             return true;
+        //         }
+        //
+        //         // STEP 2b: If node is a scope marker, return false (failure state)
+        //         // TODO: Check against scope marker list:
+        //         //   DEFAULT_SCOPE_MARKERS = ["applet", "caption", "html", "table",
+        //         //     "td", "th", "marquee", "object", "template",
+        //         //     // MathML: "mi", "mo", "mn", "ms", "mtext", "annotation-xml",
+        //         //     // SVG: "foreignObject", "desc", "title"
+        //         //   ];
+        //         // if DEFAULT_SCOPE_MARKERS.contains(&node_tag) {
+        //         //     return false;
+        //         // }
+        //
+        //         // STEP 2c: Move to previous node and continue loop
+        //         if node_index == 0 { break; }
+        //         node_index -= 1;
+        //
+        // Current simplified implementation: just check if element exists anywhere
         self.stack_of_open_elements
             .iter()
             .any(|&idx| self.get_tag_name(idx) == Some(tag_name))
@@ -413,11 +552,40 @@ impl HTMLParser {
 
     /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
     ///
-    /// "Generate implied end tags" and close an element if in scope.
+    /// This helper combines two spec operations commonly used together:
+    ///
+    /// [§ 13.2.6.2 Generate implied end tags](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
+    /// "While the current node is a dd, dt, li, optgroup, option, p, rb, rp, rt,
+    ///  or rtc element, the UA must pop the current node off the stack."
+    ///
+    /// Then: Check if element is in scope and pop until found.
+    ///
     /// Used for elements like <li>, <p>, <dd>, <dt> that implicitly close
     /// when a new one is encountered.
+    ///
+    /// NOTE: Current implementation skips "generate implied end tags" step.
+    /// Full implementation would first pop dd/dt/li/optgroup/option/p/rb/rp/rt/rtc.
     fn close_element_if_in_scope(&mut self, tag_name: &str) {
+        // TODO: STEP 1: Generate implied end tags
+        // [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
+        //
+        // const IMPLIED_END_TAG_ELEMENTS: &[&str] = &[
+        //     "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"
+        // ];
+        //
+        // while let Some(&current) = self.stack_of_open_elements.last() {
+        //     if let Some(tag) = self.get_tag_name(current) {
+        //         if IMPLIED_END_TAG_ELEMENTS.contains(&tag) && tag != tag_name {
+        //             self.stack_of_open_elements.pop();
+        //             continue;
+        //         }
+        //     }
+        //     break;
+        // }
+
+        // STEP 2: Check if element is in scope
         if self.has_element_in_scope(tag_name) {
+            // STEP 3: Pop elements until target is found
             self.pop_until_tag(tag_name);
         }
     }
@@ -871,8 +1039,30 @@ impl HTMLParser {
 
     /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
     ///
-    /// NOTE: This is a partial implementation. The full spec has many more cases
-    /// for formatting elements, adoption agency algorithm, etc.
+    /// This is the main tree construction mode for document content. The spec
+    /// organizes token handling as follows:
+    ///
+    /// - Character tokens (NULL, whitespace, other)
+    /// - Comment tokens
+    /// - DOCTYPE tokens (parse error, ignore)
+    /// - Start tag tokens (html, base/link/meta, head, body, frameset, formatting
+    ///   elements, block elements, void elements, etc.)
+    /// - End tag tokens (body, html, block elements, formatting elements, etc.)
+    /// - End-of-file token
+    ///
+    /// ## Implemented:
+    /// - Block-level start/end tags (div, p, headings, lists, etc.)
+    /// - Void elements (br, hr, img, etc.)
+    /// - Character and comment insertion
+    /// - Basic formatting tags (b, i, strong, em, etc.)
+    ///
+    /// ## Not Implemented:
+    /// - [§ 13.2.4.3] List of active formatting elements
+    /// - [§ 13.2.6.4.7] Adoption agency algorithm (for misnested formatting)
+    /// - [§ 13.2.6.1] Foster parenting (for table content errors)
+    /// - Form element pointer
+    /// - Frameset handling
+    /// - Template element handling
     fn handle_in_body_mode(&mut self, token: &Token) {
         match token {
             // "A character token that is U+0000 NULL"
@@ -1012,20 +1202,53 @@ impl HTMLParser {
                 let _ = self.insert_html_element(token);
             }
 
-            // [§ 13.2.6.4.7 "in body" - Start tags for formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // [§ 13.2.6.4.7 "in body" - Formatting element start tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
             // "A start tag whose tag name is one of: "b", "big", "code", "em", "font", "i",
             //  "s", "small", "strike", "strong", "tt", "u""
+            //
             // "Reconstruct the active formatting elements, if any."
             // "Insert an HTML element for the token."
             // "Push onto the list of active formatting elements that element."
             //
-            // "A start tag whose tag name is "nobr""
-            // "Reconstruct the active formatting elements, if any."
-            // "If the stack of open elements has a nobr element in scope, then this is a parse error;
-            //  run the adoption agency algorithm for the token, then once again reconstruct the
-            //  active formatting elements, if any."
-            // "Insert an HTML element for the token."
-            // "Push onto the list of active formatting elements that element."
+            // [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#the-list-of-active-formatting-elements)
+            //
+            // TODO: Implement active formatting elements list:
+            //
+            // // Data structure to track formatting elements
+            // enum ActiveFormattingEntry {
+            //     Element { node_id: NodeId, token: Token },
+            //     Marker,  // Inserted when entering applet, object, marquee, template, td, th, caption
+            // }
+            // active_formatting_elements: Vec<ActiveFormattingEntry>
+            //
+            // // Push formatting element onto list (called here)
+            // fn push_active_formatting_element(&mut self, element: NodeId, token: &Token) {
+            //     // STEP 1: If there are already 3 elements with same tag name, remove earliest
+            //     // STEP 2: Push Element entry onto list
+            //     self.active_formatting_elements.push(ActiveFormattingEntry::Element {
+            //         node_id: element,
+            //         token: token.clone(),
+            //     });
+            // }
+            //
+            // // Reconstruct active formatting elements (called before inserting content)
+            // fn reconstruct_active_formatting_elements(&mut self) {
+            //     // STEP 1: If list is empty, return
+            //     // STEP 2: If last entry is marker or in stack of open elements, return
+            //     // STEP 3: Let entry be the last element in the list
+            //     // STEP 4: Rewind: If entry is first in list, jump to Create
+            //     // STEP 5: Let entry = previous entry in list
+            //     // STEP 6: If entry is not marker and not in stack, go to Rewind
+            //     // STEP 7: Advance: entry = next entry in list
+            //     // STEP 8: Create: insert element for entry's token, replace entry with new element
+            //     // STEP 9: If entry is not last in list, go to Advance
+            // }
+            //
+            // NOTE: Current implementation skips active formatting elements.
+            // This means we don't handle implicit reopening of formatting across blocks.
+            // Example that would render incorrectly:
+            //   <p><b>bold<p>still bold</b>  -- second p should inherit bold
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -1060,7 +1283,7 @@ impl HTMLParser {
                         | "data"
                 ) =>
             {
-                // NOTE: We skip the list of active formatting elements and adoption agency for simplicity
+                // Simplified: just insert element without active formatting elements tracking
                 let _ = self.insert_html_element(token);
             }
 
@@ -1108,9 +1331,36 @@ impl HTMLParser {
             // "Set the frameset-ok flag to "not ok"."
             // "Switch the insertion mode to "in table"."
             //
-            // NOTE: We simplify by not switching to InTable mode - just insert the element
-            // and continue in InBody mode. This means table elements won't have proper
-            // foster parenting behavior, but basic tables will render.
+            // TODO: Implement proper table parsing with InTable mode and foster parenting:
+            //
+            // [§ 13.2.6.1 Foster parenting](https://html.spec.whatwg.org/multipage/parsing.html#foster-parent)
+            //
+            // Foster parenting handles content that appears inside <table> but outside
+            // proper table structure (e.g., text directly in <table>). Such content
+            // must be "foster parented" - inserted before the table instead.
+            //
+            // fn get_foster_parent(&self) -> (NodeId, InsertPosition) {
+            //     // STEP 1: Let last table be the last table element in stack of open elements
+            //     // STEP 2: If there is a last table:
+            //     //   - If last table has a parent, foster parent is parent, insert before table
+            //     //   - Otherwise, foster parent is element immediately above table in stack
+            //     // STEP 3: If there is no last table, foster parent is first element in stack (html)
+            // }
+            //
+            // // When inserting in InTable mode and current node is not table-compatible:
+            // fn insert_foster_parented(&mut self, node: NodeId) {
+            //     let (parent, position) = self.get_foster_parent();
+            //     // Insert node at position instead of as child of current node
+            // }
+            //
+            // Also requires implementing insertion modes:
+            // - InTable: handles table, caption, colgroup, col, tbody, thead, tfoot, tr
+            // - InTableBody: handles tbody, thead, tfoot, tr content
+            // - InRow: handles tr, td, th content
+            // - InCell: handles td, th content
+            //
+            // NOTE: Current simplified implementation just inserts table elements normally.
+            // This means invalid content like <table>text</table> won't be foster parented.
             Token::StartTag { name, .. } if name == "table" => {
                 self.close_element_if_in_scope("p");
                 let _ = self.insert_html_element(token);
@@ -1262,9 +1512,71 @@ impl HTMLParser {
             }
 
             // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            // Handle end tags for inline elements like span, a, em, strong, etc.
-            // The spec uses the "Adoption Agency Algorithm" for formatting elements,
-            // but for simplicity we just pop until the matching tag.
+            //
+            // For formatting elements, the spec uses the Adoption Agency Algorithm:
+            // [§ 13.2.6.4.7 Adoption agency algorithm](https://html.spec.whatwg.org/multipage/parsing.html#adoption-agency-algorithm)
+            //
+            // The algorithm handles misnested formatting like: <b>text<i>more</b>text</i>
+            // by "adopting" nodes between the formatting element and the misnested end tag.
+            //
+            // TODO: Implement full adoption agency algorithm:
+            //
+            // fn run_adoption_agency(&mut self, tag_name: &str) {
+            //     // STEP 1: Let outer loop counter be 0.
+            //     let mut outer_loop_counter = 0;
+            //
+            //     loop {
+            //         // STEP 2: If outer loop counter >= 8, return.
+            //         if outer_loop_counter >= 8 { return; }
+            //
+            //         // STEP 3: Increment outer loop counter.
+            //         outer_loop_counter += 1;
+            //
+            //         // STEP 4: Let formatting element be the last element in the list of
+            //         //         active formatting elements that:
+            //         //         - has the same tag name as the token
+            //         //         - is between the end of the list and the last marker
+            //         // let formatting_element = self.active_formatting_elements
+            //         //     .iter().rev()
+            //         //     .take_while(|e| !e.is_marker())
+            //         //     .find(|e| e.tag_name == tag_name);
+            //
+            //         // STEP 5: If there is no such element, return (use "any other end tag" steps)
+            //         // if formatting_element.is_none() { return self.any_other_end_tag(tag_name); }
+            //
+            //         // STEP 6: If formatting element is not in stack of open elements, remove
+            //         //         from active formatting elements and return.
+            //
+            //         // STEP 7: If formatting element is in stack but not in scope, parse error, return.
+            //
+            //         // STEP 8: If formatting element is not the current node, parse error (continue).
+            //
+            //         // STEP 9: Let furthest block be the topmost element in the stack that is
+            //         //         lower than formatting element AND is in the "special" category.
+            //         //         Special elements: address, applet, area, article, aside, base, ...
+            //
+            //         // STEP 10: If there is no furthest block, pop until formatting element,
+            //         //          remove from active formatting elements, return.
+            //
+            //         // STEP 11-21: The complex reparenting loop:
+            //         //   - Create bookmark at formatting element position
+            //         //   - Let node = furthest block, last node = furthest block
+            //         //   - Inner loop (up to 3 iterations):
+            //         //     - Move node up the stack
+            //         //     - If node is formatting element, break
+            //         //     - If node is not in active formatting elements, remove from stack, continue
+            //         //     - Create new element, replace in active formatting elements
+            //         //     - Reparent last node to new element
+            //         //   - Insert last node at appropriate place
+            //         //   - Create new element for formatting element
+            //         //   - Reparent furthest block's children to new element
+            //         //   - Append new element to furthest block
+            //         //   - Remove old formatting element, insert new at bookmark
+            //     }
+            // }
+            //
+            // Current simplified implementation - just pops until matching tag.
+            // This works for properly nested content but won't handle misnesting correctly.
             Token::EndTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -1274,8 +1586,7 @@ impl HTMLParser {
                         | "bdi" | "bdo" | "wbr" | "nobr"
                 ) =>
             {
-                // NOTE: This is a simplified version - the spec uses the Adoption Agency Algorithm
-                // for formatting elements, which is more complex.
+                // Simplified: just pop until matching tag (works for properly nested content)
                 self.pop_until_tag(name);
             }
 

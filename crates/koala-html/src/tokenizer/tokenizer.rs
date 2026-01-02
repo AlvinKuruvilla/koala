@@ -1874,7 +1874,22 @@ impl HTMLTokenizer {
                     self.handle_script_data_state();
                     continue;
                 }
-                TokenizerState::PLAINTEXT => todo!("Unhandled state: {}", self.state),
+                TokenizerState::PLAINTEXT => {
+                    // [§ 13.2.5.5 PLAINTEXT state](https://html.spec.whatwg.org/multipage/parsing.html#plaintext-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Emit a U+FFFD
+                    //    REPLACEMENT CHARACTER character token."
+                    //
+                    // "EOF"
+                    //   "Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Emit the current input character as a character token."
+                    todo!("PLAINTEXT state")
+                }
                 TokenizerState::TagOpen => {
                     self.handle_tag_open_state();
                     continue;
@@ -1920,39 +1935,336 @@ impl HTMLTokenizer {
                 TokenizerState::ScriptDataEndTagName => {
                     self.handle_script_data_end_tag_name_state();
                 }
-                TokenizerState::ScriptDataEscapeStart => todo!("Unhandled state: {}", self.state),
-                TokenizerState::ScriptDataEscapeStartDash => {
-                    todo!("Unhandled state: {}", self.state)
+                TokenizerState::ScriptDataEscapeStart => {
+                    // [§ 13.2.5.18 Script data escape start state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escape-start-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Switch to the script data escape start dash state. Emit a U+002D
+                    //    HYPHEN-MINUS character token."
+                    //
+                    // "Anything else"
+                    //   "Reconsume in the script data state."
+                    todo!("Script data escape start state")
                 }
-                TokenizerState::ScriptDataEscaped => todo!("Unhandled state: {}", self.state),
-                TokenizerState::ScriptDataEscapedDash => todo!("Unhandled state: {}", self.state),
+                TokenizerState::ScriptDataEscapeStartDash => {
+                    // [§ 13.2.5.19 Script data escape start dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escape-start-dash-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Switch to the script data escaped dash dash state. Emit a U+002D
+                    //    HYPHEN-MINUS character token."
+                    //
+                    // "Anything else"
+                    //   "Reconsume in the script data state."
+                    todo!("Script data escape start dash state")
+                }
+                TokenizerState::ScriptDataEscaped => {
+                    // [§ 13.2.5.20 Script data escaped state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Switch to the script data escaped dash state. Emit a U+002D
+                    //    HYPHEN-MINUS character token."
+                    //
+                    // "U+003C LESS-THAN SIGN (<)"
+                    //   "Switch to the script data escaped less-than sign state."
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Emit a U+FFFD
+                    //    REPLACEMENT CHARACTER character token."
+                    //
+                    // "EOF"
+                    //   "This is an eof-in-script-html-comment-like-text parse error.
+                    //    Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Emit the current input character as a character token."
+                    todo!("Script data escaped state")
+                }
+                TokenizerState::ScriptDataEscapedDash => {
+                    // [§ 13.2.5.21 Script data escaped dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-dash-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Switch to the script data escaped dash dash state. Emit a U+002D
+                    //    HYPHEN-MINUS character token."
+                    //
+                    // "U+003C LESS-THAN SIGN (<)"
+                    //   "Switch to the script data escaped less-than sign state."
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Switch to the
+                    //    script data escaped state. Emit a U+FFFD REPLACEMENT CHARACTER
+                    //    character token."
+                    //
+                    // "EOF"
+                    //   "This is an eof-in-script-html-comment-like-text parse error.
+                    //    Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Switch to the script data escaped state. Emit the current input
+                    //    character as a character token."
+                    todo!("Script data escaped dash state")
+                }
                 TokenizerState::ScriptDataEscapedDashDash => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.22 Script data escaped dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-dash-dash-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Emit a U+002D HYPHEN-MINUS character token."
+                    //
+                    // "U+003C LESS-THAN SIGN (<)"
+                    //   "Switch to the script data escaped less-than sign state."
+                    //
+                    // "U+003E GREATER-THAN SIGN (>)"
+                    //   "Switch to the script data state. Emit a U+003E GREATER-THAN SIGN
+                    //    character token."
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Switch to the
+                    //    script data escaped state. Emit a U+FFFD REPLACEMENT CHARACTER
+                    //    character token."
+                    //
+                    // "EOF"
+                    //   "This is an eof-in-script-html-comment-like-text parse error.
+                    //    Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Switch to the script data escaped state. Emit the current input
+                    //    character as a character token."
+                    todo!("Script data escaped dash dash state")
                 }
                 TokenizerState::ScriptDataEscapedLessThanSign => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.23 Script data escaped less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-less-than-sign-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002F SOLIDUS (/)"
+                    //   "Set the temporary buffer to the empty string. Switch to the
+                    //    script data escaped end tag open state."
+                    //
+                    // "ASCII alpha"
+                    //   "Set the temporary buffer to the empty string. Emit a U+003C
+                    //    LESS-THAN SIGN character token. Reconsume in the script data
+                    //    double escape start state."
+                    //
+                    // "Anything else"
+                    //   "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the
+                    //    script data escaped state."
+                    todo!("Script data escaped less-than sign state")
                 }
                 TokenizerState::ScriptDataEscapedEndTagOpen => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.24 Script data escaped end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-open-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "ASCII alpha"
+                    //   "Create a new end tag token, set its tag name to the empty string.
+                    //    Reconsume in the script data escaped end tag name state."
+                    //
+                    // "Anything else"
+                    //   "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS
+                    //    character token. Reconsume in the script data escaped state."
+                    todo!("Script data escaped end tag open state")
                 }
                 TokenizerState::ScriptDataEscapedEndTagName => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.25 Script data escaped end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-name-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+0009 CHARACTER TABULATION (tab)"
+                    // "U+000A LINE FEED (LF)"
+                    // "U+000C FORM FEED (FF)"
+                    // "U+0020 SPACE"
+                    //   "If the current end tag token is an appropriate end tag token,
+                    //    then switch to the before attribute name state. Otherwise,
+                    //    treat it as per the 'anything else' entry below."
+                    //
+                    // "U+002F SOLIDUS (/)"
+                    //   "If the current end tag token is an appropriate end tag token,
+                    //    then switch to the self-closing start tag state. Otherwise,
+                    //    treat it as per the 'anything else' entry below."
+                    //
+                    // "U+003E GREATER-THAN SIGN (>)"
+                    //   "If the current end tag token is an appropriate end tag token,
+                    //    then switch to the data state and emit the current tag token.
+                    //    Otherwise, treat it as per the 'anything else' entry below."
+                    //
+                    // "ASCII upper alpha"
+                    //   "Append the lowercase version of the current input character to
+                    //    the current tag token's tag name. Append the current input
+                    //    character to the temporary buffer."
+                    //
+                    // "ASCII lower alpha"
+                    //   "Append the current input character to the current tag token's
+                    //    tag name. Append the current input character to the temporary
+                    //    buffer."
+                    //
+                    // "Anything else"
+                    //   "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS
+                    //    character token, and a character token for each of the characters
+                    //    in the temporary buffer (in the order they were added to the
+                    //    buffer). Reconsume in the script data escaped state."
+                    todo!("Script data escaped end tag name state")
                 }
                 TokenizerState::ScriptDataDoubleEscapeStart => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.26 Script data double escape start state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escape-start-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+0009 CHARACTER TABULATION (tab)"
+                    // "U+000A LINE FEED (LF)"
+                    // "U+000C FORM FEED (FF)"
+                    // "U+0020 SPACE"
+                    // "U+002F SOLIDUS (/)"
+                    // "U+003E GREATER-THAN SIGN (>)"
+                    //   "If the temporary buffer is the string 'script', then switch to the
+                    //    script data double escaped state. Otherwise, switch to the script
+                    //    data escaped state. Emit the current input character as a character
+                    //    token."
+                    //
+                    // "ASCII upper alpha"
+                    //   "Append the lowercase version of the current input character to the
+                    //    temporary buffer. Emit the current input character as a character
+                    //    token."
+                    //
+                    // "ASCII lower alpha"
+                    //   "Append the current input character to the temporary buffer. Emit
+                    //    the current input character as a character token."
+                    //
+                    // "Anything else"
+                    //   "Reconsume in the script data escaped state."
+                    todo!("Script data double escape start state")
                 }
-                TokenizerState::ScriptDataDoubleEscaped => todo!("Unhandled state: {}", self.state),
+                TokenizerState::ScriptDataDoubleEscaped => {
+                    // [§ 13.2.5.27 Script data double escaped state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Switch to the script data double escaped dash state. Emit a U+002D
+                    //    HYPHEN-MINUS character token."
+                    //
+                    // "U+003C LESS-THAN SIGN (<)"
+                    //   "Switch to the script data double escaped less-than sign state. Emit
+                    //    a U+003C LESS-THAN SIGN character token."
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Emit a U+FFFD
+                    //    REPLACEMENT CHARACTER character token."
+                    //
+                    // "EOF"
+                    //   "This is an eof-in-script-html-comment-like-text parse error.
+                    //    Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Emit the current input character as a character token."
+                    todo!("Script data double escaped state")
+                }
                 TokenizerState::ScriptDataDoubleEscapedDash => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.28 Script data double escaped dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-dash-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Switch to the script data double escaped dash dash state. Emit a
+                    //    U+002D HYPHEN-MINUS character token."
+                    //
+                    // "U+003C LESS-THAN SIGN (<)"
+                    //   "Switch to the script data double escaped less-than sign state. Emit
+                    //    a U+003C LESS-THAN SIGN character token."
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Switch to the
+                    //    script data double escaped state. Emit a U+FFFD REPLACEMENT
+                    //    CHARACTER character token."
+                    //
+                    // "EOF"
+                    //   "This is an eof-in-script-html-comment-like-text parse error.
+                    //    Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Switch to the script data double escaped state. Emit the current
+                    //    input character as a character token."
+                    todo!("Script data double escaped dash state")
                 }
                 TokenizerState::ScriptDataDoubleEscapedDashDash => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.29 Script data double escaped dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-dash-dash-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002D HYPHEN-MINUS (-)"
+                    //   "Emit a U+002D HYPHEN-MINUS character token."
+                    //
+                    // "U+003C LESS-THAN SIGN (<)"
+                    //   "Switch to the script data double escaped less-than sign state. Emit
+                    //    a U+003C LESS-THAN SIGN character token."
+                    //
+                    // "U+003E GREATER-THAN SIGN (>)"
+                    //   "Switch to the script data state. Emit a U+003E GREATER-THAN SIGN
+                    //    character token."
+                    //
+                    // "U+0000 NULL"
+                    //   "This is an unexpected-null-character parse error. Switch to the
+                    //    script data double escaped state. Emit a U+FFFD REPLACEMENT
+                    //    CHARACTER character token."
+                    //
+                    // "EOF"
+                    //   "This is an eof-in-script-html-comment-like-text parse error.
+                    //    Emit an end-of-file token."
+                    //
+                    // "Anything else"
+                    //   "Switch to the script data double escaped state. Emit the current
+                    //    input character as a character token."
+                    todo!("Script data double escaped dash dash state")
                 }
                 TokenizerState::ScriptDataDoubleEscapedLessThanSign => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.30 Script data double escaped less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-less-than-sign-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+002F SOLIDUS (/)"
+                    //   "Set the temporary buffer to the empty string. Switch to the script
+                    //    data double escape end state. Emit a U+002F SOLIDUS character token."
+                    //
+                    // "Anything else"
+                    //   "Reconsume in the script data double escaped state."
+                    todo!("Script data double escaped less-than sign state")
                 }
                 TokenizerState::ScriptDataDoubleEscapeEnd => {
-                    todo!("Unhandled state: {}", self.state)
+                    // [§ 13.2.5.31 Script data double escape end state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escape-end-state)
+                    //
+                    // "Consume the next input character:"
+                    //
+                    // "U+0009 CHARACTER TABULATION (tab)"
+                    // "U+000A LINE FEED (LF)"
+                    // "U+000C FORM FEED (FF)"
+                    // "U+0020 SPACE"
+                    // "U+002F SOLIDUS (/)"
+                    // "U+003E GREATER-THAN SIGN (>)"
+                    //   "If the temporary buffer is the string 'script', then switch to the
+                    //    script data escaped state. Otherwise, switch to the script data
+                    //    double escaped state. Emit the current input character as a
+                    //    character token."
+                    //
+                    // "ASCII upper alpha"
+                    //   "Append the lowercase version of the current input character to the
+                    //    temporary buffer. Emit the current input character as a character
+                    //    token."
+                    //
+                    // "ASCII lower alpha"
+                    //   "Append the current input character to the temporary buffer. Emit
+                    //    the current input character as a character token."
+                    //
+                    // "Anything else"
+                    //   "Reconsume in the script data double escaped state."
+                    todo!("Script data double escape end state")
                 }
                 TokenizerState::BeforeAttributeName => {
                     self.handle_before_attribute_name_state();
@@ -2050,66 +2362,145 @@ impl HTMLTokenizer {
                     self.handle_doctype_name_state();
                     continue;
                 }
-                TokenizerState::AfterDOCTYPEName => todo!("Unhandled state: {}", self.state),
+                // ===== DOCTYPE IDENTIFIER STATES =====
+                // [§ 13.2.5.55-67](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
+                //
+                // These states handle PUBLIC and SYSTEM identifiers in DOCTYPE declarations:
+                //   <!DOCTYPE html PUBLIC "..." "...">
+                //   <!DOCTYPE html SYSTEM "...">
+                //
+                // TODO: Implement DOCTYPE identifier parsing in this order:
+                //
+                // STEP 1: AfterDOCTYPEName - look for PUBLIC/SYSTEM keywords
+                //   [§ 13.2.5.55](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
+                TokenizerState::AfterDOCTYPEName => {
+                    todo!("AfterDOCTYPEName state - see STEP 1 above")
+                }
+
+                // STEP 2: PUBLIC keyword states - parse public identifier
+                //   [§ 13.2.5.56-60](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-public-keyword-state)
                 TokenizerState::AfterDOCTYPEPublicKeyword => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("AfterDOCTYPEPublicKeyword state - see STEP 2")
                 }
                 TokenizerState::BeforeDOCTYPEPublicIdentifier => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("BeforeDOCTYPEPublicIdentifier state - see STEP 2")
                 }
                 TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("DOCTYPEPublicIdentifierDoubleQuoted state - see STEP 2")
                 }
                 TokenizerState::DOCTYPEPublicIdentifierSingleQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("DOCTYPEPublicIdentifierSingleQuoted state - see STEP 2")
                 }
                 TokenizerState::AfterDOCTYPEPublicIdentifier => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("AfterDOCTYPEPublicIdentifier state - see STEP 2")
                 }
+
+                // STEP 3: Between identifiers and SYSTEM keyword states
+                //   [§ 13.2.5.61-67](https://html.spec.whatwg.org/multipage/parsing.html#between-doctype-public-and-system-identifiers-state)
                 TokenizerState::BetweenDOCTYPEPublicAndSystemIdentifiers => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("BetweenDOCTYPEPublicAndSystemIdentifiers state - see STEP 3")
                 }
                 TokenizerState::AfterDOCTYPESystemKeyword => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("AfterDOCTYPESystemKeyword state - see STEP 3")
                 }
                 TokenizerState::BeforeDOCTYPESystemIdentifier => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("BeforeDOCTYPESystemIdentifier state - see STEP 3")
                 }
                 TokenizerState::DOCTYPESystemIdentifierDoubleQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("DOCTYPESystemIdentifierDoubleQuoted state - see STEP 3")
                 }
                 TokenizerState::DOCTYPESystemIdentifierSingleQuoted => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("DOCTYPESystemIdentifierSingleQuoted state - see STEP 3")
                 }
                 TokenizerState::AfterDOCTYPESystemIdentifier => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("AfterDOCTYPESystemIdentifier state - see STEP 3")
                 }
-                TokenizerState::BogusDOCTYPE => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CDATASection => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CDATASectionBracket => todo!("Unhandled state: {}", self.state),
-                TokenizerState::CDATASectionEnd => todo!("Unhandled state: {}", self.state),
+
+                // STEP 4: BogusDOCTYPE - error recovery for malformed DOCTYPEs
+                //   [§ 13.2.5.68](https://html.spec.whatwg.org/multipage/parsing.html#bogus-doctype-state)
+                TokenizerState::BogusDOCTYPE => {
+                    todo!("BogusDOCTYPE state - see STEP 4")
+                }
+
+                // ===== CDATA SECTION STATES =====
+                // [§ 13.2.5.69-71](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-state)
+                //
+                // CDATA sections are only valid in foreign content (SVG/MathML):
+                //   <![CDATA[ ... ]]>
+                //
+                // TODO: Implement CDATA parsing:
+                //
+                // STEP 5: CDATASection - consume characters until "]]>"
+                //   [§ 13.2.5.69](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-state)
+                TokenizerState::CDATASection => {
+                    todo!("CDATASection state - see STEP 5")
+                }
+                // STEP 6: CDATASectionBracket - saw first ']'
+                //   [§ 13.2.5.70](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-bracket-state)
+                TokenizerState::CDATASectionBracket => {
+                    todo!("CDATASectionBracket state - see STEP 6")
+                }
+                // STEP 7: CDATASectionEnd - saw "]]", looking for '>'
+                //   [§ 13.2.5.71](https://html.spec.whatwg.org/multipage/parsing.html#cdata-section-end-state)
+                TokenizerState::CDATASectionEnd => {
+                    todo!("CDATASectionEnd state - see STEP 7")
+                }
+                // ===== CHARACTER REFERENCE STATES =====
+                // [§ 13.2.5.72-80](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
+                //
+                // Character references encode special characters: &amp; &#60; &#x3C;
+                //
+                // Named references (implemented):
                 TokenizerState::CharacterReference => self.handle_character_reference_state(),
                 TokenizerState::NamedCharacterReference => {
                     self.handle_named_character_reference_state()
                 }
                 TokenizerState::AmbiguousAmpersand => self.handle_ambiguous_ampersand_state(),
+
+                // TODO: Implement numeric character references:
+                //
+                // STEP 8: NumericCharacterReference - saw "&#", determine hex or decimal
+                //   [§ 13.2.5.75](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-state)
+                //   "Consume the next input character:"
+                //   - "X" or "x": switch to HexadecimalCharacterReferenceStart
+                //   - Anything else: reconsume in DecimalCharacterReferenceStart
                 TokenizerState::NumericCharacterReference => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("NumericCharacterReference state - see STEP 8")
                 }
+
+                // STEP 9: Hexadecimal start - expect hex digits after "&#x"
+                //   [§ 13.2.5.76](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-start-state)
                 TokenizerState::HexadecimalCharacterReferenceStart => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("HexadecimalCharacterReferenceStart state - see STEP 9")
                 }
+
+                // STEP 10: Decimal start - expect digits after "&#"
+                //   [§ 13.2.5.77](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-start-state)
                 TokenizerState::DecimalCharacterReferenceStart => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("DecimalCharacterReferenceStart state - see STEP 10")
                 }
+
+                // STEP 11: Hexadecimal digits - accumulate hex value
+                //   [§ 13.2.5.78](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-state)
+                //   Multiply accumulated value by 16, add digit value
                 TokenizerState::HexadecimalCharacterReference => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("HexadecimalCharacterReference state - see STEP 11")
                 }
+
+                // STEP 12: Decimal digits - accumulate decimal value
+                //   [§ 13.2.5.79](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-state)
+                //   Multiply accumulated value by 10, add digit value
                 TokenizerState::DecimalCharacterReference => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("DecimalCharacterReference state - see STEP 12")
                 }
+
+                // STEP 13: Numeric end - convert code point, emit character
+                //   [§ 13.2.5.80](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)
+                //   - Check for null (0x00), out of range (>0x10FFFF), surrogate, noncharacter
+                //   - Apply replacement table for C1 controls (0x80-0x9F)
+                //   - Emit the character token
                 TokenizerState::NumericCharacterReferenceEnd => {
-                    todo!("Unhandled state: {}", self.state)
+                    todo!("NumericCharacterReferenceEnd state - see STEP 13")
                 }
             }
         }
