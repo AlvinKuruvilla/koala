@@ -2480,22 +2480,46 @@ impl HTMLParser {
                 let _ = element_id;
             }
 
-            // Unhandled tokens - panic to surface missing implementations
-            _ => {
-                if let Token::StartTag { name, .. } = token {
-                    todo!(
-                        "Unhandled start tag <{}> in InBody mode - implement handler",
-                        name
-                    );
-                } else if let Token::EndTag { name, .. } = token {
-                    todo!(
-                        "Unhandled end tag </{}> in InBody mode - implement handler",
-                        name
-                    );
+            // [§ 13.2.6.4.7 "in body" - Any other start tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "Any other start tag"
+            // "Reconstruct the active formatting elements, if any."
+            // "Insert an HTML element for the token."
+            //
+            // NOTE: Per spec, custom element names MUST contain a hyphen (e.g., <my-widget>).
+            // Standard HTML elements never contain hyphens. We use this to differentiate:
+            // - Custom elements (hyphen in name): handle gracefully with catch-all
+            // - Standard elements without handler: crash to surface missing implementation
+            Token::StartTag { name, .. } => {
+                if name.contains('-') {
+                    // Custom element - use "Any other start tag" handler
+                    self.reconstruct_active_formatting_elements();
+                    let _ = self.insert_html_element(token);
                 } else {
-                    panic!(
-                        "Unexpected token in InBody mode: {:?}. This indicates a parser bug.",
-                        token
+                    // Standard HTML element without a handler - crash to surface the gap
+                    todo!(
+                        "not yet implemented: Unhandled start tag <{}> in InBody mode - implement handler",
+                        name
+                    );
+                }
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "Any other end tag"
+            // Same logic: custom elements handled gracefully, standard elements crash.
+            Token::EndTag { name, .. } => {
+                if name.contains('-') {
+                    // Custom element - use "Any other end tag" handler
+                    if self.has_element_in_scope(name) {
+                        self.pop_until_tag(name);
+                    }
+                    // Otherwise: ignore the token
+                } else {
+                    // Standard HTML element without a handler - crash to surface the gap
+                    todo!(
+                        "not yet implemented: Unhandled end tag </{}> in InBody mode - implement handler",
+                        name
                     );
                 }
             }
