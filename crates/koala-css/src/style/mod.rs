@@ -49,6 +49,107 @@ pub enum InnerDisplayType {
     Grid,
 }
 
+/// [§ 2 Block Flow Direction](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
+///
+/// "The writing-mode property specifies whether lines of text are laid out
+/// horizontally or vertically and the direction in which blocks progress."
+///
+/// This property is essential for CSS Logical Properties, which map abstract
+/// directions (block-start, inline-end, etc.) to physical directions based on
+/// the writing mode.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Default)]
+pub enum WritingMode {
+    /// [§ 2](https://www.w3.org/TR/css-writing-modes-4/#valdef-writing-mode-horizontal-tb)
+    ///
+    /// "Top-to-bottom block flow direction. Both the writing mode and the
+    /// typographic mode are horizontal."
+    ///
+    /// Mapping:
+    ///   - block-start  → top
+    ///   - block-end    → bottom
+    ///   - inline-start → left  (in ltr)
+    ///   - inline-end   → right (in ltr)
+    #[default]
+    HorizontalTb,
+
+    /// [§ 2](https://www.w3.org/TR/css-writing-modes-4/#valdef-writing-mode-vertical-rl)
+    ///
+    /// "Right-to-left block flow direction. Both the writing mode and the
+    /// typographic mode are vertical."
+    ///
+    /// Mapping:
+    ///   - block-start  → right
+    ///   - block-end    → left
+    ///   - inline-start → top    (in ltr)
+    ///   - inline-end   → bottom (in ltr)
+    VerticalRl,
+
+    /// [§ 2](https://www.w3.org/TR/css-writing-modes-4/#valdef-writing-mode-vertical-lr)
+    ///
+    /// "Left-to-right block flow direction. Both the writing mode and the
+    /// typographic mode are vertical."
+    ///
+    /// Mapping:
+    ///   - block-start  → left
+    ///   - block-end    → right
+    ///   - inline-start → top    (in ltr)
+    ///   - inline-end   → bottom (in ltr)
+    VerticalLr,
+}
+
+/// Physical side of a box
+///
+/// Used to map logical directions (block-start, etc.) to physical sides.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PhysicalSide {
+    /// Top edge of the box
+    Top,
+    /// Right edge of the box
+    Right,
+    /// Bottom edge of the box
+    Bottom,
+    /// Left edge of the box
+    Left,
+}
+
+impl WritingMode {
+    /// [§ 6.2 Flow-relative Directions](https://www.w3.org/TR/css-writing-modes-4/#logical-directions)
+    ///
+    /// Map block-start to the corresponding physical side.
+    ///
+    /// | Writing Mode   | block-start |
+    /// |----------------|-------------|
+    /// | horizontal-tb  | top         |
+    /// | vertical-rl    | right       |
+    /// | vertical-lr    | left        |
+    pub fn block_start_physical(&self) -> PhysicalSide {
+        match self {
+            WritingMode::HorizontalTb => PhysicalSide::Top,
+            WritingMode::VerticalRl => PhysicalSide::Right,
+            WritingMode::VerticalLr => PhysicalSide::Left,
+        }
+    }
+
+    /// Map block-end to the corresponding physical side.
+    ///
+    /// | Writing Mode   | block-end |
+    /// |----------------|-----------|
+    /// | horizontal-tb  | bottom    |
+    /// | vertical-rl    | left      |
+    /// | vertical-lr    | right     |
+    pub fn block_end_physical(&self) -> PhysicalSide {
+        match self {
+            WritingMode::HorizontalTb => PhysicalSide::Bottom,
+            WritingMode::VerticalRl => PhysicalSide::Left,
+            WritingMode::VerticalLr => PhysicalSide::Right,
+        }
+    }
+
+    // NOTE: inline-start and inline-end also depend on `direction` (ltr/rtl).
+    // For now, we only implement block directions. Inline direction support
+    // will require adding the `direction` property.
+}
+
 /// Combined display value
 /// [§ 2 Box Layout Modes](https://www.w3.org/TR/css-display-3/#the-display-properties)
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -463,6 +564,18 @@ pub struct ComputedStyle {
     #[serde(default)]
     pub display_none: bool,
 
+    /// [§ 2 Block Flow Direction](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
+    ///
+    /// "The writing-mode property specifies whether lines of text are laid out
+    /// horizontally or vertically and the direction in which blocks progress."
+    ///
+    /// This determines how logical properties (margin-block-start, etc.) map to
+    /// physical properties (margin-top, etc.).
+    ///
+    /// Initial: horizontal-tb
+    /// Inherited: yes
+    pub writing_mode: WritingMode,
+
     /// [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
     pub color: Option<ColorValue>,
     /// [§ 3.1 'font-family'](https://www.w3.org/TR/css-fonts-4/#font-family-prop)
@@ -532,6 +645,33 @@ pub struct ComputedStyle {
     /// "This property specifies the content height of boxes."
     /// "Value: <length> | <percentage> | auto | inherit"
     pub height: Option<AutoLength>,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Source order tracking for cascade resolution of logical property groups
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)
+    //
+    // "Logical properties and their physical equivalents are considered part of
+    // the same logical property group. Within a logical property group, declarations
+    // compete based on specificity and source order, regardless of whether they
+    // use logical or physical property names."
+    //
+    // These fields track which declaration (by source_order) set each physical margin,
+    // allowing proper cascade resolution when both logical and physical properties
+    // target the same computed value.
+    /// Source order of the declaration that set margin_top (for cascade resolution)
+    #[serde(skip)]
+    pub margin_top_source_order: Option<u32>,
+    /// Source order of the declaration that set margin_right (for cascade resolution)
+    #[serde(skip)]
+    pub margin_right_source_order: Option<u32>,
+    /// Source order of the declaration that set margin_bottom (for cascade resolution)
+    #[serde(skip)]
+    pub margin_bottom_source_order: Option<u32>,
+    /// Source order of the declaration that set margin_left (for cascade resolution)
+    #[serde(skip)]
+    pub margin_left_source_order: Option<u32>,
 }
 
 impl ComputedStyle {
@@ -550,6 +690,18 @@ impl ComputedStyle {
                     // "The element and its descendants generate no boxes or text runs."
                     self.display = None;
                     self.display_none = true;
+                }
+            }
+            // [§ 2 Block Flow Direction](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
+            //
+            // "The writing-mode property specifies whether lines of text are laid out
+            // horizontally or vertically and the direction in which blocks progress."
+            //
+            // Values: horizontal-tb | vertical-rl | vertical-lr
+            // Initial: horizontal-tb
+            "writing-mode" => {
+                if let Some(wm) = parse_writing_mode(&decl.value) {
+                    self.writing_mode = wm;
                 }
             }
             "color" => {
@@ -580,52 +732,79 @@ impl ComputedStyle {
             //
             // "Value: <margin-width> | inherit"
             // "<margin-width> = <length> | <percentage> | auto"
+            //
+            // [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)
+            //
+            // Physical and logical properties compete in the cascade. We track
+            // source_order to determine which declaration wins.
             "margin-top" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
-                    self.margin_top = Some(self.resolve_auto_length(al));
+                    // Check cascade: only update if we have higher source_order
+                    if self.should_update_margin(PhysicalSide::Top, decl.source_order) {
+                        self.margin_top = Some(self.resolve_auto_length(al));
+                        self.margin_top_source_order = Some(decl.source_order);
+                    }
                 }
             }
             "margin-right" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
-                    self.margin_right = Some(self.resolve_auto_length(al));
+                    if self.should_update_margin(PhysicalSide::Right, decl.source_order) {
+                        self.margin_right = Some(self.resolve_auto_length(al));
+                        self.margin_right_source_order = Some(decl.source_order);
+                    }
                 }
             }
             "margin-bottom" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
-                    self.margin_bottom = Some(self.resolve_auto_length(al));
+                    if self.should_update_margin(PhysicalSide::Bottom, decl.source_order) {
+                        self.margin_bottom = Some(self.resolve_auto_length(al));
+                        self.margin_bottom_source_order = Some(decl.source_order);
+                    }
                 }
             }
             "margin-left" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
-                    self.margin_left = Some(self.resolve_auto_length(al));
+                    if self.should_update_margin(PhysicalSide::Left, decl.source_order) {
+                        self.margin_left = Some(self.resolve_auto_length(al));
+                        self.margin_left_source_order = Some(decl.source_order);
+                    }
                 }
             }
-            // SPEC: https://drafts.csswg.org/css-logical-1/#propdef-margin-block-start
+            // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
+            //
+            // "These properties correspond to the margin-top, margin-bottom,
+            // margin-left, and margin-right properties. The mapping depends on
+            // the element's writing-mode, direction, and text-orientation."
+            //
+            // Logical and physical properties are in the same "logical property group"
+            // and compete in the cascade based on source_order.
             "margin-block-start" => {
                 // STEP 1: Parse the value.
                 //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
                 //   "Value: <'margin-top'>"
-                //   This means it takes the same values as margin-top:
-                //   <length-percentage> | auto
                 if let Some(al) = parse_auto_length_value(&decl.value) {
-                    // STEP 2: Determine the writing mode.
-                    //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
-                    //   "The mapping depends on the element's writing-mode, direction,
-                    //   and text-orientation."
-                    //
-                    //   TODO: We don't yet support writing-mode. Assume horizontal-tb.
-                    // STEP 3: Map to the appropriate physical property.
-                    //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
-                    //   For horizontal-tb: block-start = top
-                    // STEP 4: Apply the resolved value to the physical property.
-                    self.margin_block_start = Some(self.resolve_auto_length(al));
+                    // STEP 2: Map to the physical side based on writing-mode.
+                    let physical_side = self.writing_mode.block_start_physical();
+
+                    // STEP 3: Check cascade - only update if we win.
+                    //   [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)
+                    if self.should_update_margin(physical_side, decl.source_order) {
+                        // STEP 4: Apply to both the logical field (for reference)
+                        // and the corresponding physical property.
+                        self.margin_block_start = Some(self.resolve_auto_length(al.clone()));
+                        self.set_margin_for_side(physical_side, al, decl.source_order);
+                    }
                 }
             }
-            // SPEC: https://drafts.csswg.org/css-logical-1/#propdef-margin-block-end
-            // TODO: We don't yet support writing-mode. Assume horizontal-tb.
+            // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
             "margin-block-end" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
-                    self.margin_block_end = Some(self.resolve_auto_length(al));
+                    let physical_side = self.writing_mode.block_end_physical();
+
+                    if self.should_update_margin(physical_side, decl.source_order) {
+                        self.margin_block_end = Some(self.resolve_auto_length(al.clone()));
+                        self.set_margin_for_side(physical_side, al, decl.source_order);
+                    }
                 }
             }
 
@@ -881,6 +1060,55 @@ impl ComputedStyle {
             AutoLength::Length(len) => AutoLength::Length(self.resolve_length(len)),
         }
     }
+
+    /// [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)
+    ///
+    /// Check if a margin declaration should update the value for a physical side.
+    /// Returns true if:
+    /// - No value has been set yet (source_order is None), or
+    /// - The new source_order is greater than or equal to the existing one
+    ///
+    /// This implements cascade resolution: later declarations win, and logical
+    /// and physical properties compete based on source order.
+    fn should_update_margin(&self, side: PhysicalSide, new_order: u32) -> bool {
+        let existing_order = match side {
+            PhysicalSide::Top => self.margin_top_source_order,
+            PhysicalSide::Right => self.margin_right_source_order,
+            PhysicalSide::Bottom => self.margin_bottom_source_order,
+            PhysicalSide::Left => self.margin_left_source_order,
+        };
+
+        match existing_order {
+            None => true,
+            Some(existing) => new_order >= existing,
+        }
+    }
+
+    /// [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
+    ///
+    /// Set the margin value for a physical side and update its source_order.
+    /// Used by logical properties to update the corresponding physical property.
+    fn set_margin_for_side(&mut self, side: PhysicalSide, value: AutoLength, source_order: u32) {
+        let resolved = self.resolve_auto_length(value);
+        match side {
+            PhysicalSide::Top => {
+                self.margin_top = Some(resolved);
+                self.margin_top_source_order = Some(source_order);
+            }
+            PhysicalSide::Right => {
+                self.margin_right = Some(resolved);
+                self.margin_right_source_order = Some(source_order);
+            }
+            PhysicalSide::Bottom => {
+                self.margin_bottom = Some(resolved);
+                self.margin_bottom_source_order = Some(source_order);
+            }
+            PhysicalSide::Left => {
+                self.margin_left = Some(resolved);
+                self.margin_left_source_order = Some(source_order);
+            }
+        }
+    }
 }
 
 /// [§ 4.2 RGB hex notation](https://www.w3.org/TR/css-color-4/#hex-notation)
@@ -1133,4 +1361,27 @@ fn is_display_none(values: &[ComponentValue]) -> bool {
         }
     }
     false
+}
+
+/// [§ 2 Block Flow Direction](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
+///
+/// Parse a writing-mode value from component values.
+///
+/// Values:
+///   - horizontal-tb: Top-to-bottom block flow (default)
+///   - vertical-rl: Right-to-left block flow
+///   - vertical-lr: Left-to-right block flow
+fn parse_writing_mode(values: &[ComponentValue]) -> Option<WritingMode> {
+    for v in values {
+        if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
+            let lower = ident.to_ascii_lowercase();
+            return match lower.as_str() {
+                "horizontal-tb" => Some(WritingMode::HorizontalTb),
+                "vertical-rl" => Some(WritingMode::VerticalRl),
+                "vertical-lr" => Some(WritingMode::VerticalLr),
+                _ => None,
+            };
+        }
+    }
+    None
 }

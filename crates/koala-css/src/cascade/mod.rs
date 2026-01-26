@@ -157,6 +157,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: yes"
         line_height: parent.line_height,
 
+        // [§ 2 writing-mode](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
+        // "Inherited: yes"
+        writing_mode: parent.writing_mode,
+
         // Non-inherited properties start as None
         //
         // [§ 2 display](https://www.w3.org/TR/css-display-3/#the-display-properties)
@@ -194,5 +198,11 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: no"
         width: None,
         height: None,
+
+        // Source order tracking for cascade resolution (not inherited, per-element)
+        margin_top_source_order: None,
+        margin_right_source_order: None,
+        margin_bottom_source_order: None,
+        margin_left_source_order: None,
     }
 }

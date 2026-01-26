@@ -360,3 +360,95 @@ fn test_simple_html_full_pipeline() {
         assert_eq!(color.b, 0xeb);
     }
 }
+
+/// [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)
+///
+/// Test that logical and physical margin properties compete in the cascade.
+/// The property declared later (higher source order) should win.
+#[test]
+fn test_logical_property_cascade_order() {
+    // margin-block-start (10px) comes before margin-top (20px)
+    // margin-top should win because it has higher source order
+    let css = "div { margin-block-start: 10px; margin-top: 20px; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    // margin-top should be 20px (the later declaration wins)
+    if let Some(koala_css::AutoLength::Length(koala_css::LengthValue::Px(v))) =
+        &div_style.margin_top
+    {
+        assert!(
+            (v - 20.0).abs() < 0.01,
+            "Expected margin-top 20px but got {}px (margin-top should win)",
+            v
+        );
+    } else {
+        panic!("Expected margin_top to be set");
+    }
+}
+
+/// [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)
+///
+/// Test that when physical property comes first, logical property wins.
+#[test]
+fn test_logical_property_cascade_order_reversed() {
+    // margin-top (20px) comes before margin-block-start (10px)
+    // margin-block-start should win because it has higher source order
+    let css = "div { margin-top: 20px; margin-block-start: 10px; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    // margin-top should be 10px (margin-block-start declared later wins)
+    if let Some(koala_css::AutoLength::Length(koala_css::LengthValue::Px(v))) =
+        &div_style.margin_top
+    {
+        assert!(
+            (v - 10.0).abs() < 0.01,
+            "Expected margin-top 10px but got {}px (margin-block-start should win)",
+            v
+        );
+    } else {
+        panic!("Expected margin_top to be set");
+    }
+}
+
+/// Test margin-block-end cascade resolution.
+#[test]
+fn test_logical_property_block_end_cascade() {
+    // margin-bottom comes before margin-block-end
+    // margin-block-end should win
+    let css = "div { margin-bottom: 30px; margin-block-end: 15px; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    // margin-bottom should be 15px (margin-block-end declared later wins)
+    if let Some(koala_css::AutoLength::Length(koala_css::LengthValue::Px(v))) =
+        &div_style.margin_bottom
+    {
+        assert!(
+            (v - 15.0).abs() < 0.01,
+            "Expected margin-bottom 15px but got {}px",
+            v
+        );
+    } else {
+        panic!("Expected margin_bottom to be set");
+    }
+}
