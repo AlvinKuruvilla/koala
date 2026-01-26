@@ -492,6 +492,17 @@ pub struct ComputedStyle {
     /// Can be 'auto' or a specific length. 'auto' is resolved during layout.
     pub margin_left: Option<AutoLength>,
 
+    /// [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
+    ///
+    /// "These properties correspond to the margin-top, margin-bottom, margin-left,
+    /// and margin-right properties. The mapping depends on the element's writing-mode,
+    /// direction, and text-orientation."
+    ///
+    /// For horizontal-tb (default): block-start = top, block-end = bottom
+    pub margin_block_start: Option<AutoLength>,
+    /// [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
+    pub margin_block_end: Option<AutoLength>,
+
     /// [§ 6.2 'padding-top'](https://www.w3.org/TR/css-box-4/#padding-physical)
     pub padding_top: Option<LengthValue>,
     /// [§ 6.2 'padding-right'](https://www.w3.org/TR/css-box-4/#padding-physical)
@@ -589,6 +600,35 @@ impl ComputedStyle {
                     self.margin_left = Some(self.resolve_auto_length(al));
                 }
             }
+            // SPEC: https://drafts.csswg.org/css-logical-1/#propdef-margin-block-start
+            "margin-block-start" => {
+                // STEP 1: Parse the value.
+                //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
+                //   "Value: <'margin-top'>"
+                //   This means it takes the same values as margin-top:
+                //   <length-percentage> | auto
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    // STEP 2: Determine the writing mode.
+                    //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
+                    //   "The mapping depends on the element's writing-mode, direction,
+                    //   and text-orientation."
+                    //
+                    //   TODO: We don't yet support writing-mode. Assume horizontal-tb.
+                    // STEP 3: Map to the appropriate physical property.
+                    //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
+                    //   For horizontal-tb: block-start = top
+                    // STEP 4: Apply the resolved value to the physical property.
+                    self.margin_block_start = Some(self.resolve_auto_length(al));
+                }
+            }
+            // SPEC: https://drafts.csswg.org/css-logical-1/#propdef-margin-block-end
+            // TODO: We don't yet support writing-mode. Assume horizontal-tb.
+            "margin-block-end" => {
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.margin_block_end = Some(self.resolve_auto_length(al));
+                }
+            }
+
             "padding" => {
                 self.apply_padding_shorthand(&decl.value);
             }

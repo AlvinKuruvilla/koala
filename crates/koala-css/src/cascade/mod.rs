@@ -174,6 +174,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         margin_right: None,
         margin_bottom: None,
         margin_left: None,
+        // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
+        // "Inherited: no"
+        margin_block_start: None,
+        margin_block_end: None,
         padding_top: None,
         padding_right: None,
         padding_bottom: None,
