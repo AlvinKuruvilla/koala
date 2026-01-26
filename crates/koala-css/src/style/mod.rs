@@ -107,7 +107,7 @@ use koala_common::warning::warn_once;
 /// User agent default font size.
 /// [§ 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
 /// "Initial: medium" - we define medium as 16px per common browser convention.
-/// TODO: If this is user-agent defined we eed to parse this from the user agent at some point I would imagine
+/// NOTE: This is user-agent defined. Browsers typically use 16px as the default.
 const DEFAULT_FONT_SIZE_PX: f64 = 16.0;
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
 /// "Lengths refer to distance measurements and are denoted by <length> in the
