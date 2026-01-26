@@ -85,6 +85,8 @@ pub fn extract_style_content(tree: &DomTree) -> String {
 
 /// Recursively collect CSS text from style elements.
 fn collect_style_content(tree: &DomTree, id: NodeId, css: &mut String) {
+    use koala_common::warning::warn_once;
+
     let Some(node) = tree.get(id) else { return };
 
     match &node.node_type {
@@ -97,11 +99,21 @@ fn collect_style_content(tree: &DomTree, id: NodeId, css: &mut String) {
                 }
             }
         }
-        _ => {
-            for &child_id in tree.children(id) {
-                collect_style_content(tree, child_id, css);
+        NodeType::Element(data) if data.tag_name.eq_ignore_ascii_case("link") => {
+            // [§ 4.2.4 The link element](https://html.spec.whatwg.org/multipage/semantics.html#the-link-element)
+            // Warn about external stylesheets we can't load yet
+            if is_stylesheet_link(data) {
+                if let Some(href) = data.attrs.get("href") {
+                    warn_once("CSS", &format!("external stylesheet not loaded: {href}"));
+                }
             }
         }
+        _ => {}
+    }
+
+    // Recurse into children
+    for &child_id in tree.children(id) {
+        collect_style_content(tree, child_id, css);
     }
 }
 
