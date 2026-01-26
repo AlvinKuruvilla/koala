@@ -2226,6 +2226,7 @@ dependencies = [
  "koala-common",
  "koala-dom",
  "koala-html",
+ "reqwest",
  "serde",
 ]
 

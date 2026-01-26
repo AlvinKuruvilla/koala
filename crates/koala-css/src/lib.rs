@@ -85,8 +85,6 @@ pub fn extract_style_content(tree: &DomTree) -> String {
 
 /// Recursively collect CSS text from style elements.
 fn collect_style_content(tree: &DomTree, id: NodeId, css: &mut String) {
-    use koala_common::warning::warn_once;
-
     let Some(node) = tree.get(id) else { return };
 
     match &node.node_type {
@@ -99,15 +97,8 @@ fn collect_style_content(tree: &DomTree, id: NodeId, css: &mut String) {
                 }
             }
         }
-        NodeType::Element(data) if data.tag_name.eq_ignore_ascii_case("link") => {
-            // [§ 4.2.4 The link element](https://html.spec.whatwg.org/multipage/semantics.html#the-link-element)
-            // Warn about external stylesheets we can't load yet
-            if is_stylesheet_link(data) {
-                if let Some(href) = data.attrs.get("href") {
-                    warn_once("CSS", &format!("external stylesheet not loaded: {href}"));
-                }
-            }
-        }
+        // External stylesheets (<link rel="stylesheet">) are handled by
+        // collect_all_stylesheets() which calls fetch_external_stylesheet().
         _ => {}
     }
 
@@ -334,28 +325,36 @@ pub fn fetch_external_stylesheet(href: &str, base_url: Option<&str>) -> Result<S
 
     // STEP 5: "Fetch request."
     //
-    // TODO(external-stylesheets): Implement actual fetching.
-    //
-    // This should:
-    // a) Make an HTTP GET request to resolved_url
-    // b) Follow redirects (up to some limit)
-    // c) Check Content-Type header for text/css (or accept any for compatibility)
-    // d) Handle CORS if the stylesheet is cross-origin
-    // e) Return the response body as text
-    //
-    // The browser crate has `fetch_url()` that uses curl - consider reusing that pattern.
-    todo!(
-        "STEP 5: Fetch external stylesheet from URL: {}",
-        resolved_url
-    );
+    // TODO: Implement proper Fetch Standard (https://fetch.spec.whatwg.org/)
+    // Currently a quick-and-dirty implementation that skips:
+    // - CORS handling
+    // - Content-Type validation
+    // - Proper error handling per spec
+    use std::time::Duration;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+    let response = client
+        .get(&resolved_url)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .send()
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
 
     // STEP 6: "Process the linked resource when the fetch completes."
     //
     // [§ 4.2.4](https://html.spec.whatwg.org/multipage/semantics.html#the-link-element)
     // "If the resource is not available, the user agent must act as if
     // the resource was an empty style sheet."
-    //
-    // Implementation note: Caller will parse the returned CSS text.
+    response
+        .text()
+        .map_err(|e| format!("Failed to read response body: {e}"))
 }
 
 /// [§ 4.2.3 The base element](https://html.spec.whatwg.org/multipage/semantics.html#the-base-element)

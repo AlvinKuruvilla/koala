@@ -9,6 +9,7 @@ description = "CSS tokenizer, parser, selector, and cascade for the Koala browse
 koala-common.workspace = true
 koala-dom.workspace = true
 serde.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
 koala-html.workspace = true

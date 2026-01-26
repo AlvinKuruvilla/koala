@@ -16,15 +16,15 @@
 
 pub mod renderer;
 
+pub use koala_css as css;
 pub use koala_dom as dom;
 pub use koala_html as html;
-pub use koala_css as css;
 
-use koala_dom::{DomTree, NodeId};
 use koala_css::{
-    compute_styles, extract_style_content, ComputedStyle, CSSParser, CSSTokenizer, LayoutBox,
-    Stylesheet,
+    ComputedStyle, LayoutBox, Stylesheet, compute_styles, extract_all_stylesheets,
+    extract_style_content,
 };
+use koala_dom::{DomTree, NodeId};
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
 use std::collections::HashMap;
 use std::fs;
@@ -89,7 +89,7 @@ impl std::error::Error for LoadError {}
 /// - File reading for local paths
 /// - URL fetching for http:// and https:// URLs
 /// - HTML parsing and tokenization
-/// - CSS extraction and parsing
+/// - CSS extraction and parsing (including external stylesheets)
 /// - Style computation
 /// - Layout tree construction
 ///
@@ -102,15 +102,16 @@ impl std::error::Error for LoadError {}
 /// A `LoadedDocument` containing all parsed data, or a `LoadError`.
 pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     // Fetch or read the HTML source
-    let html_source = if path.starts_with("http://") || path.starts_with("https://") {
-        fetch_url(path)?
+    let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
+        (fetch_url(path)?, Some(path))
     } else {
-        fs::read_to_string(path)
-            .map_err(|e| LoadError::FileError(format!("Failed to read '{}': {}", path, e)))?
+        let content = fs::read_to_string(path)
+            .map_err(|e| LoadError::FileError(format!("Failed to read '{}': {}", path, e)))?;
+        (content, None)
     };
 
-    // Parse the document
-    let mut doc = parse_html_string(&html_source);
+    // Parse the document with base URL for resolving external stylesheets
+    let mut doc = parse_html_with_base_url(&html_source, base_url);
     doc.source_path = path.to_string();
 
     Ok(doc)
@@ -119,7 +120,13 @@ pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
 /// Parse an HTML string into a LoadedDocument.
 ///
 /// Use this when you already have the HTML content as a string.
+/// Note: External stylesheets cannot be loaded without a base URL.
 pub fn parse_html_string(html: &str) -> LoadedDocument {
+    parse_html_with_base_url(html, None)
+}
+
+/// Parse an HTML string with an optional base URL for resolving external resources.
+fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocument {
     // Tokenize HTML
     let mut tokenizer = HTMLTokenizer::new(html.to_string());
     tokenizer.run();
@@ -130,16 +137,13 @@ pub fn parse_html_string(html: &str) -> LoadedDocument {
     let (dom, issues) = parser.run_with_issues();
     let parse_issues: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
 
-    // Extract and parse CSS
+    // Extract and parse CSS (including external stylesheets)
+    // TODO: Implement proper Fetch Standard and CSSOM spec compliance
+    let doc_stylesheets = extract_all_stylesheets(&dom, base_url);
+    let stylesheet = doc_stylesheets.into_merged_stylesheet();
+
+    // Keep inline CSS text for debugging
     let css_text = extract_style_content(&dom);
-    let stylesheet = if !css_text.is_empty() {
-        let mut css_tokenizer = CSSTokenizer::new(css_text.clone());
-        css_tokenizer.run();
-        let mut css_parser = CSSParser::new(css_tokenizer.into_tokens());
-        css_parser.parse_stylesheet()
-    } else {
-        Stylesheet { rules: vec![] }
-    };
 
     // Compute styles
     let styles = compute_styles(&dom, &stylesheet);
@@ -186,4 +190,3 @@ fn fetch_url(url: &str) -> Result<String, LoadError> {
         .text()
         .map_err(|e| LoadError::NetworkError(format!("Failed to read response body: {e}")))
 }
-
