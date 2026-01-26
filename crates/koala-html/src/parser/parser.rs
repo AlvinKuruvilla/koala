@@ -1027,6 +1027,25 @@ impl HTMLParser {
                 // NOTE: The tokenizer handles switching to ScriptData state for script elements
             }
 
+            // [§ 13.2.6.4.4 The "in head" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead)
+            // "A start tag whose tag name is "template""
+            //
+            // Full spec requires:
+            // 1. Insert an HTML element for the token.
+            // 2. Insert a marker at the end of the list of active formatting elements.
+            // 3. Set the frameset-ok flag to "not ok".
+            // 4. Switch the insertion mode to "in template".
+            // 5. Push "in template" onto the stack of template insertion modes.
+            //
+            // NOTE: InTemplate mode is not yet implemented. For now, we insert the element
+            // and stay in current mode to avoid an infinite reprocessing loop. Template
+            // content will be parsed as regular HTML content (incorrect per spec, but
+            // prevents stack overflow).
+            Token::StartTag { name, .. } if name == "template" => {
+                let _ = self.insert_html_element(token);
+                // TODO: Implement full template handling with InTemplate mode
+            }
+
             // "An end tag whose tag name is "head""
             // "Pop the current node (which will be the head element) off the stack of open elements."
             // "Switch the insertion mode to "after head"."
@@ -2273,20 +2292,20 @@ impl HTMLParser {
             // "Reconstruct the active formatting elements, if any."
             // "Insert an HTML element for the token."
             //
-            // NOTE: Per spec, custom element names MUST contain a hyphen (e.g., <my-widget>).
-            // Standard HTML elements never contain hyphens. We use this to differentiate:
-            // - Custom elements (hyphen in name): handle gracefully with catch-all
-            // - Standard elements without handler: crash to surface missing implementation
+            // This handles all elements not explicitly listed in the spec, including:
+            // - Custom elements (contain hyphen, e.g., <my-widget>)
+            // - Web component elements (slot)
+            // - Text-level semantics (ins, del, abbr, dfn, time, data, code, var, samp, kbd,
+            //   mark, ruby, rt, rp, bdi, bdo, q, cite, sub, sup, small, etc.)
+            // - Any other valid HTML element without special parsing rules
             Token::StartTag { name, .. } => {
-                if name.contains('-') {
-                    // Custom element - use "Any other start tag" handler
-                    self.reconstruct_active_formatting_elements();
-                    let _ = self.insert_html_element(token);
-                } else {
-                    // Standard HTML element without a handler - crash to surface the gap
-                    todo!(
-                        "not yet implemented: Unhandled start tag <{}> in InBody mode - implement handler",
-                        name
+                self.reconstruct_active_formatting_elements();
+                let _ = self.insert_html_element(token);
+                // Log unknown standard elements so we can add explicit handlers if needed
+                if !name.contains('-') {
+                    warn_once(
+                        "HTML Parser",
+                        &format!("using generic handler for <{}>", name),
                     );
                 }
             }
@@ -2294,21 +2313,22 @@ impl HTMLParser {
             // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             //
             // "Any other end tag"
-            // Same logic: custom elements handled gracefully, standard elements crash.
+            // 1. "Initialize node to be the current node (the bottommost node of the stack)."
+            // 2. "Loop: If node is an HTML element with the same tag name as the token, then:"
+            //    a. "Generate implied end tags, except for elements with the same tag name"
+            //    b. "If node is not the current node, then this is a parse error."
+            //    c. "Pop all the nodes from the current node up to node, including node, then stop."
+            // 3. "Otherwise, if node is in the special category, parse error; ignore the token."
+            // 4. "Set node to the previous entry in the stack of open elements."
+            // 5. "Return to the step labeled loop."
+            //
+            // NOTE: Simplified implementation - we just pop up to and including the tag.
+            // Full implementation would check special category at each step.
             Token::EndTag { name, .. } => {
-                if name.contains('-') {
-                    // Custom element - use "Any other end tag" handler
-                    if self.has_element_in_scope(name) {
-                        self.pop_until_tag(name);
-                    }
-                    // Otherwise: ignore the token
-                } else {
-                    // Standard HTML element without a handler - crash to surface the gap
-                    todo!(
-                        "not yet implemented: Unhandled end tag </{}> in InBody mode - implement handler",
-                        name
-                    );
+                if self.has_element_in_scope(name) {
+                    self.pop_until_tag(name);
                 }
+                // Otherwise: parse error, ignore the token
             }
         }
     }
