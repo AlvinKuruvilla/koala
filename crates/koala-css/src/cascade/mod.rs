@@ -153,6 +153,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: yes"
         font_size: parent.font_size.clone(),
 
+        // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+        // "Inherited: yes"
+        font_weight: parent.font_weight,
+
         // [§ 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
         // "Inherited: yes"
         line_height: parent.line_height,

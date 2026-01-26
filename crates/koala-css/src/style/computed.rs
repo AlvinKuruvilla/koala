@@ -7,13 +7,14 @@ use serde::Serialize;
 
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
+use crate::{AutoLength, BorderValue, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
 
 use super::display::{DisplayValue, is_display_none, parse_display_value};
 use super::values::{
-    AutoLength, BorderValue, ColorValue, LengthValue, DEFAULT_FONT_SIZE_PX,
-    parse_auto_length_value, parse_color_value, parse_font_family, parse_length_value,
-    parse_line_height, parse_single_auto_length, parse_single_color, parse_single_length,
+    DEFAULT_FONT_SIZE_PX, parse_auto_length_value, parse_color_value, parse_font_family,
+    parse_length_value, parse_line_height, parse_single_auto_length, parse_single_color,
+    parse_single_length,
 };
 use super::writing_mode::{PhysicalSide, WritingMode, parse_writing_mode};
 
@@ -60,6 +61,8 @@ pub struct ComputedStyle {
     pub font_family: Option<String>,
     /// [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
     pub font_size: Option<LengthValue>,
+    /// [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+    pub font_weight: Option<u16>,
     /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
 
