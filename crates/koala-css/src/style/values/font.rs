@@ -40,5 +40,24 @@ pub fn parse_line_height(values: &[ComponentValue]) -> Option<f64> {
     None
 }
 
-// TODO: Add parse_font_weight()
 // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+pub fn parse_font_weight(values: &[ComponentValue]) -> Option<u16> {
+    for v in values {
+        match v {
+            ComponentValue::Token(CSSToken::Ident(ident)) if ident.eq_ignore_ascii_case("normal") => {
+                return Some(400);
+            }
+            ComponentValue::Token(CSSToken::Ident(ident)) if ident.eq_ignore_ascii_case("bold") => {
+                return Some(700);
+            }
+            ComponentValue::Token(CSSToken::Number { value, .. }) => {
+                let weight = *value as u16;
+                if weight >= 100 && weight <= 900 && weight % 100 == 0 {
+                    return Some(weight);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}

@@ -13,8 +13,8 @@ use koala_common::warning::warn_once;
 use super::display::{DisplayValue, is_display_none, parse_display_value};
 use super::values::{
     DEFAULT_FONT_SIZE_PX, parse_auto_length_value, parse_color_value, parse_font_family,
-    parse_length_value, parse_line_height, parse_single_auto_length, parse_single_color,
-    parse_single_length,
+    parse_font_weight, parse_length_value, parse_line_height, parse_single_auto_length,
+    parse_single_color, parse_single_length,
 };
 use super::writing_mode::{PhysicalSide, WritingMode, parse_writing_mode};
 
@@ -203,6 +203,12 @@ impl ComputedStyle {
             "line-height" => {
                 if let Some(lh) = parse_line_height(&decl.value) {
                     self.line_height = Some(lh);
+                }
+            }
+            // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+            "font-weight" => {
+                if let Some(weight) = parse_font_weight(&decl.value) {
+                    self.font_weight = Some(weight);
                 }
             }
             // [§ 9.2 Shorthand properties](https://www.w3.org/TR/css-cascade-4/#shorthand)
