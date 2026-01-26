@@ -344,13 +344,63 @@ impl ColorValue {
                 b: 0,
                 a: 0,
             }),
-            // TODO: Implement full CSS named color list
+            // Basic 16 HTML colors (completing the set)
             // [§ 6.1 Named Colors](https://www.w3.org/TR/css-color-4/#named-colors)
-            //
-            // STEP 1: Add basic color keywords (16 HTML colors)
-            //   aqua, fuchsia, lime, maroon, navy, olive, purple, silver, teal
-            //
-            // STEP 2: Add extended color keywords (X11 colors, ~140 total)
+            "aqua" | "cyan" => Some(ColorValue {
+                r: 0,
+                g: 255,
+                b: 255,
+                a: 255,
+            }),
+            "fuchsia" | "magenta" => Some(ColorValue {
+                r: 255,
+                g: 0,
+                b: 255,
+                a: 255,
+            }),
+            "lime" => Some(ColorValue {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            }),
+            "maroon" => Some(ColorValue {
+                r: 128,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
+            "navy" => Some(ColorValue {
+                r: 0,
+                g: 0,
+                b: 128,
+                a: 255,
+            }),
+            "olive" => Some(ColorValue {
+                r: 128,
+                g: 128,
+                b: 0,
+                a: 255,
+            }),
+            "purple" => Some(ColorValue {
+                r: 128,
+                g: 0,
+                b: 128,
+                a: 255,
+            }),
+            "silver" => Some(ColorValue {
+                r: 192,
+                g: 192,
+                b: 192,
+                a: 255,
+            }),
+            "teal" => Some(ColorValue {
+                r: 0,
+                g: 128,
+                b: 128,
+                a: 255,
+            }),
+            // TODO: Add extended color keywords (X11 colors, ~140 total)
             //   [§ 6.1](https://www.w3.org/TR/css-color-4/#named-colors)
             //   aliceblue, antiquewhite, aquamarine, azure, beige, bisque, ...
             //
