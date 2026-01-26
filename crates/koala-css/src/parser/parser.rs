@@ -16,6 +16,20 @@ pub struct Declaration {
     pub value: Vec<ComponentValue>,
     /// Whether the declaration has `!important`.
     pub important: bool,
+    /// [§ 2.1 Cascading](https://drafts.csswg.org/css-logical-1/#cascading)
+    ///
+    /// Source order index for cascade resolution. Used to determine which
+    /// declaration wins when logical and physical properties compete.
+    ///
+    /// "Within each logical property group, corresponding flow-relative and
+    /// physical properties are paired... the computed value of both properties
+    /// in the pair is derived from the specified value of the property declared
+    /// with higher priority in the CSS cascade."
+    ///
+    /// This index is monotonically increasing across all declarations in a
+    /// stylesheet (and across stylesheets in document order). Higher values
+    /// indicate later declarations, which win in the cascade (all else equal).
+    pub source_order: u32,
 }
 
 /// [§ 5.3.7 Consume a component value](https://www.w3.org/TR/css-syntax-3/#consume-a-component-value)
@@ -96,6 +110,12 @@ pub struct Stylesheet {
 pub struct CSSParser {
     tokens: Vec<CSSToken>,
     position: usize,
+    /// [§ 2.1 Cascading](https://drafts.csswg.org/css-logical-1/#cascading)
+    ///
+    /// Counter for assigning source_order to declarations. Incremented each
+    /// time a declaration is parsed, providing a total ordering of all
+    /// declarations in the stylesheet for cascade resolution.
+    declaration_counter: u32,
 }
 
 impl CSSParser {
@@ -104,6 +124,7 @@ impl CSSParser {
         Self {
             tokens,
             position: 0,
+            declaration_counter: 0,
         }
     }
 
@@ -422,10 +443,15 @@ impl CSSParser {
         // Remove trailing whitespace and !important from value
         let value = trim_important(value);
 
+        // Assign source order and increment counter
+        let source_order = self.declaration_counter;
+        self.declaration_counter += 1;
+
         Some(Declaration {
             name,
             value,
             important,
+            source_order,
         })
     }
 
