@@ -19,18 +19,26 @@ static WARNED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 /// ```ignore
 /// warn_once("CSS", "unsupported unit 'em' in font-size: 1.5em");
 /// ```
+///
+/// # Panics
+/// Panics if the global warning set mutex is poisoned.
 pub fn warn_once(component: &str, message: &str) {
-    let key = format!("[{}] {}", component, message);
-    let mut guard = WARNED.lock().unwrap();
-    let set = guard.get_or_insert_with(HashSet::new);
+    let key = format!("[{component}] {message}");
+    let should_print = WARNED
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashSet::new)
+        .insert(key);
 
-    if !set.contains(&key) {
-        eprintln!("{}[Koala {}] ⚠ {}{}", YELLOW, component, message, RESET);
-        let _ = set.insert(key);
+    if should_print {
+        eprintln!("{YELLOW}[Koala {component}] ⚠ {message}{RESET}");
     }
 }
 
 /// Clear all recorded warnings (call when loading a new page)
+///
+/// # Panics
+/// Panics if the global warning set mutex is poisoned.
 pub fn clear_warnings() {
     let mut guard = WARNED.lock().unwrap();
     if let Some(set) = guard.as_mut() {
