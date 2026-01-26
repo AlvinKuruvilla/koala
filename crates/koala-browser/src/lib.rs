@@ -163,12 +163,15 @@ pub fn parse_html_string(html: &str) -> LoadedDocument {
 /// Fetch HTML content from a URL using reqwest.
 fn fetch_url(url: &str) -> Result<String, LoadError> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| LoadError::NetworkError(format!("Failed to create HTTP client: {e}")))?;
 
+    // TODO: Implement proper Fetch Standard (https://fetch.spec.whatwg.org/)
+    // For now, just set a User-Agent to avoid basic bot detection.
     let response = client
         .get(url)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .send()
         .map_err(|e| LoadError::NetworkError(format!("Request failed: {e}")))?;
 
