@@ -22,6 +22,12 @@ pub struct ColorValue {
 }
 
 impl ColorValue {
+    /// Black (#000000)
+    pub const BLACK: Self = Self { r: 0, g: 0, b: 0, a: 255 };
+
+    /// White (#ffffff)
+    pub const WHITE: Self = Self { r: 255, g: 255, b: 255, a: 255 };
+
     /// [§ 4.2 The RGB hexadecimal notations](https://www.w3.org/TR/css-color-4/#hex-notation)
     /// "The syntax of a <hex-color> is a <hash-token> token whose value consists of
     /// 3, 4, 6, or 8 hexadecimal digits."
