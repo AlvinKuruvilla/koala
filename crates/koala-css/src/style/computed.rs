@@ -321,6 +321,36 @@ impl ComputedStyle {
             "border" => {
                 self.apply_border_shorthand(&decl.value);
             }
+            // [§ 4.4 border-top](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+            //
+            // "The 'border-top' shorthand property sets the width, style, and color
+            // of the top border."
+            //
+            // Syntax: <line-width> || <line-style> || <color>
+            // (values can appear in any order)
+            "border-top" => {
+                if let Some(border) = self.parse_border_side(&decl.value) {
+                    self.border_top = Some(border);
+                }
+            }
+            // [§ 4.4 border-right](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+            "border-right" => {
+                if let Some(border) = self.parse_border_side(&decl.value) {
+                    self.border_right = Some(border);
+                }
+            }
+            // [§ 4.4 border-bottom](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+            "border-bottom" => {
+                if let Some(border) = self.parse_border_side(&decl.value) {
+                    self.border_bottom = Some(border);
+                }
+            }
+            // [§ 4.4 border-left](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+            "border-left" => {
+                if let Some(border) = self.parse_border_side(&decl.value) {
+                    self.border_left = Some(border);
+                }
+            }
             "background" => {
                 self.apply_background_shorthand(&decl.value);
             }
@@ -454,54 +484,7 @@ impl ComputedStyle {
     /// [§ 3.1 border shorthand](https://www.w3.org/TR/css-backgrounds-3/#the-border-shorthands)
     /// "border: 1px solid #ddd" sets all four borders
     fn apply_border_shorthand(&mut self, values: &[ComponentValue]) {
-        let mut width: Option<LengthValue> = None;
-        let mut style: Option<String> = None;
-        let mut color: Option<ColorValue> = None;
-
-        for v in values {
-            // Try to parse as length (width)
-            if width.is_none() {
-                if let Some(len) = parse_single_length(v) {
-                    width = Some(self.resolve_length(len));
-                    continue;
-                }
-            }
-
-            // Try to parse as color
-            if color.is_none() {
-                if let Some(c) = parse_single_color(v) {
-                    color = Some(c);
-                    continue;
-                }
-            }
-
-            // Try to parse as style keyword
-            if style.is_none() {
-                if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(
-                        lower.as_str(),
-                        "solid" | "dashed" | "dotted" | "double" | "none" | "hidden"
-                    ) {
-                        style = Some(lower);
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // Build border value if we have at least a width
-        if let Some(w) = width {
-            let border = BorderValue {
-                width: w,
-                style: style.unwrap_or_else(|| "solid".to_string()),
-                color: color.unwrap_or(ColorValue {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                    a: 255,
-                }),
-            };
+        if let Some(border) = self.parse_border_side(values) {
             self.border_top = Some(border.clone());
             self.border_right = Some(border.clone());
             self.border_bottom = Some(border.clone());
@@ -596,6 +579,63 @@ impl ComputedStyle {
                 self.margin_left = Some(resolved);
                 self.margin_left_source_order = Some(source_order);
             }
+        }
+    }
+
+    /// [§ 4.4 border-top, border-right, border-bottom, border-left](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+    ///
+    /// Parse a single border side value.
+    ///
+    /// Syntax: `<line-width> || <line-style> || <color>`
+    ///
+    /// [§ 4.1 Line Width](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+    /// "<line-width> = <length [0,∞]> | thin | medium | thick"
+    ///
+    /// [§ 4.2 Line Style](https://www.w3.org/TR/css-backgrounds-3/#border-style)
+    /// "<line-style> = none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset"
+    ///
+    /// [§ 4.3 Line Color](https://www.w3.org/TR/css-backgrounds-3/#border-color)
+    /// "<color>"
+    ///
+    /// Values can appear in any order. Missing values use initial values:
+    /// - width: medium (typically 3px)
+    /// - style: solid
+    /// - color: currentcolor (use computed 'color' property, or black)
+    fn parse_border_side(&self, values: &[ComponentValue]) -> Option<BorderValue> {
+        let mut width = None;
+        let mut style = None;
+        let mut color = None;
+
+        for v in values {
+            if width.is_none() && let Some(len) = parse_single_length(v) {
+                width = Some(self.resolve_length(len));
+            } else if color.is_none() && let Some(c) = parse_single_color(v) {
+                color = Some(c);
+            } else if style.is_none() && let Some(s) = Self::parse_border_style(v) {
+                style = Some(s);
+            }
+        }
+
+        // Return Some if at least one value was parsed
+        (width.is_some() || style.is_some() || color.is_some()).then(|| BorderValue {
+            width: width.unwrap_or(LengthValue::Px(3.0)),
+            style: style.unwrap_or_else(|| "solid".to_string()),
+            color: color.unwrap_or_else(|| self.color.clone().unwrap_or(ColorValue::BLACK)),
+        })
+    }
+
+    /// Parse a border-style keyword.
+    fn parse_border_style(v: &ComponentValue) -> Option<String> {
+        if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
+            let lower = ident.to_ascii_lowercase();
+            matches!(
+                lower.as_str(),
+                "solid" | "dashed" | "dotted" | "double" | "none" | "hidden" |
+                "groove" | "ridge" | "inset" | "outset"
+            )
+            .then_some(lower)
+        } else {
+            None
         }
     }
 }
