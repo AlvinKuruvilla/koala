@@ -5,7 +5,7 @@
 use anyhow::Result;
 use clap::Parser;
 use koala_browser::{LoadedDocument, load_document, parse_html_string, renderer::Renderer};
-use koala_css::LayoutBox;
+use koala_css::{LayoutBox, Painter};
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
@@ -118,9 +118,13 @@ fn take_screenshot(
     let mut layout = layout_tree.clone();
     layout.layout(viewport, viewport);
 
-    // Create renderer and paint
+    // Paint: generate display list from layout tree
+    let painter = Painter::new(&doc.styles);
+    let display_list = painter.paint(&layout);
+
+    // Render: execute display list to pixels
     let mut renderer = Renderer::new(width, height);
-    renderer.render(&layout, doc);
+    renderer.render(&display_list);
 
     // Save to file
     renderer.save(output_path)?;

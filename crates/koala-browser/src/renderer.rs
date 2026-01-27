@@ -1,12 +1,24 @@
 //! Software renderer for headless screenshot generation.
 //!
-//! Renders a LayoutBox tree to a pixel buffer using fontdue for text rasterization.
+//! Executes a DisplayList to a pixel buffer using fontdue for text rasterization.
+//!
+//! # Architecture
+//!
+//! The renderer is the final stage in the pipeline:
+//!
+//! ```text
+//! Style → Layout → Paint → Render
+//!                    ↓        ↓
+//!              DisplayList → Pixels
+//! ```
+//!
+//! The renderer knows nothing about CSS, layout, or the DOM. It simply executes
+//! drawing commands from the display list.
 
-use crate::LoadedDocument;
-use fontdue::{Font, FontSettings};
 use anyhow::Result;
+use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
-use koala_css::{BoxType, ComputedStyle, LayoutBox};
+use koala_css::{ColorValue, DisplayCommand, DisplayList};
 use std::path::Path;
 
 /// Common system font paths to search for a default font.
@@ -26,7 +38,10 @@ const FONT_SEARCH_PATHS: &[&str] = &[
     "C:\\Windows\\Fonts\\segoeui.ttf",
 ];
 
-/// Software renderer that paints a LayoutBox tree to a pixel buffer.
+/// Software renderer that executes a display list to a pixel buffer.
+///
+/// The renderer is stateless with respect to CSS - it only knows how to
+/// execute drawing commands (fill rectangles, draw text).
 pub struct Renderer {
     /// RGBA pixel buffer
     buffer: RgbaImage,
@@ -51,7 +66,7 @@ impl Renderer {
             eprintln!("Warning: No system font found. Text will not be rendered.");
             eprintln!("Searched paths:");
             for path in FONT_SEARCH_PATHS {
-                eprintln!("  - {}", path);
+                eprintln!("  - {path}");
             }
         }
 
@@ -68,7 +83,7 @@ impl Renderer {
         for path in FONT_SEARCH_PATHS {
             if let Ok(data) = std::fs::read(path) {
                 if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
-                    eprintln!("Loaded font: {}", path);
+                    eprintln!("Loaded font: {path}");
                     return Some(font);
                 }
             }
@@ -76,159 +91,70 @@ impl Renderer {
         None
     }
 
-    /// Render the layout tree to the pixel buffer.
-    pub fn render(&mut self, layout: &LayoutBox, doc: &LoadedDocument) {
-        self.render_box(layout, doc);
-    }
-
-    /// Recursively render a layout box and its children.
-    fn render_box(&mut self, layout_box: &LayoutBox, doc: &LoadedDocument) {
-        let dims = &layout_box.dimensions;
-
-        // Get style for this box if it has a node
-        let style = match &layout_box.box_type {
-            BoxType::Principal(node_id) => doc.styles.get(node_id),
-            _ => None,
-        };
-
-        // Calculate the padding box (background area)
-        let padding_x = dims.content.x - dims.padding.left;
-        let padding_y = dims.content.y - dims.padding.top;
-        let padding_width = dims.content.width + dims.padding.left + dims.padding.right;
-        let padding_height = dims.content.height + dims.padding.top + dims.padding.bottom;
-
-        // Draw background color
-        if let Some(style) = style {
-            if let Some(bg) = &style.background_color {
-                self.fill_rect(
-                    padding_x as i32,
-                    padding_y as i32,
-                    padding_width as u32,
-                    padding_height as u32,
-                    Rgba([bg.r, bg.g, bg.b, bg.a]),
-                );
-            }
-        }
-
-        // Draw text for anonymous inline boxes
-        if let BoxType::AnonymousInline(text) = &layout_box.box_type {
-            // Get text color from parent or default to black
-            let text_color = style
-                .and_then(|s| s.color.as_ref())
-                .map(|c| Rgba([c.r, c.g, c.b, c.a]))
-                .unwrap_or(Rgba([0, 0, 0, 255]));
-
-            // Get font size from style or default
-            let font_size = style
-                .and_then(|s| s.font_size.as_ref())
-                .map(|fs| fs.to_px() as f32)
-                .unwrap_or(16.0);
-
-            self.draw_text(
-                text,
-                dims.content.x as i32,
-                dims.content.y as i32,
-                font_size,
-                text_color,
-            );
-        }
-
-        // Render children
-        for child in &layout_box.children {
-            // Pass parent style to children for text color inheritance
-            self.render_box_with_inherited_style(child, doc, style);
+    /// Execute a display list, drawing all commands to the pixel buffer.
+    ///
+    /// Commands are executed in order (back to front), which is the correct
+    /// painting order established by the Painter.
+    pub fn render(&mut self, display_list: &DisplayList) {
+        for command in display_list.commands() {
+            self.execute_command(command);
         }
     }
 
-    /// Render a box with inherited style from parent.
-    fn render_box_with_inherited_style(
-        &mut self,
-        layout_box: &LayoutBox,
-        doc: &LoadedDocument,
-        parent_style: Option<&ComputedStyle>,
-    ) {
-        let dims = &layout_box.dimensions;
-
-        // Get style for this box if it has a node
-        let style = match &layout_box.box_type {
-            BoxType::Principal(node_id) => doc.styles.get(node_id),
-            _ => None,
-        };
-
-        // Use own style or inherit from parent
-        let effective_style = style.or(parent_style);
-
-        // Calculate the padding box (background area)
-        let padding_x = dims.content.x - dims.padding.left;
-        let padding_y = dims.content.y - dims.padding.top;
-        let padding_width = dims.content.width + dims.padding.left + dims.padding.right;
-        let padding_height = dims.content.height + dims.padding.top + dims.padding.bottom;
-
-        // Draw background color
-        if let Some(style) = style {
-            if let Some(bg) = &style.background_color {
-                self.fill_rect(
-                    padding_x as i32,
-                    padding_y as i32,
-                    padding_width as u32,
-                    padding_height as u32,
-                    Rgba([bg.r, bg.g, bg.b, bg.a]),
-                );
+    /// Execute a single display command.
+    fn execute_command(&mut self, command: &DisplayCommand) {
+        match command {
+            DisplayCommand::FillRect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => {
+                self.fill_rect(*x, *y, *width, *height, color);
             }
-        }
-
-        // Draw text for anonymous inline boxes
-        if let BoxType::AnonymousInline(text) = &layout_box.box_type {
-            // Get text color from effective style or default to black
-            let text_color = effective_style
-                .and_then(|s| s.color.as_ref())
-                .map(|c| Rgba([c.r, c.g, c.b, c.a]))
-                .unwrap_or(Rgba([0, 0, 0, 255]));
-
-            // Get font size from effective style or default
-            let font_size = effective_style
-                .and_then(|s| s.font_size.as_ref())
-                .map(|fs| fs.to_px() as f32)
-                .unwrap_or(16.0);
-
-            self.draw_text(
+            DisplayCommand::DrawText {
+                x,
+                y,
                 text,
-                dims.content.x as i32,
-                dims.content.y as i32,
                 font_size,
-                text_color,
-            );
-        }
-
-        // Render children
-        for child in &layout_box.children {
-            self.render_box_with_inherited_style(child, doc, effective_style);
+                color,
+            } => {
+                self.draw_text(text, *x, *y, *font_size, color);
+            }
         }
     }
 
     /// Fill a rectangle with the given color.
-    fn fill_rect(&mut self, x: i32, y: i32, width: u32, height: u32, color: Rgba<u8>) {
+    fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: &ColorValue) {
+        let rgba = Rgba([color.r, color.g, color.b, color.a]);
+        let x = x as i32;
+        let y = y as i32;
+        let width = width as u32;
+        let height = height as u32;
+
         for dy in 0..height {
             for dx in 0..width {
                 let px = x + dx as i32;
                 let py = y + dy as i32;
                 if px >= 0 && py >= 0 && (px as u32) < self.width && (py as u32) < self.height {
-                    self.buffer.put_pixel(px as u32, py as u32, color);
+                    self.buffer.put_pixel(px as u32, py as u32, rgba);
                 }
             }
         }
     }
 
     /// Draw text at the given position.
-    fn draw_text(&mut self, text: &str, x: i32, y: i32, font_size: f32, color: Rgba<u8>) {
+    fn draw_text(&mut self, text: &str, x: f32, y: f32, font_size: f32, color: &ColorValue) {
         // Skip if no font is available
         let font = match &self.font {
             Some(f) => f,
             None => return,
         };
 
-        let mut cursor_x = x as f32;
-        let cursor_y = y as f32;
+        let rgba = Rgba([color.r, color.g, color.b, color.a]);
+        let mut cursor_x = x;
+        let cursor_y = y;
 
         for ch in text.chars() {
             // Skip control characters and newlines for now
@@ -244,7 +170,8 @@ impl Renderer {
 
             // Calculate position (fontdue gives us the bitmap offset)
             let glyph_x = cursor_x as i32 + metrics.xmin;
-            let glyph_y = cursor_y as i32 + (font_size as i32 - metrics.ymin - metrics.height as i32);
+            let glyph_y =
+                cursor_y as i32 + (font_size as i32 - metrics.ymin - metrics.height as i32);
 
             // Draw the glyph
             for gy in 0..metrics.height {
@@ -261,7 +188,7 @@ impl Renderer {
                         {
                             // Alpha blend the glyph onto the background
                             let bg = self.buffer.get_pixel(px as u32, py as u32);
-                            let blended = alpha_blend(color, *bg, alpha);
+                            let blended = alpha_blend(rgba, *bg, alpha);
                             self.buffer.put_pixel(px as u32, py as u32, blended);
                         }
                     }

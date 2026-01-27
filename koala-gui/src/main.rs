@@ -18,6 +18,7 @@ use clap::Parser;
 use eframe::egui;
 use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
 use koala_common::warning::clear_warnings;
+use koala_css::Painter;
 use koala_css::{AutoLength, LayoutBox, Rect};
 use koala_dom::{NodeId, NodeType};
 use koala_html::print_tree;
@@ -132,8 +133,13 @@ fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, heig
     let mut layout = layout_tree.clone();
     layout.layout(viewport, viewport);
 
+    // Paint: generate display list from layout tree
+    let painter = Painter::new(&doc.styles);
+    let display_list = painter.paint(&layout);
+
+    // Render: execute display list to pixels
     let mut renderer = Renderer::new(width, height);
-    renderer.render(&layout, doc);
+    renderer.render(&display_list);
     renderer.save(output_path)?;
 
     Ok(())

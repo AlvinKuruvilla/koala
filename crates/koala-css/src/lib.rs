@@ -48,6 +48,8 @@ pub mod backgrounds;
 pub mod cascade;
 /// Box model and layout structures per [CSS Display Level 3](https://www.w3.org/TR/css-display-3/).
 pub mod layout;
+/// Display list and painting per [CSS 2.1 Appendix E](https://www.w3.org/TR/CSS2/zindex.html).
+pub mod paint;
 /// CSS parser per [§ 5 Parsing](https://www.w3.org/TR/css-syntax-3/#parsing).
 pub mod parser;
 /// CSS selector parsing and matching per [Selectors Level 4](https://www.w3.org/TR/selectors-4/).
@@ -61,6 +63,7 @@ pub mod tokenizer;
 pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
 pub use layout::{BoxDimensions, BoxType, EdgeSizes, LayoutBox, Rect};
+pub use paint::{DisplayCommand, DisplayList, Painter};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{ParsedSelector, Specificity, parse_selector};
 pub use style::ComputedStyle;
