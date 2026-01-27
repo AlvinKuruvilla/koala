@@ -385,6 +385,35 @@ impl DomTree {
         })
     }
 
+    /// [§ 4.2.6 Descendant](https://dom.spec.whatwg.org/#concept-tree-descendant)
+    ///
+    /// "An object A is called a descendant of an object B, if either A is a
+    /// child of B or A is a child of an object C that is a descendant of B."
+    ///
+    /// Returns an iterator over all descendants of a node in document order
+    /// (depth-first, pre-order traversal). Does not include the starting node.
+    pub fn descendants(&self, id: NodeId) -> DescendantIterator<'_> {
+        DescendantIterator {
+            tree: self,
+            // Start with the first child of the given node
+            stack: self.children(id).iter().rev().copied().collect(),
+        }
+    }
+
+    /// Iterate over all nodes in the tree in document order.
+    ///
+    /// [§ 4.2.4 Tree order](https://dom.spec.whatwg.org/#concept-tree-order)
+    ///
+    /// "An object A is preceding an object B if A and B are in the same tree
+    /// and A comes before B in tree order."
+    ///
+    /// This returns a depth-first, pre-order traversal starting from the root,
+    /// which matches the document order defined by the spec.
+    pub fn iter_all(&self) -> impl Iterator<Item = NodeId> + '_ {
+        // Include the root node, then all its descendants
+        std::iter::once(self.root()).chain(self.descendants(self.root()))
+    }
+
     /// [§ 3.1.1 The document element](https://html.spec.whatwg.org/multipage/dom.html#the-html-element-2)
     ///
     /// "The document element of a document is the element whose parent is that
@@ -504,6 +533,37 @@ impl<'a> Iterator for PrecedingSiblingIterator<'a> {
         let id = self.current?;
         // STEP 2: Advance to the previous sibling.
         self.current = self.tree.prev_sibling(id);
+        Some(id)
+    }
+}
+
+/// [§ 4.2.6 Descendant](https://dom.spec.whatwg.org/#concept-tree-descendant)
+///
+/// Iterator that walks the tree in document order (depth-first, pre-order).
+/// Each call to `next()` returns the next descendant of the starting node.
+pub struct DescendantIterator<'a> {
+    tree: &'a DomTree,
+    /// Stack of nodes to visit (children are pushed in reverse order so we
+    /// process them left-to-right).
+    stack: Vec<NodeId>,
+}
+
+impl Iterator for DescendantIterator<'_> {
+    type Item = NodeId;
+
+    /// [§ 4.2.4 Tree order](https://dom.spec.whatwg.org/#concept-tree-order)
+    ///
+    /// Return the next node in tree order and push its children onto the stack.
+    fn next(&mut self) -> Option<Self::Item> {
+        // STEP 1: Pop the next node from the stack.
+        let id = self.stack.pop()?;
+
+        // STEP 2: Push all children onto the stack in reverse order.
+        // This ensures left-to-right traversal when we pop from the stack.
+        let children = self.tree.children(id);
+        self.stack.extend(children.iter().rev().copied());
+
+        // STEP 3: Return the current node.
         Some(id)
     }
 }

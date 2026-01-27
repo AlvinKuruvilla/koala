@@ -1,6 +1,6 @@
 //! Integration tests for CSS style types.
 
-use koala_css::style::{AutoLength, ColorValue, LengthValue};
+use koala_css::{AutoLength, ColorValue, LengthValue};
 
 #[test]
 fn test_color_from_hex_6() {
@@ -93,12 +93,14 @@ fn test_auto_length() {
     // Test that AutoLength::Auto is properly handled
     let auto = AutoLength::Auto;
     assert!(auto.is_auto());
-    assert_eq!(auto.to_px(), 0.0); // auto resolves to 0 when asked for px
 
     // Test that AutoLength::Length properly wraps a length
     let len = AutoLength::Length(LengthValue::Px(20.0));
     assert!(!len.is_auto());
+
+    // Test to_px() for AutoLength
     assert_eq!(len.to_px(), 20.0);
+    assert_eq!(auto.to_px(), 0.0); // auto returns 0.0 as fallback
 }
 
 #[test]
@@ -122,4 +124,14 @@ fn test_viewport_units() {
     // Test 100vh = full viewport height
     let full_vh = LengthValue::Vh(100.0);
     assert_eq!(full_vh.to_px_with_viewport(1280.0, 720.0), 720.0);
+}
+
+#[test]
+fn test_em_units() {
+    // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    // "em: Equal to the computed value of font-size on the element"
+
+    // Test em with default font size (16px)
+    let em = LengthValue::Em(2.0);
+    assert_eq!(em.to_px(), 32.0); // 2em * 16px = 32px
 }

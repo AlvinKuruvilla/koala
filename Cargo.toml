@@ -5,6 +5,7 @@ members = [
     "crates/koala-dom",
     "crates/koala-html",
     "crates/koala-css",
+    "crates/koala-js",
     "crates/koala-browser",
     "koala-cli",
     "koala-gui",
@@ -21,6 +22,7 @@ koala-common = { path = "crates/koala-common" }
 koala-dom = { path = "crates/koala-dom" }
 koala-html = { path = "crates/koala-html" }
 koala-css = { path = "crates/koala-css" }
+koala-js = { path = "crates/koala-js" }
 koala-browser = { path = "crates/koala-browser" }
 
 # External dependencies
@@ -33,6 +35,7 @@ serde_json = "1.0"
 strum = "0.26"
 strum_macros = "0.26"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"] }
+boa_engine = "0.20"
 
 [workspace.lints.rust]
 # All warnings as errors

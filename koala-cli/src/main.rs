@@ -388,6 +388,8 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
 
 /// Print computed styles for each element
 fn print_computed_styles(doc: &LoadedDocument) {
+    use koala_css::AutoLength;
+
     for (node_id, style) in &doc.styles {
         let Some(element) = doc.dom.as_element(*node_id) else {
             continue;
@@ -398,7 +400,10 @@ fn print_computed_styles(doc: &LoadedDocument) {
 
         // Collect style properties
         if let Some(ref fs) = style.font_size {
-            props.push(format_style_prop("font-size", &format!("{}px", fs.to_px())));
+            props.push(format_style_prop(
+                "font-size",
+                &format!("{}px", fs.to_px()),
+            ));
         }
         if let Some(ref color) = style.color {
             props.push(format_style_prop("color", &color.to_hex_string()));
@@ -406,17 +411,16 @@ fn print_computed_styles(doc: &LoadedDocument) {
         if let Some(ref bg) = style.background_color {
             props.push(format_style_prop("background", &bg.to_hex_string()));
         }
-        if let Some(ref m) = style.margin_top {
-            if m.to_px() != 0.0 {
-                props.push(format_style_prop("margin-top", &format!("{}px", m.to_px())));
+        if let Some(AutoLength::Length(ref len)) = style.margin_top {
+            let px = len.to_px();
+            if px != 0.0 {
+                props.push(format_style_prop("margin-top", &format!("{}px", px)));
             }
         }
-        if let Some(ref m) = style.margin_bottom {
-            if m.to_px() != 0.0 {
-                props.push(format_style_prop(
-                    "margin-bottom",
-                    &format!("{}px", m.to_px()),
-                ));
+        if let Some(AutoLength::Length(ref len)) = style.margin_bottom {
+            let px = len.to_px();
+            if px != 0.0 {
+                props.push(format_style_prop("margin-bottom", &format!("{}px", px)));
             }
         }
         if let Some(ref d) = style.display {

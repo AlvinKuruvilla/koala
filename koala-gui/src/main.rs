@@ -18,7 +18,7 @@ use clap::Parser;
 use eframe::egui;
 use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
 use koala_common::warning::clear_warnings;
-use koala_css::{LayoutBox, Rect};
+use koala_css::{AutoLength, LayoutBox, Rect};
 use koala_dom::{NodeId, NodeType};
 use koala_html::print_tree;
 
@@ -1344,7 +1344,14 @@ impl BrowserApp {
                                 let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
                             }
                             if let Some(ref m) = style.margin_top {
-                                let _ = ui.monospace(format!("margin-top: {}px", m.to_px()));
+                                match m {
+                                    AutoLength::Length(len) => {
+                                        let _ = ui.monospace(format!("margin-top: {}px", len.to_px()));
+                                    }
+                                    AutoLength::Auto => {
+                                        let _ = ui.monospace("margin-top: auto");
+                                    }
+                                }
                             }
                             if let Some(ref p) = style.padding_top {
                                 let _ = ui.monospace(format!("padding-top: {}px", p.to_px()));
