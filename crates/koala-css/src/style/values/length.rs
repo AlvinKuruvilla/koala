@@ -15,7 +15,7 @@ pub const DEFAULT_FONT_SIZE_PX: f64 = 16.0;
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
 /// "Lengths refer to distance measurements and are denoted by <length> in the
 /// property definitions."
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum LengthValue {
     /// [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
     /// "1px = 1/96th of 1in"
