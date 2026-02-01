@@ -11,6 +11,8 @@
 //! "The height of the line box is determined by the rules given in the
 //! section on line height calculations."
 
+use crate::style::ColorValue;
+
 use super::box_model::Rect;
 
 /// Font metrics interface for text measurement during layout.
@@ -150,6 +152,12 @@ pub struct TextRun {
     pub width: f32,
     /// Font size in pixels.
     pub font_size: f32,
+    /// [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
+    ///
+    /// "This property describes the foreground color of an element's text content."
+    ///
+    /// The inherited text color for this run.
+    pub color: ColorValue,
 }
 
 /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
@@ -265,7 +273,13 @@ impl InlineLayout {
     ///
     /// "When an inline box exceeds the width of a line box, it is split into
     /// several boxes and these boxes are distributed across several line boxes."
-    pub fn add_text(&mut self, text: &str, font_size: f32, font_metrics: &dyn FontMetrics) {
+    pub fn add_text(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        color: &ColorValue,
+        font_metrics: &dyn FontMetrics,
+    ) {
         // STEP 1: Measure the text width.
         // [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
         //
@@ -314,7 +328,13 @@ impl InlineLayout {
                 // "A sequence of collapsible spaces at the end of a line is removed."
                 let first_trimmed = first.trim_end();
                 if !first_trimmed.is_empty() {
-                    self.place_text_fragment(first_trimmed, font_size, line_height, font_metrics);
+                    self.place_text_fragment(
+                        first_trimmed,
+                        font_size,
+                        line_height,
+                        color,
+                        font_metrics,
+                    );
                 }
 
                 // Finalize this line and start a new one.
@@ -324,7 +344,7 @@ impl InlineLayout {
                 // "A sequence of collapsible spaces at the beginning of a line is removed."
                 let rest_trimmed = rest.trim_start();
                 if !rest_trimmed.is_empty() {
-                    self.add_text(rest_trimmed, font_size, font_metrics);
+                    self.add_text(rest_trimmed, font_size, color, font_metrics);
                 }
                 return;
             }
@@ -335,12 +355,12 @@ impl InlineLayout {
             // prevents infinite recursion: on a fresh line we always place
             // the text even if it overflows.
             self.finish_line();
-            self.add_text(text, font_size, font_metrics);
+            self.add_text(text, font_size, color, font_metrics);
             return;
         }
 
         // STEP 4: Place fragment on the current line.
-        self.place_text_fragment(text, font_size, line_height, font_metrics);
+        self.place_text_fragment(text, font_size, line_height, color, font_metrics);
     }
 
     /// Place a text fragment at the current position on the current line.
@@ -352,6 +372,7 @@ impl InlineLayout {
         text: &str,
         font_size: f32,
         line_height: f32,
+        color: &ColorValue,
         font_metrics: &dyn FontMetrics,
     ) {
         let text_width = font_metrics.text_width(text, font_size);
@@ -371,6 +392,7 @@ impl InlineLayout {
                 text: text.to_string(),
                 width: text_width,
                 font_size,
+                color: color.clone(),
             }),
             vertical_align: VerticalAlign::Baseline,
         };
@@ -436,6 +458,65 @@ impl InlineLayout {
         if height > self.current_line_max_height {
             self.current_line_max_height = height;
         }
+    }
+
+    /// [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
+    ///
+    /// Begin a non-replaced inline box (e.g., `<span>`, `<a>`, `<em>`).
+    ///
+    /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+    ///
+    /// "Horizontal margins, borders, and padding are respected between
+    /// these boxes."
+    ///
+    /// The `left_mbp` parameter is the sum of the left margin, border,
+    /// and padding of the inline box. This horizontal offset is applied
+    /// at the start edge of the inline box's content.
+    ///
+    /// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+    ///
+    /// "When an inline box exceeds the width of a line box, it is split
+    /// into several boxes and these boxes are distributed across several
+    /// line boxes."
+    ///
+    /// If the left edge does not fit on the current line and the line
+    /// is not empty, the current line is finished first.
+    pub fn begin_inline_box(&mut self, left_mbp: f32) {
+        // STEP 1: Check if the left margin+border+padding fits on the
+        // current line.
+        //
+        // If the line already has content and adding just the opening
+        // edge would overflow, wrap to a new line. The `current_x == 0.0`
+        // guard prevents infinite wrapping on an empty line.
+        if self.current_x + left_mbp > self.available_width && self.current_x > 0.0 {
+            self.finish_line();
+        }
+
+        // STEP 2: Advance current_x by the left margin+border+padding.
+        //
+        // Content placed after this call will start after the left edge
+        // decoration of the inline box.
+        self.current_x += left_mbp;
+    }
+
+    /// [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
+    ///
+    /// End a non-replaced inline box.
+    ///
+    /// The `right_mbp` parameter is the sum of the right margin, border,
+    /// and padding of the inline box. This horizontal offset is applied
+    /// at the end edge of the inline box's content.
+    ///
+    /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+    ///
+    /// "Horizontal margins, borders, and padding are respected between
+    /// these boxes."
+    pub fn end_inline_box(&mut self, right_mbp: f32) {
+        // Advance current_x by the right margin+border+padding.
+        //
+        // Content placed after this call will start after the right edge
+        // decoration of the inline box.
+        self.current_x += right_mbp;
     }
 
     /// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)

@@ -6,12 +6,130 @@ use std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::{AutoLength, ComputedStyle, DisplayValue, OuterDisplayType};
+use crate::style::{AutoLength, ColorValue, ComputedStyle, DisplayValue, OuterDisplayType};
 
 use super::box_model::{BoxDimensions, Rect};
-use super::inline::FontMetrics;
-use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 use super::default_display_for_element;
+use super::inline::{FontMetrics, InlineLayout, LineBox};
+use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
+
+/// Recursively walk inline-level children, feeding their content into an
+/// InlineLayout.
+///
+/// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+///
+/// "In an inline formatting context, boxes are laid out horizontally,
+/// one after the other, beginning at the top of a containing block.
+/// Horizontal margins, borders, and padding are respected between
+/// these boxes."
+///
+/// For non-replaced inline boxes (`<span>`, `<a>`, etc.), the content
+/// participates in the parent's inline formatting context:
+///
+/// [§ 9.2.2](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
+///
+/// "An inline box is one that is both inline-level and whose contents
+/// participate in its containing inline formatting context."
+fn layout_inline_content(
+    children: &[LayoutBox],
+    inline_layout: &mut InlineLayout,
+    inherited_font_size: f32,
+    inherited_color: &ColorValue,
+    viewport: Rect,
+    font_metrics: &dyn FontMetrics,
+) {
+    for child in children {
+        match &child.box_type {
+            BoxType::AnonymousInline(text) => {
+                // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
+                //
+                // "Any text that is directly contained inside a block
+                // container element... must be treated as an anonymous
+                // inline element."
+                //
+                // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
+                //
+                // Anonymous inline boxes inherit font-size and color from
+                // their parent element.
+                inline_layout.add_text(
+                    text,
+                    inherited_font_size,
+                    inherited_color,
+                    font_metrics,
+                );
+            }
+            BoxType::Principal(_) if child.display.outer == OuterDisplayType::Inline => {
+                // [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
+                //
+                // "An inline box is one that is both inline-level and whose
+                // contents participate in its containing inline formatting
+                // context."
+                //
+                // Non-replaced inline boxes do not form opaque fragments.
+                // Their left margin+border+padding is applied, then their
+                // children are recursively laid out in the same inline
+                // formatting context, then their right margin+border+padding
+                // is applied.
+
+                // STEP 1: Resolve the inline box's edge sizes.
+                let resolved_padding = child.padding.resolve(viewport);
+                let resolved_border = child.border_width.resolve(viewport);
+                let resolved_margin = child.margin.resolve(viewport);
+
+                // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+                //
+                // "If 'margin-left' or 'margin-right' are computed as 'auto',
+                // their used value is '0'."
+                let margin_left = resolved_margin.left.to_px_or(0.0);
+                let margin_right = resolved_margin.right.to_px_or(0.0);
+
+                let left_mbp = margin_left + resolved_border.left + resolved_padding.left;
+                let right_mbp = resolved_padding.right + resolved_border.right + margin_right;
+
+                // STEP 2: Open the inline box (apply left edge).
+                inline_layout.begin_inline_box(left_mbp);
+
+                // STEP 3: Recursively lay out the inline box's children.
+                //
+                // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
+                //
+                // The child element's own font-size and color are used for
+                // its descendants. These were resolved from ComputedStyle
+                // during build_layout_tree().
+                layout_inline_content(
+                    &child.children,
+                    inline_layout,
+                    child.font_size,
+                    &child.color,
+                    viewport,
+                    font_metrics,
+                );
+
+                // STEP 4: Close the inline box (apply right edge).
+                inline_layout.end_inline_box(right_mbp);
+            }
+            BoxType::Principal(_) => {
+                // Block-level child in an inline formatting context.
+                // [§ 9.2.1.1] This shouldn't happen if
+                // generate_anonymous_boxes was called first.
+                debug_assert!(
+                    false,
+                    "Block-level child found in inline formatting context"
+                );
+            }
+            BoxType::AnonymousBlock => {
+                // Anonymous blocks shouldn't appear here — they are only
+                // generated to wrap inline runs alongside block children,
+                // and this method is only called when all children are
+                // inline-level.
+                debug_assert!(
+                    false,
+                    "AnonymousBlock found in inline formatting context"
+                );
+            }
+        }
+    }
+}
 
 /// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
 ///
@@ -110,6 +228,29 @@ pub struct LayoutBox {
     ///
     /// Computed height value (unresolved). None means 'auto'.
     pub height: Option<AutoLength>,
+
+    /// [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
+    ///
+    /// "This property indicates the desired height of glyphs from the font."
+    ///
+    /// Resolved font size in pixels. Used during inline layout to size text.
+    /// Defaults to 16.0 (the CSS 'medium' value per UA stylesheet conventions).
+    pub font_size: f32,
+
+    /// [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
+    ///
+    /// "This property describes the foreground color of an element's text content."
+    ///
+    /// Inherited text color for this box. Used during inline layout painting.
+    pub color: ColorValue,
+
+    /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+    ///
+    /// Completed line boxes from inline layout. Populated when this box
+    /// establishes an inline formatting context (i.e., all children are
+    /// inline-level). The painter reads from these to render text at the
+    /// correct positions.
+    pub line_boxes: Vec<LineBox>,
 }
 
 impl LayoutBox {
@@ -153,6 +294,9 @@ impl LayoutBox {
                     border_width: UnresolvedEdgeSizes::default(),
                     width: None,
                     height: None,
+                    font_size: 16.0,
+                    color: ColorValue::BLACK,
+                    line_boxes: Vec::new(),
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -198,6 +342,23 @@ impl LayoutBox {
                 let (margin, padding, border_width, width, height) =
                     Self::extract_box_style_values(style);
 
+                // [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
+                //
+                // Resolve font-size to pixels. Defaults to 16px ('medium').
+                let font_size = style
+                    .and_then(|s| s.font_size.as_ref())
+                    .map(|fs| fs.to_px() as f32)
+                    .unwrap_or(16.0);
+
+                // [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
+                //
+                // "The initial value is implementation-dependent."
+                // Most browsers default to black.
+                let color = style
+                    .and_then(|s| s.color.as_ref())
+                    .cloned()
+                    .unwrap_or(ColorValue::BLACK);
+
                 Some(LayoutBox {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
@@ -208,6 +369,9 @@ impl LayoutBox {
                     border_width,
                     width,
                     height,
+                    font_size,
+                    color,
+                    line_boxes: Vec::new(),
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -239,6 +403,14 @@ impl LayoutBox {
                     border_width: UnresolvedEdgeSizes::default(),
                     width: None,
                     height: None,
+                    // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
+                    //
+                    // Text nodes inherit font-size and color from their parent.
+                    // These defaults are overridden during inline layout by the
+                    // parent's resolved values.
+                    font_size: 16.0,
+                    color: ColorValue::BLACK,
+                    line_boxes: Vec::new(),
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -345,7 +517,12 @@ impl LayoutBox {
     ///
     /// This method lays out this box and all its descendants.
     /// The viewport is needed to resolve viewport-relative units (vw, vh).
-    pub fn layout(&mut self, containing_block: Rect, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub fn layout(
+        &mut self,
+        containing_block: Rect,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+    ) {
         match self.display.outer {
             OuterDisplayType::Block => self.layout_block(containing_block, viewport, font_metrics),
             OuterDisplayType::Inline => {
@@ -392,7 +569,12 @@ impl LayoutBox {
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
     ///
     /// Layout algorithm for block-level boxes in normal flow.
-    fn layout_block(&mut self, containing_block: Rect, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    fn layout_block(
+        &mut self,
+        containing_block: Rect,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+    ) {
         // STEP 1: Calculate width
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
         //
@@ -413,14 +595,27 @@ impl LayoutBox {
         // containing block (for right-to-left formatting, right edges touch)."
         self.calculate_block_position(containing_block, viewport);
 
-        // STEP 3: Layout children
-        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        // STEP 3: Generate anonymous block boxes for mixed content.
+        // [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
         //
-        // "In a block formatting context, boxes are laid out one after the
-        // other, vertically, beginning at the top of a containing block."
-        self.layout_block_children(viewport, font_metrics);
+        // "When an inline box contains an in-flow block-level box, the inline
+        // box... is broken around the block-level box... The line boxes before
+        // the break and after the break are enclosed in anonymous block boxes."
+        self.generate_anonymous_boxes();
 
-        // STEP 4: Calculate height
+        // STEP 4: Layout children.
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+        //
+        // If all children are inline-level, establish an inline formatting
+        // context. Otherwise, use block formatting context.
+        if self.all_children_inline() && !self.children.is_empty() {
+            self.layout_inline_children(viewport, font_metrics);
+        } else {
+            self.layout_block_children(viewport, font_metrics);
+        }
+
+        // STEP 5: Calculate height
         // [§ 10.6.3 Block-level non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
         // "If 'height' is 'auto', the height depends on whether the element
@@ -830,7 +1025,20 @@ impl LayoutBox {
             }
         }
 
-        // STEP 3: Calculate 'auto' height from children.
+        // STEP 3: Handle inline formatting context.
+        // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+        //
+        // "...the height is the distance between the top content edge and
+        // the bottom edge of the last line box, if the box establishes an
+        // inline formatting context with one or more lines"
+        //
+        // If this box has line_boxes, the height was already set correctly
+        // by layout_inline_children(). Don't overwrite it.
+        if !self.line_boxes.is_empty() {
+            return;
+        }
+
+        // STEP 4: Calculate 'auto' height from block-level children.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
         // "If 'height' is 'auto', the height depends on whether the element
@@ -1020,31 +1228,76 @@ impl LayoutBox {
     /// <p> block box: "block paragraph"
     /// Anonymous block box: "more text"
     /// ```
-    ///
-    /// TODO: Implement anonymous box generation:
-    ///
-    /// STEP 1: Check if children are mixed (both block and inline)
-    ///   // let has_block_children = self.children.iter()
-    ///   //     .any(|c| c.display.outer == OuterDisplayType::Block);
-    ///   // let has_inline_children = self.children.iter()
-    ///   //     .any(|c| c.display.outer == OuterDisplayType::Inline);
-    ///   //
-    ///   // if !(has_block_children && has_inline_children) {
-    ///   //     return; // No mixed content, no anonymous boxes needed
-    ///   // }
-    ///
-    /// STEP 2: Group consecutive inline children into anonymous block boxes
-    ///   // Walk children, accumulating runs of inline boxes.
-    ///   // When a block child is encountered:
-    ///   //   - Wrap the accumulated inline run in an AnonymousBlock
-    ///   //   - Add the block child as-is
-    ///   //   - Start a new inline run
-    ///   // After the loop, wrap any remaining inline run.
-    ///
-    /// STEP 3: Replace self.children with the new list
-    ///   // self.children = new_children;
     pub fn generate_anonymous_boxes(&mut self) {
-        todo!("Generate anonymous block boxes for mixed inline/block content per CSS 2.1 § 9.2.1.1")
+        // STEP 1: Check if children are mixed (both block and inline)
+        let has_block_children = self
+            .children
+            .iter()
+            .any(|c| c.display.outer == OuterDisplayType::Block);
+        let has_inline_children = self
+            .children
+            .iter()
+            .any(|c| c.display.outer == OuterDisplayType::Inline);
+
+        if !(has_block_children && has_inline_children) {
+            return; // No mixed content, no anonymous boxes needed
+        }
+
+        // STEP 2: Group consecutive inline children into anonymous block boxes.
+        //
+        // Walk children, accumulating runs of inline boxes.
+        // When a block child is encountered:
+        //   - Wrap the accumulated inline run in an AnonymousBlock
+        //   - Add the block child as-is
+        //   - Start a new inline run
+        // After the loop, wrap any remaining inline run.
+        let mut new_children: Vec<LayoutBox> = Vec::new();
+        let mut inline_run: Vec<LayoutBox> = Vec::new();
+
+        for child in std::mem::take(&mut self.children) {
+            if child.display.outer == OuterDisplayType::Block {
+                // Flush any accumulated inline run into an anonymous block.
+                if !inline_run.is_empty() {
+                    new_children.push(Self::wrap_in_anonymous_block(inline_run));
+                    inline_run = Vec::new();
+                }
+                new_children.push(child);
+            } else {
+                // Inline-level child — accumulate into the current run.
+                inline_run.push(child);
+            }
+        }
+
+        // Flush any trailing inline run.
+        if !inline_run.is_empty() {
+            new_children.push(Self::wrap_in_anonymous_block(inline_run));
+        }
+
+        // STEP 3: Replace self.children with the new list.
+        self.children = new_children;
+    }
+
+    /// Wrap a run of inline-level children in an anonymous block box.
+    ///
+    /// [§ 9.2.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+    ///
+    /// "Anonymous block boxes are generated to wrap inline-level content
+    /// that appears alongside block-level boxes inside a block container."
+    fn wrap_in_anonymous_block(children: Vec<LayoutBox>) -> LayoutBox {
+        LayoutBox {
+            box_type: BoxType::AnonymousBlock,
+            display: DisplayValue::block(),
+            dimensions: BoxDimensions::default(),
+            children,
+            margin: UnresolvedAutoEdgeSizes::default(),
+            padding: UnresolvedEdgeSizes::default(),
+            border_width: UnresolvedEdgeSizes::default(),
+            width: None,
+            height: None,
+            font_size: 16.0,
+            color: ColorValue::BLACK,
+            line_boxes: Vec::new(),
+        }
     }
 
     /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -1061,41 +1314,60 @@ impl LayoutBox {
     ///
     /// "The height of the line box is determined by the rules given in the
     /// section on line height calculations."
-    ///
-    /// TODO: Implement inline children layout:
-    ///
-    /// STEP 1: Create an InlineLayout context
-    ///   // let mut inline_layout = InlineLayout::new(
-    ///   //     self.dimensions.content.width,
-    ///   //     self.dimensions.content.y,
-    ///   // );
-    ///
-    /// STEP 2: Add each child to the inline layout
-    ///   // for child in &self.children {
-    ///   //     match &child.box_type {
-    ///   //         BoxType::AnonymousInline(text) => {
-    ///   //             inline_layout.add_text(text, font_size);
-    ///   //         }
-    ///   //         BoxType::Principal(_) if child.display.outer == Inline => {
-    ///   //             // Recursively process inline box children
-    ///   //             inline_layout.add_inline_box(width, height);
-    ///   //         }
-    ///   //         BoxType::Principal(_) => {
-    ///   //             // Block-level child interrupts inline flow
-    ///   //             // [§ 9.2.1.1] This shouldn't happen if
-    ///   //             // generate_anonymous_boxes was called first
-    ///   //         }
-    ///   //         _ => {}
-    ///   //     }
-    ///   // }
-    ///
-    /// STEP 3: Finalize the last line
-    ///   // inline_layout.finish_line();
-    ///
-    /// STEP 4: Set content height from line boxes
-    ///   // self.dimensions.content.height = inline_layout.total_height();
-    fn layout_inline_children(&mut self, _viewport: Rect, _font_metrics: &dyn FontMetrics) {
-        todo!("Layout inline children using inline formatting context per CSS 2.1 § 9.4.2")
+    fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+        // STEP 1: Create an InlineLayout context.
+        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+        //
+        // "The width of a line box is determined by a containing block."
+        let mut inline_layout = InlineLayout::new(
+            self.dimensions.content.width,
+            self.dimensions.content.y,
+        );
+
+        // STEP 2: Recursively add all inline content to the inline layout.
+        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+        //
+        // "In an inline formatting context, boxes are laid out horizontally,
+        // one after the other, beginning at the top of a containing block.
+        // Horizontal margins, borders, and padding are respected between
+        // these boxes."
+        //
+        // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
+        //
+        // Font-size and color are inherited properties. This box's resolved
+        // font_size and color are passed as the inherited values for its
+        // inline children. Principal inline children will use their own
+        // resolved values when recursing.
+        layout_inline_content(
+            &self.children,
+            &mut inline_layout,
+            self.font_size,
+            &self.color,
+            viewport,
+            font_metrics,
+        );
+
+        // STEP 3: Finalize the last line.
+        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+        //
+        // Any remaining fragments on the current line are flushed into a
+        // final line box.
+        inline_layout.finish_line();
+
+        // STEP 4: Set content height from line boxes.
+        // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+        //
+        // "If 'height' is 'auto'... the height is the distance between the
+        // top content edge and the bottom edge of the last line box, if the
+        // box establishes an inline formatting context with one or more lines."
+        self.dimensions.content.height = inline_layout.total_height();
+
+        // STEP 5: Store the line boxes for painting.
+        //
+        // The painter reads from line_boxes to emit DrawText commands at
+        // the correct positions, rather than reading from children's
+        // dimensions (which are not set during inline layout).
+        self.line_boxes = inline_layout.line_boxes;
     }
 
     /// [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
@@ -1277,6 +1549,8 @@ impl LayoutBox {
     /// If all children are inline-level, the parent establishes an
     /// inline formatting context for its contents instead.
     pub fn all_children_inline(&self) -> bool {
-        self.children.iter().all(|c| c.display.outer == OuterDisplayType::Inline)
+        self.children
+            .iter()
+            .all(|c| c.display.outer == OuterDisplayType::Inline)
     }
 }
