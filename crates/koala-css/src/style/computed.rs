@@ -66,6 +66,15 @@ pub struct ComputedStyle {
     /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
 
+    /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+    ///
+    /// "This property describes how inline-level content of a block
+    /// container is aligned."
+    ///
+    /// Stored as a lowercase keyword string. Converted to `TextAlign`
+    /// enum during layout tree construction.
+    pub text_align: Option<String>,
+
     /// [§ 3.2 'background-color'](https://www.w3.org/TR/css-backgrounds-3/#background-color)
     pub background_color: Option<ColorValue>,
 
@@ -209,6 +218,17 @@ impl ComputedStyle {
             "font-weight" => {
                 if let Some(weight) = parse_font_weight(&decl.value) {
                     self.font_weight = Some(weight);
+                }
+            }
+            // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+            //
+            // "Value: left | right | center | justify | inherit"
+            "text-align" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(lower.as_str(), "left" | "right" | "center" | "justify") {
+                        self.text_align = Some(lower);
+                    }
                 }
             }
             // [§ 9.2 Shorthand properties](https://www.w3.org/TR/css-cascade-4/#shorthand)

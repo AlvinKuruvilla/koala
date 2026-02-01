@@ -39,7 +39,7 @@ pub use float::{ClearSide, FloatContext, FloatSide};
 pub use formatting_context::{BlockFormattingContext, InlineFormattingContext};
 pub use inline::{
     ApproximateFontMetrics, FontMetrics, FragmentContent, InlineLayout, LineBox, LineFragment,
-    TextRun, VerticalAlign,
+    TextAlign, TextRun, VerticalAlign,
 };
 pub use layout_box::{BoxType, LayoutBox};
 pub use positioned::{BoxOffsets, PositionType, PositionedLayout};

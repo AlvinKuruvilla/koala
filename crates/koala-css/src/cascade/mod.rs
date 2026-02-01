@@ -165,6 +165,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: yes"
         writing_mode: parent.writing_mode,
 
+        // [§ 16.2 text-align](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+        // "Inherited: yes"
+        text_align: parent.text_align.clone(),
+
         // Non-inherited properties start as None
         //
         // [§ 2 display](https://www.w3.org/TR/css-display-3/#the-display-properties)

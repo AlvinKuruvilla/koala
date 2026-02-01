@@ -10,7 +10,7 @@ use crate::style::{AutoLength, ColorValue, ComputedStyle, DisplayValue, OuterDis
 
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
-use super::inline::{FontMetrics, InlineLayout, LineBox};
+use super::inline::{FontMetrics, InlineLayout, LineBox, TextAlign};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
 /// Recursively walk inline-level children, feeding their content into an
@@ -244,6 +244,15 @@ pub struct LayoutBox {
     /// Inherited text color for this box. Used during inline layout painting.
     pub color: ColorValue,
 
+    /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+    ///
+    /// "This property describes how inline-level content of a block
+    /// container is aligned."
+    ///
+    /// Inherited from ComputedStyle. Passed to InlineLayout when this box
+    /// establishes an inline formatting context.
+    pub text_align: TextAlign,
+
     /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
     ///
     /// Completed line boxes from inline layout. Populated when this box
@@ -296,6 +305,7 @@ impl LayoutBox {
                     height: None,
                     font_size: 16.0,
                     color: ColorValue::BLACK,
+                    text_align: TextAlign::default(),
                     line_boxes: Vec::new(),
                 })
             }
@@ -359,6 +369,22 @@ impl LayoutBox {
                     .cloned()
                     .unwrap_or(ColorValue::BLACK);
 
+                // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+                //
+                // "This property describes how inline-level content of a block
+                // container is aligned."
+                // "Initial value: a nameless value that acts as 'left' if
+                // 'direction' is 'ltr', 'right' if 'direction' is 'rtl'."
+                let text_align = style
+                    .and_then(|s| s.text_align.as_deref())
+                    .map(|ta| match ta {
+                        "right" => TextAlign::Right,
+                        "center" => TextAlign::Center,
+                        "justify" => TextAlign::Justify,
+                        _ => TextAlign::Left,
+                    })
+                    .unwrap_or_default();
+
                 Some(LayoutBox {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
@@ -371,6 +397,7 @@ impl LayoutBox {
                     height,
                     font_size,
                     color,
+                    text_align,
                     line_boxes: Vec::new(),
                 })
             }
@@ -410,6 +437,7 @@ impl LayoutBox {
                     // parent's resolved values.
                     font_size: 16.0,
                     color: ColorValue::BLACK,
+                    text_align: TextAlign::default(),
                     line_boxes: Vec::new(),
                 })
             }
@@ -1296,6 +1324,7 @@ impl LayoutBox {
             height: None,
             font_size: 16.0,
             color: ColorValue::BLACK,
+            text_align: TextAlign::default(),
             line_boxes: Vec::new(),
         }
     }
@@ -1322,6 +1351,7 @@ impl LayoutBox {
         let mut inline_layout = InlineLayout::new(
             self.dimensions.content.width,
             self.dimensions.content.y,
+            self.text_align,
         );
 
         // STEP 2: Recursively add all inline content to the inline layout.
