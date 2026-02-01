@@ -1004,22 +1004,27 @@ impl BrowserApp {
         );
 
         // Paint background if this element has one
-        // [§ 2.1 background-color](https://www.w3.org/TR/css-backgrounds-3/#background-color)
+        // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
+        //
+        // "The initial value of 'background-clip' is 'border-box', meaning
+        // the background is painted within the border box."
         if let Some(s) = style {
             if let Some(ref bg) = s.background_color {
-                let bg_color = egui::Color32::from_rgb(bg.r, bg.g, bg.b);
-                // Paint at the padding box (content + padding)
-                let padding_rect = egui::Rect::from_min_size(
+                let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
+                // Paint at the border box (content + padding + border)
+                let border_rect = egui::Rect::from_min_size(
                     egui::pos2(
-                        origin.x + dims.content.x - dims.padding.left,
-                        origin.y + dims.content.y - dims.padding.top,
+                        origin.x + dims.content.x - dims.padding.left - dims.border.left,
+                        origin.y + dims.content.y - dims.padding.top - dims.border.top,
                     ),
                     egui::vec2(
-                        dims.content.width + dims.padding.left + dims.padding.right,
-                        dims.content.height + dims.padding.top + dims.padding.bottom,
+                        dims.content.width + dims.padding.left + dims.padding.right
+                            + dims.border.left + dims.border.right,
+                        dims.content.height + dims.padding.top + dims.padding.bottom
+                            + dims.border.top + dims.border.bottom,
                     ),
                 );
-                let _ = ui.painter().rect_filled(padding_rect, 0.0, bg_color);
+                let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
             }
         }
 
@@ -1041,7 +1046,7 @@ impl BrowserApp {
 
         let text_color = style
             .and_then(|s| s.color.as_ref())
-            .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
+            .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
             .unwrap_or(ui.visuals().text_color());
 
         // Render text content.
@@ -1193,7 +1198,7 @@ impl BrowserApp {
 
                 let text_color = style
                     .and_then(|s| s.color.as_ref())
-                    .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
+                    .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                     .unwrap_or(ui.visuals().text_color());
 
                 let is_block = matches!(

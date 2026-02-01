@@ -73,10 +73,7 @@ impl<'a> Painter<'a> {
         // Use own style or inherit from parent for certain properties
         let effective_style = style.or(parent_style);
 
-        // Calculate the padding box (background area)
-        // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
-        // "The initial value of background-clip is border-box..."
-        // But we use padding-box for simplicity (common case).
+        // Calculate the padding box (used for border painting reference).
         let padding_x = dims.content.x - dims.padding.left;
         let padding_y = dims.content.y - dims.padding.top;
         let padding_width = dims.content.width + dims.padding.left + dims.padding.right;
@@ -86,11 +83,20 @@ impl<'a> Painter<'a> {
         // "the background color of the element"
         if let Some(style) = style {
             if let Some(bg) = &style.background_color {
+                // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
+                //
+                // "The initial value of 'background-clip' is 'border-box', meaning
+                // the background is painted within the border box."
+                let border_top = style.border_top.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
+                let border_right = style.border_right.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
+                let border_bottom = style.border_bottom.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
+                let border_left = style.border_left.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
+
                 display_list.push(DisplayCommand::FillRect {
-                    x: padding_x,
-                    y: padding_y,
-                    width: padding_width,
-                    height: padding_height,
+                    x: padding_x - border_left,
+                    y: padding_y - border_top,
+                    width: padding_width + border_left + border_right,
+                    height: padding_height + border_top + border_bottom,
                     color: bg.clone(),
                 });
             }
