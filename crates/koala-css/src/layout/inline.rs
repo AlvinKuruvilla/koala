@@ -230,6 +230,50 @@ impl Default for VerticalAlign {
     }
 }
 
+/// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+///
+/// "This property describes how inline-level content of a block container
+/// is aligned."
+///
+/// "Values have the following meanings:
+///
+/// left
+///   Inline-level content is aligned to the left line edge of the line box.
+///
+/// right
+///   Inline-level content is aligned to the right line edge of the line box.
+///
+/// center
+///   Inline-level content is centered within the line box.
+///
+/// justify
+///   Inline-level content is justified. Text should be spaced to line up
+///   its left and right edges to the left and right edges of the line box,
+///   except for the last line."
+///
+/// "The initial value is 'left' if 'direction' is 'ltr', and 'right' if
+/// 'direction' is 'rtl'."
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextAlign {
+    /// "Inline-level content is aligned to the left line edge."
+    Left,
+    /// "Inline-level content is aligned to the right line edge."
+    Right,
+    /// "Inline-level content is centered within the line box."
+    Center,
+    /// "Inline-level content is justified."
+    Justify,
+}
+
+impl Default for TextAlign {
+    fn default() -> Self {
+        // [§ 16.2](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+        //
+        // "The initial value is 'left' if 'direction' is 'ltr'."
+        TextAlign::Left
+    }
+}
+
 /// Inline formatting context that manages line box construction.
 ///
 /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -249,11 +293,16 @@ pub struct InlineLayout {
     pub available_width: f32,
     /// Maximum height seen on the current line (for line box height).
     pub current_line_max_height: f32,
+    /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+    ///
+    /// Text alignment for this inline formatting context, inherited from
+    /// the block container that established it.
+    pub text_align: TextAlign,
 }
 
 impl InlineLayout {
     /// Create a new inline layout context.
-    pub fn new(available_width: f32, start_y: f32) -> Self {
+    pub fn new(available_width: f32, start_y: f32, text_align: TextAlign) -> Self {
         InlineLayout {
             line_boxes: Vec::new(),
             current_line_fragments: Vec::new(),
@@ -261,6 +310,7 @@ impl InlineLayout {
             current_y: start_y,
             available_width,
             current_line_max_height: 0.0,
+            text_align,
         }
     }
 
@@ -536,36 +586,150 @@ impl InlineLayout {
             return;
         }
 
-        // STEP 1: Calculate line box height.
-        // [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading)
+        // STEP 1: Calculate line box height and baseline.
+        // [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
         //
         // "The height of the line box is the distance between the uppermost
         //  box top and the lowermost box bottom."
-        let line_height = self.current_line_max_height;
-
-        // STEP 2: Calculate baseline position.
         //
-        // Simplified: place baseline at 80% of line height (approximates
-        // typical font metrics where ascender ≈ 80% of em square).
+        // "CSS assumes that every font has font metrics that specify a
+        // characteristic height above the baseline and a depth below it."
         //
-        // TODO: Derive from actual font metrics (ascent / (ascent + descent)).
-        let baseline = line_height * 0.8;
+        // For each baseline-aligned fragment, we compute ascent and descent:
+        //   - half_leading = (line_height - font_size) / 2
+        //   - ascent = half_leading + font_size * ASCENDER_RATIO
+        //   - descent = line_height - ascent
+        //
+        // The line box height is max_ascent + max_descent.
+        // The baseline is at max_ascent from the top of the line box.
+        //
+        // Implementation note: Without actual font tables, we approximate
+        // the ascender as 80% of the em square. This matches typical Latin
+        // fonts (e.g., Helvetica ascender ≈ 0.77, Arial ≈ 0.81).
+        const ASCENDER_RATIO: f32 = 0.8;
 
-        // STEP 3: Apply vertical alignment.
-        // TODO: Adjust fragment y positions based on vertical-align values.
-        // For now, all fragments use Baseline alignment and share the same y.
+        let mut max_ascent: f32 = 0.0;
+        let mut max_descent: f32 = 0.0;
 
-        // STEP 4: Apply text-align.
-        // TODO: Adjust fragment x positions for center/right/justify.
-        // For now, left-aligned (the default for LTR).
+        for frag in &self.current_line_fragments {
+            match frag.vertical_align {
+                VerticalAlign::Top | VerticalAlign::Bottom => {
+                    // Top/bottom-aligned fragments don't participate in
+                    // baseline calculation — they are positioned after
+                    // the baseline is established.
+                }
+                _ => {
+                    let (ascent, descent) =
+                        Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
+                    if ascent > max_ascent {
+                        max_ascent = ascent;
+                    }
+                    if descent > max_descent {
+                        max_descent = descent;
+                    }
+                }
+            }
+        }
 
-        // STEP 5: Create line box and advance Y.
+        let line_height = (max_ascent + max_descent).max(self.current_line_max_height);
+        let baseline = max_ascent;
+
+        // STEP 2: Apply vertical alignment.
+        // [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading)
+        //
+        // "The 'vertical-align' property affects the vertical positioning
+        // inside a line box of the boxes generated by an inline-level element."
+        for frag in &mut self.current_line_fragments {
+            let (frag_ascent, _) =
+                Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
+
+            frag.bounds.y = match frag.vertical_align {
+                // "Align the baseline of the box with the baseline of the
+                // parent box."
+                VerticalAlign::Baseline => {
+                    self.current_y + baseline - frag_ascent
+                }
+                // "Align the vertical midpoint of the box with the baseline
+                // of the parent box plus half the x-height of the parent."
+                //
+                // Approximation: x-height ≈ 0.5 × font_size of the strut.
+                VerticalAlign::Middle => {
+                    self.current_y + baseline - frag.bounds.height / 2.0
+                }
+                // "Lower the baseline of the box to the proper position
+                // for subscripts of the parent's box."
+                //
+                // Approximation: shift down by 0.1 × parent font size.
+                VerticalAlign::Sub => {
+                    let shift = max_ascent * 0.125;
+                    self.current_y + baseline - frag_ascent + shift
+                }
+                // "Raise the baseline of the box to the proper position
+                // for superscripts of the parent's box."
+                //
+                // Approximation: shift up by 0.33 × parent font size.
+                VerticalAlign::Super => {
+                    let shift = max_ascent * 0.4;
+                    self.current_y + baseline - frag_ascent - shift
+                }
+                // "Align the top of the box with the top of the parent's
+                // content area."
+                VerticalAlign::TextTop => self.current_y,
+                // "Align the bottom of the box with the bottom of the
+                // parent's content area."
+                VerticalAlign::TextBottom => {
+                    self.current_y + line_height - frag.bounds.height
+                }
+                // "Align the top of the aligned subtree with the top of
+                // the line box."
+                VerticalAlign::Top => self.current_y,
+                // "Align the bottom of the aligned subtree with the bottom
+                // of the line box."
+                VerticalAlign::Bottom => {
+                    self.current_y + line_height - frag.bounds.height
+                }
+                // "Raise (positive value) or lower (negative value) the box
+                // by this distance."
+                VerticalAlign::Length(offset) => {
+                    self.current_y + baseline - frag_ascent - offset
+                }
+            };
+        }
+
+        // STEP 3: Apply text-align.
+        // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+        //
+        // "This property describes how inline-level content of a block
+        // container is aligned."
+        let line_width = self.current_x;
+        let x_offset = match self.text_align {
+            // "Inline-level content is aligned to the left line edge."
+            TextAlign::Left => 0.0,
+            // "Inline-level content is aligned to the right line edge."
+            TextAlign::Right => (self.available_width - line_width).max(0.0),
+            // "Inline-level content is centered within the line box."
+            TextAlign::Center => ((self.available_width - line_width) / 2.0).max(0.0),
+            // "Inline-level content is justified."
+            //
+            // TODO: Distribute extra space between words. For now, treat
+            // justify as left-aligned (per spec, the last line of a
+            // justified block is left-aligned anyway).
+            TextAlign::Justify => 0.0,
+        };
+
+        if x_offset > 0.0 {
+            for frag in &mut self.current_line_fragments {
+                frag.bounds.x += x_offset;
+            }
+        }
+
+        // STEP 4: Create line box and advance Y.
         let fragments = std::mem::take(&mut self.current_line_fragments);
         let line_box = LineBox {
             bounds: Rect {
                 x: 0.0,
                 y: self.current_y,
-                width: self.current_x,
+                width: self.available_width,
                 height: line_height,
             },
             fragments,
@@ -578,6 +742,37 @@ impl InlineLayout {
         self.current_y += line_height;
         self.current_x = 0.0;
         self.current_line_max_height = 0.0;
+    }
+
+    /// Calculate the ascent and descent of a fragment for vertical alignment.
+    ///
+    /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
+    ///
+    /// "The height of the inline box encloses all glyphs and their
+    /// half-leading on each side and is thus exactly 'line-height'."
+    ///
+    /// For a text fragment:
+    ///   half_leading = (line_height - font_size) / 2
+    ///   ascent = half_leading + font_size × ascender_ratio
+    ///   descent = line_height - ascent
+    ///
+    /// For non-text fragments (InlineBox, ReplacedElement), we approximate
+    /// using the fragment height directly.
+    fn fragment_ascent_descent(frag: &LineFragment, ascender_ratio: f32) -> (f32, f32) {
+        let frag_height = frag.bounds.height;
+
+        let font_size = match &frag.content {
+            FragmentContent::Text(run) => run.font_size,
+            // For non-text fragments, treat the full height as the "font size"
+            // so ascent = height × ascender_ratio.
+            FragmentContent::InlineBox | FragmentContent::ReplacedElement => frag_height,
+        };
+
+        let half_leading = (frag_height - font_size) / 2.0;
+        let ascent = half_leading + font_size * ascender_ratio;
+        let descent = frag_height - ascent;
+
+        (ascent.max(0.0), descent.max(0.0))
     }
 
     /// [§ 5.5 Line Breaking and Word Boundaries](https://www.w3.org/TR/css-text-3/#line-breaking)
