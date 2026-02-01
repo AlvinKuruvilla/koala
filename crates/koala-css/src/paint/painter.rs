@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use koala_dom::NodeId;
 
+use crate::layout::inline::FragmentContent;
 use crate::style::ComputedStyle;
 use crate::{BoxType, ColorValue, LayoutBox};
 
@@ -101,19 +102,33 @@ impl<'a> Painter<'a> {
 
         // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the element's text"
-        if let BoxType::AnonymousInline(text) = &layout_box.box_type {
-            // Get text color from effective style or default to black
+        //
+        // If this box has line_boxes (i.e., it established an inline
+        // formatting context), paint text from the line box fragments.
+        // These fragments have correct positions computed by InlineLayout.
+        if !layout_box.line_boxes.is_empty() {
+            for line_box in &layout_box.line_boxes {
+                for fragment in &line_box.fragments {
+                    if let FragmentContent::Text(text_run) = &fragment.content {
+                        display_list.push(DisplayCommand::DrawText {
+                            x: fragment.bounds.x,
+                            y: fragment.bounds.y,
+                            text: text_run.text.clone(),
+                            font_size: text_run.font_size,
+                            color: text_run.color.clone(),
+                        });
+                    }
+                }
+            }
+        } else if let BoxType::AnonymousInline(text) = &layout_box.box_type {
+            // Fallback for AnonymousInline boxes that are NOT part of an
+            // inline formatting context (e.g., text directly in a block
+            // whose height was computed by calculate_block_height STEP 2).
             let text_color = effective_style
                 .and_then(|s| s.color.as_ref())
                 .cloned()
-                .unwrap_or(ColorValue {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                    a: 255,
-                });
+                .unwrap_or(ColorValue::BLACK);
 
-            // Get font size from effective style or default
             let font_size = effective_style
                 .and_then(|s| s.font_size.as_ref())
                 .map(|fs| fs.to_px() as f32)
@@ -131,7 +146,9 @@ impl<'a> Painter<'a> {
         // [CSS 2.1 Appendix E.2 Step 4](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the in-flow, non-inline-level, non-positioned descendants"
         //
-        // Paint children in tree order
+        // Paint children in tree order. For boxes with line_boxes, the
+        // inline children's text is already painted above from fragments,
+        // but we still recurse for backgrounds/borders of child elements.
         for child in &layout_box.children {
             self.paint_box(child, display_list, effective_style);
         }

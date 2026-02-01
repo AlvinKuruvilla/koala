@@ -1044,8 +1044,40 @@ impl BrowserApp {
             .map(|c| egui::Color32::from_rgb(c.r, c.g, c.b))
             .unwrap_or(ui.visuals().text_color());
 
-        // Render text content for this node at the computed position
-        if let Some(id) = node_id {
+        // Render text content.
+        //
+        // If this box has line_boxes (established an inline formatting
+        // context), paint text from the positioned line fragments.
+        // Otherwise fall back to walking DOM children directly.
+        if !layout_box.line_boxes.is_empty() {
+            for line_box in &layout_box.line_boxes {
+                for fragment in &line_box.fragments {
+                    if let koala_css::layout::inline::FragmentContent::Text(text_run) =
+                        &fragment.content
+                    {
+                        let frag_color = egui::Color32::from_rgb(
+                            text_run.color.r,
+                            text_run.color.g,
+                            text_run.color.b,
+                        );
+                        let text_pos = egui::pos2(
+                            origin.x + fragment.bounds.x,
+                            origin.y + fragment.bounds.y,
+                        );
+                        let galley = ui.painter().layout(
+                            text_run.text.clone(),
+                            egui::FontId::new(
+                                text_run.font_size,
+                                egui::FontFamily::Proportional,
+                            ),
+                            frag_color,
+                            fragment.bounds.width.max(content_rect.width()),
+                        );
+                        ui.painter().galley(text_pos, galley, frag_color);
+                    }
+                }
+            }
+        } else if let Some(id) = node_id {
             let mut text_y = content_rect.min.y;
             for &child_id in page.doc.dom.children(id) {
                 if let Some(child_node) = page.doc.dom.get(child_id) {
