@@ -265,37 +265,6 @@ impl InlineLayout {
     ///
     /// "When an inline box exceeds the width of a line box, it is split into
     /// several boxes and these boxes are distributed across several line boxes."
-    ///
-    /// TODO: Implement text layout:
-    ///
-    /// STEP 1: Measure the text width
-    ///   // Use font metrics to calculate the pixel width of the text.
-    ///   // [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
-    ///   // The height contribution is determined by line-height.
-    ///
-    /// STEP 2: Check if text fits on the current line
-    ///   // if self.current_x + text_width > self.available_width {
-    ///   //     // Need to break the text
-    ///   // }
-    ///
-    /// STEP 3: Handle line breaking
-    ///   // [§ 5.5.1 Line Breaking Details](https://www.w3.org/TR/css-text-3/#line-breaking)
-    ///   // "A line break is forced at a preserved newline."
-    ///   //
-    ///   // [§ 5.5.2 Word Breaking Rules](https://www.w3.org/TR/css-text-3/#word-breaking)
-    ///   // Find the last soft wrap opportunity before the line end.
-    ///   // Soft wrap opportunities occur at:
-    ///   //   - Whitespace characters (per white-space property)
-    ///   //   - Before and after CJK characters
-    ///   //   - At hyphens
-    ///
-    /// STEP 4: Place fragment(s) on line(s)
-    ///   // Create LineFragment for each piece of text.
-    ///   // If text was split, finalize current line and start new one.
-    ///
-    /// STEP 5: Update current position
-    ///   // self.current_x += fragment_width;
-    ///   // self.current_line_max_height = max(height, self.current_line_max_height);
     pub fn add_text(&mut self, text: &str, font_size: f32, font_metrics: &dyn FontMetrics) {
         // STEP 1: Measure the text width.
         // [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
@@ -424,25 +393,49 @@ impl InlineLayout {
     /// "The boxes may be aligned vertically in different ways: their bottoms
     /// or tops may be aligned, or the baselines of text within them may be
     /// aligned."
-    ///
-    /// TODO: Implement inline box layout:
-    ///
-    /// STEP 1: Calculate the inline box's margin box width
-    ///   // inline_width = margin_left + border_left + padding_left
-    ///   //              + content_width
-    ///   //              + padding_right + border_right + margin_right
-    ///
-    /// STEP 2: Check if box fits on current line
-    ///   // If not, call self.finish_line() to start a new line
-    ///
-    /// STEP 3: Recursively layout the inline box's contents
-    ///   // The inline box may contain text runs and other inline boxes
-    ///
-    /// STEP 4: Create fragment and position it
-    ///   // fragment.bounds.x = self.current_x;
-    ///   // self.current_x += inline_width;
-    pub fn add_inline_box(&mut self, _width: f32, _height: f32) {
-        todo!("Layout inline box within inline formatting context per CSS 2.1 § 9.4.2")
+    pub fn add_inline_box(&mut self, width: f32, height: f32) {
+        // STEP 1: Check if box fits on current line.
+        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+        //
+        // "When an inline box exceeds the width of a line box, it is split
+        // into several boxes and these boxes are distributed across several
+        // line boxes."
+        //
+        // If the box doesn't fit and we're not at the start of a line,
+        // wrap to a new line. The `current_x == 0.0` guard prevents
+        // infinite wrapping when a single box is wider than the available
+        // width.
+        let fits_on_current_line =
+            self.current_x + width <= self.available_width || self.current_x == 0.0;
+
+        if !fits_on_current_line {
+            self.finish_line();
+        }
+
+        // STEP 2: Create fragment and position it.
+        //
+        // "Horizontal margins, borders, and padding are respected between
+        // inline boxes."
+        //
+        // The width and height parameters represent the margin box
+        // dimensions of the inline box, as computed by the caller.
+        let fragment = LineFragment {
+            bounds: Rect {
+                x: self.current_x,
+                y: self.current_y,
+                width,
+                height,
+            },
+            content: FragmentContent::InlineBox,
+            vertical_align: VerticalAlign::Baseline,
+        };
+        self.current_line_fragments.push(fragment);
+
+        // STEP 3: Advance current position and update line height.
+        self.current_x += width;
+        if height > self.current_line_max_height {
+            self.current_line_max_height = height;
+        }
     }
 
     /// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
@@ -455,43 +448,7 @@ impl InlineLayout {
     /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
     ///
     /// "This property describes how inline-level content of a block container
-    /// is aligned."
-    ///
-    /// TODO: Implement line finalization:
-    ///
-    /// STEP 1: Calculate line box height
-    ///   // [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading)
-    ///   // "The height of the line box is the distance between the uppermost
-    ///   //  box top and the lowermost box bottom."
-    ///   // height = max(fragment heights after vertical alignment)
-    ///
-    /// STEP 2: Calculate baseline position
-    ///   // Find the baseline from font metrics of the strut
-    ///   // (the imaginary zero-width inline box with the element's font)
-    ///
-    /// STEP 3: Apply vertical alignment
-    ///   // [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading)
-    ///   // For each fragment, adjust y position based on vertical-align value.
-    ///   // baseline → align baseline with line baseline
-    ///   // top → align fragment top with line box top
-    ///   // bottom → align fragment bottom with line box bottom
-    ///   // middle → align midpoint with baseline + half x-height
-    ///
-    /// STEP 4: Apply text-align
-    ///   // [§ 16.2](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
-    ///   // "left": fragments start at left edge (default for LTR)
-    ///   // "right": fragments are flush right
-    ///   // "center": fragments are centered
-    ///   // "justify": extra space distributed between words
-    ///   // let remaining = self.available_width - total_fragment_width;
-    ///   // Apply offset based on text-align value.
-    ///
-    /// STEP 5: Create line box and advance Y
-    ///   // let line_box = LineBox { bounds, fragments, line_height, baseline };
-    ///   // self.line_boxes.push(line_box);
-    ///   // self.current_y += line_height;
-    ///   // self.current_x = 0.0;
-    ///   // self.current_line_fragments.clear();
+    ///  is aligned."
     pub fn finish_line(&mut self) {
         // Don't create empty line boxes.
         if self.current_line_fragments.is_empty() {
@@ -558,19 +515,9 @@ impl InlineLayout {
     /// - A soft wrap opportunity exists at the boundary of whitespace.
     /// - A soft wrap opportunity exists before and after CJK characters."
     ///
-    /// TODO: Implement word breaking:
-    ///
-    /// STEP 1: Find all soft wrap opportunities
-    ///   // Scan for whitespace boundaries, hyphens, CJK characters
-    ///
-    /// STEP 2: Find the last opportunity that fits
-    ///   // Measure text width from start to each opportunity
-    ///   // Return the last one where width <= max_width
-    ///
-    /// STEP 3: Handle overflow-wrap: break-word
-    ///   // [§ 3.3 overflow-wrap](https://www.w3.org/TR/css-text-3/#overflow-wrap-property)
-    ///   // "If the word is too long to fit on a line by itself, break at
-    ///   //  an arbitrary point."
+    ///  [§ 3.3 overflow-wrap](https://www.w3.org/TR/css-text-3/#overflow-wrap-property)
+    ///  "If the word is too long to fit on a line by itself, break at
+    ///   an arbitrary point."
     pub fn find_break_opportunity(
         text: &str,
         max_width: f32,
@@ -630,9 +577,6 @@ impl InlineLayout {
     /// "The 'height' property does not apply. The height of the content area
     /// should be based on the font, but this specification does not specify how."
     pub fn total_height(&self) -> f32 {
-        self.line_boxes
-            .iter()
-            .map(|lb| lb.line_height)
-            .sum()
+        self.line_boxes.iter().map(|lb| lb.line_height).sum()
     }
 }
