@@ -79,7 +79,7 @@ impl Renderer {
     }
 
     /// Try to load a font from common system paths.
-    fn load_system_font() -> Option<Font> {
+    pub fn load_system_font() -> Option<Font> {
         for path in FONT_SEARCH_PATHS {
             if let Ok(data) = std::fs::read(path) {
                 if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {

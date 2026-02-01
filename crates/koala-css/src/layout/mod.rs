@@ -37,7 +37,7 @@ pub mod values;
 pub use box_model::{BoxDimensions, EdgeSizes, Rect};
 pub use float::{ClearSide, FloatContext, FloatSide};
 pub use formatting_context::{BlockFormattingContext, InlineFormattingContext};
-pub use inline::{InlineLayout, LineBox, VerticalAlign};
+pub use inline::{ApproximateFontMetrics, FontMetrics, InlineLayout, LineBox, VerticalAlign};
 pub use layout_box::{BoxType, LayoutBox};
 pub use positioned::{BoxOffsets, PositionType, PositionedLayout};
 pub use stacking::{StackingContext, ZIndex};

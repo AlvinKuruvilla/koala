@@ -16,6 +16,7 @@
 //! - External script loading (`<script src="...">`)
 //! - DOM manipulation from JavaScript
 
+pub mod font_metrics;
 pub mod renderer;
 
 pub use koala_css as css;
@@ -248,4 +249,63 @@ fn fetch_url(url: &str) -> Result<String, LoadError> {
     response
         .text()
         .map_err(|e| LoadError::NetworkError(format!("Failed to read response body: {e}")))
+}
+
+/// Try to load a system font for text measurement and rendering.
+///
+/// Searches common system font paths (macOS, Linux, Windows) and returns
+/// the first font that loads successfully, or None if no font is found.
+pub fn load_system_font() -> Option<fontdue::Font> {
+    renderer::Renderer::load_system_font()
+}
+
+/// Create a [`FontMetrics`](koala_css::FontMetrics) provider, using real
+/// font metrics if a font is available, falling back to approximation.
+///
+/// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
+///
+/// "CSS assumes that every font has font metrics that specify a
+/// characteristic height above the baseline and a depth below it."
+pub fn create_font_metrics(
+    font: Option<&fontdue::Font>,
+) -> Box<dyn koala_css::FontMetrics + '_> {
+    match font {
+        Some(f) => Box::new(font_metrics::FontdueFontMetrics::new(f)),
+        None => Box::new(koala_css::ApproximateFontMetrics),
+    }
+}
+
+/// Opaque font handle for text measurement during layout.
+///
+/// Wraps the underlying font library so that downstream crates (koala-gui,
+/// koala-cli) can use real font metrics without depending on fontdue directly.
+///
+/// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
+///
+/// "CSS assumes that every font has font metrics that specify a
+/// characteristic height above the baseline and a depth below it."
+pub struct FontProvider {
+    /// The loaded system font, if one was found.
+    font: Option<fontdue::Font>,
+}
+
+impl FontProvider {
+    /// Load a system font for text measurement.
+    ///
+    /// Searches common system font paths and loads the first one found.
+    /// If no font is available, [`metrics()`](Self::metrics) will return
+    /// an approximate metrics provider.
+    pub fn load() -> Self {
+        Self {
+            font: renderer::Renderer::load_system_font(),
+        }
+    }
+
+    /// Create a [`FontMetrics`](koala_css::FontMetrics) provider from this font.
+    ///
+    /// Returns real per-glyph metrics if a font was loaded, or an
+    /// approximation (0.6 × font size per character) otherwise.
+    pub fn metrics(&self) -> Box<dyn koala_css::FontMetrics + '_> {
+        create_font_metrics(self.font.as_ref())
+    }
 }

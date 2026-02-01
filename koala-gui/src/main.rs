@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use eframe::egui;
-use koala_browser::{load_document, parse_html_string, renderer::Renderer, LoadedDocument};
+use koala_browser::{FontProvider, load_document, parse_html_string, renderer::Renderer, LoadedDocument};
 use koala_common::warning::clear_warnings;
 use koala_css::Painter;
 use koala_css::{AutoLength, LayoutBox, Rect};
@@ -131,7 +131,9 @@ fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, heig
         .ok_or_else(|| anyhow::anyhow!("No layout tree available"))?;
 
     let mut layout = layout_tree.clone();
-    layout.layout(viewport, viewport);
+    let font_provider = FontProvider::load();
+    let font_metrics = font_provider.metrics();
+    layout.layout(viewport, viewport, &*font_metrics);
 
     // Paint: generate display list from layout tree
     let painter = Painter::new(&doc.styles);
@@ -187,7 +189,9 @@ fn print_layout(doc: &LoadedDocument) {
             width: viewport_width,
             height: viewport_height,
         };
-        layout.layout(viewport, viewport);
+        let font_provider = FontProvider::load();
+        let font_metrics = font_provider.metrics();
+        layout.layout(viewport, viewport, &*font_metrics);
         print_layout_box(&layout, 0, doc);
     } else {
         println!("No layout tree available");
@@ -381,6 +385,11 @@ struct BrowserApp {
 
     /// URL to navigate to on first update (from command-line arg)
     pending_navigation: Option<String>,
+
+    /// Font provider for real text measurement during layout.
+    ///
+    /// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
+    font_provider: FontProvider,
 }
 
 /// Parsed page state - wraps LoadedDocument with GUI-specific fields
@@ -418,6 +427,7 @@ impl BrowserApp {
             theme,
             css_warnings_logged: RefCell::new(HashSet::new()),
             pending_navigation: initial_url,
+            font_provider: FontProvider::load(),
         }
     }
 
@@ -771,7 +781,8 @@ impl eframe::App for BrowserApp {
                                 // "The viewport-percentage lengths are relative to the size
                                 // of the initial containing block."
                                 let viewport = initial_containing_block;
-                                root.layout(initial_containing_block, viewport);
+                                let font_metrics = self.font_provider.metrics();
+                                root.layout(initial_containing_block, viewport, &*font_metrics);
                                 page.last_layout_viewport = Some(viewport_size);
                                 println!(
                                     "[Koala GUI] Layout computed for viewport {}x{}",

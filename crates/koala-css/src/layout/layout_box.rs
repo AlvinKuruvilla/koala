@@ -9,6 +9,7 @@ use koala_dom::{DomTree, NodeId, NodeType};
 use crate::style::{AutoLength, ComputedStyle, DisplayValue, OuterDisplayType};
 
 use super::box_model::{BoxDimensions, Rect};
+use super::inline::FontMetrics;
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 use super::default_display_for_element;
 
@@ -344,9 +345,9 @@ impl LayoutBox {
     ///
     /// This method lays out this box and all its descendants.
     /// The viewport is needed to resolve viewport-relative units (vw, vh).
-    pub fn layout(&mut self, containing_block: Rect, viewport: Rect) {
+    pub fn layout(&mut self, containing_block: Rect, viewport: Rect, font_metrics: &dyn FontMetrics) {
         match self.display.outer {
-            OuterDisplayType::Block => self.layout_block(containing_block, viewport),
+            OuterDisplayType::Block => self.layout_block(containing_block, viewport, font_metrics),
             OuterDisplayType::Inline => {
                 // TODO: Implement proper inline layout with line box construction
                 // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -379,7 +380,7 @@ impl LayoutBox {
                 //
                 // TEMPORARY: Fall back to block layout until inline is implemented.
                 // This causes inline elements to stack vertically instead of horizontally.
-                self.layout_block(containing_block, viewport)
+                self.layout_block(containing_block, viewport, font_metrics)
             }
             OuterDisplayType::RunIn => {
                 // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
@@ -391,7 +392,7 @@ impl LayoutBox {
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
     ///
     /// Layout algorithm for block-level boxes in normal flow.
-    fn layout_block(&mut self, containing_block: Rect, viewport: Rect) {
+    fn layout_block(&mut self, containing_block: Rect, viewport: Rect, font_metrics: &dyn FontMetrics) {
         // STEP 1: Calculate width
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
         //
@@ -417,7 +418,7 @@ impl LayoutBox {
         //
         // "In a block formatting context, boxes are laid out one after the
         // other, vertically, beginning at the top of a containing block."
-        self.layout_block_children(viewport);
+        self.layout_block_children(viewport, font_metrics);
 
         // STEP 4: Calculate height
         // [§ 10.6.3 Block-level non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
@@ -430,7 +431,7 @@ impl LayoutBox {
         // formatting context... or the bottom edge of the bottom margin of
         // its last in-flow child, if the child's bottom margin does not
         // collapse with the element's bottom margin"
-        self.calculate_block_height(viewport);
+        self.calculate_block_height(viewport, font_metrics);
     }
 
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -667,7 +668,7 @@ impl LayoutBox {
     ///
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
-    fn layout_block_children(&mut self, viewport: Rect) {
+    fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the other,
@@ -713,7 +714,7 @@ impl LayoutBox {
             };
 
             // b. Layout the child (viewport is passed through for resolving vw/vh)
-            child.layout(child_containing_block, viewport);
+            child.layout(child_containing_block, viewport, font_metrics);
 
             // STEP 4: Advance the Y position.
             // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -772,7 +773,7 @@ impl LayoutBox {
     ///
     /// "If 'height' is 'auto', the height depends on whether the element has
     /// any block-level children and whether it has padding or borders."
-    fn calculate_block_height(&mut self, viewport: Rect) {
+    fn calculate_block_height(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
         // STEP 1: Check if height is explicitly specified.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
@@ -815,16 +816,16 @@ impl LayoutBox {
                 // on the font of the element. The value has the same meaning as <number>.
                 // We recommend a used value for 'normal' between 1.0 to 1.2."
                 //
-                // Using 1.2 * default font size (16px) = 19.2px, rounded to 20px.
-                // Adding 4px line spacing for readability.
-                const DEFAULT_LINE_HEIGHT: f32 = 24.0;
+                // Use FontMetrics to get the line height for the default font size (16px).
+                let default_font_size: f32 = 16.0;
+                let line_height = font_metrics.line_height(default_font_size);
 
                 // Count lines in text content.
                 // NOTE: This is a simplification. Proper implementation would wrap
                 // text based on available width and font metrics.
                 let line_count = text.lines().count().max(1);
 
-                self.dimensions.content.height = (line_count as f32) * DEFAULT_LINE_HEIGHT;
+                self.dimensions.content.height = (line_count as f32) * line_height;
                 return;
             }
         }
@@ -1093,7 +1094,7 @@ impl LayoutBox {
     ///
     /// STEP 4: Set content height from line boxes
     ///   // self.dimensions.content.height = inline_layout.total_height();
-    fn layout_inline_children(&mut self, _viewport: Rect) {
+    fn layout_inline_children(&mut self, _viewport: Rect, _font_metrics: &dyn FontMetrics) {
         todo!("Layout inline children using inline formatting context per CSS 2.1 § 9.4.2")
     }
 

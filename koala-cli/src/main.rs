@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use koala_browser::{LoadedDocument, load_document, parse_html_string, renderer::Renderer};
+use koala_browser::{FontProvider, LoadedDocument, load_document, parse_html_string, renderer::Renderer};
 use koala_css::{LayoutBox, Painter};
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
@@ -116,7 +116,9 @@ fn take_screenshot(
         .ok_or_else(|| anyhow::anyhow!("No layout tree available"))?;
 
     let mut layout = layout_tree.clone();
-    layout.layout(viewport, viewport);
+    let font_provider = FontProvider::load();
+    let font_metrics = font_provider.metrics();
+    layout.layout(viewport, viewport, &*font_metrics);
 
     // Paint: generate display list from layout tree
     let painter = Painter::new(&doc.styles);
@@ -271,7 +273,9 @@ fn print_layout(doc: &LoadedDocument) {
             width: viewport_width,
             height: viewport_height,
         };
-        layout.layout(viewport, viewport);
+        let font_provider = FontProvider::load();
+        let font_metrics = font_provider.metrics();
+        layout.layout(viewport, viewport, &*font_metrics);
 
         print_layout_box(&layout, 0, doc);
     } else {
