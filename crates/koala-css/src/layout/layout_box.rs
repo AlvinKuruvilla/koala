@@ -855,4 +855,427 @@ impl LayoutBox {
             .map(|c| c.dimensions.margin_box().height)
             .sum();
     }
+
+    /// [§ 10.4 Minimum and maximum widths: 'min-width' and 'max-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+    ///
+    /// "The following algorithm describes how the two properties influence
+    /// the used value of the 'width' property:
+    ///
+    /// 1. The tentative used width is calculated (without 'min-width' and
+    ///    'max-width') following the rules under 'Calculating widths and margins'.
+    ///
+    /// 2. If the tentative used width is greater than 'max-width', the rules
+    ///    above are applied again, but this time using the computed value of
+    ///    'max-width' as the computed value for 'width'.
+    ///
+    /// 3. If the resulting width is smaller than 'min-width', the rules above
+    ///    are applied again, but this time using the value of 'min-width' as
+    ///    the computed value for 'width'."
+    ///
+    /// NOTE: Requires `min-width` and `max-width` properties to be parsed
+    /// into `ComputedStyle` before this can be implemented.
+    ///
+    /// TODO: Implement min/max width constraints:
+    ///
+    /// STEP 1: Get the tentative used width (already computed by calculate_block_width)
+    ///   // let tentative_width = self.dimensions.content.width;
+    ///
+    /// STEP 2: Apply max-width constraint
+    ///   // if let Some(max_width) = self.max_width {
+    ///   //     let max_px = max_width.resolve(viewport);
+    ///   //     if tentative_width > max_px {
+    ///   //         // Re-run width calculation with max_width as the width
+    ///   //         self.dimensions.content.width = max_px;
+    ///   //         // Re-solve margin equation with new width
+    ///   //     }
+    ///   // }
+    ///
+    /// STEP 3: Apply min-width constraint
+    ///   // if let Some(min_width) = self.min_width {
+    ///   //     let min_px = min_width.resolve(viewport);
+    ///   //     if self.dimensions.content.width < min_px {
+    ///   //         self.dimensions.content.width = min_px;
+    ///   //         // Re-solve margin equation with new width
+    ///   //     }
+    ///   // }
+    fn apply_min_max_width(&mut self, _containing_block: Rect, _viewport: Rect) {
+        todo!("Apply min-width/max-width constraints per CSS 2.1 § 10.4")
+    }
+
+    /// [§ 10.7 Minimum and maximum heights: 'min-height' and 'max-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+    ///
+    /// "The following algorithm describes how the two properties influence
+    /// the used value of the 'height' property:
+    ///
+    /// 1. The tentative used height is calculated (without 'min-height' and
+    ///    'max-height') following the rules under 'Calculating heights and margins'.
+    ///
+    /// 2. If this tentative height is greater than 'max-height', the rules
+    ///    above are applied again, but this time using the value of
+    ///    'max-height' as the computed value for 'height'.
+    ///
+    /// 3. If the resulting height is smaller than 'min-height', the rules
+    ///    above are applied again, but this time using the value of
+    ///    'min-height' as the computed value for 'height'."
+    ///
+    /// NOTE: Requires `min-height` and `max-height` properties to be parsed
+    /// into `ComputedStyle` before this can be implemented.
+    ///
+    /// TODO: Implement min/max height constraints:
+    ///
+    /// STEP 1: Get the tentative used height (already computed by calculate_block_height)
+    ///   // let tentative_height = self.dimensions.content.height;
+    ///
+    /// STEP 2: Apply max-height constraint
+    ///   // if let Some(max_height) = self.max_height {
+    ///   //     let max_px = max_height.resolve(viewport);
+    ///   //     if tentative_height > max_px {
+    ///   //         self.dimensions.content.height = max_px;
+    ///   //     }
+    ///   // }
+    ///
+    /// STEP 3: Apply min-height constraint
+    ///   // if let Some(min_height) = self.min_height {
+    ///   //     let min_px = min_height.resolve(viewport);
+    ///   //     if self.dimensions.content.height < min_px {
+    ///   //         self.dimensions.content.height = min_px;
+    ///   //     }
+    ///   // }
+    fn apply_min_max_height(&mut self, _viewport: Rect) {
+        todo!("Apply min-height/max-height constraints per CSS 2.1 § 10.7")
+    }
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// "In CSS, the adjoining margins of two or more boxes (which might or
+    /// might not be siblings) can combine to form a single margin. Margins
+    /// that combine this way are said to collapse, and the resulting combined
+    /// margin is called a collapsed margin."
+    ///
+    /// "When two or more margins collapse, the resulting margin width is the
+    /// maximum of the collapsing margins' widths. In the case of negative
+    /// margins, the maximum of the absolute values of the negative adjoining
+    /// margins is deducted from the maximum of the positive adjoining margins.
+    /// If there are no positive margins, the maximum of the absolute values
+    /// of the adjoining margins is deducted from zero."
+    ///
+    /// TODO: Implement margin collapsing:
+    ///
+    /// STEP 1: Walk through children pairwise
+    ///   // For each pair of adjacent siblings (child_a, child_b):
+    ///   //   margin_bottom_a = child_a.dimensions.margin.bottom
+    ///   //   margin_top_b = child_b.dimensions.margin.top
+    ///
+    /// STEP 2: Determine if margins are adjoining
+    ///   // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///   // "Two margins are adjoining if and only if:
+    ///   //   - both belong to in-flow block-level boxes in the same BFC
+    ///   //   - no line boxes, no clearance, no padding and no border
+    ///   //     separate them"
+    ///   //
+    ///   // Check: child_a has no bottom border/padding, child_b has no top border/padding
+    ///   // Check: neither is a float or absolutely positioned
+    ///
+    /// STEP 3: Calculate collapsed margin
+    ///   // if both positive: collapsed = max(margin_a, margin_b)
+    ///   // if both negative: collapsed = min(margin_a, margin_b)
+    ///   // if mixed: collapsed = margin_a + margin_b (positive + negative)
+    ///
+    /// STEP 4: Adjust child positions
+    ///   // collapsed_gap = collapsed_margin - (margin_bottom_a + margin_top_b)
+    ///   // Shift child_b and all subsequent children up by the difference
+    ///
+    /// STEP 5: Handle parent-child margin collapsing
+    ///   // "The top margin of an in-flow block element collapses with its
+    ///   //  first in-flow block-level child's top margin if the element
+    ///   //  has no top border, no top padding, and the child has no clearance."
+    ///   //
+    ///   // If self has no top border/padding:
+    ///   //   collapsed_top = max(self.margin.top, first_child.margin.top)
+    ///   //   self.margin.top = collapsed_top
+    ///   //   first_child.margin.top = 0
+    fn collapse_margins(&mut self) {
+        todo!("Collapse vertical margins between children per CSS 2.1 § 8.3.1")
+    }
+
+    /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+    ///
+    /// "When an inline box contains an in-flow block-level box, the inline box
+    /// (and its inline ancestors within the same line box) are broken around
+    /// the block-level box (and any block-level siblings that are consecutive
+    /// or separated only by collapsible whitespace and/or out-of-flow elements),
+    /// splitting the inline box into two boxes (even if either side is empty),
+    /// one on each side of the block-level box(es). The line boxes before the
+    /// break and after the break are enclosed in anonymous block boxes, and
+    /// the block-level box becomes a sibling of those anonymous boxes."
+    ///
+    /// Example:
+    /// ```html
+    /// <div>Some text <p>block paragraph</p> more text</div>
+    /// ```
+    /// Generates:
+    /// ```text
+    /// Anonymous block box: "Some text"
+    /// <p> block box: "block paragraph"
+    /// Anonymous block box: "more text"
+    /// ```
+    ///
+    /// TODO: Implement anonymous box generation:
+    ///
+    /// STEP 1: Check if children are mixed (both block and inline)
+    ///   // let has_block_children = self.children.iter()
+    ///   //     .any(|c| c.display.outer == OuterDisplayType::Block);
+    ///   // let has_inline_children = self.children.iter()
+    ///   //     .any(|c| c.display.outer == OuterDisplayType::Inline);
+    ///   //
+    ///   // if !(has_block_children && has_inline_children) {
+    ///   //     return; // No mixed content, no anonymous boxes needed
+    ///   // }
+    ///
+    /// STEP 2: Group consecutive inline children into anonymous block boxes
+    ///   // Walk children, accumulating runs of inline boxes.
+    ///   // When a block child is encountered:
+    ///   //   - Wrap the accumulated inline run in an AnonymousBlock
+    ///   //   - Add the block child as-is
+    ///   //   - Start a new inline run
+    ///   // After the loop, wrap any remaining inline run.
+    ///
+    /// STEP 3: Replace self.children with the new list
+    ///   // self.children = new_children;
+    pub fn generate_anonymous_boxes(&mut self) {
+        todo!("Generate anonymous block boxes for mixed inline/block content per CSS 2.1 § 9.2.1.1")
+    }
+
+    /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+    ///
+    /// Layout children in an inline formatting context.
+    ///
+    /// "In an inline formatting context, boxes are laid out horizontally,
+    /// one after the other, beginning at the top of a containing block."
+    ///
+    /// This is the counterpart to `layout_block_children` — called when
+    /// all children are inline-level.
+    ///
+    /// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
+    ///
+    /// "The height of the line box is determined by the rules given in the
+    /// section on line height calculations."
+    ///
+    /// TODO: Implement inline children layout:
+    ///
+    /// STEP 1: Create an InlineLayout context
+    ///   // let mut inline_layout = InlineLayout::new(
+    ///   //     self.dimensions.content.width,
+    ///   //     self.dimensions.content.y,
+    ///   // );
+    ///
+    /// STEP 2: Add each child to the inline layout
+    ///   // for child in &self.children {
+    ///   //     match &child.box_type {
+    ///   //         BoxType::AnonymousInline(text) => {
+    ///   //             inline_layout.add_text(text, font_size);
+    ///   //         }
+    ///   //         BoxType::Principal(_) if child.display.outer == Inline => {
+    ///   //             // Recursively process inline box children
+    ///   //             inline_layout.add_inline_box(width, height);
+    ///   //         }
+    ///   //         BoxType::Principal(_) => {
+    ///   //             // Block-level child interrupts inline flow
+    ///   //             // [§ 9.2.1.1] This shouldn't happen if
+    ///   //             // generate_anonymous_boxes was called first
+    ///   //         }
+    ///   //         _ => {}
+    ///   //     }
+    ///   // }
+    ///
+    /// STEP 3: Finalize the last line
+    ///   // inline_layout.finish_line();
+    ///
+    /// STEP 4: Set content height from line boxes
+    ///   // self.dimensions.content.height = inline_layout.total_height();
+    fn layout_inline_children(&mut self, _viewport: Rect) {
+        todo!("Layout inline children using inline formatting context per CSS 2.1 § 9.4.2")
+    }
+
+    /// [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+    ///
+    /// "A replaced element is an element whose content is outside the scope of
+    /// the CSS formatting model, such as an image, embedded document, or applet."
+    ///
+    /// [§ 10.3.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+    ///
+    /// "If 'width' has a computed value of 'auto', and the element has an
+    /// intrinsic width, then that intrinsic width is the used value of 'width'."
+    ///
+    /// [§ 10.6.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-height)
+    ///
+    /// "If 'height' has a computed value of 'auto', and the element has an
+    /// intrinsic height, then that intrinsic height is the used value of 'height'."
+    ///
+    /// "If 'height' and 'width' both have computed values of 'auto' and the
+    /// element has an intrinsic ratio but no intrinsic height or width, then
+    /// the used value of 'width' is undefined in CSS 2.1. However, it is
+    /// suggested that, if the containing block's width does not itself depend
+    /// on the replaced element's width, then the used value of 'width' is
+    /// calculated from the constraint equation used for block-level,
+    /// non-replaced elements in normal flow."
+    ///
+    /// TODO: Implement replaced element sizing:
+    ///
+    /// STEP 1: Get intrinsic dimensions
+    ///   // (intrinsic_width, intrinsic_height, intrinsic_ratio)
+    ///   // For <img>: from the image's natural dimensions
+    ///   // For <video>: from the video's natural dimensions
+    ///   // For <canvas>: 300x150 default
+    ///   // For <iframe>: 300x150 default
+    ///
+    /// STEP 2: Resolve width
+    ///   // If width is auto:
+    ///   //   If has intrinsic width → use intrinsic width
+    ///   //   Else if has intrinsic ratio and resolved height → width = height * ratio
+    ///   //   Else → use 300px (CSS2 default for replaced elements)
+    ///   // Else: use specified width
+    ///
+    /// STEP 3: Resolve height
+    ///   // If height is auto:
+    ///   //   If has intrinsic height → use intrinsic height
+    ///   //   Else if has intrinsic ratio and resolved width → height = width / ratio
+    ///   //   Else → use 150px (CSS2 default)
+    ///   // Else: use specified height
+    fn layout_replaced_element(
+        &mut self,
+        _intrinsic_width: Option<f32>,
+        _intrinsic_height: Option<f32>,
+        _intrinsic_ratio: Option<f32>,
+        _viewport: Rect,
+    ) {
+        todo!("Layout replaced element (img, video, etc.) per CSS 2.1 § 10.3.2 / § 10.6.2")
+    }
+
+    /// [§ 11.1 Overflow and clipping](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    ///
+    /// "This property specifies whether content of a block container element
+    /// is clipped when it overflows the element's box."
+    ///
+    /// "Values have the following meanings:
+    ///
+    /// visible
+    ///   This value indicates that content is not clipped, i.e., it may be
+    ///   rendered outside the block box.
+    ///
+    /// hidden
+    ///   This value indicates that the content is clipped and that no
+    ///   scrolling user interface should be provided to view the content
+    ///   outside the clipping region.
+    ///
+    /// scroll
+    ///   This value indicates that the content is clipped and that if the
+    ///   user agent uses a scrolling mechanism that is visible on the screen
+    ///   (such as a scroll bar or a panner), that mechanism should be
+    ///   displayed for a box whether or not any of its content is clipped.
+    ///
+    /// auto
+    ///   The behavior of the 'auto' value is user agent-dependent, but
+    ///   should cause a scrolling mechanism to be provided for overflowing boxes."
+    ///
+    /// NOTE: Requires `overflow` property to be parsed into `ComputedStyle`.
+    ///
+    /// TODO: Implement overflow handling:
+    ///
+    /// STEP 1: Determine if content overflows
+    ///   // let content_height = self.dimensions.content.height;
+    ///   // let box_height = specified_height or auto;
+    ///   // overflows = content_height > box_height
+    ///
+    /// STEP 2: Apply clipping if overflow is hidden/scroll/auto
+    ///   // Create a clip rect matching the padding box
+    ///   // clip_rect = self.dimensions.padding_box();
+    ///
+    /// STEP 3: Handle scrollable overflow
+    ///   // [CSS Overflow Module Level 3 § 2](https://www.w3.org/TR/css-overflow-3/#overflow-properties)
+    ///   // Calculate scrollable overflow region:
+    ///   // "The scrollable overflow region is the union of the border boxes
+    ///   //  of all descendants that extend beyond the padding edge."
+    ///   // scroll_width = max(child.margin_box().x + child.margin_box().width) - content.x
+    ///   // scroll_height = max(child.margin_box().y + child.margin_box().height) - content.y
+    fn apply_overflow_clipping(&self) -> Option<Rect> {
+        todo!("Apply overflow clipping per CSS 2.1 § 11.1")
+    }
+
+    /// [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+    ///
+    /// "If 'width' is computed as 'auto', the used value is the 'shrink-to-fit'
+    /// width."
+    ///
+    /// [§ 10.3.5 Shrink-to-fit width](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+    ///
+    /// "Calculation of the shrink-to-fit width is similar to calculating the
+    /// width of a table cell using the automatic table layout algorithm. Roughly:
+    /// calculate the preferred width by formatting the content without breaking
+    /// lines other than where explicit line breaks occur, and also calculate
+    /// the preferred minimum width, e.g., by trying all possible line breaks.
+    /// CSS 2.1 does not define the exact algorithm.
+    ///
+    /// Thirdly, find the available width: this is found by solving for 'width'
+    /// after setting 'left' (in case 2) or 'right' (in case 4) to 0.
+    ///
+    /// Then the shrink-to-fit width is:
+    ///   min(max(preferred minimum width, available width), preferred width)"
+    ///
+    /// TODO: Implement shrink-to-fit width:
+    ///
+    /// STEP 1: Calculate preferred width
+    ///   // Format content with no line breaks except explicit ones.
+    ///   // preferred_width = max line width across all lines
+    ///
+    /// STEP 2: Calculate preferred minimum width
+    ///   // Try all possible line breaks.
+    ///   // preferred_min_width = max word width (or widest unbreakable unit)
+    ///
+    /// STEP 3: Calculate available width
+    ///   // available_width = containing_block.width - margins - borders - padding
+    ///
+    /// STEP 4: Compute shrink-to-fit width
+    ///   // shrink_to_fit = min(max(preferred_min_width, available_width), preferred_width)
+    fn shrink_to_fit_width(&self, _containing_block: Rect, _viewport: Rect) -> f32 {
+        todo!("Calculate shrink-to-fit width per CSS 2.1 § 10.3.5")
+    }
+
+    /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+    ///
+    /// Determine whether this box's children need anonymous box wrapping.
+    ///
+    /// "When an inline-level box contains a block-level box, the inline-level
+    /// box (and its inline ancestors within the same line box) are broken
+    /// around the block-level box."
+    ///
+    /// Returns true if children contain both block-level and inline-level boxes.
+    pub fn has_mixed_children(&self) -> bool {
+        let mut has_block = false;
+        let mut has_inline = false;
+        for child in &self.children {
+            match child.display.outer {
+                OuterDisplayType::Block => has_block = true,
+                OuterDisplayType::Inline => has_inline = true,
+                _ => {}
+            }
+            if has_block && has_inline {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    ///
+    /// Determine whether all children of this box are inline-level.
+    ///
+    /// "In a block formatting context, boxes are laid out one after the
+    /// other, vertically..."
+    ///
+    /// If all children are inline-level, the parent establishes an
+    /// inline formatting context for its contents instead.
+    pub fn all_children_inline(&self) -> bool {
+        self.children.iter().all(|c| c.display.outer == OuterDisplayType::Inline)
+    }
 }

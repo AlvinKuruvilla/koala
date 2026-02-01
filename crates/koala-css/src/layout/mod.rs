@@ -8,6 +8,8 @@
 //! - [CSS Display Module Level 3](https://www.w3.org/TR/css-display-3/)
 //! - [CSS Box Model Module Level 3](https://www.w3.org/TR/css-box-3/)
 //! - [CSS 2.1 Visual Formatting Model](https://www.w3.org/TR/CSS2/visuren.html)
+//! - [CSS Positioned Layout Module Level 3](https://www.w3.org/TR/css-position-3/)
+//! - [CSS Text Module Level 3](https://www.w3.org/TR/css-text-3/)
 //!
 //! # Module Structure
 //!
@@ -15,18 +17,30 @@
 //! - [`values`] - Unresolved and auto value types
 //! - [`formatting_context`] - Block and inline formatting contexts
 //! - [`layout_box`] - Layout box types and layout algorithms
+//! - [`inline`] - Inline formatting context with line box model
+//! - [`positioned`] - Positioned layout (relative, absolute, fixed, sticky)
+//! - [`float`] - Float layout and clearance
+//! - [`stacking`] - Stacking contexts and painting order
 //! - [`table`] - Table layout algorithm
 
 pub mod box_model;
+pub mod float;
 pub mod formatting_context;
+pub mod inline;
 pub mod layout_box;
+pub mod positioned;
+pub mod stacking;
 pub mod table;
 pub mod values;
 
 // Re-exports for convenience
 pub use box_model::{BoxDimensions, EdgeSizes, Rect};
+pub use float::{ClearSide, FloatContext, FloatSide};
 pub use formatting_context::{BlockFormattingContext, InlineFormattingContext};
+pub use inline::{InlineLayout, LineBox, VerticalAlign};
 pub use layout_box::{BoxType, LayoutBox};
+pub use positioned::{BoxOffsets, PositionType, PositionedLayout};
+pub use stacking::{StackingContext, ZIndex};
 pub use table::TableLayout;
 pub use values::{AutoEdgeSizes, AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
