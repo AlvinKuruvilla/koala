@@ -452,3 +452,168 @@ fn test_logical_property_block_end_cascade() {
         panic!("Expected margin_bottom to be set");
     }
 }
+
+// ===== Color function tests =====
+
+/// Helper: parse CSS, apply to a div, return the computed color.
+fn color_from_css(property: &str, value: &str) -> Option<koala_css::ColorValue> {
+    let css = format!("div {{ {}: {}; }}", property, value);
+    let stylesheet = parse_css(&css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &stylesheet);
+    let style = styles.get(&div_id)?;
+    match property {
+        "color" => style.color.clone(),
+        "background-color" => style.background_color.clone(),
+        _ => None,
+    }
+}
+
+/// [§ 4.1 The RGB Functions](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// Legacy comma-separated syntax: rgb(R, G, B)
+#[test]
+fn test_rgb_legacy_syntax() {
+    let c = color_from_css("color", "rgb(255, 0, 128)").unwrap();
+    assert_eq!(c.r, 255);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 128);
+    assert_eq!(c.a, 255);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// Modern space-separated syntax: rgb(R G B)
+#[test]
+fn test_rgb_modern_syntax() {
+    let c = color_from_css("color", "rgb(100 200 50)").unwrap();
+    assert_eq!(c.r, 100);
+    assert_eq!(c.g, 200);
+    assert_eq!(c.b, 50);
+    assert_eq!(c.a, 255);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// rgba() is an alias for rgb() with alpha.
+#[test]
+fn test_rgba_legacy_syntax() {
+    let c = color_from_css("color", "rgba(255, 0, 0, 0.5)").unwrap();
+    assert_eq!(c.r, 255);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 0);
+    assert_eq!(c.a, 128);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// Modern syntax with slash-separated alpha: rgb(R G B / A)
+#[test]
+fn test_rgb_modern_with_alpha() {
+    let c = color_from_css("color", "rgb(0 128 255 / 0.75)").unwrap();
+    assert_eq!(c.r, 0);
+    assert_eq!(c.g, 128);
+    assert_eq!(c.b, 255);
+    assert_eq!(c.a, 191);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// Percentage values: "100% = 255"
+#[test]
+fn test_rgb_percentage() {
+    let c = color_from_css("color", "rgb(100%, 0%, 50%)").unwrap();
+    assert_eq!(c.r, 255);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 128);
+    assert_eq!(c.a, 255);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// "Values outside these ranges are not invalid, but are clamped."
+#[test]
+fn test_rgb_clamping() {
+    let c = color_from_css("color", "rgb(300, -10, 128)").unwrap();
+    assert_eq!(c.r, 255);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 128);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// rgb() works for background-color too.
+#[test]
+fn test_rgb_background_color() {
+    let c = color_from_css("background-color", "rgb(64, 128, 192)").unwrap();
+    assert_eq!(c.r, 64);
+    assert_eq!(c.g, 128);
+    assert_eq!(c.b, 192);
+}
+
+/// [§ 4.1 The HSL Functions](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// Pure red: hsl(0, 100%, 50%)
+#[test]
+fn test_hsl_red() {
+    let c = color_from_css("color", "hsl(0, 100%, 50%)").unwrap();
+    assert_eq!(c.r, 255);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 0);
+    assert_eq!(c.a, 255);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// Pure green: hsl(120, 100%, 50%)
+#[test]
+fn test_hsl_green() {
+    let c = color_from_css("color", "hsl(120, 100%, 50%)").unwrap();
+    assert_eq!(c.r, 0);
+    assert_eq!(c.g, 255);
+    assert_eq!(c.b, 0);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// Pure blue: hsl(240, 100%, 50%)
+#[test]
+fn test_hsl_blue() {
+    let c = color_from_css("color", "hsl(240, 100%, 50%)").unwrap();
+    assert_eq!(c.r, 0);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 255);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// hsla() with alpha.
+#[test]
+fn test_hsla_with_alpha() {
+    let c = color_from_css("color", "hsla(0, 100%, 50%, 0.5)").unwrap();
+    assert_eq!(c.r, 255);
+    assert_eq!(c.g, 0);
+    assert_eq!(c.b, 0);
+    assert_eq!(c.a, 128);
+}
+
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// Black and white from HSL.
+/// hsl(0, 0%, 0%) = black, hsl(0, 0%, 100%) = white
+#[test]
+fn test_hsl_black_white() {
+    let black = color_from_css("color", "hsl(0, 0%, 0%)").unwrap();
+    assert_eq!(black.r, 0);
+    assert_eq!(black.g, 0);
+    assert_eq!(black.b, 0);
+
+    let white = color_from_css("background-color", "hsl(0, 0%, 100%)").unwrap();
+    assert_eq!(white.r, 255);
+    assert_eq!(white.g, 255);
+    assert_eq!(white.b, 255);
+}

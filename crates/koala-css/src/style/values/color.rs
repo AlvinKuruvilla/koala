@@ -220,7 +220,227 @@ pub fn parse_single_color(v: &ComponentValue) -> Option<ColorValue> {
     match v {
         ComponentValue::Token(CSSToken::Hash { value, .. }) => ColorValue::from_hex(value),
         ComponentValue::Token(CSSToken::Ident(name)) => ColorValue::from_named(name),
-        // TODO: Implement color functions (rgb(), hsl(), etc.)
+        ComponentValue::Function { name, value } => parse_color_function(name, value),
         _ => None,
     }
+}
+
+/// [§ 4.1 The RGB Functions: rgb() and rgba()](https://www.w3.org/TR/css-color-4/#rgb-functions)
+/// [§ 4.1 The HSL Functions: hsl() and hsla()](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// "For legacy reasons, rgb() also supports an alternate syntax that
+/// separates all of its arguments with commas."
+///
+/// "For legacy reasons, hsl() also supports an alternate syntax that
+/// separates all of its arguments with commas."
+///
+/// Per CSS Color 4, rgb()/rgba() and hsl()/hsla() are aliases.
+fn parse_color_function(name: &str, args: &[ComponentValue]) -> Option<ColorValue> {
+    match name.to_ascii_lowercase().as_str() {
+        "rgb" | "rgba" => parse_rgb_function(args),
+        "hsl" | "hsla" => parse_hsl_function(args),
+        _ => None,
+    }
+}
+
+/// A numeric value extracted from a color function argument.
+///
+/// Color function arguments can be either plain numbers (0-255 for RGB)
+/// or percentages (0%-100%).
+#[derive(Debug, Clone, Copy)]
+enum ColorArg {
+    Number(f64),
+    Percentage(f64),
+}
+
+/// Extract numeric arguments from a color function's component values,
+/// skipping whitespace and commas.
+///
+/// Handles both modern syntax (space-separated with optional `/ alpha`)
+/// and legacy syntax (comma-separated).
+///
+/// Returns up to 4 arguments: the 3 color channels and an optional alpha.
+fn extract_color_args(args: &[ComponentValue]) -> Vec<ColorArg> {
+    let mut result = Vec::new();
+    let mut saw_slash = false;
+
+    for arg in args {
+        match arg {
+            // Plain number
+            ComponentValue::Token(CSSToken::Number { value, .. }) => {
+                result.push(ColorArg::Number(*value));
+            }
+            // Percentage
+            ComponentValue::Token(CSSToken::Percentage { value, .. }) => {
+                result.push(ColorArg::Percentage(*value));
+            }
+            // [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+            //
+            // "/ <alpha-value>" — the slash separator before alpha in
+            // modern syntax. We just skip it; the next number is alpha.
+            ComponentValue::Token(CSSToken::Delim('/')) => {
+                saw_slash = true;
+            }
+            // Skip whitespace and commas (both legacy and modern syntax)
+            ComponentValue::Token(CSSToken::Whitespace | CSSToken::Comma) => {}
+            _ => {}
+        }
+    }
+
+    // If we saw a slash but only got 3 args, that means the alpha
+    // was already captured as the 4th element. The `saw_slash` flag
+    // is informational only (both syntaxes produce the same result).
+    let _ = saw_slash;
+
+    result
+}
+
+/// [§ 4.1 The RGB Functions](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// "rgb() = rgb( <percentage>{3} [ / <alpha-value> ]? ) |
+///          rgb( <number>{3} [ / <alpha-value> ]? )"
+///
+/// Legacy: "rgb( <percentage>#{3} , <alpha-value>? ) |
+///          rgb( <number>#{3} , <alpha-value>? )"
+///
+/// "Values outside these ranges are not invalid, but are clamped to the
+/// ranges defined here at parsed-value time."
+fn parse_rgb_function(args: &[ComponentValue]) -> Option<ColorValue> {
+    let vals = extract_color_args(args);
+    if vals.len() < 3 {
+        return None;
+    }
+
+    let r = color_channel_to_u8(vals[0]);
+    let g = color_channel_to_u8(vals[1]);
+    let b = color_channel_to_u8(vals[2]);
+
+    // [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+    //
+    // "The final argument, <alpha-value>, specifies the alpha of the color."
+    // "If omitted, it defaults to 100%."
+    let a = if vals.len() >= 4 {
+        alpha_to_u8(vals[3])
+    } else {
+        255
+    };
+
+    Some(ColorValue { r, g, b, a })
+}
+
+/// [§ 4.1 The HSL Functions](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+///
+/// "hsl() = hsl( <hue> <percentage> <percentage> [ / <alpha-value> ]? )"
+///
+/// Legacy: "hsl( <hue>, <percentage>, <percentage>, <alpha-value>? )"
+///
+/// "<hue> is a <number> or <angle>, interpreted as degrees."
+fn parse_hsl_function(args: &[ComponentValue]) -> Option<ColorValue> {
+    let vals = extract_color_args(args);
+    if vals.len() < 3 {
+        return None;
+    }
+
+    // [§ 4.1](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
+    //
+    // "The first argument specifies the hue angle."
+    // "Because this value is so often given in degrees, the argument
+    // can also be given as a number, which is interpreted as degrees."
+    let hue = match vals[0] {
+        ColorArg::Number(v) => v,
+        ColorArg::Percentage(v) => v * 3.6, // 100% = 360 degrees
+    };
+
+    // "The second argument is the saturation... interpreted as a percentage."
+    let saturation = match vals[1] {
+        ColorArg::Percentage(v) => v / 100.0,
+        ColorArg::Number(v) => v / 100.0,
+    };
+
+    // "The third argument is the lightness... interpreted as a percentage."
+    let lightness = match vals[2] {
+        ColorArg::Percentage(v) => v / 100.0,
+        ColorArg::Number(v) => v / 100.0,
+    };
+
+    let a = if vals.len() >= 4 {
+        alpha_to_u8(vals[3])
+    } else {
+        255
+    };
+
+    let (r, g, b) = hsl_to_rgb(hue, saturation, lightness);
+    Some(ColorValue { r, g, b, a })
+}
+
+/// Convert a color channel argument to a u8 (0-255).
+///
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// "Values outside these ranges are not invalid, but are clamped."
+///
+/// Numbers are clamped to 0-255; percentages map 0%-100% to 0-255.
+fn color_channel_to_u8(arg: ColorArg) -> u8 {
+    let v = match arg {
+        ColorArg::Number(n) => n,
+        // "100% = 255"
+        ColorArg::Percentage(p) => p * 255.0 / 100.0,
+    };
+    v.round().clamp(0.0, 255.0) as u8
+}
+
+/// Convert an alpha argument to a u8 (0-255).
+///
+/// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
+///
+/// "The <alpha-value> can be a <number> (clamped to [0, 1]) or a
+/// <percentage> (clamped to [0%, 100%])."
+fn alpha_to_u8(arg: ColorArg) -> u8 {
+    let v = match arg {
+        // Numbers: 0.0 = transparent, 1.0 = opaque
+        ColorArg::Number(n) => n * 255.0,
+        // Percentages: 0% = transparent, 100% = opaque
+        ColorArg::Percentage(p) => p * 255.0 / 100.0,
+    };
+    v.round().clamp(0.0, 255.0) as u8
+}
+
+/// [§ 4.2.4 HSL-to-RGB](https://www.w3.org/TR/css-color-4/#hsl-to-rgb)
+///
+/// Convert HSL color to RGB.
+///
+/// - hue: angle in degrees (0-360, wraps)
+/// - saturation: 0.0-1.0
+/// - lightness: 0.0-1.0
+///
+/// Returns (r, g, b) as u8 values.
+fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
+    // Normalize hue to [0, 360)
+    let h = ((hue % 360.0) + 360.0) % 360.0;
+    let s = saturation.clamp(0.0, 1.0);
+    let l = lightness.clamp(0.0, 1.0);
+
+    // [§ 4.2.4](https://www.w3.org/TR/css-color-4/#hsl-to-rgb)
+    //
+    // "HOW TO RETURN hsl.h, hsl.s, hsl.l converted to an idealized-rgb color"
+    //
+    // Standard algorithm using chroma and intermediate value.
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h_prime = h / 60.0;
+    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
+
+    let (r1, g1, b1) = match h_prime as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        5 => (c, 0.0, x),
+        _ => (0.0, 0.0, 0.0),
+    };
+
+    let m = l - c / 2.0;
+    let to_u8 = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+
+    (to_u8(r1), to_u8(g1), to_u8(b1))
 }
