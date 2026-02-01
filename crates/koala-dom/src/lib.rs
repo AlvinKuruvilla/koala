@@ -15,13 +15,13 @@ use std::collections::{HashMap, HashSet};
 /// [§ 4.9.1 Interface Attr](https://dom.spec.whatwg.org/#interface-attr)
 /// "An Attr object represents an attribute of an Element object."
 ///
-/// [§ 4.9.2 Interface NamedNodeMap](https://dom.spec.whatwg.org/#interface-namednodemap)
-/// "A NamedNodeMap has an associated element (an element)."
+/// [§ 4.9.2 Interface `NamedNodeMap`](https://dom.spec.whatwg.org/#interface-namednodemap)
+/// "A `NamedNodeMap` has an associated element (an element)."
 ///
 /// NOTE: This is a simplified representation. Full DOM spec compliance would require:
 /// - Namespace URI and namespace prefix per attribute
 /// - Attr node objects with ownerElement references
-/// - NamedNodeMap interface with getNamedItem/setNamedItem methods
+/// - `NamedNodeMap` interface with getNamedItem/setNamedItem methods
 ///
 /// We use a simple String->String map since we don't currently need namespace support.
 pub type AttributesMap = HashMap<String, String>;
@@ -31,13 +31,13 @@ pub type AttributesMap = HashMap<String, String>;
 /// [§ 4.4 Interface Node](https://dom.spec.whatwg.org/#interface-node)
 /// "Each node has an associated node document..."
 ///
-/// NodeId provides O(1) access to any node in the tree without borrowing issues.
+/// `NodeId` provides O(1) access to any node in the tree without borrowing issues.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(pub usize);
 
 impl NodeId {
     /// The root document node is always at index 0.
-    pub const ROOT: NodeId = NodeId(0);
+    pub const ROOT: Self = Self(0);
 }
 
 /// [§ 4.4 Interface Node](https://dom.spec.whatwg.org/#interface-node)
@@ -95,10 +95,10 @@ pub enum NodeType {
 ///
 /// Per [§ 4.9 Interface Element](https://dom.spec.whatwg.org/#interface-element):
 /// - "Elements have an associated namespace, namespace prefix, local name, custom element state,
-///    custom element definition, is value."
+///   custom element definition, is value."
 /// - "When an element is created, its local name is always given."
 ///
-/// NOTE: We only store tag_name (local name) and attrs for simplicity.
+/// NOTE: We only store `tag_name` (local name) and attrs for simplicity.
 /// Full spec compliance would require namespace handling, custom elements, etc.
 #[derive(Debug, Clone)]
 pub struct ElementData {
@@ -113,6 +113,7 @@ impl ElementData {
     ///
     /// Per [§ 3.2.6 Global attributes](https://html.spec.whatwg.org/multipage/dom.html#global-attributes):
     /// "The id attribute specifies its element's unique identifier (ID)."
+    #[must_use]
     pub fn id(&self) -> Option<&String> {
         self.attrs.get("id")
     }
@@ -122,11 +123,9 @@ impl ElementData {
     /// Per [§ 3.2.6 Global attributes](https://html.spec.whatwg.org/multipage/dom.html#global-attributes):
     /// "The class attribute, if specified, must have a value that is a set of
     /// space-separated tokens representing the various classes that the element belongs to."
+    #[must_use]
     pub fn classes(&self) -> HashSet<&str> {
-        match self.attrs.get("class") {
-            Some(classlist) => classlist.split(' ').collect(),
-            None => HashSet::new(),
-        }
+        self.attrs.get("class").map_or_else(HashSet::new, |classlist| classlist.split(' ').collect())
     }
 }
 
@@ -139,14 +138,14 @@ impl ElementData {
 ///
 /// This structure stores all nodes in a contiguous vector, using indices
 /// for all relationships. This provides:
-/// - O(1) access to any node by NodeId
+/// - O(1) access to any node by `NodeId`
 /// - O(1) parent/sibling traversal
 /// - No borrowing issues (indices instead of references)
 /// - Memory-efficient storage
 #[derive(Debug, Clone)]
 pub struct DomTree {
-    /// All nodes in the tree, indexed by NodeId.
-    /// The Document node is always at index 0 (NodeId::ROOT).
+    /// All nodes in the tree, indexed by `NodeId`.
+    /// The Document node is always at index 0 (`NodeId::ROOT`).
     nodes: Vec<Node>,
 }
 
@@ -156,7 +155,8 @@ impl DomTree {
     /// "A document is created by the 'create a document' algorithm."
     ///
     /// Create a new DOM tree with just the Document node at the root.
-    /// The Document node is always at index 0 (NodeId::ROOT).
+    /// The Document node is always at index 0 (`NodeId::ROOT`).
+    #[must_use]
     pub fn new() -> Self {
         // STEP 1: Create the Document node.
         // [§ 4.5](https://dom.spec.whatwg.org/#interface-document)
@@ -172,18 +172,20 @@ impl DomTree {
             prev_sibling: None,
         };
 
-        // STEP 3: Place Document at index 0 (NodeId::ROOT).
-        DomTree {
+        // STEP 3: Place Document at index 0 (`NodeId::ROOT`).
+        Self {
             nodes: vec![document],
         }
     }
 
     /// Get the root document node ID.
+    #[must_use]
     pub fn root(&self) -> NodeId {
         NodeId::ROOT
     }
 
     /// Get a node by its ID.
+    #[must_use]
     pub fn get(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.0)
     }
@@ -194,11 +196,13 @@ impl DomTree {
     }
 
     /// Get the number of nodes in the tree.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if the tree is empty (should always have at least the Document).
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -213,7 +217,7 @@ impl DomTree {
     /// created and inserted in a single operation. We separate these for
     /// flexibility in tree construction.
     pub fn alloc(&mut self, node_type: NodeType) -> NodeId {
-        // STEP 1: Assign the next available index as the NodeId.
+        // STEP 1: Assign the next available index as the `NodeId`.
         let id = NodeId(self.nodes.len());
 
         // STEP 2: Create the node with no relationships.
@@ -231,7 +235,7 @@ impl DomTree {
             prev_sibling: None,
         });
 
-        // STEP 3: Return the NodeId for later insertion.
+        // STEP 3: Return the `NodeId` for later insertion.
         id
     }
 
@@ -279,31 +283,37 @@ impl DomTree {
     }
 
     /// Get the parent of a node.
+    #[must_use]
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.get(id).and_then(|n| n.parent)
     }
 
     /// Get all children of a node.
+    #[must_use]
     pub fn children(&self, id: NodeId) -> &[NodeId] {
-        self.get(id).map(|n| n.children.as_slice()).unwrap_or(&[])
+        self.get(id).map_or(&[], |n| n.children.as_slice())
     }
 
     /// Get the first child of a node.
+    #[must_use]
     pub fn first_child(&self, id: NodeId) -> Option<NodeId> {
         self.get(id).and_then(|n| n.children.first().copied())
     }
 
     /// Get the last child of a node.
+    #[must_use]
     pub fn last_child(&self, id: NodeId) -> Option<NodeId> {
         self.get(id).and_then(|n| n.children.last().copied())
     }
 
     /// Get the next sibling of a node.
+    #[must_use]
     pub fn next_sibling(&self, id: NodeId) -> Option<NodeId> {
         self.get(id).and_then(|n| n.next_sibling)
     }
 
     /// Get the previous sibling of a node.
+    #[must_use]
     pub fn prev_sibling(&self, id: NodeId) -> Option<NodeId> {
         self.get(id).and_then(|n| n.prev_sibling)
     }
@@ -315,6 +325,7 @@ impl DomTree {
     ///
     /// Check if `descendant` is a descendant of `ancestor` by walking up
     /// the parent chain.
+    #[must_use]
     pub fn is_descendant_of(&self, descendant: NodeId, ancestor: NodeId) -> bool {
         // STEP 1: Start at the descendant's parent.
         // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-parent)
@@ -345,7 +356,8 @@ impl DomTree {
     /// a descendant of A."
     ///
     /// Returns an iterator over all ancestors of a node, from parent to root.
-    /// The iterator yields NodeIds in order: parent, grandparent, ..., root.
+    /// The iterator yields `NodeId`s in order: parent, grandparent, ..., root.
+    #[must_use]
     pub fn ancestors(&self, id: NodeId) -> AncestorIterator<'_> {
         AncestorIterator {
             tree: self,
@@ -361,6 +373,7 @@ impl DomTree {
     ///
     /// Returns an iterator over preceding siblings, from immediately before
     /// to the first child of the parent.
+    #[must_use]
     pub fn preceding_siblings(&self, id: NodeId) -> PrecedingSiblingIterator<'_> {
         PrecedingSiblingIterator {
             tree: self,
@@ -370,6 +383,7 @@ impl DomTree {
     }
 
     /// Get element data if this node is an element.
+    #[must_use]
     pub fn as_element(&self, id: NodeId) -> Option<&ElementData> {
         self.get(id).and_then(|n| match &n.node_type {
             NodeType::Element(data) => Some(data),
@@ -378,6 +392,7 @@ impl DomTree {
     }
 
     /// Get text content if this node is a text node.
+    #[must_use]
     pub fn as_text(&self, id: NodeId) -> Option<&str> {
         self.get(id).and_then(|n| match &n.node_type {
             NodeType::Text(s) => Some(s.as_str()),
@@ -392,6 +407,7 @@ impl DomTree {
     ///
     /// Returns an iterator over all descendants of a node in document order
     /// (depth-first, pre-order traversal). Does not include the starting node.
+    #[must_use]
     pub fn descendants(&self, id: NodeId) -> DescendantIterator<'_> {
         DescendantIterator {
             tree: self,
@@ -496,7 +512,7 @@ pub struct AncestorIterator<'a> {
     current: Option<NodeId>,
 }
 
-impl<'a> Iterator for AncestorIterator<'a> {
+impl Iterator for AncestorIterator<'_> {
     type Item = NodeId;
 
     /// [§ 4.2.5](https://dom.spec.whatwg.org/#concept-tree-ancestor)
@@ -521,7 +537,7 @@ pub struct PrecedingSiblingIterator<'a> {
     current: Option<NodeId>,
 }
 
-impl<'a> Iterator for PrecedingSiblingIterator<'a> {
+impl Iterator for PrecedingSiblingIterator<'_> {
     type Item = NodeId;
 
     /// [§ 4.2.5](https://dom.spec.whatwg.org/#concept-tree-previous-sibling)
