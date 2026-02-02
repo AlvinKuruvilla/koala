@@ -154,7 +154,12 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
     let css_text = extract_style_content(&dom);
 
     // Compute styles
-    let styles = compute_styles(&dom, &stylesheet);
+    // [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+    //
+    // "Each style rule has a cascade origin... User-Agent origin rules have
+    // the lowest priority."
+    let ua = koala_css::ua_stylesheet::ua_stylesheet();
+    let styles = compute_styles(&dom, ua, &stylesheet);
 
     // Build layout tree
     let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());

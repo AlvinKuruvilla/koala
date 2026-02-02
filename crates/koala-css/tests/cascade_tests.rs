@@ -13,6 +13,12 @@ fn parse_css(css: &str) -> Stylesheet {
     parser.parse_stylesheet()
 }
 
+/// Empty stylesheet used as the UA stylesheet in tests.
+/// Tests exercise author CSS behavior, so no UA defaults are needed.
+fn empty_stylesheet() -> Stylesheet {
+    Stylesheet { rules: vec![] }
+}
+
 /// Helper to create element node types
 fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType {
     let mut attrs = AttributesMap::new();
@@ -37,7 +43,7 @@ fn test_compute_styles_simple() {
     let body_id = tree.alloc(make_element("body", None, &[]));
     tree.append_child(NodeId::ROOT, body_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     // Document has no style
     assert!(!styles.contains_key(&NodeId::ROOT));
@@ -62,7 +68,7 @@ fn test_compute_styles_inheritance() {
     tree.append_child(NodeId::ROOT, body_id);
     tree.append_child(body_id, p_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     // P should inherit color from body
     let p_style = styles.get(&p_id).unwrap();
@@ -81,7 +87,7 @@ fn test_compute_styles_specificity() {
     let p_id = tree.alloc(make_element("p", None, &["highlight"]));
     tree.append_child(NodeId::ROOT, p_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     let p_style = styles.get(&p_id).unwrap();
     let color = p_style.color.as_ref().unwrap();
@@ -99,7 +105,7 @@ fn test_compute_styles_id_selector() {
     let div_id = tree.alloc(make_element("div", Some("main-content"), &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     let div_style = styles.get(&div_id).unwrap();
     assert!(div_style.background_color.is_some());
@@ -119,7 +125,7 @@ fn test_background_color_not_inherited() {
     tree.append_child(NodeId::ROOT, body_id);
     tree.append_child(body_id, p_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     // Body should have background-color
     let body_style = styles.get(&body_id).unwrap();
@@ -145,7 +151,7 @@ fn test_line_height_inherited() {
     tree.append_child(NodeId::ROOT, body_id);
     tree.append_child(body_id, p_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     // P should inherit line-height from body
     let p_style = styles.get(&p_id).unwrap();
@@ -162,7 +168,7 @@ fn test_margin_and_padding_shorthand() {
     let div_id = tree.alloc(make_element("div", None, &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     let div_style = styles.get(&div_id).unwrap();
 
@@ -205,7 +211,7 @@ fn test_font_size_inherited() {
     tree.append_child(body_id, h1_id);
     tree.append_child(h1_id, span_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     // Span inside h1 should inherit h1's font-size (32px)
     let span_style = styles.get(&span_id).unwrap();
@@ -224,7 +230,7 @@ fn test_border_parsing() {
     let div_id = tree.alloc(make_element("div", Some("box"), &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     let div_style = styles.get(&div_id).unwrap();
 
@@ -319,7 +325,7 @@ fn test_simple_html_full_pipeline() {
     let stylesheet = css_parser.parse_stylesheet();
 
     // Compute styles
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
 
     // Should have styles for multiple elements
     assert!(!styles.is_empty(), "Should have computed styles");
@@ -376,7 +382,7 @@ fn test_logical_property_cascade_order() {
     let div_id = tree.alloc(make_element("div", None, &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
     let div_style = styles.get(&div_id).unwrap();
 
     // margin-top should be 20px (the later declaration wins)
@@ -407,7 +413,7 @@ fn test_logical_property_cascade_order_reversed() {
     let div_id = tree.alloc(make_element("div", None, &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
     let div_style = styles.get(&div_id).unwrap();
 
     // margin-top should be 10px (margin-block-start declared later wins)
@@ -436,7 +442,7 @@ fn test_logical_property_block_end_cascade() {
     let div_id = tree.alloc(make_element("div", None, &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
     let div_style = styles.get(&div_id).unwrap();
 
     // margin-bottom should be 15px (margin-block-end declared later wins)
@@ -464,7 +470,7 @@ fn color_from_css(property: &str, value: &str) -> Option<koala_css::ColorValue> 
     let div_id = tree.alloc(make_element("div", None, &[]));
     tree.append_child(NodeId::ROOT, div_id);
 
-    let styles = compute_styles(&tree, &stylesheet);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
     let style = styles.get(&div_id)?;
     match property {
         "color" => style.color.clone(),

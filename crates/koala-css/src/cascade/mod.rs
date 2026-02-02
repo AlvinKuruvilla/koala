@@ -11,37 +11,81 @@ use crate::style::ComputedStyle;
 use koala_common::warning::warn_once;
 use koala_dom::{DomTree, NodeId, NodeType};
 
+/// [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+///
+/// "Each style rule has a cascade origin, which determines where it enters
+/// the cascade."
+///
+/// "The cascading process sorts declarations according to the following
+/// criteria, in descending order of priority:
+/// Origin and Importance > Context > Element-Attached Styles >
+/// Specificity > Order of Appearance"
+///
+/// UserAgent (0) < Author (1): author rules always override UA rules
+/// regardless of specificity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CascadeOrigin {
+    /// [§ 6.1](https://www.w3.org/TR/css-cascade-4/#cascade-origin-ua)
+    /// "The user agent's default styles."
+    UserAgent = 0,
+    /// [§ 6.1](https://www.w3.org/TR/css-cascade-4/#cascade-origin-author)
+    /// "The author specifies style sheets for a source document."
+    Author = 1,
+}
+
 /// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
 ///
-/// A matched rule with its specificity for cascade ordering.
+/// A matched rule with its origin and specificity for cascade ordering.
 struct MatchedRule<'a> {
+    origin: CascadeOrigin,
     specificity: Specificity,
     rule: &'a StyleRule,
 }
 
-/// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
-/// "The cascade takes an unordered list of declared values for a given property
-/// on a given element, sorts them by their declaration's precedence..."
+/// A pre-parsed rule: one (selector, rule) pair tagged with its origin.
 ///
-/// Compute styles for the entire DOM tree given a stylesheet.
-/// Returns a map from NodeId to computed style.
-pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId, ComputedStyle> {
-    let mut styles = HashMap::new();
+/// Each comma-separated selector in a rule produces a separate `ParsedRule`.
+/// For example, `h1, h2, h3 { font-weight: bold; }` produces three entries.
+struct ParsedRule<'a> {
+    origin: CascadeOrigin,
+    selector: ParsedSelector,
+    rule: &'a StyleRule,
+}
 
-    // Parse all selectors upfront
-    let parsed_rules: Vec<(ParsedSelector, &StyleRule)> = stylesheet
-        .rules
-        .iter()
-        .filter_map(|rule| match rule {
+/// Parse all rules from a stylesheet, expanding comma-separated selectors.
+///
+/// [§ 5.1 Selector Lists](https://www.w3.org/TR/selectors-4/#grouping)
+///
+/// "A comma-separated list of selectors represents the union of all
+/// elements selected by each individual selector in the list."
+///
+/// Each valid selector in a rule produces a separate `ParsedRule` entry
+/// so that matching checks every selector independently.
+fn parse_stylesheet_rules<'a>(
+    stylesheet: &'a Stylesheet,
+    origin: CascadeOrigin,
+    out: &mut Vec<ParsedRule<'a>>,
+) {
+    for rule in &stylesheet.rules {
+        match rule {
             Rule::Style(style_rule) => {
-                // Try each selector in the rule (comma-separated selectors)
-                // For MVP, we just use the first valid one
-                let result = style_rule
-                    .selectors
-                    .iter()
-                    .find_map(|sel| parse_selector(&sel.text).map(|parsed| (parsed, style_rule)));
+                let mut any_parsed = false;
+
+                // Expand ALL valid selectors, not just the first one.
+                // This is critical for rules like `h1, h2, h3 { ... }`.
+                for sel in &style_rule.selectors {
+                    if let Some(parsed) = parse_selector(&sel.text) {
+                        out.push(ParsedRule {
+                            origin,
+                            selector: parsed,
+                            rule: style_rule,
+                        });
+                        any_parsed = true;
+                    }
+                }
+
                 // Warn if all selectors in this rule failed to parse
-                if result.is_none() && !style_rule.selectors.is_empty() {
+                if !any_parsed && !style_rule.selectors.is_empty() {
                     let selector_text = style_rule
                         .selectors
                         .iter()
@@ -53,11 +97,33 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
                         &format!("failed to parse selector '{selector_text}'"),
                     );
                 }
-                result
             }
-            Rule::At(_) => None, // Skip at-rules for MVP
-        })
-        .collect();
+            Rule::At(_) => {} // Skip at-rules for MVP
+        }
+    }
+}
+
+/// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
+/// "The cascade takes an unordered list of declared values for a given property
+/// on a given element, sorts them by their declaration's precedence..."
+///
+/// Compute styles for the entire DOM tree given UA and author stylesheets.
+/// Returns a map from NodeId to computed style.
+///
+/// [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+///
+/// UA rules are always overridden by author rules (origin beats specificity).
+pub fn compute_styles(
+    tree: &DomTree,
+    ua_stylesheet: &Stylesheet,
+    author_stylesheet: &Stylesheet,
+) -> HashMap<NodeId, ComputedStyle> {
+    let mut styles = HashMap::new();
+
+    // Parse all selectors upfront, tagged with their origin.
+    let mut parsed_rules = Vec::new();
+    parse_stylesheet_rules(ua_stylesheet, CascadeOrigin::UserAgent, &mut parsed_rules);
+    parse_stylesheet_rules(author_stylesheet, CascadeOrigin::Author, &mut parsed_rules);
 
     // Start with default inherited style (none)
     let initial_style = ComputedStyle::default();
@@ -79,7 +145,7 @@ pub fn compute_styles(tree: &DomTree, stylesheet: &Stylesheet) -> HashMap<NodeId
 fn compute_node_styles(
     tree: &DomTree,
     id: NodeId,
-    rules: &[(ParsedSelector, &StyleRule)],
+    rules: &[ParsedRule],
     inherited: &ComputedStyle,
     styles: &mut HashMap<NodeId, ComputedStyle>,
 ) {
@@ -95,18 +161,30 @@ fn compute_node_styles(
             // Find all matching rules using tree-aware matching for combinator support
             let mut matched: Vec<MatchedRule> = rules
                 .iter()
-                .filter(|(selector, _)| selector.matches_in_tree(tree, id))
-                .map(|(selector, rule)| MatchedRule {
-                    specificity: selector.specificity,
-                    rule,
+                .filter(|pr| pr.selector.matches_in_tree(tree, id))
+                .map(|pr| MatchedRule {
+                    origin: pr.origin,
+                    specificity: pr.selector.specificity,
+                    rule: pr.rule,
                 })
                 .collect();
 
-            // [§ 6.4.3 Specificity](https://www.w3.org/TR/css-cascade-4/#cascade-specificity)
-            // Sort by specificity (lower first, so later ones override)
-            matched.sort_by(|a, b| a.specificity.cmp(&b.specificity));
+            // [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+            //
+            // "The cascading process sorts declarations according to the following
+            // criteria, in descending order of priority:
+            // Origin and Importance > ... > Specificity > Order of Appearance"
+            //
+            // Sort by (origin, specificity) — UA rules sort before author rules,
+            // so author rules always override UA rules regardless of specificity.
+            // Within the same origin, higher specificity wins.
+            matched.sort_by(|a, b| {
+                a.origin
+                    .cmp(&b.origin)
+                    .then_with(|| a.specificity.cmp(&b.specificity))
+            });
 
-            // Apply declarations in order
+            // Apply declarations in order (lowest priority first, highest last wins)
             for m in matched {
                 for decl in &m.rule.declarations {
                     computed.apply_declaration(decl);
@@ -156,6 +234,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
         // "Inherited: yes"
         font_weight: parent.font_weight,
+
+        // [§ 3.3 font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+        // "Inherited: yes"
+        font_style: parent.font_style.clone(),
 
         // [§ 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
         // "Inherited: yes"

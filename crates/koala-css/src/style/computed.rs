@@ -63,6 +63,12 @@ pub struct ComputedStyle {
     pub font_size: Option<LengthValue>,
     /// [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
     pub font_weight: Option<u16>,
+    /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+    ///
+    /// "This property allows italic or oblique faces to be selected."
+    /// Values: normal | italic | oblique
+    /// Inherited: yes
+    pub font_style: Option<String>,
     /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
 
@@ -218,6 +224,18 @@ impl ComputedStyle {
             "font-weight" => {
                 if let Some(weight) = parse_font_weight(&decl.value) {
                     self.font_weight = Some(weight);
+                }
+            }
+            // [§ 3.3 font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+            //
+            // "This property allows italic or oblique faces to be selected."
+            // Values: normal | italic | oblique
+            "font-style" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(lower.as_str(), "normal" | "italic" | "oblique") {
+                        self.font_style = Some(lower);
+                    }
                 }
             }
             // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)

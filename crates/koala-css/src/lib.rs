@@ -58,6 +58,8 @@ pub mod selector;
 pub mod style;
 /// CSS tokenizer per [§ 4 Tokenization](https://www.w3.org/TR/css-syntax-3/#tokenization).
 pub mod tokenizer;
+/// User-agent stylesheet per [WHATWG HTML § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html).
+pub mod ua_stylesheet;
 
 // Re-exports for convenience
 pub use backgrounds::canvas_background;
