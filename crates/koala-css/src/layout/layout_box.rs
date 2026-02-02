@@ -31,12 +31,13 @@ use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 /// "An inline box is one that is both inline-level and whose contents
 /// participate in its containing inline formatting context."
 fn layout_inline_content(
-    children: &[LayoutBox],
+    children: &mut [LayoutBox],
     inline_layout: &mut InlineLayout,
     inherited_font_size: f32,
     inherited_color: &ColorValue,
     viewport: Rect,
     font_metrics: &dyn FontMetrics,
+    content_rect: Rect,
 ) {
     for child in children {
         match &child.box_type {
@@ -97,35 +98,51 @@ fn layout_inline_content(
                 // its descendants. These were resolved from ComputedStyle
                 // during build_layout_tree().
                 layout_inline_content(
-                    &child.children,
+                    &mut child.children,
                     inline_layout,
                     child.font_size,
                     &child.color,
                     viewport,
                     font_metrics,
+                    content_rect,
                 );
 
                 // STEP 4: Close the inline box (apply right edge).
                 inline_layout.end_inline_box(right_mbp);
             }
-            BoxType::Principal(_) => {
-                // Block-level child in an inline formatting context.
-                // [§ 9.2.1.1] This shouldn't happen if
-                // generate_anonymous_boxes was called first.
-                debug_assert!(
-                    false,
-                    "Block-level child found in inline formatting context"
-                );
-            }
-            BoxType::AnonymousBlock => {
-                // Anonymous blocks shouldn't appear here — they are only
-                // generated to wrap inline runs alongside block children,
-                // and this method is only called when all children are
-                // inline-level.
-                debug_assert!(
-                    false,
-                    "AnonymousBlock found in inline formatting context"
-                );
+            BoxType::Principal(_) | BoxType::AnonymousBlock => {
+                // [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+                //
+                // "When an inline box contains an in-flow block-level box,
+                // the inline box (and its inline ancestors within the same
+                // line box) are broken around the block-level box... The line
+                // boxes before the break and after the break are enclosed in
+                // anonymous block boxes, and the block-level box becomes a
+                // sibling of those anonymous boxes."
+                //
+                // Break the inline context: flush the current line, lay out
+                // the block child, and resume inline layout below it.
+
+                // STEP 1: Flush any accumulated inline content into a line box.
+                inline_layout.finish_line();
+
+                // STEP 2: Create a containing block for the block child.
+                // The block child is positioned at the full width of the
+                // parent block container, not narrowed by any inline box
+                // margin/border/padding.
+                let block_cb = Rect {
+                    x: content_rect.x,
+                    y: inline_layout.current_y,
+                    width: content_rect.width,
+                    height: f32::MAX,
+                };
+
+                // STEP 3: Layout the block child.
+                child.layout(block_cb, viewport, font_metrics);
+
+                // STEP 4: Advance past the block child's margin box.
+                inline_layout.current_y += child.dimensions.margin_box().height;
+                inline_layout.current_x = 0.0;
             }
         }
     }
@@ -1257,6 +1274,14 @@ impl LayoutBox {
     /// Anonymous block box: "more text"
     /// ```
     pub fn generate_anonymous_boxes(&mut self) {
+        // STEP 0: Flatten block-in-inline.
+        // [§ 9.2.1.1](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+        //
+        // If any inline child contains a block-level descendant, promote those
+        // descendants before the mixed-content check so the existing wrapping
+        // logic handles the result correctly.
+        self.flatten_block_in_inline();
+
         // STEP 1: Check if children are mixed (both block and inline)
         let has_block_children = self
             .children
@@ -1348,6 +1373,7 @@ impl LayoutBox {
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
         // "The width of a line box is determined by a containing block."
+        let content_rect = self.dimensions.content_box();
         let mut inline_layout = InlineLayout::new(
             self.dimensions.content.width,
             self.dimensions.content.y,
@@ -1369,12 +1395,13 @@ impl LayoutBox {
         // inline children. Principal inline children will use their own
         // resolved values when recursing.
         layout_inline_content(
-            &self.children,
+            &mut self.children,
             &mut inline_layout,
             self.font_size,
             &self.color,
             viewport,
             font_metrics,
+            content_rect,
         );
 
         // STEP 3: Finalize the last line.
@@ -1384,13 +1411,17 @@ impl LayoutBox {
         // final line box.
         inline_layout.finish_line();
 
-        // STEP 4: Set content height from line boxes.
+        // STEP 4: Set content height.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
         // "If 'height' is 'auto'... the height is the distance between the
         // top content edge and the bottom edge of the last line box, if the
         // box establishes an inline formatting context with one or more lines."
-        self.dimensions.content.height = inline_layout.total_height();
+        //
+        // When block children are interspersed (per § 9.2.1.1), current_y
+        // tracks the full height including both line boxes and block
+        // interruptions.
+        self.dimensions.content.height = inline_layout.current_y - self.dimensions.content.y;
 
         // STEP 5: Store the line boxes for painting.
         //
@@ -1582,5 +1613,56 @@ impl LayoutBox {
         self.children
             .iter()
             .all(|c| c.display.outer == OuterDisplayType::Inline)
+    }
+
+    /// Promote block-level descendants out of inline ancestors.
+    ///
+    /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+    ///
+    /// "When an inline box contains an in-flow block-level box, the inline
+    /// box (and its inline ancestors within the same line box) are broken
+    /// around the block-level box..."
+    ///
+    /// This pre-pass replaces each inline child that contains a block
+    /// descendant with that child's own children (promoting them one level
+    /// up). The loop repeats until no inline child has block descendants,
+    /// handling nested inline wrappers (e.g. `<span><em><div>`).
+    ///
+    /// NOTE: The inline box's own styling (margin/border/padding) is lost
+    /// during promotion. This is an acceptable trade-off — the content
+    /// renders instead of crashing.
+    fn flatten_block_in_inline(&mut self) {
+        loop {
+            let needs_flatten = self.children.iter().any(|c| {
+                c.display.outer == OuterDisplayType::Inline && c.has_block_descendant()
+            });
+            if !needs_flatten {
+                break;
+            }
+
+            let old_children = std::mem::take(&mut self.children);
+            for child in old_children {
+                if child.display.outer == OuterDisplayType::Inline
+                    && child.has_block_descendant()
+                {
+                    // Replace the inline wrapper with its children.
+                    self.children.extend(child.children);
+                } else {
+                    self.children.push(child);
+                }
+            }
+        }
+    }
+
+    /// Returns true if any descendant (recursively) is block-level.
+    ///
+    /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
+    ///
+    /// Used to detect the case where an inline box contains a block-level
+    /// descendant, which requires splitting the inline box per the spec.
+    fn has_block_descendant(&self) -> bool {
+        self.children.iter().any(|c| {
+            c.display.outer == OuterDisplayType::Block || c.has_block_descendant()
+        })
     }
 }
