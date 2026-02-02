@@ -10,18 +10,24 @@
 //! - koala -H file.html     # Print DOM/layout info
 //! - koala -S out.png URL   # Take screenshot
 
+mod theme;
+
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
 use clap::Parser;
 use eframe::egui;
-use koala_browser::{FontProvider, load_document, parse_html_string, renderer::Renderer, LoadedDocument};
+use koala_browser::{
+    FontProvider, LoadedDocument, load_document, parse_html_string, renderer::Renderer,
+};
 use koala_common::warning::clear_warnings;
 use koala_css::Painter;
 use koala_css::{AutoLength, LayoutBox, Rect};
 use koala_dom::{NodeId, NodeType};
 use koala_html::print_tree;
+
+use theme::{ColorPalette, Theme};
 
 /// Koala Browser - A from-scratch web browser built for learning
 #[derive(Parser, Debug)]
@@ -117,7 +123,12 @@ fn load_doc(cli: &Cli) -> anyhow::Result<LoadedDocument> {
 }
 
 /// Take a screenshot of the rendered page
-fn take_screenshot(doc: &LoadedDocument, output_path: &PathBuf, width: u32, height: u32) -> anyhow::Result<()> {
+fn take_screenshot(
+    doc: &LoadedDocument,
+    output_path: &PathBuf,
+    width: u32,
+    height: u32,
+) -> anyhow::Result<()> {
     let viewport = Rect {
         x: 0.0,
         y: 0.0,
@@ -284,52 +295,6 @@ fn run_gui(initial_url: Option<String>) -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("GUI error: {}", e))
 }
 
-/// Application theme
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Theme {
-    Light,
-    Dark,
-}
-
-impl Theme {
-    fn toggle(&self) -> Self {
-        match self {
-            Theme::Light => Theme::Dark,
-            Theme::Dark => Theme::Light,
-        }
-    }
-
-    fn visuals(&self) -> egui::Visuals {
-        match self {
-            Theme::Light => {
-                let mut visuals = egui::Visuals::light();
-                visuals.window_rounding = egui::Rounding::same(8.0);
-                visuals.widgets.noninteractive.rounding = egui::Rounding::same(4.0);
-                visuals.widgets.inactive.rounding = egui::Rounding::same(4.0);
-                visuals.widgets.hovered.rounding = egui::Rounding::same(4.0);
-                visuals.widgets.active.rounding = egui::Rounding::same(4.0);
-                visuals
-            }
-            Theme::Dark => {
-                let mut visuals = egui::Visuals::dark();
-                visuals.window_rounding = egui::Rounding::same(8.0);
-                visuals.widgets.noninteractive.rounding = egui::Rounding::same(4.0);
-                visuals.widgets.inactive.rounding = egui::Rounding::same(4.0);
-                visuals.widgets.hovered.rounding = egui::Rounding::same(4.0);
-                visuals.widgets.active.rounding = egui::Rounding::same(4.0);
-                visuals
-            }
-        }
-    }
-
-    fn icon(&self) -> &'static str {
-        match self {
-            Theme::Light => "🌙",
-            Theme::Dark => "☀️",
-        }
-    }
-}
-
 /// Quick link for the landing page
 struct QuickLink {
     name: &'static str,
@@ -379,6 +344,9 @@ struct BrowserApp {
     /// Current theme
     theme: Theme,
 
+    /// Semantic color palette derived from the current theme.
+    palette: ColorPalette,
+
     /// CSS properties we've warned about - (property, tag) pairs
     /// Cleared on each page load to avoid spam
     css_warnings_logged: RefCell<HashSet<(String, String)>>,
@@ -412,8 +380,10 @@ enum DebugTab {
 
 impl BrowserApp {
     fn new(ctx: &egui::Context, initial_url: Option<String>) -> Self {
+        theme::setup_fonts(ctx);
+
         let theme = Theme::Dark;
-        ctx.set_visuals(theme.visuals());
+        theme.apply(ctx);
         println!("[Koala GUI] Browser initialized with {:?} theme", theme);
 
         Self {
@@ -425,6 +395,7 @@ impl BrowserApp {
             debug_tab: DebugTab::Dom,
             status_message: "Welcome to Koala Browser".to_string(),
             theme,
+            palette: theme.palette(),
             css_warnings_logged: RefCell::new(HashSet::new()),
             pending_navigation: initial_url,
             font_provider: FontProvider::load(),
@@ -433,7 +404,8 @@ impl BrowserApp {
 
     fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
         self.theme = theme;
-        ctx.set_visuals(theme.visuals());
+        self.palette = theme.palette();
+        theme.apply(ctx);
         println!("[Koala GUI] Theme changed to {:?}", theme);
     }
 
@@ -455,7 +427,10 @@ impl BrowserApp {
                 println!("[Koala GUI]   - {} bytes CSS", page.doc.css_text.len());
 
                 if !page.doc.parse_issues.is_empty() {
-                    println!("[Koala GUI]   - {} parse issues:", page.doc.parse_issues.len());
+                    println!(
+                        "[Koala GUI]   - {} parse issues:",
+                        page.doc.parse_issues.len()
+                    );
                     for issue in &page.doc.parse_issues {
                         println!("[Koala GUI]     ! {}", issue);
                     }
@@ -486,7 +461,10 @@ impl BrowserApp {
     fn load_page(&self, path: &str) -> Result<PageState, String> {
         let doc = load_document(path).map_err(|e| e.to_string())?;
 
-        println!("[Koala GUI] Parsing {} bytes of HTML", doc.html_source.len());
+        println!(
+            "[Koala GUI] Parsing {} bytes of HTML",
+            doc.html_source.len()
+        );
         println!("[Koala GUI] Tokenized: {} tokens", doc.tokens.len());
         println!("[Koala GUI] Parsed: {} nodes", doc.dom.len());
         if !doc.css_text.is_empty() {
@@ -565,24 +543,34 @@ impl eframe::App for BrowserApp {
             self.debug_panel_open = !self.debug_panel_open;
             println!(
                 "[Koala GUI] Debug panel: {}",
-                if self.debug_panel_open { "OPEN" } else { "CLOSED" }
+                if self.debug_panel_open {
+                    "OPEN"
+                } else {
+                    "CLOSED"
+                }
             );
         }
 
         // Top panel: Navigation bar
-        let _ = egui::TopBottomPanel::top("nav_bar")
-            .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::symmetric(12.0, 8.0)))
+        let nav_response = egui::TopBottomPanel::top("nav_bar")
+            .frame(
+                egui::Frame::none()
+                    .fill(self.palette.bg_surface)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
+            )
             .show(ctx, |ui| {
                 let _ = ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Navigation buttons with consistent styling
+                    // Navigation buttons — ghost style (transparent fill, visible on hover)
                     let button_size = egui::vec2(32.0, 28.0);
 
                     if ui
                         .add_enabled(
                             self.can_go_back(),
-                            egui::Button::new("◀").min_size(button_size),
+                            egui::Button::new("◀")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .min_size(button_size),
                         )
                         .on_hover_text("Back")
                         .clicked()
@@ -593,7 +581,9 @@ impl eframe::App for BrowserApp {
                     if ui
                         .add_enabled(
                             self.can_go_forward(),
-                            egui::Button::new("▶").min_size(button_size),
+                            egui::Button::new("▶")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .min_size(button_size),
                         )
                         .on_hover_text("Forward")
                         .clicked()
@@ -604,7 +594,9 @@ impl eframe::App for BrowserApp {
                     if ui
                         .add_enabled(
                             self.page.is_some(),
-                            egui::Button::new("↻").min_size(button_size),
+                            egui::Button::new("↻")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .min_size(button_size),
                         )
                         .on_hover_text("Refresh")
                         .clicked()
@@ -613,7 +605,11 @@ impl eframe::App for BrowserApp {
                     }
 
                     if ui
-                        .add(egui::Button::new("🏠").min_size(button_size))
+                        .add(
+                            egui::Button::new("🏠")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .min_size(button_size),
+                        )
                         .on_hover_text("Home")
                         .clicked()
                     {
@@ -622,23 +618,37 @@ impl eframe::App for BrowserApp {
 
                     ui.add_space(8.0);
 
-                    // URL bar with rounded frame
+                    // URL bar with rounded frame and focus-aware border
                     let url_bar_width = ui.available_width() - 100.0;
+
+                    // Check if the URL text edit had focus last frame
+                    let url_id = ui.id().with("url_input");
+                    let url_focused = ui.memory(|m| m.has_focus(url_id));
+                    let url_border = if url_focused {
+                        self.palette.accent
+                    } else {
+                        self.palette.border_subtle
+                    };
+
                     let _ = egui::Frame::none()
-                        .fill(ui.visuals().extreme_bg_color)
+                        .fill(self.palette.bg_input)
                         .rounding(egui::Rounding::same(14.0))
+                        .stroke(egui::Stroke::new(1.0, url_border))
                         .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                         .show(ui, |ui| {
                             ui.set_width(url_bar_width);
                             let response = ui.add_sized(
                                 [url_bar_width - 24.0, 20.0],
                                 egui::TextEdit::singleline(&mut self.url_input)
+                                    .id(url_id)
                                     .hint_text("Enter file path or URL...")
                                     .frame(false)
                                     .font(egui::TextStyle::Body),
                             );
 
-                            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            if response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
                                 let path = self.url_input.clone();
                                 self.navigate(&path);
                             }
@@ -648,7 +658,11 @@ impl eframe::App for BrowserApp {
 
                     // Theme toggle
                     if ui
-                        .add(egui::Button::new(self.theme.icon()).min_size(button_size))
+                        .add(
+                            egui::Button::new(self.theme.icon())
+                                .fill(egui::Color32::TRANSPARENT)
+                                .min_size(button_size),
+                        )
                         .on_hover_text("Toggle theme")
                         .clicked()
                     {
@@ -656,11 +670,11 @@ impl eframe::App for BrowserApp {
                         self.set_theme(ctx, new_theme);
                     }
 
-                    // Debug toggle
+                    // Debug toggle — accent tint when open
                     let debug_button = if self.debug_panel_open {
-                        egui::Button::new("🔧").fill(ui.visuals().selection.bg_fill)
+                        egui::Button::new("🔧").fill(self.palette.accent_muted)
                     } else {
-                        egui::Button::new("🔧")
+                        egui::Button::new("🔧").fill(egui::Color32::TRANSPARENT)
                     };
                     if ui
                         .add(debug_button.min_size(button_size))
@@ -670,46 +684,84 @@ impl eframe::App for BrowserApp {
                         self.debug_panel_open = !self.debug_panel_open;
                         println!(
                             "[Koala GUI] Debug panel: {}",
-                            if self.debug_panel_open { "OPEN" } else { "CLOSED" }
+                            if self.debug_panel_open {
+                                "OPEN"
+                            } else {
+                                "CLOSED"
+                            }
                         );
                     }
                 });
             });
 
+        // Paint bottom separator line for the nav bar
+        {
+            let r = nav_response.response.rect;
+            let _ = ctx.layer_painter(egui::LayerId::background()).hline(
+                r.x_range(),
+                r.bottom(),
+                egui::Stroke::new(1.0, self.palette.border_subtle),
+            );
+        }
+
         // Bottom panel: Status bar
-        let _ = egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::symmetric(12.0, 4.0)))
+        let status_response = egui::TopBottomPanel::bottom("status_bar")
+            .frame(
+                egui::Frame::none()
+                    .fill(self.palette.bg_surface)
+                    .inner_margin(egui::Margin::symmetric(12.0, 4.0)),
+            )
             .show(ctx, |ui| {
                 let _ = ui.horizontal(|ui| {
                     let _ = ui.label(
                         egui::RichText::new(&self.status_message)
                             .size(12.0)
-                            .color(ui.visuals().text_color().gamma_multiply(0.7)),
+                            .color(self.palette.text_tertiary),
                     );
-                    let _ = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(page) = &self.page {
-                            let _ = ui.label(
-                                egui::RichText::new(format!(
-                                    "{} nodes • {} styled",
-                                    page.doc.dom.len(),
-                                    page.doc.styles.len()
-                                ))
-                                .size(12.0)
-                                .color(ui.visuals().text_color().gamma_multiply(0.7)),
-                            );
-                        }
-                    });
+                    let _ =
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if let Some(page) = &self.page {
+                                let _ = ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} nodes \u{2022} {} styled",
+                                        page.doc.dom.len(),
+                                        page.doc.styles.len()
+                                    ))
+                                    .size(12.0)
+                                    .color(self.palette.text_tertiary),
+                                );
+                            }
+                        });
                 });
             });
 
+        // Paint top separator line for the status bar
+        {
+            let r = status_response.response.rect;
+            let _ = ctx.layer_painter(egui::LayerId::background()).hline(
+                r.x_range(),
+                r.top(),
+                egui::Stroke::new(1.0, self.palette.border_subtle),
+            );
+        }
+
         // Right panel: Debug panel (if open)
         if self.debug_panel_open {
-            let _ = egui::SidePanel::right("debug_panel")
+            let debug_response = egui::SidePanel::right("debug_panel")
                 .min_width(350.0)
                 .default_width(400.0)
-                .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::same(12.0)))
+                .frame(
+                    egui::Frame::none()
+                        .fill(self.palette.bg_surface)
+                        .inner_margin(egui::Margin::same(12.0)),
+                )
                 .show(ctx, |ui| {
-                    let _ = ui.heading("Debug Panel");
+                    let _ = ui.label(
+                        egui::RichText::new("Debug Panel")
+                            .size(16.0)
+                            .color(self.palette.text_primary)
+                            .strong(),
+                    );
                     ui.add_space(8.0);
 
                     // Tab bar
@@ -741,18 +793,29 @@ impl eframe::App for BrowserApp {
                                 DebugTab::Source => self.render_debug_source(ui, page),
                             }
                         } else {
-                            let _ = ui.colored_label(
-                                ui.visuals().text_color().gamma_multiply(0.5),
-                                "No page loaded",
-                            );
+                            let _ = ui.colored_label(self.palette.text_secondary, "No page loaded");
                         }
                     });
                 });
+
+            // Paint left separator line for the debug panel
+            {
+                let r = debug_response.response.rect;
+                let _ = ctx.layer_painter(egui::LayerId::background()).vline(
+                    r.left(),
+                    r.y_range(),
+                    egui::Stroke::new(1.0, self.palette.border_subtle),
+                );
+            }
         }
 
         // Central panel: Page content or landing page
         let _ = egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill).inner_margin(egui::Margin::same(0.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(self.palette.bg_base)
+                    .inner_margin(egui::Margin::same(0.0)),
+            )
             .show(ctx, |ui| {
                 if self.page.is_some() {
                     // Get actual viewport size from egui
@@ -803,22 +866,19 @@ impl eframe::App for BrowserApp {
                     //
                     // We use a neutral background for the canvas, then paint the body's
                     // background at its computed layout position.
-                    let canvas_color = if self.theme == Theme::Dark {
-                        egui::Color32::from_rgb(28, 28, 30)
-                    } else {
-                        egui::Color32::WHITE
-                    };
                     let _ = egui::Frame::none()
-                        .fill(canvas_color)
+                        .fill(self.palette.bg_base)
                         .inner_margin(egui::Margin::ZERO)
                         .show(ui, |ui| {
                             // Use auto_shrink(false) to prevent ScrollArea from adding scrollbar
-                            // space that would make the content area narrower than the layout viewport.
-                            let _ = egui::ScrollArea::vertical()
-                                .auto_shrink(false)
-                                .show(ui, |ui| {
-                                    self.render_page_content(ui, page);
-                                });
+                            // space that would make the content area narrower than the layout
+                            // viewport.
+                            let _ =
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        self.render_page_content(ui, page);
+                                    });
                         });
                 } else {
                     // Landing page
@@ -838,37 +898,45 @@ impl BrowserApp {
 
         let _ = ui.vertical_centered(|ui| {
             // Logo/Title
-            let _ = ui.heading(
-                egui::RichText::new("🐨")
-                    .size(80.0),
-            );
+            let _ = ui.heading(egui::RichText::new("\u{1f428}").size(80.0));
             ui.add_space(16.0);
 
             let _ = ui.heading(
                 egui::RichText::new("Koala Browser")
-                    .size(32.0)
+                    .size(36.0)
+                    .color(self.palette.text_primary)
                     .strong(),
             );
             ui.add_space(8.0);
 
             let _ = ui.label(
                 egui::RichText::new("A from-scratch browser built for learning")
-                    .size(16.0)
-                    .color(ui.visuals().text_color().gamma_multiply(0.6)),
+                    .size(15.0)
+                    .color(self.palette.text_secondary),
             );
 
             ui.add_space(32.0);
 
-            // Search/URL box
+            // Search/URL box with focus-aware border
+            let landing_url_id = ui.id().with("landing_url_input");
+            let landing_focused = ui.memory(|m| m.has_focus(landing_url_id));
+            let landing_border = if landing_focused {
+                self.palette.accent
+            } else {
+                self.palette.border_subtle
+            };
+
             let _ = egui::Frame::none()
-                .fill(ui.visuals().extreme_bg_color)
+                .fill(self.palette.bg_elevated)
                 .rounding(egui::Rounding::same(24.0))
+                .stroke(egui::Stroke::new(1.0, landing_border))
                 .inner_margin(egui::Margin::symmetric(20.0, 12.0))
                 .show(ui, |ui| {
                     ui.set_width(400.0);
                     let response = ui.add_sized(
                         [380.0, 24.0],
                         egui::TextEdit::singleline(&mut self.url_input)
+                            .id(landing_url_id)
                             .hint_text("Enter file path or URL...")
                             .frame(false)
                             .font(egui::FontId::proportional(16.0)),
@@ -888,7 +956,7 @@ impl BrowserApp {
             let _ = ui.label(
                 egui::RichText::new("Quick Links")
                     .size(14.0)
-                    .color(ui.visuals().text_color().gamma_multiply(0.5)),
+                    .color(self.palette.text_tertiary),
             );
             ui.add_space(16.0);
 
@@ -900,6 +968,8 @@ impl BrowserApp {
                     let button = egui::Button::new(
                         egui::RichText::new(format!("{} {}", link.icon, link.name)).size(14.0),
                     )
+                    .fill(self.palette.bg_elevated)
+                    .stroke(egui::Stroke::new(1.0, self.palette.border_subtle))
                     .min_size(egui::vec2(120.0, 40.0))
                     .rounding(egui::Rounding::same(8.0));
 
@@ -914,9 +984,11 @@ impl BrowserApp {
 
             // Keyboard shortcuts hint
             let _ = ui.label(
-                egui::RichText::new("Press F12 for debug panel • Click 🌙/☀️ to toggle theme")
-                    .size(12.0)
-                    .color(ui.visuals().text_color().gamma_multiply(0.4)),
+                egui::RichText::new(
+                    "Press F12 for debug panel \u{2022} Click \u{1f319}/\u{2600}\u{fe0f} to toggle theme",
+                )
+                .size(12.0)
+                .color(self.palette.text_tertiary),
             );
         });
     }
@@ -944,10 +1016,8 @@ impl BrowserApp {
         // as an invisible rect so scrolling works correctly.
         let total_height = layout_box.dimensions.margin_box().height;
         let total_width = layout_box.dimensions.margin_box().width;
-        let (_response, _painter) = ui.allocate_painter(
-            egui::vec2(total_width, total_height),
-            egui::Sense::hover(),
-        );
+        let (_response, _painter) =
+            ui.allocate_painter(egui::vec2(total_width, total_height), egui::Sense::hover());
 
         // The origin is where document (0,0) maps to on screen
         let origin = ui.clip_rect().min;
@@ -1018,10 +1088,16 @@ impl BrowserApp {
                         origin.y + dims.content.y - dims.padding.top - dims.border.top,
                     ),
                     egui::vec2(
-                        dims.content.width + dims.padding.left + dims.padding.right
-                            + dims.border.left + dims.border.right,
-                        dims.content.height + dims.padding.top + dims.padding.bottom
-                            + dims.border.top + dims.border.bottom,
+                        dims.content.width
+                            + dims.padding.left
+                            + dims.padding.right
+                            + dims.border.left
+                            + dims.border.right,
+                        dims.content.height
+                            + dims.padding.top
+                            + dims.padding.bottom
+                            + dims.border.top
+                            + dims.border.bottom,
                     ),
                 );
                 let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
@@ -1032,16 +1108,14 @@ impl BrowserApp {
         let font_size = style
             .and_then(|s| s.font_size.as_ref())
             .map(|fs| fs.to_px())
-            .unwrap_or_else(|| {
-                match tag.as_deref() {
-                    Some("h1") => 32.0,
-                    Some("h2") => 24.0,
-                    Some("h3") => 18.72,
-                    Some("h4") => 16.0,
-                    Some("h5") => 13.28,
-                    Some("h6") => 10.72,
-                    _ => 16.0,
-                }
+            .unwrap_or_else(|| match tag.as_deref() {
+                Some("h1") => 32.0,
+                Some("h2") => 24.0,
+                Some("h3") => 18.72,
+                Some("h4") => 16.0,
+                Some("h5") => 13.28,
+                Some("h6") => 10.72,
+                _ => 16.0,
             });
 
         let text_color = style
@@ -1065,16 +1139,11 @@ impl BrowserApp {
                             text_run.color.g,
                             text_run.color.b,
                         );
-                        let text_pos = egui::pos2(
-                            origin.x + fragment.bounds.x,
-                            origin.y + fragment.bounds.y,
-                        );
+                        let text_pos =
+                            egui::pos2(origin.x + fragment.bounds.x, origin.y + fragment.bounds.y);
                         let galley = ui.painter().layout(
                             text_run.text.clone(),
-                            egui::FontId::new(
-                                text_run.font_size,
-                                egui::FontFamily::Proportional,
-                            ),
+                            egui::FontId::new(text_run.font_size, egui::FontFamily::Proportional),
                             frag_color,
                             fragment.bounds.width.max(content_rect.width()),
                         );
@@ -1203,9 +1272,26 @@ impl BrowserApp {
 
                 let is_block = matches!(
                     tag.as_str(),
-                    "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "li"
-                        | "article" | "section" | "header" | "footer" | "main" | "nav"
-                        | "aside" | "blockquote" | "pre"
+                    "div"
+                        | "p"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "h5"
+                        | "h6"
+                        | "ul"
+                        | "ol"
+                        | "li"
+                        | "article"
+                        | "section"
+                        | "header"
+                        | "footer"
+                        | "main"
+                        | "nav"
+                        | "aside"
+                        | "blockquote"
+                        | "pre"
                 );
 
                 if is_block {
@@ -1221,7 +1307,10 @@ impl BrowserApp {
                                 if !trimmed.is_empty() {
                                     let job = egui::text::LayoutJob::simple_singleline(
                                         trimmed.to_string(),
-                                        egui::FontId::new(font_size as f32, egui::FontFamily::Proportional),
+                                        egui::FontId::new(
+                                            font_size as f32,
+                                            egui::FontFamily::Proportional,
+                                        ),
                                         text_color,
                                     );
                                     let _ = ui.label(job);
@@ -1296,7 +1385,7 @@ impl BrowserApp {
                 if has_style {
                     let _ = ui.horizontal(|ui| {
                         let _ = ui.monospace(&label);
-                        let _ = ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "●");
+                        let _ = ui.colored_label(self.palette.success, "\u{25cf}");
                     });
                 } else {
                     let _ = ui.monospace(label);
@@ -1310,7 +1399,7 @@ impl BrowserApp {
                 };
                 if !preview.is_empty() {
                     let _ = ui.colored_label(
-                        ui.visuals().text_color().gamma_multiply(0.6),
+                        self.palette.text_secondary,
                         format!("{}\"{}\"", indent, preview),
                     );
                 }
@@ -1322,7 +1411,7 @@ impl BrowserApp {
                     text.clone()
                 };
                 let _ = ui.colored_label(
-                    ui.visuals().text_color().gamma_multiply(0.4),
+                    self.palette.text_tertiary,
                     format!("{}<!-- {} -->", indent, preview),
                 );
             }
@@ -1348,10 +1437,7 @@ impl BrowserApp {
 
     fn render_debug_css(&self, ui: &mut egui::Ui, page: &PageState) {
         if page.doc.css_text.is_empty() {
-            let _ = ui.colored_label(
-                ui.visuals().text_color().gamma_multiply(0.5),
-                "No CSS found in document",
-            );
+            let _ = ui.colored_label(self.palette.text_secondary, "No CSS found in document");
             return;
         }
 
@@ -1364,7 +1450,7 @@ impl BrowserApp {
 
         let _ = egui::Frame::none()
             .fill(ui.visuals().extreme_bg_color)
-            .rounding(egui::Rounding::same(4.0))
+            .rounding(egui::Rounding::same(6.0))
             .inner_margin(egui::Margin::same(8.0))
             .show(ui, |ui| {
                 let _ = ui.add(
@@ -1377,9 +1463,12 @@ impl BrowserApp {
 
     fn render_debug_styles(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
-            egui::RichText::new(format!("Computed Styles ({} elements)", page.doc.styles.len()))
-                .strong()
-                .size(13.0),
+            egui::RichText::new(format!(
+                "Computed Styles ({} elements)",
+                page.doc.styles.len()
+            ))
+            .strong()
+            .size(13.0),
         );
         ui.add_space(8.0);
 
@@ -1392,7 +1481,8 @@ impl BrowserApp {
                                 let _ = ui.monospace(format!("color: {}", color.to_hex_string()));
                             }
                             if let Some(ref bg) = style.background_color {
-                                let _ = ui.monospace(format!("background-color: {}", bg.to_hex_string()));
+                                let _ = ui
+                                    .monospace(format!("background-color: {}", bg.to_hex_string()));
                             }
                             if let Some(ref fs) = style.font_size {
                                 let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
@@ -1400,7 +1490,8 @@ impl BrowserApp {
                             if let Some(ref m) = style.margin_top {
                                 match m {
                                     AutoLength::Length(len) => {
-                                        let _ = ui.monospace(format!("margin-top: {}px", len.to_px()));
+                                        let _ =
+                                            ui.monospace(format!("margin-top: {}px", len.to_px()));
                                     }
                                     AutoLength::Auto => {
                                         let _ = ui.monospace("margin-top: auto");
@@ -1418,15 +1509,18 @@ impl BrowserApp {
 
     fn render_debug_source(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
-            egui::RichText::new(format!("HTML Source ({} bytes)", page.doc.html_source.len()))
-                .strong()
-                .size(13.0),
+            egui::RichText::new(format!(
+                "HTML Source ({} bytes)",
+                page.doc.html_source.len()
+            ))
+            .strong()
+            .size(13.0),
         );
         ui.add_space(8.0);
 
         let _ = egui::Frame::none()
             .fill(ui.visuals().extreme_bg_color)
-            .rounding(egui::Rounding::same(4.0))
+            .rounding(egui::Rounding::same(6.0))
             .inner_margin(egui::Margin::same(8.0))
             .show(ui, |ui| {
                 let _ = ui.add(
