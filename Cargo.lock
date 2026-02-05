@@ -2521,7 +2521,6 @@ dependencies = [
  "koala-dom",
  "koala-html",
  "koala-js",
- "reqwest",
 ]
 
 [[package]]
@@ -2540,6 +2539,9 @@ dependencies = [
 [[package]]
 name = "koala-common"
 version = "0.1.0"
+dependencies = [
+ "reqwest",
+]
 
 [[package]]
 name = "koala-css"
@@ -2548,7 +2550,6 @@ dependencies = [
  "koala-common",
  "koala-dom",
  "koala-html",
- "reqwest",
  "serde",
 ]
 

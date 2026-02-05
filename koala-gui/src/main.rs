@@ -1125,8 +1125,8 @@ impl BrowserApp {
                         let mut textures = self.image_textures.borrow_mut();
                         let texture = textures.entry(src.clone()).or_insert_with(|| {
                             let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                [loaded_img.width as usize, loaded_img.height as usize],
-                                &loaded_img.rgba_data,
+                                [loaded_img.width() as usize, loaded_img.height() as usize],
+                                loaded_img.rgba_data(),
                             );
                             ui.ctx().load_texture(
                                 src.clone(),

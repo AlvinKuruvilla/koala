@@ -24,6 +24,9 @@ pub use koala_dom as dom;
 pub use koala_html as html;
 pub use koala_js as js;
 
+// Re-export LoadedImage from koala-common for backwards compatibility.
+pub use koala_common::image::LoadedImage;
+
 use koala_css::{
     ComputedStyle, LayoutBox, Stylesheet, compute_styles, extract_all_stylesheets,
     extract_style_content,
@@ -33,22 +36,6 @@ use koala_html::{HTMLParser, HTMLTokenizer, Token};
 use koala_js::JsRuntime;
 use std::collections::HashMap;
 use std::fs;
-use std::time::Duration;
-
-/// Decoded image data for a loaded image resource.
-///
-/// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
-///
-/// Contains the decoded RGBA pixel data and intrinsic dimensions.
-#[derive(Clone)]
-pub struct LoadedImage {
-    /// Intrinsic width of the image in pixels.
-    pub width: u32,
-    /// Intrinsic height of the image in pixels.
-    pub height: u32,
-    /// Raw RGBA pixel data (width * height * 4 bytes).
-    pub rgba_data: Vec<u8>,
-}
 
 /// A fully loaded and parsed document.
 ///
@@ -133,7 +120,9 @@ impl std::error::Error for LoadError {}
 pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     // Fetch or read the HTML source
     let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
-        (fetch_url(path)?, Some(path))
+        let text = koala_common::net::fetch_text(path)
+            .map_err(|e| LoadError::NetworkError(e))?;
+        (text, Some(path))
     } else {
         let content = fs::read_to_string(path)
             .map_err(|e| LoadError::FileError(format!("Failed to read '{}': {}", path, e)))?;
@@ -247,15 +236,15 @@ fn load_images(
 
             // If we already loaded this src, just record its dims for this node.
             if let Some(existing) = images.get(src) {
-                let _ = image_dims.insert(node_id, (existing.width as f32, existing.height as f32));
+                let _ = image_dims.insert(node_id, existing.dimensions_f32());
                 continue;
             }
 
             // Resolve URL and fetch bytes.
-            let resolved = koala_css::resolve_url(src, base_url);
+            let resolved = koala_common::url::resolve_url(src, base_url);
 
             let bytes = if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                match fetch_image_bytes(&resolved) {
+                match koala_common::net::fetch_bytes(&resolved) {
                     Ok(b) => b,
                     Err(e) => {
                         eprintln!("[Koala] Warning: failed to fetch image '{}': {}", src, e);
@@ -277,11 +266,7 @@ fn load_images(
                 Ok(dynamic_img) => {
                     let rgba = dynamic_img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    let loaded = LoadedImage {
-                        width: w,
-                        height: h,
-                        rgba_data: rgba.into_raw(),
-                    };
+                    let loaded = LoadedImage::new(w, h, rgba.into_raw());
                     let _ = image_dims.insert(node_id, (w as f32, h as f32));
                     let _ = images.insert(src.to_string(), loaded);
                 }
@@ -293,29 +278,6 @@ fn load_images(
     }
 
     (images, image_dims)
-}
-
-/// Fetch raw bytes from an HTTP(S) URL for image loading.
-fn fetch_image_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-    let response = client
-        .get(url)
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .send()
-        .map_err(|e| format!("Request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()));
-    }
-
-    response
-        .bytes()
-        .map(|b| b.to_vec())
-        .map_err(|e| format!("Failed to read response body: {e}"))
 }
 
 /// Extract inline script content from the DOM.
@@ -357,33 +319,6 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
     }
 
     scripts
-}
-
-/// Fetch HTML content from a URL using reqwest.
-fn fetch_url(url: &str) -> Result<String, LoadError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| LoadError::NetworkError(format!("Failed to create HTTP client: {e}")))?;
-
-    // TODO: Implement proper Fetch Standard (https://fetch.spec.whatwg.org/)
-    // For now, just set a User-Agent to avoid basic bot detection.
-    let response = client
-        .get(url)
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .send()
-        .map_err(|e| LoadError::NetworkError(format!("Request failed: {e}")))?;
-
-    if !response.status().is_success() {
-        return Err(LoadError::NetworkError(format!(
-            "HTTP error: {}",
-            response.status()
-        )));
-    }
-
-    response
-        .text()
-        .map_err(|e| LoadError::NetworkError(format!("Failed to read response body: {e}")))
 }
 
 /// Try to load a system font for text measurement and rendering.

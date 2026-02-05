@@ -22,7 +22,7 @@ use koala_css::{ColorValue, DisplayCommand, DisplayList, FontStyle};
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::LoadedImage;
+use koala_common::image::LoadedImage;
 
 /// Common system font paths to search for a default (regular) font.
 const FONT_SEARCH_PATHS: &[&str] = &[
@@ -234,8 +234,8 @@ impl Renderer {
         let dest_y = y as i32;
         let dest_w = width as u32;
         let dest_h = height as u32;
-        let src_w = img.width;
-        let src_h = img.height;
+        let src_w = img.width();
+        let src_h = img.height();
 
         if src_w == 0 || src_h == 0 || dest_w == 0 || dest_h == 0 {
             return;
@@ -255,10 +255,10 @@ impl Renderer {
                 let sy = ((dy as u64 * src_h as u64) / dest_h as u64).min(src_h as u64 - 1) as u32;
                 let src_idx = ((sy * src_w + sx) * 4) as usize;
 
-                let sr = img.rgba_data[src_idx];
-                let sg = img.rgba_data[src_idx + 1];
-                let sb = img.rgba_data[src_idx + 2];
-                let sa = img.rgba_data[src_idx + 3];
+                let sr = img.rgba_data()[src_idx];
+                let sg = img.rgba_data()[src_idx + 1];
+                let sb = img.rgba_data()[src_idx + 2];
+                let sa = img.rgba_data()[src_idx + 3];
 
                 if sa == 0 {
                     continue;

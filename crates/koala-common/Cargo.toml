@@ -6,6 +6,7 @@ license.workspace = true
 description = "Common utilities for the Koala browser"
 
 [dependencies]
+reqwest.workspace = true
 
 [lints]
 workspace = true

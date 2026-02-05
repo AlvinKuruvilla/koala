@@ -14,3 +14,4 @@
 - [ ] Browser history (back/forward navigation)
 - [ ] HTTP/HTTPS URL loading
 - [ ] Tab support
+- [ ] **Font infrastructure refactoring** — Move `FontMetrics` trait from `koala-css` to `koala-common`, then consolidate font loading (search paths, `FontProvider`, `FontdueFontMetrics`) into `koala-common::fonts`. This unblocks both headless and GUI renderers from depending on koala-browser for font infrastructure.
