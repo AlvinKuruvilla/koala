@@ -251,7 +251,17 @@ fn load_images(
                         continue;
                     }
                 }
-            } else {
+            }
+            else if resolved.starts_with("data:") {
+                match koala_common::net::fetch_bytes_from_data_url(&resolved) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("[Koala] Warning: failed to decode data URL '{}': {}", src, e);
+                        continue;
+                    }
+                }
+            } 
+            else {
                 match fs::read(&resolved) {
                     Ok(b) => b,
                     Err(e) => {
