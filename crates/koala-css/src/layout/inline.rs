@@ -158,6 +158,12 @@ pub struct TextRun {
     ///
     /// The inherited text color for this run.
     pub color: ColorValue,
+    /// [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+    ///
+    /// Numeric weight (400 = normal, 700 = bold).
+    pub font_weight: u16,
+    /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+    pub font_style: FontStyle,
 }
 
 /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
@@ -274,6 +280,35 @@ impl Default for TextAlign {
     }
 }
 
+/// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+///
+/// "The 'font-style' property allows italic or oblique faces to be selected."
+///
+/// "normal — Selects a face that is classified as a normal face."
+/// "italic — Selects a font that is labeled as an italic face."
+/// "oblique — Selects a font that is labeled as an oblique face."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FontStyle {
+    /// "Selects a face that is classified as a normal face."
+    #[default]
+    Normal,
+    /// "Selects a font that is labeled as an italic face."
+    Italic,
+    /// "Selects a font that is labeled as an oblique face."
+    Oblique,
+}
+
+impl FontStyle {
+    /// Parse a CSS font-style keyword string.
+    pub fn from_css(s: &str) -> Self {
+        match s {
+            "italic" => FontStyle::Italic,
+            "oblique" => FontStyle::Oblique,
+            _ => FontStyle::Normal,
+        }
+    }
+}
+
 /// Inline formatting context that manages line box construction.
 ///
 /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -328,6 +363,8 @@ impl InlineLayout {
         text: &str,
         font_size: f32,
         color: &ColorValue,
+        font_weight: u16,
+        font_style: FontStyle,
         font_metrics: &dyn FontMetrics,
     ) {
         // STEP 1: Measure the text width.
@@ -383,6 +420,8 @@ impl InlineLayout {
                         font_size,
                         line_height,
                         color,
+                        font_weight,
+                        font_style,
                         font_metrics,
                     );
                 }
@@ -394,7 +433,7 @@ impl InlineLayout {
                 // "A sequence of collapsible spaces at the beginning of a line is removed."
                 let rest_trimmed = rest.trim_start();
                 if !rest_trimmed.is_empty() {
-                    self.add_text(rest_trimmed, font_size, color, font_metrics);
+                    self.add_text(rest_trimmed, font_size, color, font_weight, font_style, font_metrics);
                 }
                 return;
             }
@@ -405,12 +444,12 @@ impl InlineLayout {
             // prevents infinite recursion: on a fresh line we always place
             // the text even if it overflows.
             self.finish_line();
-            self.add_text(text, font_size, color, font_metrics);
+            self.add_text(text, font_size, color, font_weight, font_style, font_metrics);
             return;
         }
 
         // STEP 4: Place fragment on the current line.
-        self.place_text_fragment(text, font_size, line_height, color, font_metrics);
+        self.place_text_fragment(text, font_size, line_height, color, font_weight, font_style, font_metrics);
     }
 
     /// Place a text fragment at the current position on the current line.
@@ -423,6 +462,8 @@ impl InlineLayout {
         font_size: f32,
         line_height: f32,
         color: &ColorValue,
+        font_weight: u16,
+        font_style: FontStyle,
         font_metrics: &dyn FontMetrics,
     ) {
         let text_width = font_metrics.text_width(text, font_size);
@@ -443,6 +484,8 @@ impl InlineLayout {
                 width: text_width,
                 font_size,
                 color: color.clone(),
+                font_weight,
+                font_style,
             }),
             vertical_align: VerticalAlign::Baseline,
         };

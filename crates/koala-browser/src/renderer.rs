@@ -18,10 +18,10 @@
 use anyhow::Result;
 use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
-use koala_css::{ColorValue, DisplayCommand, DisplayList};
+use koala_css::{ColorValue, DisplayCommand, DisplayList, FontStyle};
 use std::path::Path;
 
-/// Common system font paths to search for a default font.
+/// Common system font paths to search for a default (regular) font.
 const FONT_SEARCH_PATHS: &[&str] = &[
     // macOS
     "/System/Library/Fonts/Helvetica.ttc",
@@ -38,6 +38,48 @@ const FONT_SEARCH_PATHS: &[&str] = &[
     "C:\\Windows\\Fonts\\segoeui.ttf",
 ];
 
+/// System font paths for bold variants.
+const FONT_BOLD_SEARCH_PATHS: &[&str] = &[
+    // macOS
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    // Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    // Windows
+    "C:\\Windows\\Fonts\\arialbd.ttf",
+];
+
+/// System font paths for italic variants.
+const FONT_ITALIC_SEARCH_PATHS: &[&str] = &[
+    // macOS
+    "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+    "/Library/Fonts/Arial Italic.ttf",
+    // Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Oblique.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf",
+    // Windows
+    "C:\\Windows\\Fonts\\ariali.ttf",
+];
+
+/// System font paths for bold-italic variants.
+const FONT_BOLD_ITALIC_SEARCH_PATHS: &[&str] = &[
+    // macOS
+    "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+    "/Library/Fonts/Arial Bold Italic.ttf",
+    // Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf",
+    // Windows
+    "C:\\Windows\\Fonts\\arialbi.ttf",
+];
+
 /// Software renderer that executes a display list to a pixel buffer.
 ///
 /// The renderer is stateless with respect to CSS - it only knows how to
@@ -49,8 +91,14 @@ pub struct Renderer {
     width: u32,
     /// Height in pixels
     height: u32,
-    /// Font for text rendering (None if no font found)
+    /// Regular font for text rendering (None if no font found)
     font: Option<Font>,
+    /// Bold font variant (None falls back to regular)
+    font_bold: Option<Font>,
+    /// Italic font variant (None falls back to regular)
+    font_italic: Option<Font>,
+    /// Bold-italic font variant (None falls back to bold or italic or regular)
+    font_bold_italic: Option<Font>,
 }
 
 impl Renderer {
@@ -59,8 +107,12 @@ impl Renderer {
         // Create white background
         let buffer = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
 
-        // Try to load a system font
-        let font = Self::load_system_font();
+        // Try to load system fonts (regular + variants)
+        let font = Self::load_font_from_paths(FONT_SEARCH_PATHS, "regular");
+        let font_bold = Self::load_font_from_paths(FONT_BOLD_SEARCH_PATHS, "bold");
+        let font_italic = Self::load_font_from_paths(FONT_ITALIC_SEARCH_PATHS, "italic");
+        let font_bold_italic =
+            Self::load_font_from_paths(FONT_BOLD_ITALIC_SEARCH_PATHS, "bold-italic");
 
         if font.is_none() {
             eprintln!("Warning: No system font found. Text will not be rendered.");
@@ -75,20 +127,28 @@ impl Renderer {
             width,
             height,
             font,
+            font_bold,
+            font_italic,
+            font_bold_italic,
         }
     }
 
-    /// Try to load a font from common system paths.
-    pub fn load_system_font() -> Option<Font> {
-        for path in FONT_SEARCH_PATHS {
+    /// Try to load a font from a list of filesystem paths.
+    fn load_font_from_paths(paths: &[&str], label: &str) -> Option<Font> {
+        for path in paths {
             if let Ok(data) = std::fs::read(path) {
                 if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
-                    eprintln!("Loaded font: {path}");
+                    eprintln!("Loaded {label} font: {path}");
                     return Some(font);
                 }
             }
         }
         None
+    }
+
+    /// Try to load the regular system font (public API, kept for compatibility).
+    pub fn load_system_font() -> Option<Font> {
+        Self::load_font_from_paths(FONT_SEARCH_PATHS, "regular")
     }
 
     /// Execute a display list, drawing all commands to the pixel buffer.
@@ -119,8 +179,10 @@ impl Renderer {
                 text,
                 font_size,
                 color,
+                font_weight,
+                font_style,
             } => {
-                self.draw_text(text, *x, *y, *font_size, color);
+                self.draw_text(text, *x, *y, *font_size, color, *font_weight, *font_style);
             }
         }
     }
@@ -145,9 +207,33 @@ impl Renderer {
     }
 
     /// Draw text at the given position.
-    fn draw_text(&mut self, text: &str, x: f32, y: f32, font_size: f32, color: &ColorValue) {
-        // Skip if no font is available
-        let font = match &self.font {
+    fn draw_text(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        font_size: f32,
+        color: &ColorValue,
+        font_weight: u16,
+        font_style: FontStyle,
+    ) {
+        // Select the best available font for the given weight and style,
+        // falling back through: exact match → partial match → regular.
+        let is_bold = font_weight >= 700;
+        let is_italic = font_style != FontStyle::Normal;
+
+        let font = match (is_bold, is_italic) {
+            (true, true) => self
+                .font_bold_italic
+                .as_ref()
+                .or(self.font_bold.as_ref())
+                .or(self.font.as_ref()),
+            (true, false) => self.font_bold.as_ref().or(self.font.as_ref()),
+            (false, true) => self.font_italic.as_ref().or(self.font.as_ref()),
+            (false, false) => self.font.as_ref(),
+        };
+
+        let font = match font {
             Some(f) => f,
             None => return,
         };

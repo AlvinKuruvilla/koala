@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use koala_dom::NodeId;
 
-use crate::layout::inline::FragmentContent;
+use crate::layout::inline::{FontStyle, FragmentContent};
 use crate::style::ComputedStyle;
 use crate::{BoxType, ColorValue, LayoutBox};
 
@@ -122,6 +122,8 @@ impl<'a> Painter<'a> {
                             text: text_run.text.clone(),
                             font_size: text_run.font_size,
                             color: text_run.color.clone(),
+                            font_weight: text_run.font_weight,
+                            font_style: text_run.font_style,
                         });
                     }
                 }
@@ -140,12 +142,23 @@ impl<'a> Painter<'a> {
                 .map(|fs| fs.to_px() as f32)
                 .unwrap_or(16.0);
 
+            let font_weight = effective_style
+                .and_then(|s| s.font_weight)
+                .unwrap_or(400);
+
+            let font_style = effective_style
+                .and_then(|s| s.font_style.as_deref())
+                .map(FontStyle::from_css)
+                .unwrap_or_default();
+
             display_list.push(DisplayCommand::DrawText {
                 x: dims.content.x,
                 y: dims.content.y,
                 text: text.clone(),
                 font_size,
                 color: text_color,
+                font_weight,
+                font_style,
             });
         }
 

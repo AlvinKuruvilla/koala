@@ -1141,9 +1141,20 @@ impl BrowserApp {
                         );
                         let text_pos =
                             egui::pos2(origin.x + fragment.bounds.x, origin.y + fragment.bounds.y);
+
+                        // Select font family based on weight and style.
+                        let is_bold = text_run.font_weight >= 700;
+                        let is_italic = text_run.font_style != koala_css::FontStyle::Normal;
+                        let font_family = match (is_bold, is_italic) {
+                            (true, true) => egui::FontFamily::Name("inter-bold-italic".into()),
+                            (true, false) => egui::FontFamily::Name("inter-bold".into()),
+                            (false, true) => egui::FontFamily::Name("inter-italic".into()),
+                            (false, false) => egui::FontFamily::Proportional,
+                        };
+
                         let galley = ui.painter().layout(
                             text_run.text.clone(),
-                            egui::FontId::new(text_run.font_size, egui::FontFamily::Proportional),
+                            egui::FontId::new(text_run.font_size, font_family),
                             frag_color,
                             fragment.bounds.width.max(content_rect.width()),
                         );
@@ -1152,6 +1163,18 @@ impl BrowserApp {
                 }
             }
         } else if let Some(id) = node_id {
+            // Select font family from computed style for the fallback path.
+            let is_bold = style.and_then(|s| s.font_weight).unwrap_or(400) >= 700;
+            let is_italic = style
+                .and_then(|s| s.font_style.as_deref())
+                .is_some_and(|s| s == "italic" || s == "oblique");
+            let fallback_family = match (is_bold, is_italic) {
+                (true, true) => egui::FontFamily::Name("inter-bold-italic".into()),
+                (true, false) => egui::FontFamily::Name("inter-bold".into()),
+                (false, true) => egui::FontFamily::Name("inter-italic".into()),
+                (false, false) => egui::FontFamily::Proportional,
+            };
+
             let mut text_y = content_rect.min.y;
             for &child_id in page.doc.dom.children(id) {
                 if let Some(child_node) = page.doc.dom.get(child_id) {
@@ -1162,7 +1185,7 @@ impl BrowserApp {
                             let text_pos = egui::pos2(content_rect.min.x, text_y);
                             let galley = ui.painter().layout(
                                 trimmed.to_string(),
-                                egui::FontId::new(font_size as f32, egui::FontFamily::Proportional),
+                                egui::FontId::new(font_size as f32, fallback_family.clone()),
                                 text_color,
                                 content_rect.width(),
                             );

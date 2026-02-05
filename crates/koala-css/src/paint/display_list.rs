@@ -5,6 +5,7 @@
 //! The display list is the output of the painting phase. It contains all the
 //! drawing commands needed to render a page, in the correct z-order.
 
+use crate::layout::inline::FontStyle;
 use crate::ColorValue;
 
 /// A single drawing command.
@@ -45,6 +46,12 @@ pub enum DisplayCommand {
         font_size: f32,
         /// Text color.
         color: ColorValue,
+        /// [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+        ///
+        /// Numeric weight (400 = normal, 700 = bold).
+        font_weight: u16,
+        /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+        font_style: FontStyle,
     },
 }
 

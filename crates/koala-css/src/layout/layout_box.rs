@@ -10,7 +10,7 @@ use crate::style::{AutoLength, ColorValue, ComputedStyle, DisplayValue, OuterDis
 
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
-use super::inline::{FontMetrics, InlineLayout, LineBox, TextAlign};
+use super::inline::{FontMetrics, FontStyle, InlineLayout, LineBox, TextAlign};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
 /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
@@ -53,6 +53,8 @@ fn layout_inline_content(
     inline_layout: &mut InlineLayout,
     inherited_font_size: f32,
     inherited_color: &ColorValue,
+    inherited_font_weight: u16,
+    inherited_font_style: FontStyle,
     viewport: Rect,
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
@@ -74,6 +76,8 @@ fn layout_inline_content(
                     text,
                     inherited_font_size,
                     inherited_color,
+                    inherited_font_weight,
+                    inherited_font_style,
                     font_metrics,
                 );
             }
@@ -120,6 +124,8 @@ fn layout_inline_content(
                     inline_layout,
                     child.font_size,
                     &child.color,
+                    child.font_weight,
+                    child.font_style,
                     viewport,
                     font_metrics,
                     content_rect,
@@ -288,6 +294,20 @@ pub struct LayoutBox {
     /// establishes an inline formatting context.
     pub text_align: TextAlign,
 
+    /// [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+    ///
+    /// "This property specifies the weight of glyphs in the font."
+    ///
+    /// Numeric weight: 400 = normal, 700 = bold. Inherited from ComputedStyle.
+    pub font_weight: u16,
+
+    /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+    ///
+    /// "The 'font-style' property allows italic or oblique faces to be selected."
+    ///
+    /// Inherited from ComputedStyle.
+    pub font_style: FontStyle,
+
     /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
     ///
     /// Completed line boxes from inline layout. Populated when this box
@@ -426,6 +446,8 @@ impl LayoutBox {
                     font_size: 16.0,
                     color: ColorValue::BLACK,
                     text_align: TextAlign::default(),
+                    font_weight: 400,
+                    font_style: FontStyle::Normal,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -507,6 +529,21 @@ impl LayoutBox {
                     })
                     .unwrap_or_default();
 
+                // [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+                //
+                // "This property specifies the weight of glyphs in the font."
+                // 400 = normal, 700 = bold.
+                let font_weight = style.and_then(|s| s.font_weight).unwrap_or(400);
+
+                // [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+                //
+                // "The 'font-style' property allows italic or oblique faces to
+                // be selected."
+                let font_style = style
+                    .and_then(|s| s.font_style.as_deref())
+                    .map(FontStyle::from_css)
+                    .unwrap_or_default();
+
                 Some(LayoutBox {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
@@ -520,6 +557,8 @@ impl LayoutBox {
                     font_size,
                     color,
                     text_align,
+                    font_weight,
+                    font_style,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -562,6 +601,8 @@ impl LayoutBox {
                     font_size: 16.0,
                     color: ColorValue::BLACK,
                     text_align: TextAlign::default(),
+                    font_weight: 400,
+                    font_style: FontStyle::Normal,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -1492,6 +1533,8 @@ impl LayoutBox {
             font_size: 16.0,
             color: ColorValue::BLACK,
             text_align: TextAlign::default(),
+            font_weight: 400,
+            font_style: FontStyle::Normal,
             line_boxes: Vec::new(),
             collapsed_margin_top: None,
             collapsed_margin_bottom: None,
@@ -1543,6 +1586,8 @@ impl LayoutBox {
             &mut inline_layout,
             self.font_size,
             &self.color,
+            self.font_weight,
+            self.font_style,
             viewport,
             font_metrics,
             content_rect,

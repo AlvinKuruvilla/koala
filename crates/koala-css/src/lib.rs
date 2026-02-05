@@ -64,7 +64,7 @@ pub mod ua_stylesheet;
 // Re-exports for convenience
 pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
-pub use layout::{ApproximateFontMetrics, BoxDimensions, BoxType, EdgeSizes, FontMetrics, LayoutBox, Rect};
+pub use layout::{ApproximateFontMetrics, BoxDimensions, BoxType, EdgeSizes, FontMetrics, FontStyle, LayoutBox, Rect};
 pub use paint::{DisplayCommand, DisplayList, Painter};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{ParsedSelector, Specificity, parse_selector};

@@ -240,23 +240,70 @@ impl ColorPalette {
     }
 }
 
-/// Load the Inter font and register it as the default proportional family.
+/// Load the Inter font family (regular, bold, italic, bold-italic) and
+/// register font families for content rendering.
 ///
 /// Called once at startup from [`BrowserApp::new`].
+///
+/// Font families registered:
+/// - `Proportional` — Inter Regular (default for all UI and normal-weight text)
+/// - `Name("inter-bold")` — Inter Bold (used when `font-weight >= 700`)
+/// - `Name("inter-italic")` — Inter Italic (used when `font-style: italic/oblique`)
+/// - `Name("inter-bold-italic")` — Inter Bold Italic (bold + italic combined)
 pub fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
+    // Regular
     let _ = fonts.font_data.insert(
         "inter".to_owned(),
         egui::FontData::from_static(include_bytes!("../../res/fonts/Inter-Regular.ttf")),
     );
 
-    // Insert Inter at the front so it takes priority over the built-in font.
+    // Bold
+    let _ = fonts.font_data.insert(
+        "inter-bold".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../res/fonts/Inter-Bold.ttf")),
+    );
+
+    // Italic
+    let _ = fonts.font_data.insert(
+        "inter-italic".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../res/fonts/Inter-Italic.ttf")),
+    );
+
+    // Bold Italic
+    let _ = fonts.font_data.insert(
+        "inter-bold-italic".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../res/fonts/Inter-BoldItalic.ttf")),
+    );
+
+    // Insert Inter Regular at the front of Proportional so it takes priority.
     fonts
         .families
         .entry(FontFamily::Proportional)
         .or_default()
         .insert(0, "inter".to_owned());
+
+    // Register bold as a named family.
+    fonts
+        .families
+        .entry(FontFamily::Name("inter-bold".into()))
+        .or_default()
+        .push("inter-bold".to_owned());
+
+    // Register italic as a named family.
+    fonts
+        .families
+        .entry(FontFamily::Name("inter-italic".into()))
+        .or_default()
+        .push("inter-italic".to_owned());
+
+    // Register bold-italic as a named family.
+    fonts
+        .families
+        .entry(FontFamily::Name("inter-bold-italic".into()))
+        .or_default()
+        .push("inter-bold-italic".to_owned());
 
     ctx.set_fonts(fonts);
 }
