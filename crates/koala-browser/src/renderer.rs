@@ -19,7 +19,10 @@ use anyhow::Result;
 use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use koala_css::{ColorValue, DisplayCommand, DisplayList, FontStyle};
+use std::collections::HashMap;
 use std::path::Path;
+
+use crate::LoadedImage;
 
 /// Common system font paths to search for a default (regular) font.
 const FONT_SEARCH_PATHS: &[&str] = &[
@@ -83,7 +86,7 @@ const FONT_BOLD_ITALIC_SEARCH_PATHS: &[&str] = &[
 /// Software renderer that executes a display list to a pixel buffer.
 ///
 /// The renderer is stateless with respect to CSS - it only knows how to
-/// execute drawing commands (fill rectangles, draw text).
+/// execute drawing commands (fill rectangles, draw text, draw images).
 pub struct Renderer {
     /// RGBA pixel buffer
     buffer: RgbaImage,
@@ -99,11 +102,13 @@ pub struct Renderer {
     font_italic: Option<Font>,
     /// Bold-italic font variant (None falls back to bold or italic or regular)
     font_bold_italic: Option<Font>,
+    /// Loaded images keyed by src attribute. Used for DrawImage commands.
+    images: HashMap<String, LoadedImage>,
 }
 
 impl Renderer {
-    /// Create a new renderer with the given dimensions.
-    pub fn new(width: u32, height: u32) -> Self {
+    /// Create a new renderer with the given dimensions and optional image data.
+    pub fn new(width: u32, height: u32, images: HashMap<String, LoadedImage>) -> Self {
         // Create white background
         let buffer = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
 
@@ -130,6 +135,7 @@ impl Renderer {
             font_bold,
             font_italic,
             font_bold_italic,
+            images,
         }
     }
 
@@ -173,6 +179,15 @@ impl Renderer {
             } => {
                 self.fill_rect(*x, *y, *width, *height, color);
             }
+            DisplayCommand::DrawImage {
+                x,
+                y,
+                width,
+                height,
+                src,
+            } => {
+                self.draw_image(src, *x, *y, *width, *height);
+            }
             DisplayCommand::DrawText {
                 x,
                 y,
@@ -201,6 +216,61 @@ impl Renderer {
                 let py = y + dy as i32;
                 if px >= 0 && py >= 0 && (px as u32) < self.width && (py as u32) < self.height {
                     self.buffer.put_pixel(px as u32, py as u32, rgba);
+                }
+            }
+        }
+    }
+
+    /// Draw an image scaled to the destination rectangle.
+    ///
+    /// Uses nearest-neighbor sampling to scale the source RGBA data to the
+    /// destination size, then alpha-blends onto the buffer.
+    fn draw_image(&mut self, src: &str, x: f32, y: f32, width: f32, height: f32) {
+        let Some(img) = self.images.get(src) else {
+            return;
+        };
+
+        let dest_x = x as i32;
+        let dest_y = y as i32;
+        let dest_w = width as u32;
+        let dest_h = height as u32;
+        let src_w = img.width;
+        let src_h = img.height;
+
+        if src_w == 0 || src_h == 0 || dest_w == 0 || dest_h == 0 {
+            return;
+        }
+
+        for dy in 0..dest_h {
+            for dx in 0..dest_w {
+                let px = dest_x + dx as i32;
+                let py = dest_y + dy as i32;
+
+                if px < 0 || py < 0 || (px as u32) >= self.width || (py as u32) >= self.height {
+                    continue;
+                }
+
+                // Nearest-neighbor sampling
+                let sx = ((dx as u64 * src_w as u64) / dest_w as u64).min(src_w as u64 - 1) as u32;
+                let sy = ((dy as u64 * src_h as u64) / dest_h as u64).min(src_h as u64 - 1) as u32;
+                let src_idx = ((sy * src_w + sx) * 4) as usize;
+
+                let sr = img.rgba_data[src_idx];
+                let sg = img.rgba_data[src_idx + 1];
+                let sb = img.rgba_data[src_idx + 2];
+                let sa = img.rgba_data[src_idx + 3];
+
+                if sa == 0 {
+                    continue;
+                }
+
+                let fg = Rgba([sr, sg, sb, sa]);
+                if sa == 255 {
+                    self.buffer.put_pixel(px as u32, py as u32, fg);
+                } else {
+                    let bg = *self.buffer.get_pixel(px as u32, py as u32);
+                    let blended = alpha_blend(fg, bg, sa);
+                    self.buffer.put_pixel(px as u32, py as u32, blended);
                 }
             }
         }

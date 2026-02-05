@@ -35,6 +35,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::Duration;
 
+/// Decoded image data for a loaded image resource.
+///
+/// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
+///
+/// Contains the decoded RGBA pixel data and intrinsic dimensions.
+#[derive(Clone)]
+pub struct LoadedImage {
+    /// Intrinsic width of the image in pixels.
+    pub width: u32,
+    /// Intrinsic height of the image in pixels.
+    pub height: u32,
+    /// Raw RGBA pixel data (width * height * 4 bytes).
+    pub rgba_data: Vec<u8>,
+}
+
 /// A fully loaded and parsed document.
 ///
 /// Contains all the data needed to render a page: DOM, styles, layout tree,
@@ -69,6 +84,13 @@ pub struct LoadedDocument {
 
     /// JavaScript runtime for this document
     pub js_runtime: JsRuntime,
+
+    /// Loaded images keyed by their `src` attribute value.
+    ///
+    /// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
+    ///
+    /// Used by the renderer to draw `DrawImage` commands.
+    pub images: HashMap<String, LoadedImage>,
 }
 
 /// Error type for document loading.
@@ -161,8 +183,11 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
     let ua = koala_css::ua_stylesheet::ua_stylesheet();
     let styles = compute_styles(&dom, ua, &stylesheet);
 
+    // Load images referenced by <img> elements
+    let (images, image_dims) = load_images(&dom, base_url);
+
     // Build layout tree
-    let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root());
+    let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims);
 
     // Execute JavaScript
     // [§ 4.12.1.1 Processing model](https://html.spec.whatwg.org/multipage/scripting.html)
@@ -185,7 +210,112 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
         layout_tree,
         parse_issues,
         js_runtime,
+        images,
     }
+}
+
+/// Load images referenced by `<img>` elements in the DOM.
+///
+/// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
+///
+/// Walks the DOM for `<img>` elements with a `src` attribute, fetches the
+/// image data (network or filesystem), and decodes it to RGBA pixels.
+///
+/// Returns:
+/// - A map of src → LoadedImage for the renderer
+/// - A map of NodeId → (width, height) for layout intrinsic dimensions
+fn load_images(
+    dom: &DomTree,
+    base_url: Option<&str>,
+) -> (HashMap<String, LoadedImage>, HashMap<NodeId, (f32, f32)>) {
+    let mut images: HashMap<String, LoadedImage> = HashMap::new();
+    let mut image_dims: HashMap<NodeId, (f32, f32)> = HashMap::new();
+
+    for node_id in dom.iter_all() {
+        if let Some(element) = dom.as_element(node_id) {
+            if !element.tag_name.eq_ignore_ascii_case("img") {
+                continue;
+            }
+
+            let Some(src) = element.attrs.get("src") else {
+                continue;
+            };
+            let src = src.trim();
+            if src.is_empty() {
+                continue;
+            }
+
+            // If we already loaded this src, just record its dims for this node.
+            if let Some(existing) = images.get(src) {
+                let _ = image_dims.insert(node_id, (existing.width as f32, existing.height as f32));
+                continue;
+            }
+
+            // Resolve URL and fetch bytes.
+            let resolved = koala_css::resolve_url(src, base_url);
+
+            let bytes = if resolved.starts_with("http://") || resolved.starts_with("https://") {
+                match fetch_image_bytes(&resolved) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("[Koala] Warning: failed to fetch image '{}': {}", src, e);
+                        continue;
+                    }
+                }
+            } else {
+                match fs::read(&resolved) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("[Koala] Warning: failed to read image '{}': {}", resolved, e);
+                        continue;
+                    }
+                }
+            };
+
+            // Decode with the `image` crate.
+            match image::load_from_memory(&bytes) {
+                Ok(dynamic_img) => {
+                    let rgba = dynamic_img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let loaded = LoadedImage {
+                        width: w,
+                        height: h,
+                        rgba_data: rgba.into_raw(),
+                    };
+                    let _ = image_dims.insert(node_id, (w as f32, h as f32));
+                    let _ = images.insert(src.to_string(), loaded);
+                }
+                Err(e) => {
+                    eprintln!("[Koala] Warning: failed to decode image '{}': {}", src, e);
+                }
+            }
+        }
+    }
+
+    (images, image_dims)
+}
+
+/// Fetch raw bytes from an HTTP(S) URL for image loading.
+fn fetch_image_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+    let response = client
+        .get(url)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .send()
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+
+    response
+        .bytes()
+        .map(|b| b.to_vec())
+        .map_err(|e| format!("Failed to read response body: {e}"))
 }
 
 /// Extract inline script content from the DOM.

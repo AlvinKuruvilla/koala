@@ -13,7 +13,7 @@
 mod theme;
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -151,7 +151,7 @@ fn take_screenshot(
     let display_list = painter.paint(&layout);
 
     // Render: execute display list to pixels
-    let mut renderer = Renderer::new(width, height);
+    let mut renderer = Renderer::new(width, height, doc.images.clone());
     renderer.render(&display_list);
     renderer.save(output_path)?;
 
@@ -358,6 +358,14 @@ struct BrowserApp {
     ///
     /// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
     font_provider: FontProvider,
+
+    /// Cached egui texture handles for loaded images, keyed by `src`.
+    ///
+    /// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
+    ///
+    /// Textures are lazily created from `LoadedImage` RGBA data and cached
+    /// for the lifetime of the current page. Cleared on navigation.
+    image_textures: RefCell<HashMap<String, egui::TextureHandle>>,
 }
 
 /// Parsed page state - wraps LoadedDocument with GUI-specific fields
@@ -399,6 +407,7 @@ impl BrowserApp {
             css_warnings_logged: RefCell::new(HashSet::new()),
             pending_navigation: initial_url,
             font_provider: FontProvider::load(),
+            image_textures: RefCell::new(HashMap::new()),
         }
     }
 
@@ -411,9 +420,10 @@ impl BrowserApp {
 
     /// Navigate to a URL/path
     fn navigate(&mut self, path: &str) {
-        // Clear CSS warnings for the new page
+        // Clear CSS warnings and image textures for the new page
         clear_warnings();
         self.css_warnings_logged.borrow_mut().clear();
+        self.image_textures.borrow_mut().clear();
 
         println!("[Koala GUI] Navigating to: {}", path);
         self.status_message = format!("Loading {}...", path);
@@ -1101,6 +1111,42 @@ impl BrowserApp {
                     ),
                 );
                 let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
+            }
+        }
+
+        // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+        // "the replaced content of replaced inline-level elements"
+        //
+        // If this is a replaced element (e.g., <img>), paint the image.
+        if layout_box.is_replaced {
+            if let Some(ref src) = layout_box.replaced_src {
+                if let Some(page_ref) = &self.page {
+                    if let Some(loaded_img) = page_ref.doc.images.get(src) {
+                        let mut textures = self.image_textures.borrow_mut();
+                        let texture = textures.entry(src.clone()).or_insert_with(|| {
+                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                [loaded_img.width as usize, loaded_img.height as usize],
+                                &loaded_img.rgba_data,
+                            );
+                            ui.ctx().load_texture(
+                                src.clone(),
+                                color_image,
+                                egui::TextureOptions::LINEAR,
+                            )
+                        });
+                        let img_rect = content_rect;
+                        let uv = egui::Rect::from_min_max(
+                            egui::pos2(0.0, 0.0),
+                            egui::pos2(1.0, 1.0),
+                        );
+                        let _ = ui.painter().image(
+                            texture.id(),
+                            img_rect,
+                            uv,
+                            egui::Color32::WHITE,
+                        );
+                    }
+                }
             }
         }
 

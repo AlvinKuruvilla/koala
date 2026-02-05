@@ -48,6 +48,7 @@ fn test_default_display_none() {
 fn layout_html(html: &str) -> LayoutBox {
     use koala_css::cascade::compute_styles;
     use koala_css::Stylesheet;
+    use std::collections::HashMap;
     let mut tokenizer = koala_html::HTMLTokenizer::new(html.to_string());
     tokenizer.run();
     let parser = koala_html::HTMLParser::new(tokenizer.into_tokens());
@@ -58,7 +59,8 @@ fn layout_html(html: &str) -> LayoutBox {
     let empty = Stylesheet { rules: vec![] };
     let styles = compute_styles(&dom, ua, &empty);
 
-    let mut layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root())
+    let image_dims = HashMap::new();
+    let mut layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims)
         .expect("should produce a layout tree");
 
     let viewport = Rect {

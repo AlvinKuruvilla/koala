@@ -331,6 +331,38 @@ pub struct LayoutBox {
     /// layout context should use this instead of `dimensions.margin.bottom`
     /// for sibling collapsing at the grandparent level.
     pub collapsed_margin_bottom: Option<f32>,
+
+    // ===== Replaced element fields =====
+
+    /// [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+    ///
+    /// "A replaced element is an element whose content is outside the scope
+    /// of the CSS formatting model, such as an image, embedded document,
+    /// or applet."
+    ///
+    /// True if this box represents a replaced element (e.g., `<img>`).
+    pub is_replaced: bool,
+
+    /// The `src` attribute value for replaced elements.
+    ///
+    /// Used as a key to look up image data at paint/render time.
+    pub replaced_src: Option<String>,
+
+    /// Intrinsic width of the replaced content in pixels.
+    ///
+    /// [§ 10.3.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+    ///
+    /// "If 'width' has a computed value of 'auto', and the element has an
+    /// intrinsic width, then that intrinsic width is the used value of 'width'."
+    pub intrinsic_width: Option<f32>,
+
+    /// Intrinsic height of the replaced content in pixels.
+    ///
+    /// [§ 10.6.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-height)
+    ///
+    /// "If 'height' has a computed value of 'auto', and the element has an
+    /// intrinsic height, then that intrinsic height is the used value of 'height'."
+    pub intrinsic_height: Option<f32>,
 }
 
 impl LayoutBox {
@@ -407,10 +439,14 @@ impl LayoutBox {
     ///
     /// "The display property, determines the type of box or boxes that
     /// are generated for an element."
+    ///
+    /// `image_dimensions` maps NodeId to (width, height) for replaced
+    /// elements like `<img>` whose intrinsic size was resolved externally.
     pub fn build_layout_tree(
         tree: &DomTree,
         styles: &HashMap<NodeId, ComputedStyle>,
         node_id: NodeId,
+        image_dimensions: &HashMap<NodeId, (f32, f32)>,
     ) -> Option<LayoutBox> {
         let Some(node) = tree.get(node_id) else {
             return None;
@@ -428,7 +464,9 @@ impl LayoutBox {
             NodeType::Document => {
                 let mut children = Vec::new();
                 for &child_id in tree.children(node_id) {
-                    if let Some(child_box) = LayoutBox::build_layout_tree(tree, styles, child_id) {
+                    if let Some(child_box) =
+                        LayoutBox::build_layout_tree(tree, styles, child_id, image_dimensions)
+                    {
                         children.push(child_box);
                     }
                 }
@@ -451,6 +489,10 @@ impl LayoutBox {
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
+                    is_replaced: false,
+                    replaced_src: None,
+                    intrinsic_width: None,
+                    intrinsic_height: None,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -486,7 +528,9 @@ impl LayoutBox {
                 // Build children recursively
                 let mut children = Vec::new();
                 for &child_id in tree.children(node_id) {
-                    if let Some(child_box) = LayoutBox::build_layout_tree(tree, styles, child_id) {
+                    if let Some(child_box) =
+                        LayoutBox::build_layout_tree(tree, styles, child_id, image_dimensions)
+                    {
                         children.push(child_box);
                     }
                 }
@@ -544,6 +588,24 @@ impl LayoutBox {
                     .map(FontStyle::from_css)
                     .unwrap_or_default();
 
+                // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+                //
+                // Detect replaced elements (e.g., <img>) and record their
+                // intrinsic dimensions and src attribute for layout and paint.
+                let (is_replaced, replaced_src, intrinsic_width, intrinsic_height) =
+                    if tag == "img" {
+                        let src = data.attrs.get("src").cloned();
+                        let dims = image_dimensions.get(&node_id);
+                        (
+                            src.is_some(),
+                            src,
+                            dims.map(|(w, _)| *w),
+                            dims.map(|(_, h)| *h),
+                        )
+                    } else {
+                        (false, None, None, None)
+                    };
+
                 Some(LayoutBox {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
@@ -562,6 +624,10 @@ impl LayoutBox {
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
+                    is_replaced,
+                    replaced_src,
+                    intrinsic_width,
+                    intrinsic_height,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -606,6 +672,10 @@ impl LayoutBox {
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
+                    is_replaced: false,
+                    replaced_src: None,
+                    intrinsic_width: None,
+                    intrinsic_height: None,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -718,6 +788,18 @@ impl LayoutBox {
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
     ) {
+        // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+        //
+        // "A replaced element is an element whose content is outside the scope
+        // of the CSS formatting model."
+        //
+        // Replaced elements use their own sizing algorithm instead of the
+        // normal block/inline layout dispatch.
+        if self.is_replaced {
+            self.layout_replaced(containing_block, viewport);
+            return;
+        }
+
         match self.display.outer {
             OuterDisplayType::Block => self.layout_block(containing_block, viewport, font_metrics),
             OuterDisplayType::Inline => {
@@ -1538,6 +1620,10 @@ impl LayoutBox {
             line_boxes: Vec::new(),
             collapsed_margin_top: None,
             collapsed_margin_bottom: None,
+            is_replaced: false,
+            replaced_src: None,
+            intrinsic_width: None,
+            intrinsic_height: None,
         }
     }
 
@@ -1621,58 +1707,111 @@ impl LayoutBox {
     }
 
     /// [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+    /// [§ 10.6.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-height)
     ///
     /// "A replaced element is an element whose content is outside the scope of
     /// the CSS formatting model, such as an image, embedded document, or applet."
     ///
-    /// [§ 10.3.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
-    ///
-    /// "If 'width' has a computed value of 'auto', and the element has an
-    /// intrinsic width, then that intrinsic width is the used value of 'width'."
-    ///
-    /// [§ 10.6.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-height)
-    ///
-    /// "If 'height' has a computed value of 'auto', and the element has an
-    /// intrinsic height, then that intrinsic height is the used value of 'height'."
-    ///
-    /// "If 'height' and 'width' both have computed values of 'auto' and the
-    /// element has an intrinsic ratio but no intrinsic height or width, then
-    /// the used value of 'width' is undefined in CSS 2.1. However, it is
-    /// suggested that, if the containing block's width does not itself depend
-    /// on the replaced element's width, then the used value of 'width' is
-    /// calculated from the constraint equation used for block-level,
-    /// non-replaced elements in normal flow."
-    ///
-    /// TODO: Implement replaced element sizing:
-    ///
-    /// STEP 1: Get intrinsic dimensions
-    ///   // (intrinsic_width, intrinsic_height, intrinsic_ratio)
-    ///   // For <img>: from the image's natural dimensions
-    ///   // For <video>: from the video's natural dimensions
-    ///   // For <canvas>: 300x150 default
-    ///   // For <iframe>: 300x150 default
-    ///
-    /// STEP 2: Resolve width
-    ///   // If width is auto:
-    ///   //   If has intrinsic width → use intrinsic width
-    ///   //   Else if has intrinsic ratio and resolved height → width = height * ratio
-    ///   //   Else → use 300px (CSS2 default for replaced elements)
-    ///   // Else: use specified width
-    ///
-    /// STEP 3: Resolve height
-    ///   // If height is auto:
-    ///   //   If has intrinsic height → use intrinsic height
-    ///   //   Else if has intrinsic ratio and resolved width → height = width / ratio
-    ///   //   Else → use 150px (CSS2 default)
-    ///   // Else: use specified height
-    fn layout_replaced_element(
-        &mut self,
-        _intrinsic_width: Option<f32>,
-        _intrinsic_height: Option<f32>,
-        _intrinsic_ratio: Option<f32>,
-        _viewport: Rect,
-    ) {
-        todo!("Layout replaced element (img, video, etc.) per CSS 2.1 § 10.3.2 / § 10.6.2")
+    /// Layout a replaced element (e.g., `<img>`) using its intrinsic dimensions.
+    fn layout_replaced(&mut self, containing_block: Rect, viewport: Rect) {
+        // STEP 1: Resolve padding, border, and margin.
+        let resolved_padding = self.padding.resolve(viewport);
+        let resolved_border = self.border_width.resolve(viewport);
+        let resolved_margin = self.margin.resolve(viewport);
+
+        self.dimensions.padding.top = resolved_padding.top;
+        self.dimensions.padding.bottom = resolved_padding.bottom;
+        self.dimensions.padding.left = resolved_padding.left;
+        self.dimensions.padding.right = resolved_padding.right;
+
+        self.dimensions.border.top = resolved_border.top;
+        self.dimensions.border.bottom = resolved_border.bottom;
+        self.dimensions.border.left = resolved_border.left;
+        self.dimensions.border.right = resolved_border.right;
+
+        self.dimensions.margin.top = resolved_margin.top.to_px_or(0.0);
+        self.dimensions.margin.bottom = resolved_margin.bottom.to_px_or(0.0);
+        self.dimensions.margin.left = resolved_margin.left.to_px_or(0.0);
+        self.dimensions.margin.right = resolved_margin.right.to_px_or(0.0);
+
+        // STEP 2: Compute intrinsic ratio.
+        let intrinsic_ratio = match (self.intrinsic_width, self.intrinsic_height) {
+            (Some(w), Some(h)) if h > 0.0 => Some(w / h),
+            _ => None,
+        };
+
+        // STEP 3: Resolve width.
+        // [§ 10.3.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
+        //
+        // "If 'width' has a computed value of 'auto', and the element has an
+        // intrinsic width, then that intrinsic width is the used value of 'width'."
+        let width_is_auto = matches!(self.width, None | Some(AutoLength::Auto));
+        let height_is_auto = matches!(self.height, None | Some(AutoLength::Auto));
+
+        let used_width = if width_is_auto {
+            if let Some(iw) = self.intrinsic_width {
+                iw
+            } else if let (Some(ratio), false) = (intrinsic_ratio, height_is_auto) {
+                // "If 'width' has a computed value of 'auto', but none of the
+                // conditions above are met, then the used value of 'width'
+                // becomes... height * ratio"
+                let h = self.height.as_ref().map_or(150.0, |al| {
+                    UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(150.0)
+                });
+                h * ratio
+            } else {
+                // [§ 10.3.2] Fallback: 300px
+                300.0
+            }
+        } else {
+            self.width.as_ref().map_or(300.0, |al| {
+                UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(300.0)
+            })
+        };
+
+        // STEP 4: Resolve height.
+        // [§ 10.6.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-height)
+        //
+        // "If 'height' has a computed value of 'auto', and the element has an
+        // intrinsic height, then that intrinsic height is the used value of 'height'."
+        let used_height = if height_is_auto {
+            if let Some(ih) = self.intrinsic_height {
+                ih
+            } else if let Some(ratio) = intrinsic_ratio {
+                // "Otherwise, if 'height' has a computed value of 'auto', and
+                // the element has an intrinsic ratio then the used value of
+                // 'height' is: used width / ratio"
+                if ratio > 0.0 {
+                    used_width / ratio
+                } else {
+                    150.0
+                }
+            } else {
+                // [§ 10.6.2] Fallback: 150px
+                150.0
+            }
+        } else {
+            self.height.as_ref().map_or(150.0, |al| {
+                UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(150.0)
+            })
+        };
+
+        self.dimensions.content.width = used_width;
+        self.dimensions.content.height = used_height;
+
+        // STEP 5: Position the content box.
+        // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+        //
+        // Same positioning as calculate_block_position.
+        self.dimensions.content.x = containing_block.x
+            + self.dimensions.margin.left
+            + self.dimensions.border.left
+            + self.dimensions.padding.left;
+
+        self.dimensions.content.y = containing_block.y
+            + self.dimensions.margin.top
+            + self.dimensions.border.top
+            + self.dimensions.padding.top;
     }
 
     /// [§ 11.1 Overflow and clipping](https://www.w3.org/TR/CSS2/visufx.html#overflow)

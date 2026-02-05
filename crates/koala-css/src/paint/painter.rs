@@ -106,6 +106,23 @@ impl<'a> Painter<'a> {
             self.paint_borders(style, padding_x, padding_y, padding_width, padding_height, display_list);
         }
 
+        // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+        // "the replaced content of replaced inline-level elements"
+        //
+        // If this is a replaced element (e.g., <img>), emit a DrawImage
+        // command using the content rect dimensions and src attribute.
+        if layout_box.is_replaced {
+            if let Some(ref src) = layout_box.replaced_src {
+                display_list.push(DisplayCommand::DrawImage {
+                    x: dims.content.x,
+                    y: dims.content.y,
+                    width: dims.content.width,
+                    height: dims.content.height,
+                    src: src.clone(),
+                });
+            }
+        }
+
         // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the element's text"
         //

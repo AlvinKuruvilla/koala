@@ -125,7 +125,7 @@ fn take_screenshot(
     let display_list = painter.paint(&layout);
 
     // Render: execute display list to pixels
-    let mut renderer = Renderer::new(width, height);
+    let mut renderer = Renderer::new(width, height, doc.images.clone());
     renderer.render(&display_list);
 
     // Save to file

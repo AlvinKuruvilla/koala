@@ -31,6 +31,26 @@ pub enum DisplayCommand {
         color: ColorValue,
     },
 
+    /// Draw an image (replaced element content) at a position.
+    ///
+    /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+    /// Step 5: "the replaced content of replaced inline-level elements"
+    ///
+    /// The `src` string is used as a key to look up the loaded image data
+    /// in the renderer's image store.
+    DrawImage {
+        /// X coordinate of the image's top-left corner.
+        x: f32,
+        /// Y coordinate of the image's top-left corner.
+        y: f32,
+        /// Rendered width of the image in pixels.
+        width: f32,
+        /// Rendered height of the image in pixels.
+        height: f32,
+        /// The `src` attribute value, used as lookup key for image data.
+        src: String,
+    },
+
     /// Draw text at a position.
     ///
     /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
