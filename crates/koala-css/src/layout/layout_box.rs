@@ -13,6 +13,24 @@ use super::default_display_for_element;
 use super::inline::{FontMetrics, InlineLayout, LineBox, TextAlign};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
+/// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+///
+/// "When two or more margins collapse, the resulting margin width is the
+/// maximum of the collapsing margins' widths. In the case of negative
+/// margins, the maximum of the absolute values of the negative adjoining
+/// margins is deducted from the maximum of the positive adjoining margins.
+/// If there are no positive margins, the maximum of the absolute values
+/// of the adjoining margins is deducted from zero."
+fn collapse_two_margins(a: f32, b: f32) -> f32 {
+    if a >= 0.0 && b >= 0.0 {
+        a.max(b)
+    } else if a < 0.0 && b < 0.0 {
+        a.min(b)
+    } else {
+        a + b
+    }
+}
+
 /// Recursively walk inline-level children, feeding their content into an
 /// InlineLayout.
 ///
@@ -277,9 +295,94 @@ pub struct LayoutBox {
     /// inline-level). The painter reads from these to render text at the
     /// correct positions.
     pub line_boxes: Vec<LineBox>,
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// The effective top margin after collapsing with the first child's top
+    /// margin (parent-child collapsing). When set, the parent's layout
+    /// context should use this instead of `dimensions.margin.top` for
+    /// sibling collapsing at the grandparent level.
+    pub collapsed_margin_top: Option<f32>,
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// The effective bottom margin after collapsing with the last child's
+    /// bottom margin (parent-child collapsing). When set, the parent's
+    /// layout context should use this instead of `dimensions.margin.bottom`
+    /// for sibling collapsing at the grandparent level.
+    pub collapsed_margin_bottom: Option<f32>,
 }
 
 impl LayoutBox {
+    // ── Margin collapsing helpers ──────────────────────────────────────
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// Return the effective top margin for this box, accounting for
+    /// parent-child collapsing. If no collapsing occurred, falls back
+    /// to the resolved `dimensions.margin.top`.
+    pub fn effective_margin_top(&self) -> f32 {
+        self.collapsed_margin_top
+            .unwrap_or(self.dimensions.margin.top)
+    }
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// Return the effective bottom margin for this box, accounting for
+    /// parent-child collapsing. If no collapsing occurred, falls back
+    /// to the resolved `dimensions.margin.bottom`.
+    pub fn effective_margin_bottom(&self) -> f32 {
+        self.collapsed_margin_bottom
+            .unwrap_or(self.dimensions.margin.bottom)
+    }
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// "Two margins are adjoining if and only if:
+    ///   ...no... padding [or] border... separate them"
+    ///
+    /// Returns true if this box has a non-zero top border or top padding,
+    /// which prevents parent-child top margin collapsing.
+    fn has_top_border_or_padding(&self) -> bool {
+        self.dimensions.border.top > 0.0 || self.dimensions.padding.top > 0.0
+    }
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// Returns true if this box has a non-zero bottom border or bottom
+    /// padding, which prevents parent-child bottom margin collapsing.
+    fn has_bottom_border_or_padding(&self) -> bool {
+        self.dimensions.border.bottom > 0.0 || self.dimensions.padding.bottom > 0.0
+    }
+
+    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+    ///
+    /// "A box's own margins collapse if the 'min-height' property is
+    /// computed as zero, the 'height' property is computed as zero or
+    /// 'auto', it does not establish a new block formatting context, and
+    /// it contains no in-flow content (i.e., has no in-flow line boxes
+    /// and no in-flow block-level children)."
+    fn is_empty_collapsible_box(&self) -> bool {
+        // min-height is not yet implemented — effectively zero for all boxes.
+
+        // height must be zero or auto.
+        let height_zero_or_auto = match &self.height {
+            None => true,
+            Some(AutoLength::Auto) => true,
+            Some(AutoLength::Length(l)) => l.to_px() == 0.0,
+        };
+        if !height_zero_or_auto {
+            return false;
+        }
+
+        // Must have no in-flow content and no border/padding separating
+        // the top and bottom margins.
+        self.children.is_empty()
+            && self.line_boxes.is_empty()
+            && !self.has_top_border_or_padding()
+            && !self.has_bottom_border_or_padding()
+    }
+
     /// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
     ///
     /// "The display property, determines the type of box or boxes that
@@ -324,6 +427,8 @@ impl LayoutBox {
                     color: ColorValue::BLACK,
                     text_align: TextAlign::default(),
                     line_boxes: Vec::new(),
+                    collapsed_margin_top: None,
+                    collapsed_margin_bottom: None,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -416,6 +521,8 @@ impl LayoutBox {
                     color,
                     text_align,
                     line_boxes: Vec::new(),
+                    collapsed_margin_top: None,
+                    collapsed_margin_bottom: None,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -456,6 +563,8 @@ impl LayoutBox {
                     color: ColorValue::BLACK,
                     text_align: TextAlign::default(),
                     line_boxes: Vec::new(),
+                    collapsed_margin_top: None,
+                    collapsed_margin_bottom: None,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -937,15 +1046,118 @@ impl LayoutBox {
         // Start at the top of our content box (y = 0 relative to content area,
         // but we pass absolute coordinates to children).
         let mut current_y = content_box.y;
-        // STEP 3: Layout each child.
-        // For each child box:
-        //   a. Create a containing block rect with current_y as the y position
-        //   b. Call child.layout(containing_block, viewport) to layout the child
-        //   c. The child will calculate its own width, position, and height
+
+        // STEP 3: Layout each child with margin collapsing.
+        // [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
         //
-        // Note: We iterate over `self.children` but need mutable access to each child.
-        for child in &mut self.children {
-            // a. Create containing block for child
+        // "Vertical margins between adjacent block-level boxes in a block
+        // formatting context collapse."
+        //
+        // "When two or more margins collapse, the resulting margin width is the
+        // maximum of the collapsing margins' widths."
+        //
+        // Track the previous sibling's bottom margin so we can collapse it
+        // with the current sibling's top margin.
+        let mut prev_margin_bottom: Option<f32> = None;
+
+        // [§ 8.3.1 Parent-child margin collapsing](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+        //
+        // "The top margin of an in-flow block element collapses with its
+        // first in-flow block-level child's top margin value if the element
+        // has no top border, no top padding, and the child has no clearance."
+        //
+        // Pre-compute the condition; dimensions.border/padding are already
+        // resolved by calculate_block_position() before this method runs.
+        let no_top_separator =
+            self.dimensions.border.top == 0.0 && self.dimensions.padding.top == 0.0;
+        let parent_mt = self.dimensions.margin.top;
+        let child_count = self.children.len();
+
+        for i in 0..child_count {
+            let child = &mut self.children[i];
+
+            // STEP 3a: Parent-first-child top margin collapsing.
+            //
+            // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+            //
+            // When this is the first child and the parent has no top
+            // border/padding, the child's top margin collapses with the
+            // parent's top margin. The parent already occupies space for
+            // its own margin-top; we pull current_y up by the child's
+            // margin-top so that calculate_block_position() (which adds
+            // child_mt) places the child flush at the parent's content top.
+            // The parent's effective margin becomes the collapsed value.
+            if i == 0 && no_top_separator && child.display.outer == OuterDisplayType::Block {
+                let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
+                current_y -= child_mt;
+                self.collapsed_margin_top = Some(collapse_two_margins(parent_mt, child_mt));
+            }
+
+            // STEP 3b: Collapse margins between adjacent siblings.
+            //
+            // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+            //
+            // "Two margins are adjoining if and only if:
+            //   - both belong to in-flow block-level boxes that participate
+            //     in the same block formatting context
+            //   - no line boxes, no clearance, no padding and no border
+            //     separate them"
+            //
+            // Pre-resolve the child's margin-top from the unresolved value.
+            // This is safe because UnresolvedAutoEdgeSizes::resolve() is a
+            // pure function of the viewport dimensions — identical to what
+            // calculate_block_position() will compute internally.
+            if let Some(prev_mb) = prev_margin_bottom {
+                let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
+                let collapsed = collapse_two_margins(prev_mb, child_mt);
+                // current_y already includes the previous child's margin-bottom
+                // (from margin_box().height). The child will add its own
+                // margin-top during calculate_block_position(). Without
+                // collapsing the total gap would be prev_mb + child_mt.
+                // We want the gap to be `collapsed`, so subtract the overlap.
+                let overlap = prev_mb + child_mt - collapsed;
+                current_y -= overlap;
+            }
+
+            // STEP 3c: Handle empty box self-collapsing.
+            //
+            // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+            //
+            // "A box's own margins collapse if the 'min-height' property is
+            // computed as zero, the 'height' property is computed as zero or
+            // 'auto', it does not establish a new block formatting context,
+            // and it contains no in-flow content."
+            //
+            // An empty box takes up zero content height; its top and bottom
+            // margins collapse into a single margin that participates in
+            // sibling collapsing with its neighbours.
+            if child.is_empty_collapsible_box() {
+                let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
+                let child_mb = child.margin.resolve(viewport).bottom.to_px_or(0.0);
+                let self_collapsed = collapse_two_margins(child_mt, child_mb);
+
+                // Lay out the child so its dimensions are resolved (even
+                // though it has zero content).
+                let child_containing_block = Rect {
+                    x: content_box.x,
+                    y: current_y,
+                    width: content_box.width,
+                    height: f32::MAX,
+                };
+                child.layout(child_containing_block, viewport, font_metrics);
+
+                // The empty box's self-collapsed margin merges with the
+                // accumulated prev_margin_bottom for subsequent sibling
+                // collapsing.
+                prev_margin_bottom = Some(if let Some(prev_mb) = prev_margin_bottom {
+                    collapse_two_margins(prev_mb, self_collapsed)
+                } else {
+                    self_collapsed
+                });
+                continue;
+            }
+
+            // STEP 3d: Create containing block and lay out the child.
             let child_containing_block = Rect {
                 x: content_box.x,
                 y: current_y,
@@ -953,7 +1165,6 @@ impl LayoutBox {
                 height: f32::MAX, // Height is unconstrained for normal flow
             };
 
-            // b. Layout the child (viewport is passed through for resolving vw/vh)
             child.layout(child_containing_block, viewport, font_metrics);
 
             // STEP 4: Advance the Y position.
@@ -961,50 +1172,30 @@ impl LayoutBox {
             //
             // "The vertical distance between two sibling boxes is determined by the
             // 'margin' properties."
-            //
-            // After laying out each child, advance current_y by the child's margin
-            // box height:
-            //   current_y += child.dimensions.margin_box().height
-            //
-            // This positions the next sibling below the current one.
             current_y += child.dimensions.margin_box().height;
+            prev_margin_bottom = Some(child.effective_margin_bottom());
         }
 
-        // STEP 5: Handle margin collapsing (NOT YET IMPLEMENTED).
-        // [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+        // STEP 5: Parent-last-child bottom margin collapsing.
+        // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
         //
-        // "In CSS, the adjoining margins of two or more boxes can combine to
-        // form a single margin. Margins that combine this way are said to collapse."
-        //
-        // TODO: Implement margin collapsing:
-        //
-        // fn collapse_margins(&mut self) {
-        //     // STEP 1: Identify adjoining margins
-        //     // "Two margins are adjoining if and only if:"
-        //     //   - Both belong to in-flow block-level boxes in same BFC
-        //     //   - No line boxes, clearance, padding, or border separate them
-        //     //   - Both belong to vertically-adjacent box edges
-        //
-        //     // STEP 2: Calculate collapsed margin value
-        //     // "When two or more margins collapse, the resulting margin width is
-        //     //  the maximum of the collapsing margins' widths."
-        //     // let collapsed = margins.iter().map(|m| m.abs()).max();
-        //     //
-        //     // "If there are no positive margins, the maximum of the absolute
-        //     //  values of the adjoining margins is deducted from zero."
-        //     // For negative margins: collapsed = max_positive + min_negative
-        //
-        //     // STEP 3: Handle parent-child collapsing
-        //     // "If a box has margin-top that collapses with its first child's
-        //     //  margin-top..."
-        //
-        //     // STEP 4: Handle empty boxes
-        //     // "A box with zero min-height, zero or auto computed height, no
-        //     //  inline content, and no border or padding... collapses its
-        //     //  margin-top with its margin-bottom."
-        // }
-        //
-        // NOTE: For now, we simply stack boxes without collapsing.
+        // "The bottom margin of an in-flow block-level element collapses
+        // with the bottom margin of its last in-flow block-level child if
+        // the element has no bottom padding and no bottom border and the
+        // child's bottom margin does not collapse through with a top margin
+        // that has clearance."
+        let no_bottom_separator =
+            self.dimensions.border.bottom == 0.0 && self.dimensions.padding.bottom == 0.0;
+        if no_bottom_separator && self.height.is_none() {
+            if let Some(last) = self.children.last() {
+                if last.display.outer == OuterDisplayType::Block {
+                    let parent_mb = self.dimensions.margin.bottom;
+                    let last_child_mb = last.effective_margin_bottom();
+                    self.collapsed_margin_bottom =
+                        Some(collapse_two_margins(parent_mb, last_child_mb));
+                }
+            }
+        }
     }
 
     /// [§ 10.6.3 Block-level, non-replaced elements in normal flow when 'overflow' computes to 'visible'](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
@@ -1089,25 +1280,29 @@ impl LayoutBox {
         // "If 'height' is 'auto', the height depends on whether the element
         // has any block-level children..."
         //
-        // For a block formatting context:
-        // "the bottom edge of the bottom (possibly collapsed) margin of its
+        // "...the height is the distance between the top content edge and...
+        // the bottom edge of the bottom (possibly collapsed) margin of its
         // last in-flow child"
         //
-        // NOTE: Margin collapsing is not yet implemented so we follow the
-        // simplified approach below:
-        //
-        // Simplified (no margin collapsing): Sum the margin box heights of
-        // all children:
-        //   auto_height = self.children.iter()
-        //       .map(|c| c.dimensions.margin_box().height)
-        //       .sum()
-        //
-        // Then: self.dimensions.content.height = auto_height
-        self.dimensions.content.height = self
-            .children
-            .iter()
-            .map(|c| c.dimensions.margin_box().height)
-            .sum();
+        // Compute height from the last child's actual position rather than
+        // summing margin_box heights. This correctly accounts for collapsed
+        // margins between siblings (which reduce the effective spacing).
+        if let Some(last) = self.children.last() {
+            let last_mb = last.dimensions.margin_box();
+            let mut height = (last_mb.y + last_mb.height) - self.dimensions.content.y;
+
+            // [§ 8.3.1 Parent-child bottom margin collapsing](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+            //
+            // When the last child's bottom margin collapses with the
+            // parent's bottom margin, it is no longer part of the parent's
+            // content height — it becomes part of the parent's own margin.
+            // Exclude it from the auto height calculation.
+            if self.collapsed_margin_bottom.is_some() {
+                height -= last.effective_margin_bottom();
+            }
+
+            self.dimensions.content.height = height;
+        }
     }
 
     /// [§ 10.4 Minimum and maximum widths: 'min-width' and 'max-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
@@ -1197,59 +1392,6 @@ impl LayoutBox {
     ///   // }
     fn apply_min_max_height(&mut self, _viewport: Rect) {
         todo!("Apply min-height/max-height constraints per CSS 2.1 § 10.7")
-    }
-
-    /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
-    ///
-    /// "In CSS, the adjoining margins of two or more boxes (which might or
-    /// might not be siblings) can combine to form a single margin. Margins
-    /// that combine this way are said to collapse, and the resulting combined
-    /// margin is called a collapsed margin."
-    ///
-    /// "When two or more margins collapse, the resulting margin width is the
-    /// maximum of the collapsing margins' widths. In the case of negative
-    /// margins, the maximum of the absolute values of the negative adjoining
-    /// margins is deducted from the maximum of the positive adjoining margins.
-    /// If there are no positive margins, the maximum of the absolute values
-    /// of the adjoining margins is deducted from zero."
-    ///
-    /// TODO: Implement margin collapsing:
-    ///
-    /// STEP 1: Walk through children pairwise
-    ///   // For each pair of adjacent siblings (child_a, child_b):
-    ///   //   margin_bottom_a = child_a.dimensions.margin.bottom
-    ///   //   margin_top_b = child_b.dimensions.margin.top
-    ///
-    /// STEP 2: Determine if margins are adjoining
-    ///   // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
-    ///   // "Two margins are adjoining if and only if:
-    ///   //   - both belong to in-flow block-level boxes in the same BFC
-    ///   //   - no line boxes, no clearance, no padding and no border
-    ///   //     separate them"
-    ///   //
-    ///   // Check: child_a has no bottom border/padding, child_b has no top border/padding
-    ///   // Check: neither is a float or absolutely positioned
-    ///
-    /// STEP 3: Calculate collapsed margin
-    ///   // if both positive: collapsed = max(margin_a, margin_b)
-    ///   // if both negative: collapsed = min(margin_a, margin_b)
-    ///   // if mixed: collapsed = margin_a + margin_b (positive + negative)
-    ///
-    /// STEP 4: Adjust child positions
-    ///   // collapsed_gap = collapsed_margin - (margin_bottom_a + margin_top_b)
-    ///   // Shift child_b and all subsequent children up by the difference
-    ///
-    /// STEP 5: Handle parent-child margin collapsing
-    ///   // "The top margin of an in-flow block element collapses with its
-    ///   //  first in-flow block-level child's top margin if the element
-    ///   //  has no top border, no top padding, and the child has no clearance."
-    ///   //
-    ///   // If self has no top border/padding:
-    ///   //   collapsed_top = max(self.margin.top, first_child.margin.top)
-    ///   //   self.margin.top = collapsed_top
-    ///   //   first_child.margin.top = 0
-    fn collapse_margins(&mut self) {
-        todo!("Collapse vertical margins between children per CSS 2.1 § 8.3.1")
     }
 
     /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
@@ -1351,6 +1493,8 @@ impl LayoutBox {
             color: ColorValue::BLACK,
             text_align: TextAlign::default(),
             line_boxes: Vec::new(),
+            collapsed_margin_top: None,
+            collapsed_margin_bottom: None,
         }
     }
 
