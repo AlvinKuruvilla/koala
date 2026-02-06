@@ -243,6 +243,63 @@ fn load_images(
             // Resolve URL and fetch bytes.
             let resolved = koala_common::url::resolve_url(src, base_url);
 
+            // Handle SVG images separately (resvg for rasterization).
+            if resolved.ends_with(".svg") || resolved.starts_with("data:image/svg") {
+                let svg_data = if resolved.starts_with("http://") || resolved.starts_with("https://") {
+                    match koala_common::net::fetch_bytes(&resolved) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("[Koala] Warning: failed to fetch SVG '{}': {}", src, e);
+                            continue;
+                        }
+                    }
+                } else if resolved.starts_with("data:") {
+                    match koala_common::net::fetch_bytes_from_data_url(&resolved) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("[Koala] Warning: failed to decode SVG data URL '{}': {}", src, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    match fs::read(&resolved) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("[Koala] Warning: failed to read SVG '{}': {}", resolved, e);
+                            continue;
+                        }
+                    }
+                };
+
+                // Parse and render the SVG
+                let opts = usvg::Options::default();
+                let tree = match usvg::Tree::from_data(&svg_data, &opts) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!("[Koala] Warning: failed to parse SVG '{}': {}", src, e);
+                        continue;
+                    }
+                };
+
+                let size = tree.size();
+                let (w, h) = (size.width() as u32, size.height() as u32);
+                if w == 0 || h == 0 {
+                    continue;
+                }
+
+                let Some(mut pixmap) = tiny_skia::Pixmap::new(w, h) else {
+                    continue;
+                };
+
+                resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+
+                let loaded = LoadedImage::new(w, h, pixmap.take().to_vec());
+                let _ = image_dims.insert(node_id, (w as f32, h as f32));
+                let _ = images.insert(src.to_string(), loaded);
+                continue;
+            }
+
+            // Handle raster images (PNG, JPEG, GIF, WebP, etc.)
             let bytes = if resolved.starts_with("http://") || resolved.starts_with("https://") {
                 match koala_common::net::fetch_bytes(&resolved) {
                     Ok(b) => b,
@@ -260,7 +317,7 @@ fn load_images(
                         continue;
                     }
                 }
-            } 
+            }
             else {
                 match fs::read(&resolved) {
                     Ok(b) => b,
