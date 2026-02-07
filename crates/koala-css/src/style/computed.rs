@@ -142,6 +142,51 @@ pub struct ComputedStyle {
     /// "Value: <length> | <percentage> | auto | inherit"
     pub height: Option<AutoLength>,
 
+    // [§ 2 Flex Layout Box Model](https://www.w3.org/TR/css-flexbox-1/#box-model)
+    /// [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+    ///
+    /// "The flex-direction property specifies how flex items are placed in
+    /// the flex container, by setting the direction of the flex container's
+    /// main axis."
+    ///
+    /// Values: row | row-reverse | column | column-reverse
+    /// Initial: row
+    pub flex_direction: Option<String>,
+
+    /// [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+    ///
+    /// "The justify-content property aligns flex items along the main axis
+    /// of the current line of the flex container."
+    ///
+    /// Values: flex-start | flex-end | center | space-between | space-around
+    /// Initial: flex-start
+    pub justify_content: Option<String>,
+
+    /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
+    ///
+    /// "The flex-grow property sets the flex grow factor to the provided
+    /// <number>. Negative values are invalid."
+    ///
+    /// Initial: 0
+    pub flex_grow: Option<f32>,
+
+    /// [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
+    ///
+    /// "The flex-shrink property sets the flex shrink factor to the provided
+    /// <number>. Negative values are invalid."
+    ///
+    /// Initial: 1
+    pub flex_shrink: Option<f32>,
+
+    /// [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
+    ///
+    /// "The flex-basis property sets the flex basis: the initial main size
+    /// of the flex item, before free space is distributed."
+    ///
+    /// Values: auto | <length>
+    /// Initial: auto
+    pub flex_basis: Option<AutoLength>,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Source order tracking for cascade resolution of logical property groups
     // ─────────────────────────────────────────────────────────────────────────
@@ -416,6 +461,72 @@ impl ComputedStyle {
                 if let Some(first) = decl.value.first() {
                     if let Some(auto_len) = parse_single_auto_length(first) {
                         self.height = Some(self.resolve_auto_length(auto_len));
+                    }
+                }
+            }
+            // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+            //
+            // "Values: row | row-reverse | column | column-reverse"
+            "flex-direction" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(
+                        lower.as_str(),
+                        "row" | "row-reverse" | "column" | "column-reverse"
+                    ) {
+                        self.flex_direction = Some(lower);
+                    }
+                }
+            }
+            // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+            //
+            // "Values: flex-start | flex-end | center | space-between | space-around"
+            "justify-content" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(
+                        lower.as_str(),
+                        "flex-start" | "flex-end" | "center" | "space-between" | "space-around"
+                    ) {
+                        self.justify_content = Some(lower);
+                    }
+                }
+            }
+            // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
+            //
+            // "The flex-grow property sets the flex grow factor to the provided
+            // <number>. Negative values are invalid."
+            "flex-grow" => {
+                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
+                    decl.value.first()
+                {
+                    let val = *value as f32;
+                    if val >= 0.0 {
+                        self.flex_grow = Some(val);
+                    }
+                }
+            }
+            // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
+            //
+            // "The flex-shrink property sets the flex shrink factor to the provided
+            // <number>. Negative values are invalid."
+            "flex-shrink" => {
+                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
+                    decl.value.first()
+                {
+                    let val = *value as f32;
+                    if val >= 0.0 {
+                        self.flex_shrink = Some(val);
+                    }
+                }
+            }
+            // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
+            //
+            // "Values: auto | <length>"
+            "flex-basis" => {
+                if let Some(first) = decl.value.first() {
+                    if let Some(auto_len) = parse_single_auto_length(first) {
+                        self.flex_basis = Some(self.resolve_auto_length(auto_len));
                     }
                 }
             }
