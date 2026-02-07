@@ -57,6 +57,7 @@ pub fn layout_flex(
     containing_block: Rect,
     viewport: Rect,
     font_metrics: &dyn FontMetrics,
+    abs_cb: Rect,
 ) {
     #[cfg(feature = "layout-trace")]
     {
@@ -80,6 +81,16 @@ pub fn layout_flex(
 
     // STEP 2 (§ 9.2): Resolve container position.
     container.calculate_block_position(containing_block, viewport);
+
+    // [§ 10.1 Definition of containing block](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+    //
+    // If the flex container is positioned, its padding box becomes the
+    // containing block for absolutely positioned descendants.
+    let child_abs_cb = if container.is_positioned() {
+        container.dimensions.padding_box()
+    } else {
+        abs_cb
+    };
 
     let content_box = container.dimensions.content_box();
     let available_main = content_box.width;
@@ -231,7 +242,7 @@ pub fn layout_flex(
             child.display.inner,
             child.children.len()
         );
-        child.layout(child_containing, viewport, font_metrics);
+        child.layout(child_containing, viewport, font_metrics, child_abs_cb);
         #[cfg(feature = "layout-trace")]
         eprintln!("[FLEX] STEP 6: child {item_idx} layout complete");
 
@@ -277,7 +288,7 @@ pub fn layout_flex(
     // "An absolutely-positioned child of a flex container does not
     // participate in flex layout." They are positioned after flex
     // layout completes.
-    container.layout_absolute_children(viewport, font_metrics);
+    container.layout_absolute_children(viewport, font_metrics, child_abs_cb);
 }
 
 /// Determine flex base size from width property or content measurement.

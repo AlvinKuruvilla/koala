@@ -291,6 +291,14 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         width: None,
         height: None,
 
+        // [§ 10.4 min-width / max-width](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+        // [§ 10.7 min-height / max-height](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+        // "Inherited: no"
+        min_width: None,
+        max_width: None,
+        min_height: None,
+        max_height: None,
+
         // [§ 5.1 flex-direction](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
         // [§ 8.2 justify-content](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
         // [§ 7 Flexibility](https://www.w3.org/TR/css-flexbox-1/#flexibility)

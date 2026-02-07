@@ -142,6 +142,34 @@ pub struct ComputedStyle {
     /// "Value: `<length>` | `<percentage>` | auto | inherit"
     pub height: Option<AutoLength>,
 
+    /// [§ 10.4 'min-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+    ///
+    /// "Value: `<length>` | `<percentage>` | inherit"
+    /// Initial: 0
+    /// None means initial (0 — no minimum constraint).
+    pub min_width: Option<LengthValue>,
+
+    /// [§ 10.4 'max-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+    ///
+    /// "Value: `<length>` | `<percentage>` | none | inherit"
+    /// Initial: none
+    /// None means initial (none — no maximum constraint).
+    pub max_width: Option<LengthValue>,
+
+    /// [§ 10.7 'min-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+    ///
+    /// "Value: `<length>` | `<percentage>` | inherit"
+    /// Initial: 0
+    /// None means initial (0 — no minimum constraint).
+    pub min_height: Option<LengthValue>,
+
+    /// [§ 10.7 'max-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+    ///
+    /// "Value: `<length>` | `<percentage>` | none | inherit"
+    /// Initial: none
+    /// None means initial (none — no maximum constraint).
+    pub max_height: Option<LengthValue>,
+
     // [§ 2 Flex Layout Box Model](https://www.w3.org/TR/css-flexbox-1/#box-model)
     /// [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
     ///
@@ -501,6 +529,50 @@ impl ComputedStyle {
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.height = Some(self.resolve_auto_length(auto_len));
+                }
+            }
+            // [§ 10.4 'min-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+            //
+            // "Value: <length> | <percentage> | inherit"
+            // Initial: 0
+            "min-width" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.min_width = Some(self.resolve_length(len));
+                }
+            }
+            // [§ 10.4 'max-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+            //
+            // "Value: <length> | <percentage> | none | inherit"
+            // Initial: none
+            "max-width" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first()
+                    && ident.eq_ignore_ascii_case("none")
+                {
+                    self.max_width = None;
+                } else if let Some(len) = parse_length_value(&decl.value) {
+                    self.max_width = Some(self.resolve_length(len));
+                }
+            }
+            // [§ 10.7 'min-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+            //
+            // "Value: <length> | <percentage> | inherit"
+            // Initial: 0
+            "min-height" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.min_height = Some(self.resolve_length(len));
+                }
+            }
+            // [§ 10.7 'max-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+            //
+            // "Value: <length> | <percentage> | none | inherit"
+            // Initial: none
+            "max-height" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first()
+                    && ident.eq_ignore_ascii_case("none")
+                {
+                    self.max_height = None;
+                } else if let Some(len) = parse_length_value(&decl.value) {
+                    self.max_height = Some(self.resolve_length(len));
                 }
             }
             // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)

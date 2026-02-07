@@ -166,7 +166,7 @@ fn take_screenshot(
     let font_provider = FontProvider::load();
     let font_metrics = font_provider.metrics();
 
-    layout.layout(viewport, viewport, &*font_metrics);
+    layout.layout(viewport, viewport, &*font_metrics, viewport);
 
     // Paint: generate display list from layout tree
     let painter = Painter::new(&doc.styles);
@@ -323,7 +323,7 @@ fn print_layout(doc: &LoadedDocument) {
         };
         let font_provider = FontProvider::load();
         let font_metrics = font_provider.metrics();
-        layout.layout(viewport, viewport, &*font_metrics);
+        layout.layout(viewport, viewport, &*font_metrics, viewport);
 
         print_layout_box(&layout, 0, doc);
     } else {

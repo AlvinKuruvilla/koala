@@ -201,6 +201,7 @@ impl PositionedLayout {
         containing_block: Rect,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
+        _abs_cb: Rect,
     ) {
         // STEP 1: Resolve padding, border, and margin to used values.
         let resolved_padding = layout_box.padding.resolve(viewport);
@@ -316,10 +317,15 @@ impl PositionedLayout {
         if height_auto {
             layout_box.generate_anonymous_boxes();
 
+            // An absolutely positioned box IS positioned, so its padding box
+            // becomes the containing block for its own absolutely positioned
+            // descendants. We compute it after positioning is known.
+            let child_abs_cb = layout_box.dimensions.padding_box();
+
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
-                layout_box.layout_inline_children(viewport, font_metrics);
+                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb);
             } else {
-                layout_box.layout_block_children(viewport, font_metrics);
+                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb);
             }
 
             // Auto height: use the content height computed by child layout.
@@ -388,10 +394,11 @@ impl PositionedLayout {
 
             // Lay out children within the positioned box.
             layout_box.generate_anonymous_boxes();
+            let child_abs_cb = layout_box.dimensions.padding_box();
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
-                layout_box.layout_inline_children(viewport, font_metrics);
+                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb);
             } else {
-                layout_box.layout_block_children(viewport, font_metrics);
+                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb);
             }
 
             // Restore the explicit height — child layout may have
@@ -401,7 +408,10 @@ impl PositionedLayout {
         }
 
         // STEP 5: Lay out any absolutely positioned children of this box.
-        layout_box.layout_absolute_children(viewport, font_metrics);
+        // An absolute box IS positioned, so its padding box is the abs_cb
+        // for its own absolutely positioned children.
+        let final_abs_cb = layout_box.dimensions.padding_box();
+        layout_box.layout_absolute_children(viewport, font_metrics, final_abs_cb);
     }
 
     /// Solve the horizontal constraint equation per § 10.3.7.

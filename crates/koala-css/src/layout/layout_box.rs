@@ -10,7 +10,8 @@ use std::cell::Cell;
 use koala_dom::{DomTree, NodeId, NodeType};
 
 use crate::style::{
-    AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, OuterDisplayType,
+    AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
+    OuterDisplayType,
 };
 
 use super::box_model::{BoxDimensions, Rect};
@@ -70,6 +71,7 @@ fn layout_inline_content(
     viewport: Rect,
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
+    abs_cb: Rect,
 ) {
     for child in children.iter_mut() {
         // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
@@ -152,6 +154,7 @@ fn layout_inline_content(
                     viewport,
                     font_metrics,
                     content_rect,
+                    abs_cb,
                 );
 
                 // STEP 4: Close the inline box (apply right edge).
@@ -185,7 +188,7 @@ fn layout_inline_content(
                 };
 
                 // STEP 3: Layout the block child.
-                child.layout(block_cb, viewport, font_metrics);
+                child.layout(block_cb, viewport, font_metrics, abs_cb);
 
                 // STEP 4: Advance past the block child's margin box.
                 inline_layout.current_y += child.dimensions.margin_box().height;
@@ -292,6 +295,26 @@ pub struct LayoutBox {
     ///
     /// Computed height value (unresolved). None means 'auto'.
     pub height: Option<AutoLength>,
+
+    /// [§ 10.4 'min-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+    ///
+    /// None means initial (0 — no minimum constraint).
+    pub min_width: Option<LengthValue>,
+
+    /// [§ 10.4 'max-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+    ///
+    /// None means initial (none — no maximum constraint).
+    pub max_width: Option<LengthValue>,
+
+    /// [§ 10.7 'min-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+    ///
+    /// None means initial (0 — no minimum constraint).
+    pub min_height: Option<LengthValue>,
+
+    /// [§ 10.7 'max-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+    ///
+    /// None means initial (none — no maximum constraint).
+    pub max_height: Option<LengthValue>,
 
     /// [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
     ///
@@ -485,7 +508,15 @@ impl LayoutBox {
     /// it contains no in-flow content (i.e., has no in-flow line boxes
     /// and no in-flow block-level children)."
     fn is_empty_collapsible_box(&self) -> bool {
-        // min-height is not yet implemented — effectively zero for all boxes.
+        // [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
+        //
+        // "A box's own margins collapse if the 'min-height' property is
+        // computed as zero..."
+        if let Some(ref min_h) = self.min_height
+            && min_h.to_px() > 0.0
+        {
+            return false;
+        }
 
         // height must be zero or auto.
         let height_zero_or_auto = match &self.height {
@@ -640,6 +671,10 @@ impl LayoutBox {
                     border_width: UnresolvedEdgeSizes::default(),
                     width: None,
                     height: None,
+                    min_width: None,
+                    max_width: None,
+                    min_height: None,
+                    max_height: None,
                     font_size: 16.0,
                     color: ColorValue::BLACK,
                     text_align: TextAlign::default(),
@@ -769,6 +804,13 @@ impl LayoutBox {
                 // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
                 let flex_basis = style.and_then(|s| s.flex_basis);
 
+                // [§ 10.4 min-width / max-width](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+                // [§ 10.7 min-height / max-height](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+                let min_width = style.and_then(|s| s.min_width);
+                let max_width = style.and_then(|s| s.max_width);
+                let min_height = style.and_then(|s| s.min_height);
+                let max_height = style.and_then(|s| s.max_height);
+
                 // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
                 //
                 // "Values: static | relative | absolute | fixed | sticky"
@@ -857,6 +899,10 @@ impl LayoutBox {
                     border_width,
                     width,
                     height,
+                    min_width,
+                    max_width,
+                    min_height,
+                    max_height,
                     font_size,
                     color,
                     text_align,
@@ -907,6 +953,10 @@ impl LayoutBox {
                     border_width: UnresolvedEdgeSizes::default(),
                     width: None,
                     height: None,
+                    min_width: None,
+                    max_width: None,
+                    min_height: None,
+                    max_height: None,
                     // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
                     //
                     // Text nodes inherit font-size and color from their parent.
@@ -1037,11 +1087,17 @@ impl LayoutBox {
     ///
     /// This method lays out this box and all its descendants.
     /// The viewport is needed to resolve viewport-relative units (vw, vh).
+    /// [§ 10.1 Definition of containing block](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+    ///
+    /// `abs_cb` is the padding box of the nearest positioned ancestor.
+    /// Used as the containing block for absolutely positioned descendants.
+    /// The initial value (at the root) is the viewport.
     pub fn layout(
         &mut self,
         containing_block: Rect,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
     ) {
         #[cfg(feature = "layout-trace")]
         let _depth = {
@@ -1082,11 +1138,11 @@ impl LayoutBox {
             // [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
             //
             // Check inner display type — flex containers use their own algorithm.
-            super::flex::layout_flex(self, containing_block, viewport, font_metrics);
+            super::flex::layout_flex(self, containing_block, viewport, font_metrics, abs_cb);
         } else {
             match self.display.outer {
                 OuterDisplayType::Block => {
-                    self.layout_block(containing_block, viewport, font_metrics);
+                    self.layout_block(containing_block, viewport, font_metrics, abs_cb);
                 }
                 OuterDisplayType::Inline => {
                     // TODO: Implement proper inline layout with line box construction
@@ -1120,7 +1176,7 @@ impl LayoutBox {
                     //
                     // TEMPORARY: Fall back to block layout until inline is implemented.
                     // This causes inline elements to stack vertically instead of horizontally.
-                    self.layout_block(containing_block, viewport, font_metrics);
+                    self.layout_block(containing_block, viewport, font_metrics, abs_cb);
                 }
                 OuterDisplayType::RunIn => {
                     // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
@@ -1144,11 +1200,27 @@ impl LayoutBox {
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
     ///
     /// Layout algorithm for block-level boxes in normal flow.
+    /// [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+    ///
+    /// Returns true if this box is positioned (i.e., `position` is not `static`).
+    /// Positioned boxes establish a containing block for absolutely positioned
+    /// descendants.
+    pub(crate) const fn is_positioned(&self) -> bool {
+        matches!(
+            self.position_type,
+            PositionType::Relative
+                | PositionType::Absolute
+                | PositionType::Fixed
+                | PositionType::Sticky
+        )
+    }
+
     fn layout_block(
         &mut self,
         containing_block: Rect,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
     ) {
         // STEP 1: Calculate width
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -1163,12 +1235,33 @@ impl LayoutBox {
         // For now, we use the full containing block width (auto width behavior).
         self.calculate_block_width(containing_block, viewport);
 
+        // [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+        //
+        // Apply min-width/max-width constraints after the tentative width
+        // has been calculated.
+        self.apply_min_max_width(containing_block, viewport);
+
         // STEP 2: Calculate horizontal position
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "Each box's left outer edge touches the left edge of the
         // containing block (for right-to-left formatting, right edges touch)."
         self.calculate_block_position(containing_block, viewport);
+
+        // [§ 10.1 Definition of containing block](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+        //
+        // "If the element has 'position: absolute', the containing block is
+        // established by the nearest ancestor with a 'position' of 'absolute',
+        // 'relative', or 'fixed'..."
+        //
+        // If this box is positioned, its padding box becomes the containing
+        // block for absolutely positioned descendants. Otherwise, pass
+        // through the inherited abs_cb unchanged.
+        let child_abs_cb = if self.is_positioned() {
+            self.dimensions.padding_box()
+        } else {
+            abs_cb
+        };
 
         // STEP 3: Generate anonymous block boxes for mixed content.
         // [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
@@ -1202,7 +1295,7 @@ impl LayoutBox {
                 "[BLOCK STEP4] layout_inline_children for {:?}",
                 self.box_type
             );
-            self.layout_inline_children(viewport, font_metrics);
+            self.layout_inline_children(viewport, font_metrics, child_abs_cb);
         } else {
             #[cfg(feature = "layout-trace")]
             eprintln!(
@@ -1210,7 +1303,7 @@ impl LayoutBox {
                 self.box_type,
                 self.children.len()
             );
-            self.layout_block_children(viewport, font_metrics);
+            self.layout_block_children(viewport, font_metrics, child_abs_cb);
         }
 
         // STEP 5: Calculate height
@@ -1226,6 +1319,12 @@ impl LayoutBox {
         // collapse with the element's bottom margin"
         self.calculate_block_height(viewport, font_metrics);
 
+        // [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+        //
+        // Apply min-height/max-height constraints after the tentative height
+        // has been calculated.
+        self.apply_min_max_height(viewport);
+
         // STEP 6: Layout absolutely positioned children.
         // [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
         //
@@ -1233,10 +1332,9 @@ impl LayoutBox {
         // normal flow entirely and assigned a position with respect to a
         // containing block."
         //
-        // Absolute children are positioned relative to this box's padding
-        // box (if this box is positioned), or passed through to the next
-        // positioned ancestor.
-        self.layout_absolute_children(viewport, font_metrics);
+        // Absolute children are positioned relative to the nearest
+        // positioned ancestor's padding box (child_abs_cb).
+        self.layout_absolute_children(viewport, font_metrics, child_abs_cb);
     }
 
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -1473,7 +1571,7 @@ impl LayoutBox {
     ///
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
-    pub(crate) fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub(crate) fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect) {
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the other,
@@ -1620,7 +1718,7 @@ impl LayoutBox {
                     width: content_box.width,
                     height: f32::MAX,
                 };
-                child.layout(child_containing_block, viewport, font_metrics);
+                child.layout(child_containing_block, viewport, font_metrics, abs_cb);
 
                 // The empty box's self-collapsed margin merges with the
                 // accumulated prev_margin_bottom for subsequent sibling
@@ -1639,7 +1737,7 @@ impl LayoutBox {
                 height: f32::MAX, // Height is unconstrained for normal flow
             };
 
-            child.layout(child_containing_block, viewport, font_metrics);
+            child.layout(child_containing_block, viewport, font_metrics, abs_cb);
 
             // STEP 4: Advance the Y position.
             // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -1856,8 +1954,42 @@ impl LayoutBox {
     ///     }
     /// }
     /// ```
-    fn apply_min_max_width(&self, _containing_block: Rect, _viewport: Rect) {
-        todo!("Apply min-width/max-width constraints per CSS 2.1 § 10.4")
+    #[allow(clippy::cast_possible_truncation)]
+    fn apply_min_max_width(&mut self, containing_block: Rect, viewport: Rect) {
+        let vw = f64::from(viewport.width);
+        let vh = f64::from(viewport.height);
+
+        // STEP 1: Apply max-width constraint.
+        // [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+        //
+        // "If the tentative used width is greater than 'max-width', the rules
+        // above are applied again, but this time using the computed value of
+        // 'max-width' as the computed value for 'width'."
+        if let Some(ref max_w) = self.max_width {
+            let max_px = max_w.to_px_with_viewport(vw, vh) as f32;
+            if self.dimensions.content.width > max_px {
+                let saved = self.width.take();
+                self.width = Some(AutoLength::Length(LengthValue::Px(f64::from(max_px))));
+                self.calculate_block_width(containing_block, viewport);
+                self.width = saved;
+            }
+        }
+
+        // STEP 2: Apply min-width constraint (min wins over max per spec).
+        // [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+        //
+        // "If the resulting width is smaller than 'min-width', the rules above
+        // are applied again, but this time using the value of 'min-width' as
+        // the computed value for 'width'."
+        if let Some(ref min_w) = self.min_width {
+            let min_px = min_w.to_px_with_viewport(vw, vh) as f32;
+            if self.dimensions.content.width < min_px {
+                let saved = self.width.take();
+                self.width = Some(AutoLength::Length(LengthValue::Px(f64::from(min_px))));
+                self.calculate_block_width(containing_block, viewport);
+                self.width = saved;
+            }
+        }
     }
 
     /// [§ 10.7 Minimum and maximum heights: 'min-height' and 'max-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
@@ -1908,8 +2040,36 @@ impl LayoutBox {
     ///     }
     /// }
     /// ```
-    fn apply_min_max_height(&self, _viewport: Rect) {
-        todo!("Apply min-height/max-height constraints per CSS 2.1 § 10.7")
+    #[allow(clippy::cast_possible_truncation)]
+    fn apply_min_max_height(&mut self, viewport: Rect) {
+        let vw = f64::from(viewport.width);
+        let vh = f64::from(viewport.height);
+
+        // STEP 1: Apply max-height constraint.
+        // [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+        //
+        // "If this tentative height is greater than 'max-height', the rules
+        // above are applied again, but this time using the value of
+        // 'max-height' as the computed value for 'height'."
+        if let Some(ref max_h) = self.max_height {
+            let max_px = max_h.to_px_with_viewport(vw, vh) as f32;
+            if self.dimensions.content.height > max_px {
+                self.dimensions.content.height = max_px;
+            }
+        }
+
+        // STEP 2: Apply min-height constraint (min wins over max per spec).
+        // [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+        //
+        // "If the resulting height is smaller than 'min-height', the rules
+        // above are applied again, but this time using the value of
+        // 'min-height' as the computed value for 'height'."
+        if let Some(ref min_h) = self.min_height {
+            let min_px = min_h.to_px_with_viewport(vw, vh) as f32;
+            if self.dimensions.content.height < min_px {
+                self.dimensions.content.height = min_px;
+            }
+        }
     }
 
     /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
@@ -2015,6 +2175,10 @@ impl LayoutBox {
             border_width: UnresolvedEdgeSizes::default(),
             width: None,
             height: None,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
             font_size: 16.0,
             color: ColorValue::BLACK,
             text_align: TextAlign::default(),
@@ -2051,7 +2215,7 @@ impl LayoutBox {
     ///
     /// "The height of the line box is determined by the rules given in the
     /// section on line height calculations."
-    pub(crate) fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub(crate) fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect) {
         // STEP 1: Create an InlineLayout context.
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
@@ -2087,6 +2251,7 @@ impl LayoutBox {
             viewport,
             font_metrics,
             content_rect,
+            abs_cb,
         );
 
         // STEP 3: Finalize the last line.
@@ -2362,6 +2527,7 @@ impl LayoutBox {
         &mut self,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
     ) {
         // Collect indices of absolute/fixed children to avoid borrow issues.
         let abs_indices: Vec<usize> = self
@@ -2381,9 +2547,6 @@ impl LayoutBox {
             return;
         }
 
-        // The containing block for absolute children is this box's padding box.
-        let padding_box = self.dimensions.padding_box();
-
         for idx in abs_indices {
             let child = &mut self.children[idx];
 
@@ -2392,13 +2555,18 @@ impl LayoutBox {
             // "Fixed positioning is a subcategory of absolute positioning.
             // The only difference is that for a fixed positioned box, the
             // containing block is established by the viewport."
+            //
+            // [§ 10.1 Definition of containing block](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+            //
+            // For absolute children: use the abs_cb (nearest positioned ancestor's
+            // padding box). For fixed children: use the viewport.
             let cb = if child.position_type == PositionType::Fixed {
                 viewport
             } else {
-                padding_box
+                abs_cb
             };
 
-            PositionedLayout::layout_absolute(child, cb, viewport, font_metrics);
+            PositionedLayout::layout_absolute(child, cb, viewport, font_metrics, abs_cb);
         }
     }
 

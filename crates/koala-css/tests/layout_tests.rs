@@ -83,7 +83,7 @@ fn layout_html_with_viewport(html: &str, vw: f32, vh: f32) -> LayoutBox {
         width: vw,
         height: vh,
     };
-    layout_tree.layout(viewport, viewport, &ApproximateFontMetrics);
+    layout_tree.layout(viewport, viewport, &ApproximateFontMetrics, viewport);
 
     layout_tree
 }
@@ -1090,5 +1090,251 @@ fn test_absolute_auto_margins_centering() {
         (abs_child.dimensions.content.x - expected_x).abs() < 1.0,
         "abs child should be centered at x={expected_x:.1}, got {:.1}",
         abs_child.dimensions.content.x
+    );
+}
+
+// ---------------------------------------------------------------------------
+// min-width / max-width / min-height / max-height tests
+//
+// [§ 10.4 Minimum and maximum widths](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+// [§ 10.7 Minimum and maximum heights](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+// ---------------------------------------------------------------------------
+
+/// [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+///
+/// max-width should clamp the computed width of a block element.
+#[test]
+fn test_max_width_clamps_block() {
+    let root = layout_html(
+        "<html><head><style>\
+         .box { max-width: 200px; }\
+         </style></head>\
+         <body><div class='box'>Content</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // Without max-width, the div would be body's content width (~784px in
+    // an 800px viewport with 8px body margin). With max-width: 200px, it
+    // should be clamped to 200px.
+    assert!(
+        (div.dimensions.content.width - 200.0).abs() < 1.0,
+        "div width should be clamped to 200px by max-width, got {:.1}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+///
+/// min-width should expand a narrow explicit width.
+#[test]
+fn test_min_width_expands_narrow() {
+    let root = layout_html(
+        "<html><head><style>\
+         .box { width: 50px; min-width: 100px; }\
+         </style></head>\
+         <body><div class='box'>Content</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // width: 50px is less than min-width: 100px, so min-width wins.
+    assert!(
+        (div.dimensions.content.width - 100.0).abs() < 1.0,
+        "div width should be expanded to 100px by min-width, got {:.1}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+///
+/// min-width has no effect when the element is already wider.
+#[test]
+fn test_min_width_no_effect_when_wider() {
+    let root = layout_html(
+        "<html><head><style>\
+         .box { width: 200px; min-width: 100px; }\
+         </style></head>\
+         <body><div class='box'>Content</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // width: 200px > min-width: 100px, so width stays at 200px.
+    assert!(
+        (div.dimensions.content.width - 200.0).abs() < 1.0,
+        "div width should remain 200px (min-width has no effect), got {:.1}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+///
+/// "If the tentative used width is greater than 'max-width', the rules above
+/// are applied again, but this time using the computed value of 'max-width'
+/// as the computed value for 'width'."
+///
+/// "If the resulting width is smaller than 'min-width', the rules above are
+/// applied again, but this time using the value of 'min-width' as the
+/// computed value for 'width'."
+///
+/// min-width wins over max-width when min > max.
+#[test]
+fn test_min_wins_over_max() {
+    let root = layout_html(
+        "<html><head><style>\
+         .box { min-width: 200px; max-width: 150px; }\
+         </style></head>\
+         <body><div class='box'>Content</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // min-width: 200px > max-width: 150px. Per spec, min-width wins because
+    // it is applied after max-width.
+    assert!(
+        (div.dimensions.content.width - 200.0).abs() < 1.0,
+        "min-width (200) should win over max-width (150), got {:.1}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+///
+/// max-height should clamp an explicit height.
+#[test]
+fn test_max_height_clamps() {
+    let root = layout_html(
+        "<html><head><style>\
+         .box { height: 500px; max-height: 100px; }\
+         </style></head>\
+         <body><div class='box'>Content</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // height: 500px > max-height: 100px, so height is clamped to 100px.
+    assert!(
+        (div.dimensions.content.height - 100.0).abs() < 1.0,
+        "div height should be clamped to 100px by max-height, got {:.1}",
+        div.dimensions.content.height
+    );
+}
+
+/// [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+///
+/// min-height should expand an auto-height box.
+#[test]
+fn test_min_height_expands() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .box { min-height: 200px; }\
+         </style></head>\
+         <body><div class='box'>Short</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // Auto height from text content would be small (~16px or so). min-height
+    // should expand it to at least 200px.
+    assert!(
+        div.dimensions.content.height >= 200.0 - 1.0,
+        "div height should be at least 200px from min-height, got {:.1}",
+        div.dimensions.content.height
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Containing block ancestor walk tests
+//
+// [§ 10.1 Definition of "containing block"](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+//
+// "If the element has 'position: absolute', the containing block is
+// established by the nearest ancestor with a 'position' of 'absolute',
+// 'relative', 'fixed', or 'sticky'."
+// ---------------------------------------------------------------------------
+
+/// [§ 10.1](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+///
+/// An absolutely positioned child of a non-positioned parent should use the
+/// nearest positioned ancestor (grandparent) as its containing block.
+#[test]
+fn test_absolute_uses_positioned_grandparent() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .grandparent { position: relative; width: 400px; height: 300px; padding: 10px; }\
+         .parent { width: 200px; height: 100px; }\
+         .abs { position: absolute; top: 0; left: 0; width: 50px; height: 50px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='grandparent'>\
+           <div class='parent'>\
+             <div class='abs'>Abs</div>\
+           </div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grandparent = &body.children[0];
+    let parent = &grandparent.children[0];
+
+    // The abs child is a child of .parent in the DOM, but its containing
+    // block should be .grandparent (the nearest positioned ancestor).
+    let abs_child = &parent.children[0];
+
+    // With top:0, left:0 relative to grandparent's padding box:
+    let gp_padding_x = grandparent.dimensions.content.x - grandparent.dimensions.padding.left;
+    let gp_padding_y = grandparent.dimensions.content.y - grandparent.dimensions.padding.top;
+
+    assert!(
+        (abs_child.dimensions.content.x - gp_padding_x).abs() < 1.0,
+        "abs child x should be at grandparent's padding box left ({gp_padding_x:.1}), got {:.1}",
+        abs_child.dimensions.content.x
+    );
+    assert!(
+        (abs_child.dimensions.content.y - gp_padding_y).abs() < 1.0,
+        "abs child y should be at grandparent's padding box top ({gp_padding_y:.1}), got {:.1}",
+        abs_child.dimensions.content.y
+    );
+}
+
+/// [§ 10.1](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+///
+/// When no positioned ancestor exists, the absolutely positioned element
+/// should use the initial containing block (viewport).
+#[test]
+fn test_absolute_no_positioned_ancestor_uses_viewport() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .abs { position: absolute; top: 0; left: 0; width: 80px; height: 40px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div><div class='abs'>Abs</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let wrapper = &body.children[0];
+    let abs_child = &wrapper.children[0];
+
+    // No positioned ancestor exists (body and wrapper are static), so the
+    // containing block is the viewport (origin 0,0).
+    assert!(
+        abs_child.dimensions.content.x.abs() < 1.0,
+        "abs child x should be at viewport left (0), got {:.1}",
+        abs_child.dimensions.content.x
+    );
+    assert!(
+        abs_child.dimensions.content.y.abs() < 1.0,
+        "abs child y should be at viewport top (0), got {:.1}",
+        abs_child.dimensions.content.y
     );
 }

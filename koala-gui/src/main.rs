@@ -145,7 +145,7 @@ fn take_screenshot(
     let mut layout = layout_tree.clone();
     let font_provider = FontProvider::load();
     let font_metrics = font_provider.metrics();
-    layout.layout(viewport, viewport, &*font_metrics);
+    layout.layout(viewport, viewport, &*font_metrics, viewport);
 
     // Paint: generate display list from layout tree
     let painter = Painter::new(&doc.styles);
@@ -200,7 +200,7 @@ fn print_layout(doc: &LoadedDocument) {
         };
         let font_provider = FontProvider::load();
         let font_metrics = font_provider.metrics();
-        layout.layout(viewport, viewport, &*font_metrics);
+        layout.layout(viewport, viewport, &*font_metrics, viewport);
         print_layout_box(&layout, 0, doc);
     } else {
         println!("No layout tree available");
@@ -855,7 +855,7 @@ impl eframe::App for BrowserApp {
                             // of the initial containing block."
                             let viewport = initial_containing_block;
                             let font_metrics = self.font_provider.metrics();
-                            root.layout(initial_containing_block, viewport, &*font_metrics);
+                            root.layout(initial_containing_block, viewport, &*font_metrics, viewport);
                             page.last_layout_viewport = Some(viewport_size);
                             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                             {
