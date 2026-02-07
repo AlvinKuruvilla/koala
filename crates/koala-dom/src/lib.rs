@@ -180,7 +180,7 @@ impl DomTree {
 
     /// Get the root document node ID.
     #[must_use]
-    pub fn root(&self) -> NodeId {
+    pub const fn root(&self) -> NodeId {
         NodeId::ROOT
     }
 
@@ -197,13 +197,13 @@ impl DomTree {
 
     /// Get the number of nodes in the tree.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if the tree is empty (should always have at least the Document).
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
