@@ -26,6 +26,7 @@ pub use koala_js as js;
 
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
+use koala_common::warning::warn_once;
 
 use koala_css::{
     ComputedStyle, LayoutBox, Stylesheet, compute_styles, extract_all_stylesheets,
@@ -244,7 +245,37 @@ fn load_images(
             let resolved = koala_common::url::resolve_url(src, base_url);
 
             // Handle SVG images separately (resvg for rasterization).
-            if resolved.ends_with(".svg") || resolved.starts_with("data:image/svg") {
+            //
+            // Real-world URLs often carry query strings (`?w=1024`) or
+            // fragment identifiers (`#globe-blue`).  Strip these before
+            // checking the file extension so we still recognise the SVG.
+            let (path_for_ext, query, fragment) = {
+                let (before_frag, frag) = resolved.split_once('#')
+                    .map_or((&*resolved, None), |(b, f)| (b, Some(f)));
+                let (path, qry) = before_frag.split_once('?')
+                    .map_or((before_frag, None), |(b, q)| (b, Some(q)));
+                (path, qry, frag)
+            };
+
+            // TODO: Handle SVG fragment identifiers (§ 7.1 of SVG spec) —
+            // e.g. `icons.svg#globe-blue` should extract a single element
+            // from a sprite sheet rather than rendering the whole document.
+            if let Some(frag) = fragment {
+                warn_once("image", &format!(
+                    "ignoring SVG fragment identifier '#{frag}' in '{src}' (sprite sheets not yet supported)"
+                ));
+            }
+
+            // TODO: Handle URL query parameters that hint at image sizing —
+            // e.g. `?w=1024` may indicate a server-side resize or could
+            // inform client-side rasterization dimensions.
+            if let Some(qry) = query {
+                warn_once("image", &format!(
+                    "ignoring query string '?{qry}' in '{src}' (URL parameters not yet handled)"
+                ));
+            }
+
+            if path_for_ext.ends_with(".svg") || resolved.starts_with("data:image/svg") {
                 let svg_data = if resolved.starts_with("http://") || resolved.starts_with("https://") {
                     match koala_common::net::fetch_bytes(&resolved) {
                         Ok(b) => b,
@@ -338,7 +369,12 @@ fn load_images(
                     let _ = images.insert(src.to_string(), loaded);
                 }
                 Err(e) => {
-                    eprintln!("[Koala] Warning: failed to decode image '{}': {}", src, e);
+                    eprintln!(
+                        "[Koala] Warning: skipping <img src=\"{}\">: \
+                         could not decode image ({e}). \
+                         The page will still render but this image will be missing.",
+                        src
+                    );
                 }
             }
         }
