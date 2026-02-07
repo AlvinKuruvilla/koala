@@ -458,8 +458,10 @@ fn test_named_character_reference_without_semicolon() {
 
 #[test]
 fn test_named_character_reference_unknown() {
-    // Unknown entities should be passed through as-is
-    let tokens = tokenize("&notreal;");
+    // Unknown entities should be passed through as-is.
+    // NOTE: "xyzzy" is not a real entity name in the spec.
+    // (Don't use "notreal" — "&not" is a valid legacy entity for ¬.)
+    let tokens = tokenize("&xyzzy;");
     let content: String = tokens
         .iter()
         .filter_map(|t| {
@@ -471,7 +473,7 @@ fn test_named_character_reference_unknown() {
         })
         .collect();
     // The ampersand and entity name should be emitted as characters
-    assert_eq!(content, "&notreal;");
+    assert_eq!(content, "&xyzzy;");
 }
 
 #[test]

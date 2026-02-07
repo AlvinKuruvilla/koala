@@ -200,7 +200,7 @@ The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) travers
 
 ### Current Status
 
-- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing, RCDATA/RAWTEXT states, character references (named + numeric, § 13.2.5.72-80). Missing: script data states, full entity table (88/2231 entities)
+- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing, RCDATA/RAWTEXT states, character references (named + numeric, § 13.2.5.72-80, all 2,231 named entities). Missing: script data states
 - **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. CSS combinator matching works. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
 - **DOM**: Arena-based tree with Node, Element, Text, Comment types. O(1) parent/sibling traversal.
 - **CSS**: Tokenizer, parser, selector matching (including combinators), cascade, and computed styles working
