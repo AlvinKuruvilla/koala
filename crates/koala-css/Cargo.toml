@@ -10,6 +10,9 @@ koala-common.workspace = true
 koala-dom.workspace = true
 serde.workspace = true
 
+[features]
+layout-trace = []
+
 [dev-dependencies]
 koala-html.workspace = true
 

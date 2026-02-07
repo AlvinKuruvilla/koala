@@ -2615,6 +2615,7 @@ dependencies = [
  "koala-css",
  "koala-dom",
  "koala-html",
+ "libc",
  "owo-colors",
 ]
 

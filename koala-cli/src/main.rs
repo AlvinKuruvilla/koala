@@ -66,6 +66,22 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
+    #[cfg(feature = "layout-trace")]
+    {
+        let stack_marker: u8 = 0;
+        let stack_addr = &stack_marker as *const u8 as usize;
+        #[allow(unsafe_code)]
+        // SAFETY: pthread_self and stack info functions are safe to call
+        unsafe {
+            let thread = libc::pthread_self();
+            let stack_base = libc::pthread_get_stackaddr_np(thread) as usize;
+            let stack_size = libc::pthread_get_stacksize_np(thread);
+            let stack_bottom = stack_base - stack_size;
+            let remaining = stack_addr.saturating_sub(stack_bottom);
+            eprintln!("[STACK] main(): addr=0x{stack_addr:x} base=0x{stack_base:x} size={stack_size} ({:.1}MB) bottom=0x{stack_bottom:x} remaining={remaining} ({:.1}KB)",
+                stack_size as f64 / 1024.0 / 1024.0, remaining as f64 / 1024.0);
+        }
+    }
     let cli = Cli::parse();
 
     // Determine the document source
@@ -118,6 +134,7 @@ fn take_screenshot(
     let mut layout = layout_tree.clone();
     let font_provider = FontProvider::load();
     let font_metrics = font_provider.metrics();
+
     layout.layout(viewport, viewport, &*font_metrics);
 
     // Paint: generate display list from layout tree

@@ -215,6 +215,51 @@ The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) travers
 - **anyhow** — Error handling
 - **Boa** (planned) — JavaScript engine
 
+## Debugging Layout Issues
+
+### Layout Trace Feature Flag
+
+Verbose layout tracing is built into `koala-css` and `koala-cli` behind a cargo feature flag. Enable it to print detailed step-by-step trace of layout, flex, inline, and measure operations:
+
+```bash
+# Run CLI with layout tracing enabled
+cargo run --bin koala-cli --features layout-trace -- --screenshot out.png https://example.com
+
+# Capture trace to file for analysis
+cargo run --bin koala-cli --features layout-trace -- --screenshot out.png https://example.com 2> /tmp/trace.txt
+
+# Filter trace by subsystem
+grep '\[FLEX\]' /tmp/trace.txt      # Flex layout steps
+grep '\[INLINE\]' /tmp/trace.txt    # Inline formatting context
+grep '\[LAYOUT DEPTH\]' /tmp/trace.txt  # Layout recursion depth + stack addresses
+grep '\[BLOCK STEP' /tmp/trace.txt  # Block layout steps (anon boxes, child dispatch)
+grep '\[MEASURE\]' /tmp/trace.txt   # Content size measurement
+grep '\[STACK\]' /tmp/trace.txt     # Thread stack bounds (main only)
+```
+
+### Debugging Stack Overflows
+
+Rust's built-in stack overflow handler does **not** produce a backtrace — even with `RUST_BACKTRACE=full`. For stack overflows, use `lldb` to get the actual crash backtrace:
+
+```bash
+# Write an lldb script
+cat > /tmp/lldb_cmds << 'EOF'
+settings set auto-confirm true
+process launch -e /dev/null -- --screenshot /tmp/test.png https://www.google.com
+bt 50
+thread info
+register read sp
+quit
+EOF
+
+# Run under lldb
+lldb -s /tmp/lldb_cmds target/debug/koala-cli
+```
+
+This gives the definitive backtrace at the crash point, showing exactly which function chain caused the overflow.
+
+**Key lesson**: Stack overflow symptoms can be misleading. Trace output may show only shallow recursion while the actual overflow happens in a completely different function (e.g., `InlineLayout::add_text()` infinite recursion appeared as a layout depth issue). Always get the real backtrace before theorizing.
+
 ## Code Style
 
 - Spec comments go above the code they describe
