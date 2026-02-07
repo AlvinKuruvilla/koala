@@ -20,10 +20,10 @@
 //!          whose ID is elementId; otherwise, return null."
 //!
 //! [§ 4.5 getElementsByClassName](https://dom.spec.whatwg.org/#dom-document-getelementsbyclassname)
-//! "Returns a live HTMLCollection of elements with the given class names."
+//! "Returns a live `HTMLCollection` of elements with the given class names."
 //!
 //! [§ 4.5 getElementsByTagName](https://dom.spec.whatwg.org/#dom-document-getelementsbytagname)
-//! "Returns a live HTMLCollection of elements with the given local name."
+//! "Returns a live `HTMLCollection` of elements with the given local name."
 //!
 //! ## Selectors API
 //!
@@ -31,7 +31,7 @@
 //! "Returns the first element that is a descendant of node that matches selectors."
 //!
 //! STEP 1: "Let s be the result of parse a selector from selectors."
-//! STEP 2: "If s is failure, throw a SyntaxError DOMException."
+//! STEP 2: "If s is failure, throw a `SyntaxError` `DOMException`."
 //! STEP 3: "Return the first result of running scope-match a selectors string
 //!          selectors against node, if the result is non-empty; otherwise null."
 //!
@@ -58,11 +58,11 @@
 //! "Creates an element with the given local name."
 //!
 //! STEP 1: "If localName does not match the Name production, throw an
-//!          InvalidCharacterError DOMException."
+//!          `InvalidCharacterError` `DOMException`."
 //! STEP 2: "If context object is an HTML document, let localName be converted
 //!          to ASCII lowercase."
 //! STEP 3: "Let is be null."
-//! STEP 4: "If options is a dictionary and options["is"] exists, then set is
+//! STEP 4: "If options is a dictionary and `options["is"]` exists, then set is
 //!          to it."
 //! STEP 5: "Let namespace be the HTML namespace if context object is an HTML
 //!          document or context object's content type is 'application/xhtml+xml';
@@ -86,7 +86,7 @@ use boa_engine::Context;
 /// NOTE: This is currently a stub. The document object requires access to the
 /// DOM tree, which needs to be passed in when the runtime is created.
 #[allow(dead_code)]
-pub fn register_document(_context: &mut Context) {
+pub const fn register_document(_context: &mut Context) {
     // TODO: Implement document global
     //
     // This requires architectural changes:

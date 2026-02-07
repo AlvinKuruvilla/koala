@@ -36,19 +36,19 @@ use boa_engine::{
 /// "count(label)" and "countReset(label)" for counting labeled calls.
 ///
 /// [§ 1.3 Grouping](https://console.spec.whatwg.org/#grouping)
-/// "group()", "groupCollapsed()", "groupEnd()" for nested logging.
+/// `group()`, `groupCollapsed()`, `groupEnd()` for nested logging.
 ///
 /// [§ 1.4 Timing](https://console.spec.whatwg.org/#timing)
-/// "time(label)", "timeLog(label)", "timeEnd(label)" for performance timing.
+/// `time(label)`, `timeLog(label)`, `timeEnd(label)` for performance timing.
 ///
 /// [§ 1.5 Table](https://console.spec.whatwg.org/#table)
-/// "table(tabularData)" for tabular data display.
+/// `table(tabularData)` for tabular data display.
 ///
 /// [§ 1.6 Trace](https://console.spec.whatwg.org/#trace)
-/// "trace()" for stack trace output.
+/// `trace()` for stack trace output.
 ///
 /// [§ 1.7 Clear](https://console.spec.whatwg.org/#clear)
-/// "clear()" to clear the console.
+/// `clear()` to clear the console.
 pub fn register_console(context: &mut Context) {
     let console = ObjectInitializer::new(context)
         .function(NativeFunction::from_copy_closure(console_log), js_string!("log"), 0)
