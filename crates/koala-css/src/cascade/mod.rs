@@ -309,6 +309,13 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         flex_shrink: None,
         flex_basis: None,
 
+        // [§ 9.5 float](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        // "Inherited: no"
+        float: None,
+        // [§ 9.5.2 clear](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+        // "Inherited: no"
+        clear: None,
+
         // [§ 9.3.1 position](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
         // "Inherited: no"
         position: None,

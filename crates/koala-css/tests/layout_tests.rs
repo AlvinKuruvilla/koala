@@ -1509,3 +1509,247 @@ fn test_border_box_max_width() {
         div.dimensions.content.width
     );
 }
+
+// ---------------------------------------------------------------------------
+// Float layout tests
+//
+// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+//
+// "A float is a box that is shifted to the left or right on the current line.
+// The most interesting characteristic of a float is that content may flow along
+// its side (or be prohibited from doing so by the 'clear' property)."
+// ---------------------------------------------------------------------------
+
+/// Helper: find the first child box with float_side set.
+fn find_float_child(parent: &LayoutBox) -> &LayoutBox {
+    parent
+        .children
+        .iter()
+        .find(|c| c.float_side.is_some())
+        .expect("expected a floated child")
+}
+
+/// Helper: find all children with float_side set.
+fn find_float_children(parent: &LayoutBox) -> Vec<&LayoutBox> {
+    parent
+        .children
+        .iter()
+        .filter(|c| c.float_side.is_some())
+        .collect()
+}
+
+/// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+///
+/// A float:left element with explicit width should be positioned at the left
+/// edge of the containing block's content area.
+#[test]
+fn test_float_left_basic() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .floated { float: left; width: 100px; height: 50px; }</style><div class='floated'></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let floated = find_float_child(body);
+
+    assert!(
+        (floated.dimensions.content.x - 0.0).abs() < 0.1,
+        "float:left should be at x=0, got {:.1}",
+        floated.dimensions.content.x
+    );
+    assert!(
+        (floated.dimensions.content.y - 0.0).abs() < 0.1,
+        "float:left should be at y=0, got {:.1}",
+        floated.dimensions.content.y
+    );
+    assert!(
+        (floated.dimensions.content.width - 100.0).abs() < 0.1,
+        "floated width should be 100, got {:.1}",
+        floated.dimensions.content.width
+    );
+    assert!(
+        (floated.dimensions.content.height - 50.0).abs() < 0.1,
+        "floated height should be 50, got {:.1}",
+        floated.dimensions.content.height
+    );
+}
+
+/// [§ 9.5.1 Rule 9](https://www.w3.org/TR/CSS2/visuren.html#float-position)
+///
+/// "A right-floating box as far to the right as possible."
+#[test]
+fn test_float_right_basic() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .floated { float: right; width: 100px; height: 50px; }</style><div class='floated'></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let floated = find_float_child(body);
+
+    // Viewport is 800px wide, float should be at x = 800 - 100 = 700.
+    assert!(
+        (floated.dimensions.content.x - 700.0).abs() < 0.1,
+        "float:right should be at x=700 in 800px viewport, got {:.1}",
+        floated.dimensions.content.x
+    );
+}
+
+/// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+///
+/// "Since a float is not in the flow, non-positioned block boxes created
+/// before and after the float box flow vertically as if the float did not
+/// exist."
+///
+/// A floated box should NOT advance the parent's current_y for subsequent
+/// in-flow siblings.
+#[test]
+fn test_float_no_advance_y() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .floated { float: left; width: 100px; height: 50px; } .block { margin: 0; }</style><div class='floated'></div><div class='block'>After</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    // Find the in-flow block child (not the float).
+    let block = body
+        .children
+        .iter()
+        .find(|c| c.float_side.is_none() && c.display.outer == koala_css::OuterDisplayType::Block)
+        .expect("expected an in-flow block child");
+
+    assert!(
+        (block.dimensions.content.y - 0.0).abs() < 0.1,
+        "in-flow block after float should be at y=0, got {:.1}",
+        block.dimensions.content.y
+    );
+}
+
+/// [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+///
+/// "For clear: left → below bottom edge of all left-floating boxes."
+#[test]
+fn test_clear_left() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .floated { float: left; width: 100px; height: 80px; } .cleared { clear: left; margin: 0; }</style><div class='floated'></div><div class='cleared'>Cleared</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    // The cleared div is the second block-level child (first in-flow block).
+    let cleared = body
+        .children
+        .iter()
+        .find(|c| c.clear_side.is_some())
+        .expect("expected a cleared child");
+
+    // The cleared div should be pushed below the float's bottom edge (80px).
+    assert!(
+        cleared.dimensions.content.y >= 79.9,
+        "clear:left should push below float bottom (80), got y={:.1}",
+        cleared.dimensions.content.y
+    );
+}
+
+/// [§ 9.5.2](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+///
+/// "For clear: both → below bottom edge of all floating boxes."
+#[test]
+fn test_clear_both() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .fl { float: left; width: 100px; height: 60px; } .fr { float: right; width: 100px; height: 80px; } .cleared { clear: both; margin: 0; }</style><div class='fl'></div><div class='fr'></div><div class='cleared'>Cleared</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let cleared = body
+        .children
+        .iter()
+        .find(|c| c.clear_side.is_some())
+        .expect("expected a cleared child");
+
+    // clear:both should push below the tallest float (right at 80px).
+    assert!(
+        cleared.dimensions.content.y >= 79.9,
+        "clear:both should push below tallest float (80), got y={:.1}",
+        cleared.dimensions.content.y
+    );
+}
+
+/// [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
+///
+/// "Otherwise, if 'float' has a value other than 'none', the box is floated
+/// and 'display' is set according to the table [inline → block]."
+#[test]
+fn test_float_display_blockification() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } span.fl { float: left; width: 80px; height: 40px; }</style><span class='fl'>Float</span></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let floated_span = find_float_child(body);
+
+    // The span should have been blockified: width should be 80 as specified.
+    assert!(
+        (floated_span.dimensions.content.width - 80.0).abs() < 0.1,
+        "floated span should be blockified with width=80, got {:.1}",
+        floated_span.dimensions.content.width
+    );
+    assert!(
+        (floated_span.dimensions.content.height - 40.0).abs() < 0.1,
+        "floated span should be blockified with height=40, got {:.1}",
+        floated_span.dimensions.content.height
+    );
+}
+
+/// [§ 10.6.7 'Auto' heights for block formatting context roots](https://www.w3.org/TR/CSS2/visudet.html#root-height)
+///
+/// "If the element has any floating descendants whose bottom margin edge
+/// is below the element's bottom content edge, then the height is
+/// increased to include those edges."
+#[test]
+fn test_float_height_extension() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .container { background-color: #ccc; } .floated { float: left; width: 100px; height: 120px; }</style><div class='container'><div class='floated'></div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    // The container's auto height should extend to include the float (120px).
+    assert!(
+        container.dimensions.content.height >= 119.9,
+        "container auto height should extend to include float (120), got {:.1}",
+        container.dimensions.content.height
+    );
+}
+
+/// [§ 9.5.1 Rules 2, 3, 7](https://www.w3.org/TR/CSS2/visuren.html#float-position)
+///
+/// Multiple left floats should stack horizontally (not overlap).
+#[test]
+fn test_multiple_floats_stack() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } .fl { float: left; width: 100px; height: 50px; }</style><div class='fl'>A</div><div class='fl'>B</div><div class='fl'>C</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let floats = find_float_children(body);
+
+    assert!(
+        floats.len() >= 3,
+        "expected at least 3 float children, got {}",
+        floats.len()
+    );
+
+    assert!(
+        (floats[0].dimensions.content.x - 0.0).abs() < 0.1,
+        "first float at x=0, got {:.1}",
+        floats[0].dimensions.content.x
+    );
+    assert!(
+        (floats[1].dimensions.content.x - 100.0).abs() < 0.1,
+        "second float at x=100, got {:.1}",
+        floats[1].dimensions.content.x
+    );
+    assert!(
+        (floats[2].dimensions.content.x - 200.0).abs() < 0.1,
+        "third float at x=200, got {:.1}",
+        floats[2].dimensions.content.x
+    );
+}

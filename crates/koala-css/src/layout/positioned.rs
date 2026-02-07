@@ -332,10 +332,12 @@ impl PositionedLayout {
             // descendants. We compute it after positioning is known.
             let child_abs_cb = layout_box.dimensions.padding_box();
 
+            let mut float_ctx =
+                super::float::FloatContext::new(layout_box.dimensions.content.width);
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
-                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb);
+                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
             } else {
-                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb);
+                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
             }
 
             // Auto height: use the content height computed by child layout.
@@ -414,10 +416,12 @@ impl PositionedLayout {
             // Lay out children within the positioned box.
             layout_box.generate_anonymous_boxes();
             let child_abs_cb = layout_box.dimensions.padding_box();
+            let mut float_ctx2 =
+                super::float::FloatContext::new(layout_box.dimensions.content.width);
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
-                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb);
+                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb, &mut float_ctx2);
             } else {
-                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb);
+                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb, &mut float_ctx2);
             }
 
             // Restore the explicit height — child layout may have

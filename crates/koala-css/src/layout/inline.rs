@@ -322,6 +322,16 @@ pub struct InlineLayout {
     /// Text alignment for this inline formatting context, inherited from
     /// the block container that established it.
     pub text_align: TextAlign,
+
+    /// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+    ///
+    /// "The current and subsequent line boxes created next to the float
+    /// are shortened as necessary to make room for the margin box of the
+    /// float."
+    ///
+    /// Horizontal offset from the content box left edge caused by left
+    /// floats. Fragment x positions are shifted by this amount.
+    pub left_offset: f32,
 }
 
 impl InlineLayout {
@@ -336,6 +346,7 @@ impl InlineLayout {
             available_width,
             current_line_max_height: 0.0,
             text_align,
+            left_offset: 0.0,
         }
     }
 
@@ -485,9 +496,13 @@ impl InlineLayout {
         //
         // "In an inline formatting context, boxes are laid out horizontally,
         // one after the other, beginning at the top of a containing block."
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // Fragment x is offset by left_offset to account for left floats
+        // intruding into the line box.
         let fragment = LineFragment {
             bounds: Rect {
-                x: self.current_x,
+                x: self.left_offset + self.current_x,
                 y: self.current_y,
                 width: text_width,
                 height: line_height,
@@ -549,7 +564,7 @@ impl InlineLayout {
         // dimensions of the inline box, as computed by the caller.
         let fragment = LineFragment {
             bounds: Rect {
-                x: self.current_x,
+                x: self.left_offset + self.current_x,
                 y: self.current_y,
                 width,
                 height,

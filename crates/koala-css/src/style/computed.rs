@@ -255,6 +255,26 @@ pub struct ComputedStyle {
     /// box is offset to the right of the left edge of the box's containing block."
     pub left: Option<AutoLength>,
 
+    /// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+    ///
+    /// "The 'float' property specifies whether a box should float to the
+    /// left, right, or not at all."
+    ///
+    /// Values: left | right | none
+    /// Initial: none
+    /// Inherited: no
+    pub float: Option<String>,
+
+    /// [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+    ///
+    /// "This property indicates which sides of an element's box(es) may not
+    /// be adjacent to an earlier floating box."
+    ///
+    /// Values: left | right | both | none
+    /// Initial: none
+    /// Inherited: no
+    pub clear: Option<String>,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Source order tracking for cascade resolution of logical property groups
     // ─────────────────────────────────────────────────────────────────────────
@@ -654,6 +674,28 @@ impl ComputedStyle {
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.flex_basis = Some(self.resolve_auto_length(auto_len));
+                }
+            }
+            // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+            //
+            // "Values: left | right | none | inherit"
+            "float" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(lower.as_str(), "left" | "right" | "none") {
+                        self.float = Some(lower);
+                    }
+                }
+            }
+            // [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+            //
+            // "Values: left | right | both | none | inherit"
+            "clear" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(lower.as_str(), "left" | "right" | "both" | "none") {
+                        self.clear = Some(lower);
+                    }
                 }
             }
             // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)

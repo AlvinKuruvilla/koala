@@ -16,6 +16,7 @@ use crate::style::{
 
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
+use super::float::{ClearSide, FloatContext, FloatSide};
 use super::inline::{FontMetrics, FontStyle, InlineLayout, LineBox, TextAlign};
 use super::positioned::{BoxOffsets, PositionType, PositionedLayout};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
@@ -82,6 +83,15 @@ fn layout_inline_content(
             child.position_type,
             PositionType::Absolute | PositionType::Fixed
         ) {
+            continue;
+        }
+
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // Float children are out of flow — they have already been laid out
+        // and placed by the parent's layout_inline_children() before inline
+        // content processing begins.
+        if child.float_side.is_some() {
             continue;
         }
 
@@ -463,6 +473,22 @@ pub struct LayoutBox {
     ///
     /// true = border-box, false = content-box (default).
     pub box_sizing_border_box: bool,
+
+    // ===== Float fields =====
+    /// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+    ///
+    /// "A float is a box that is shifted to the left or right on the current line."
+    ///
+    /// None means the element is not floated (float: none).
+    pub float_side: Option<FloatSide>,
+
+    /// [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+    ///
+    /// "This property indicates which sides of an element's box(es) may not
+    /// be adjacent to an earlier floating box."
+    ///
+    /// None means no clearance (clear: none).
+    pub clear_side: Option<ClearSide>,
 }
 
 impl LayoutBox {
@@ -704,6 +730,8 @@ impl LayoutBox {
                     position_type: PositionType::Static,
                     offsets: BoxOffsets::default(),
                     box_sizing_border_box: false,
+                    float_side: None,
+                    clear_side: None,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -835,22 +863,54 @@ impl LayoutBox {
                         _ => PositionType::Static,
                     });
 
+                // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+                //
+                // Extract float and clear from computed style.
+                let clear_side = style
+                    .and_then(|s| s.clear.as_deref())
+                    .and_then(|c| match c {
+                        "left" => Some(ClearSide::Left),
+                        "right" => Some(ClearSide::Right),
+                        "both" => Some(ClearSide::Both),
+                        _ => None,
+                    });
+
                 // [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
                 //
-                // "If 'position' has the value 'absolute' or 'fixed', the box
-                // is absolutely positioned, 'float' is set to 'none', and display
-                // is set according to the table below. The position of the box
-                // will be determined by the 'top', 'right', 'bottom' and 'left'
-                // properties and the box's containing block."
+                // "1. If 'display' has the value 'none', then 'position' and
+                //    'float' do not apply."
+                //
+                // "2. Otherwise, if 'position' has the value 'absolute' or 'fixed',
+                //    the box is absolutely positioned, 'float' is set to 'none',
+                //    and display is set according to the table below."
+                //
+                // "3. Otherwise, if 'float' has a value other than 'none', the box
+                //    is floated and 'display' is set according to the table below."
                 //
                 // The table maps inline → block (and inline-* → block-*).
-                let display =
-                    if matches!(position_type, PositionType::Absolute | PositionType::Fixed)
-                        && display.outer == OuterDisplayType::Inline
-                    {
-                        DisplayValue::block()
+                let (display, float_side) =
+                    if matches!(position_type, PositionType::Absolute | PositionType::Fixed) {
+                        // Rule 2: absolute/fixed → float is none, blockify display
+                        let d = if display.outer == OuterDisplayType::Inline {
+                            DisplayValue::block()
+                        } else {
+                            display
+                        };
+                        (d, None)
                     } else {
-                        display
+                        // Rule 3: extract float, blockify if floated
+                        let fs = style
+                            .and_then(|s| s.float.as_deref())
+                            .and_then(|f| match f {
+                                "left" => Some(FloatSide::Left),
+                                "right" => Some(FloatSide::Right),
+                                _ => None,
+                            });
+                        if fs.is_some() && display.outer == OuterDisplayType::Inline {
+                            (DisplayValue::block(), fs)
+                        } else {
+                            (display, fs)
+                        }
                     };
 
                 // [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
@@ -942,6 +1002,8 @@ impl LayoutBox {
                     position_type,
                     offsets,
                     box_sizing_border_box,
+                    float_side,
+                    clear_side,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -1002,6 +1064,8 @@ impl LayoutBox {
                     position_type: PositionType::Static,
                     offsets: BoxOffsets::default(),
                     box_sizing_border_box: false,
+                    float_side: None,
+                    clear_side: None,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -1304,7 +1368,14 @@ impl LayoutBox {
             self.all_children_inline()
         );
 
-        // STEP 4: Layout children.
+        // STEP 4: Create a FloatContext for this block formatting context.
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // Floats are scoped to their block formatting context. Each block
+        // container gets its own FloatContext that tracks placed floats.
+        let mut float_ctx = FloatContext::new(self.dimensions.content.width);
+
+        // STEP 5: Layout children.
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
@@ -1313,21 +1384,21 @@ impl LayoutBox {
         if self.all_children_inline() && !self.children.is_empty() {
             #[cfg(feature = "layout-trace")]
             eprintln!(
-                "[BLOCK STEP4] layout_inline_children for {:?}",
+                "[BLOCK STEP5] layout_inline_children for {:?}",
                 self.box_type
             );
-            self.layout_inline_children(viewport, font_metrics, child_abs_cb);
+            self.layout_inline_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
         } else {
             #[cfg(feature = "layout-trace")]
             eprintln!(
-                "[BLOCK STEP4] layout_block_children for {:?}, {} children",
+                "[BLOCK STEP5] layout_block_children for {:?}, {} children",
                 self.box_type,
                 self.children.len()
             );
-            self.layout_block_children(viewport, font_metrics, child_abs_cb);
+            self.layout_block_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
         }
 
-        // STEP 5: Calculate height
+        // STEP 6: Calculate height
         // [§ 10.6.3 Block-level non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
         // "If 'height' is 'auto', the height depends on whether the element
@@ -1339,6 +1410,21 @@ impl LayoutBox {
         // its last in-flow child, if the child's bottom margin does not
         // collapse with the element's bottom margin"
         self.calculate_block_height(viewport, font_metrics);
+
+        // [§ 10.6.7](https://www.w3.org/TR/CSS2/visudet.html#root-height)
+        //
+        // "If the element has any floating descendants whose bottom margin
+        // edge is below the element's bottom content edge, then the height
+        // is increased to include those edges."
+        //
+        // Only applies when height is auto (not explicitly set).
+        if self.height.is_none() && !float_ctx.is_empty() {
+            let float_bottom = float_ctx.max_float_bottom();
+            let content_bottom = self.dimensions.content.y + self.dimensions.content.height;
+            if float_bottom > content_bottom {
+                self.dimensions.content.height = float_bottom - self.dimensions.content.y;
+            }
+        }
 
         // [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
         //
@@ -1392,6 +1478,19 @@ impl LayoutBox {
         let mut margin_left = resolved_margin.left;
         let mut margin_right = resolved_margin.right;
 
+        // [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        //
+        // "If 'margin-left' or 'margin-right' are computed as 'auto', their
+        // used value is '0'."
+        if self.float_side.is_some() {
+            if margin_left.is_auto() {
+                margin_left = AutoOr::Length(0.0);
+            }
+            if margin_right.is_auto() {
+                margin_right = AutoOr::Length(0.0);
+            }
+        }
+
         // Resolve width: None means 'auto'
         let mut width = self.width.as_ref().map_or(AutoOr::Auto, |al| {
             UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport)
@@ -1444,9 +1543,20 @@ impl LayoutBox {
         let used_margin_left: f32;
         let used_margin_right: f32;
 
+        // [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        //
+        // Floated elements do NOT use the § 10.3.3 constraint equation.
+        // Width is either the specified value or shrink-to-fit (set before
+        // layout by the caller). Auto margins are 0 (set above). No
+        // overconstrained margin expansion occurs.
+        if self.float_side.is_some() {
+            used_width = width.to_px_or(0.0);
+            used_margin_left = margin_left.to_px_or(0.0);
+            used_margin_right = margin_right.to_px_or(0.0);
+        }
         // RULE A: "If 'width' is set to 'auto', any other 'auto' values become
         //         '0' and 'width' follows from the resulting equality."
-        if width.is_auto() {
+        else if width.is_auto() {
             used_margin_left = margin_left.to_px_or(0.0);
             used_margin_right = margin_right.to_px_or(0.0);
             used_width = containing_block.width
@@ -1606,7 +1716,7 @@ impl LayoutBox {
     ///
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
-    pub(crate) fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect) {
+    pub(crate) fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect, float_ctx: &mut FloatContext) {
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the other,
@@ -1668,7 +1778,6 @@ impl LayoutBox {
 
         for i in 0..child_count {
             let child = &mut self.children[i];
-
             // [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
             //
             // "In the absolute positioning model, a box is removed from the
@@ -1681,6 +1790,73 @@ impl LayoutBox {
                 child.position_type,
                 PositionType::Absolute | PositionType::Fixed
             ) {
+                continue;
+            }
+
+            // [§ 9.5.2 Clear](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+            //
+            // "This property indicates which sides of an element's box(es)
+            // may not be adjacent to an earlier floating box."
+            //
+            // Clear is applied before margin collapsing and before float
+            // placement.
+            if let Some(clear) = child.clear_side {
+                current_y = float_ctx.clear(clear, current_y);
+            }
+
+            // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+            //
+            // "A float is a box that is shifted to the left or right on the
+            // current line... Since a float is not in the flow, non-positioned
+            // block boxes created before and after the float box flow
+            // vertically as if the float did not exist."
+            //
+            // Float children are laid out, then placed by the FloatContext.
+            // They do NOT advance current_y and do NOT participate in margin
+            // collapsing.
+            if child.float_side.is_some() {
+                let float_side = child.float_side.unwrap();
+
+                // [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+                //
+                // "If 'width' is computed as 'auto', the used value is the
+                // 'shrink-to-fit' width."
+                if child.width.is_none() || matches!(child.width, Some(AutoLength::Auto)) {
+                    let stf = child.shrink_to_fit_width(content_box, viewport, font_metrics);
+                    child.width = Some(AutoLength::Length(LengthValue::Px(f64::from(stf))));
+                }
+
+                // Layout the float child at a temporary position to determine
+                // its dimensions.
+                let temp_cb = Rect {
+                    x: content_box.x,
+                    y: current_y,
+                    width: content_box.width,
+                    height: f32::MAX,
+                };
+                child.layout(temp_cb, viewport, font_metrics, abs_cb);
+
+                // Place the float using its margin box dimensions.
+                let child_mb = child.dimensions.margin_box();
+                let placed = float_ctx.place_float(
+                    float_side,
+                    child_mb.width,
+                    child_mb.height,
+                    current_y,
+                );
+
+                // Relocate the child from its temporary position to the
+                // placed position. The shift is the difference between
+                // where place_float() wants the margin box and where
+                // layout() actually put it.
+                let dx = placed.x - child_mb.x;
+                let dy = placed.y - child_mb.y;
+                if dx != 0.0 || dy != 0.0 {
+                    Self::shift_box_tree(child, dx, dy);
+                }
+
+                // Float children do NOT advance current_y and do NOT
+                // participate in margin collapsing.
                 continue;
             }
 
@@ -2190,8 +2366,14 @@ impl LayoutBox {
         //
         // Absolute/fixed children are out of flow and do not participate
         // in the inline/block content classification.
-        let is_inflow =
-            |c: &Self| !matches!(c.position_type, PositionType::Absolute | PositionType::Fixed);
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // Floated children are out of flow — like absolute/fixed, they do not
+        // participate in the inline/block content classification.
+        let is_inflow = |c: &Self| {
+            !matches!(c.position_type, PositionType::Absolute | PositionType::Fixed)
+                && c.float_side.is_none()
+        };
         let has_block_children = self
             .children
             .iter()
@@ -2282,6 +2464,8 @@ impl LayoutBox {
             position_type: PositionType::Static,
             offsets: BoxOffsets::default(),
             box_sizing_border_box: false,
+            float_side: None,
+            clear_side: None,
         }
     }
 
@@ -2299,17 +2483,93 @@ impl LayoutBox {
     ///
     /// "The height of the line box is determined by the rules given in the
     /// section on line height calculations."
-    pub(crate) fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect) {
+    pub(crate) fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect, float_ctx: &mut FloatContext) {
         // STEP 1: Create an InlineLayout context.
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
-        // "The width of a line box is determined by a containing block."
+        // "The width of a line box is determined by a containing block and
+        // the presence of floats."
         let content_rect = self.dimensions.content_box();
+
+        // STEP 0: Process float children before inline layout.
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // "A float is a box that is shifted to the left or right on the
+        // current line... Since a float is not in the flow, non-positioned
+        // block boxes created before and after the float box flow vertically
+        // as if the float did not exist."
+        //
+        // Float children must be laid out and placed before inline content
+        // so that line boxes can be shortened to accommodate them.
+        let child_count = self.children.len();
+        for i in 0..child_count {
+            let child = &mut self.children[i];
+            if child.float_side.is_none() {
+                continue;
+            }
+            let float_side = child.float_side.unwrap();
+
+            // [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+            //
+            // "If 'width' is computed as 'auto', the used value is the
+            // 'shrink-to-fit' width."
+            if child.width.is_none() || matches!(child.width, Some(AutoLength::Auto)) {
+                let stf = child.shrink_to_fit_width(content_rect, viewport, font_metrics);
+                child.width = Some(AutoLength::Length(LengthValue::Px(f64::from(stf))));
+            }
+
+            // Layout the float child at a temporary position.
+            let temp_cb = Rect {
+                x: content_rect.x,
+                y: content_rect.y,
+                width: content_rect.width,
+                height: f32::MAX,
+            };
+            child.layout(temp_cb, viewport, font_metrics, abs_cb);
+
+            // Place the float using its margin box dimensions.
+            let child_mb = child.dimensions.margin_box();
+            let placed = float_ctx.place_float(
+                float_side,
+                child_mb.width,
+                child_mb.height,
+                0.0,
+            );
+
+            // Relocate from temporary position to placed position.
+            let dx = placed.x - child_mb.x;
+            let dy = placed.y - child_mb.y;
+            if dx != 0.0 || dy != 0.0 {
+                Self::shift_box_tree(child, dx, dy);
+            }
+        }
+
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // "The current and subsequent line boxes created next to the float
+        // are shortened as necessary to make room for the margin box of the
+        // float."
+        //
+        // V1 simplification: query float intrusion once for the entire IFC
+        // using the content area's top edge. Per-line queries are a v2
+        // enhancement.
+        let line_height = font_metrics.line_height(self.font_size);
+        let (left_offset, avail_width) =
+            float_ctx.available_width_at(self.dimensions.content.y, line_height);
+
+        // Use the narrower of the content width and float-adjusted width.
+        let effective_width = if avail_width < self.dimensions.content.width {
+            avail_width
+        } else {
+            self.dimensions.content.width
+        };
+
         let mut inline_layout = InlineLayout::new(
-            self.dimensions.content.width,
+            effective_width,
             self.dimensions.content.y,
             self.text_align,
         );
+        inline_layout.left_offset = left_offset;
 
         // STEP 2: Recursively add all inline content to the inline layout.
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -2501,6 +2761,30 @@ impl LayoutBox {
             + self.dimensions.padding.top;
     }
 
+    /// Recursively shift a box and all its descendants by `(dx, dy)`.
+    ///
+    /// Used to relocate float children from their temporary layout position
+    /// to the final position determined by `FloatContext::place_float()`.
+    fn shift_box_tree(bx: &mut Self, dx: f32, dy: f32) {
+        bx.dimensions.content.x += dx;
+        bx.dimensions.content.y += dy;
+
+        // Shift line box fragments (for inline formatting contexts).
+        for lb in &mut bx.line_boxes {
+            lb.bounds.x += dx;
+            lb.bounds.y += dy;
+            for frag in &mut lb.fragments {
+                frag.bounds.x += dx;
+                frag.bounds.y += dy;
+            }
+        }
+
+        // Recurse into children.
+        for child in &mut bx.children {
+            Self::shift_box_tree(child, dx, dy);
+        }
+    }
+
     /// [§ 11.1 Overflow and clipping](https://www.w3.org/TR/CSS2/visufx.html#overflow)
     ///
     /// "This property specifies whether content of a block container element
@@ -2610,8 +2894,51 @@ impl LayoutBox {
     /// ```text
     /// shrink_to_fit = min(max(preferred_min_width, available_width), preferred_width)
     /// ```
-    fn shrink_to_fit_width(&self, _containing_block: Rect, _viewport: Rect) -> f32 {
-        todo!("Calculate shrink-to-fit width per CSS 2.1 § 10.3.5")
+    fn shrink_to_fit_width(
+        &self,
+        containing_block: Rect,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+    ) -> f32 {
+        // STEP 1: Calculate preferred width (max-content).
+        // [§ 10.3.5](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        //
+        // "Calculate the preferred width by formatting the content without
+        // breaking lines other than where explicit line breaks occur."
+        let preferred_width = self.measure_content_size(viewport, font_metrics);
+
+        // STEP 2: Calculate preferred minimum width.
+        // [§ 10.3.5](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        //
+        // "Also calculate the preferred minimum width, e.g., by trying all
+        // possible line breaks."
+        //
+        // V1 simplification: use 0 as preferred minimum width. A proper
+        // implementation would find the widest unbreakable unit (word).
+        let preferred_min_width: f32 = 0.0;
+
+        // STEP 3: Calculate available width.
+        // [§ 10.3.5](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        //
+        // "Find the available width: this is found by solving for 'width'
+        // after setting 'left' (in case 2) or 'right' (in case 4) to 0."
+        let resolved_padding = self.padding.resolve(viewport);
+        let resolved_border = self.border_width.resolve(viewport);
+        let resolved_margin = self.margin.resolve(viewport);
+        let available_width = containing_block.width
+            - resolved_margin.left.to_px_or(0.0)
+            - resolved_margin.right.to_px_or(0.0)
+            - resolved_border.left
+            - resolved_border.right
+            - resolved_padding.left
+            - resolved_padding.right;
+
+        // STEP 4: Compute shrink-to-fit width.
+        // [§ 10.3.5](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        //
+        // "Then the shrink-to-fit width is:
+        //   min(max(preferred minimum width, available width), preferred width)"
+        preferred_min_width.max(available_width).min(preferred_width)
     }
 
     /// [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
@@ -2722,11 +3049,15 @@ impl LayoutBox {
             // Absolute/fixed children are out of flow — they do not affect
             // whether the parent establishes an inline or block formatting
             // context for its in-flow children.
+            // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+            //
+            // Floated children are also out of flow — like absolute/fixed,
+            // they do not participate in the inline/block classification.
             .filter(|c| {
                 !matches!(
                     c.position_type,
                     PositionType::Absolute | PositionType::Fixed
-                )
+                ) && c.float_side.is_none()
             })
             .all(|c| c.display.outer == OuterDisplayType::Inline)
     }
