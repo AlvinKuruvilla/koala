@@ -84,6 +84,30 @@ fn main() -> Result<()> {
     }
     let cli = Cli::parse();
 
+    // Validate screenshot output path before doing any expensive work.
+    if let Some(ref output_path) = cli.screenshot {
+        let supported = ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "tga", "ico", "pnm", "webp"];
+        match output_path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) if supported.contains(&ext.to_ascii_lowercase().as_str()) => {}
+            Some(ext) => {
+                anyhow::bail!(
+                    "Unsupported screenshot format '.{ext}' for '{}'.\n\
+                     Supported formats: {}",
+                    output_path.display(),
+                    supported.join(", ")
+                );
+            }
+            None => {
+                anyhow::bail!(
+                    "Screenshot path '{}' has no file extension.\n\
+                     Please add one of the supported formats: {}",
+                    output_path.display(),
+                    supported.join(", ")
+                );
+            }
+        }
+    }
+
     // Determine the document source
     let doc = if let Some(html_string) = cli.html {
         parse_html_string(&html_string)

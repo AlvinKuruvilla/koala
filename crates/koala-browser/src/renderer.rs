@@ -358,7 +358,12 @@ impl Renderer {
 
     /// Save the rendered image to a file.
     pub fn save(&self, path: &Path) -> Result<()> {
-        self.buffer.save(path)?;
+        self.buffer.save(path).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to save screenshot to '{}': {e}",
+                path.display()
+            )
+        })?;
         Ok(())
     }
 }
