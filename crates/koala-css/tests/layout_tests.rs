@@ -1,7 +1,9 @@
 //! Integration tests for CSS layout types.
 
 use koala_css::layout::default_display_for_element;
-use koala_css::{ApproximateFontMetrics, DisplayValue, LayoutBox, Rect};
+use koala_css::{
+    ApproximateFontMetrics, DisplayValue, InnerDisplayType, LayoutBox, OuterDisplayType, Rect,
+};
 
 #[test]
 fn test_default_display_block() {
@@ -1612,7 +1614,7 @@ fn test_float_no_advance_y() {
     let block = body
         .children
         .iter()
-        .find(|c| c.float_side.is_none() && c.display.outer == koala_css::OuterDisplayType::Block)
+        .find(|c| c.float_side.is_none() && c.display.outer == OuterDisplayType::Block)
         .expect("expected an in-flow block child");
 
     assert!(
@@ -1751,5 +1753,215 @@ fn test_multiple_floats_stack() {
         (floats[2].dimensions.content.x - 200.0).abs() < 0.1,
         "third float at x=200, got {:.1}",
         floats[2].dimensions.content.x
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Inline-block tests
+//
+// [§ 10.3.9 'Inline-block', non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
+//
+// "This value causes an element to generate an inline-level block
+// container. The inside of an inline-block is formatted as a block box,
+// and the element itself is formatted as an atomic inline-level box."
+// ---------------------------------------------------------------------------
+
+/// [§ 10.3.9](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
+///
+/// An inline-block with explicit width and height should use those dimensions.
+#[test]
+fn test_inline_block_explicit_size() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         .ib { display: inline-block; width: 100px; height: 50px; }\
+         </style>\
+         <div><span class='ib'></span></div>\
+         </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    // The inline-block child should be in the container's children.
+    let ib = &container.children[0];
+    assert!(
+        (ib.dimensions.content.width - 100.0).abs() < 0.1,
+        "inline-block width should be 100, got {:.1}",
+        ib.dimensions.content.width
+    );
+    assert!(
+        (ib.dimensions.content.height - 50.0).abs() < 0.1,
+        "inline-block height should be 50, got {:.1}",
+        ib.dimensions.content.height
+    );
+}
+
+/// [§ 10.3.9](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
+///
+/// "If 'width' is 'auto', the used value is the shrink-to-fit width."
+///
+/// An inline-block with auto width containing text should shrink to fit
+/// the text content.
+#[test]
+fn test_inline_block_shrink_to_fit() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         .ib { display: inline-block; }\
+         </style>\
+         <div><span class='ib'>Hello</span></div>\
+         </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+    let ib = &container.children[0];
+
+    // The inline-block should shrink to the text width.
+    // ApproximateFontMetrics: 5 chars × 0.6 × 16.0 = 48.0
+    let expected_width = 5.0 * 0.6 * 16.0;
+    assert!(
+        (ib.dimensions.content.width - expected_width).abs() < 1.0,
+        "inline-block should shrink-to-fit (expected ~{expected_width:.0}), got {:.1}",
+        ib.dimensions.content.width
+    );
+}
+
+/// [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
+///
+/// Two inline-blocks side by side should be on the same line, positioned
+/// horizontally.
+#[test]
+fn test_inline_block_multiple_on_one_line() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         .ib1 { display: inline-block; width: 100px; height: 50px; }\
+         .ib2 { display: inline-block; width: 150px; height: 50px; }\
+         </style>\
+         <div>\
+           <span class='ib1'></span>\
+           <span class='ib2'></span>\
+         </div>\
+         </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    // Find the inline-block children. The container's children may include
+    // anonymous inline text nodes for whitespace, so search for Principal
+    // boxes with inline-block display.
+    let inline_blocks: Vec<&LayoutBox> = container
+        .children
+        .iter()
+        .filter(|c| {
+            c.display.outer == OuterDisplayType::Inline
+                && c.display.inner == InnerDisplayType::FlowRoot
+        })
+        .collect();
+    assert!(
+        inline_blocks.len() >= 2,
+        "expected at least 2 inline-block children, got {} (total children: {})",
+        inline_blocks.len(),
+        container.children.len()
+    );
+    let ib1 = inline_blocks[0];
+    let ib2 = inline_blocks[1];
+
+    // ib1 should start at x=0 (or near it, within the content box).
+    assert!(
+        ib1.dimensions.content.x < 10.0,
+        "first inline-block should be near the left edge, got x={:.1}",
+        ib1.dimensions.content.x
+    );
+
+    // ib2 should be to the right of ib1. There may be a space between
+    // them from the whitespace text node.
+    assert!(
+        ib2.dimensions.content.x > ib1.dimensions.content.x + 90.0,
+        "second inline-block should be to the right of the first, \
+         ib1.x={:.1}, ib2.x={:.1}",
+        ib1.dimensions.content.x,
+        ib2.dimensions.content.x
+    );
+}
+
+/// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+///
+/// An inline-block that doesn't fit on the current line should wrap to
+/// the next line.
+#[test]
+fn test_inline_block_line_wrapping() {
+    // Viewport is 800px wide. Two 500px inline-blocks won't fit on one line.
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         .ib { display: inline-block; width: 500px; height: 40px; }\
+         </style>\
+         <div>\
+           <span class='ib'>A</span>\
+           <span class='ib'>B</span>\
+         </div>\
+         </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    let ib1 = &container.children[0];
+    let ib2 = &container.children[1];
+
+    // ib2 should be on a different line (higher y value) than ib1.
+    assert!(
+        ib2.dimensions.content.y > ib1.dimensions.content.y + 20.0,
+        "second inline-block should wrap to next line, \
+         ib1.y={:.1}, ib2.y={:.1}",
+        ib1.dimensions.content.y,
+        ib2.dimensions.content.y
+    );
+}
+
+/// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+///
+/// "Inline-level content is centered within the line box."
+///
+/// An inline-block inside a `text-align: center` container should be
+/// horizontally centered.
+#[test]
+fn test_inline_block_text_align_center() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         .container { text-align: center; }\
+         .ib { display: inline-block; width: 200px; height: 50px; }\
+         </style>\
+         <div class='container'>\
+           <span class='ib'></span>\
+         </div>\
+         </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    // Find the inline-block child (may be mixed with anonymous text nodes).
+    let ib = container
+        .children
+        .iter()
+        .find(|c| {
+            c.display.outer == OuterDisplayType::Inline
+                && c.display.inner == InnerDisplayType::FlowRoot
+        })
+        .expect("should find an inline-block child");
+
+    // Container is 800px wide. The 200px inline-block should be centered:
+    // offset = (800 - 200) / 2 = 300.
+    let expected_x = (800.0 - 200.0) / 2.0;
+    assert!(
+        (ib.dimensions.content.x - expected_x).abs() < 5.0,
+        "inline-block should be centered (expected x≈{expected_x:.0}), got x={:.1}",
+        ib.dimensions.content.x
     );
 }

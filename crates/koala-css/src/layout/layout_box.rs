@@ -17,7 +17,7 @@ use crate::style::{
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
 use super::float::{ClearSide, FloatContext, FloatSide};
-use super::inline::{FontMetrics, FontStyle, InlineLayout, LineBox, TextAlign};
+use super::inline::{FontMetrics, FontStyle, FragmentContent, InlineLayout, LineBox, TextAlign};
 use super::positioned::{BoxOffsets, PositionType, PositionedLayout};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
@@ -42,6 +42,24 @@ fn collapse_two_margins(a: f32, b: f32) -> f32 {
     } else {
         a + b
     }
+}
+
+/// Find a child `LayoutBox` by `NodeId`, searching recursively.
+///
+/// Used to locate inline-block children for repositioning after line
+/// finalization.
+fn find_child_by_node_id(children: &mut [LayoutBox], target: NodeId) -> Option<&mut LayoutBox> {
+    for child in children.iter_mut() {
+        if let BoxType::Principal(id) = child.box_type {
+            if id == target {
+                return Some(child);
+            }
+        }
+        if let Some(found) = find_child_by_node_id(&mut child.children, target) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// Recursively walk inline-level children, feeding their content into an
@@ -73,6 +91,7 @@ fn layout_inline_content(
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
     abs_cb: Rect,
+    inline_block_positions: &mut Vec<(NodeId, Rect)>,
 ) {
     for child in children.iter_mut() {
         // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
@@ -115,6 +134,45 @@ fn layout_inline_content(
                     inherited_font_style,
                     font_metrics,
                 );
+            }
+            BoxType::Principal(node_id)
+                if child.display.outer == OuterDisplayType::Inline
+                    && child.display.inner == InnerDisplayType::FlowRoot =>
+            {
+                // [§ 10.3.9 'Inline-block', non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
+                //
+                // "If 'width' is 'auto', the used value is the shrink-to-fit
+                // width as for floating elements."
+                //
+                // [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
+                //
+                // "Inline-block elements participate in their parent's inline
+                // formatting context as a single opaque box."
+                let node_id = *node_id;
+
+                // STEP 1: Resolve width. If auto, use shrink-to-fit.
+                if child.width.is_none() || matches!(child.width, Some(AutoLength::Auto)) {
+                    let stf = child.shrink_to_fit_width(content_rect, viewport, font_metrics);
+                    child.width = Some(AutoLength::Length(LengthValue::Px(f64::from(stf))));
+                }
+
+                // STEP 2: Layout at a temporary position.
+                // The block child is laid out at the content rect origin;
+                // it will be repositioned after line finalization.
+                let temp_cb = Rect {
+                    x: content_rect.x,
+                    y: inline_layout.current_y,
+                    width: content_rect.width,
+                    height: f32::MAX,
+                };
+                child.layout(temp_cb, viewport, font_metrics, abs_cb);
+
+                // STEP 3: Record margin box and place on the inline line.
+                let mb = child.dimensions.margin_box();
+                inline_layout.add_inline_block(node_id, mb.width, mb.height);
+
+                // Record the temporary position for post-layout repositioning.
+                inline_block_positions.push((node_id, mb));
             }
             BoxType::Principal(_) if child.display.outer == OuterDisplayType::Inline => {
                 // [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
@@ -165,6 +223,7 @@ fn layout_inline_content(
                     font_metrics,
                     content_rect,
                     abs_cb,
+                    inline_block_positions,
                 );
 
                 // STEP 4: Close the inline box (apply right edge).
@@ -1479,10 +1538,13 @@ impl LayoutBox {
         let mut margin_right = resolved_margin.right;
 
         // [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)
+        // [§ 10.3.9 'Inline-block', non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
         //
         // "If 'margin-left' or 'margin-right' are computed as 'auto', their
         // used value is '0'."
-        if self.float_side.is_some() {
+        let is_inline_block = self.display.outer == OuterDisplayType::Inline
+            && self.display.inner == InnerDisplayType::FlowRoot;
+        if self.float_side.is_some() || is_inline_block {
             if margin_left.is_auto() {
                 margin_left = AutoOr::Length(0.0);
             }
@@ -1549,7 +1611,7 @@ impl LayoutBox {
         // Width is either the specified value or shrink-to-fit (set before
         // layout by the caller). Auto margins are 0 (set above). No
         // overconstrained margin expansion occurs.
-        if self.float_side.is_some() {
+        if self.float_side.is_some() || is_inline_block {
             used_width = width.to_px_or(0.0);
             used_margin_left = margin_left.to_px_or(0.0);
             used_margin_right = margin_right.to_px_or(0.0);
@@ -2585,6 +2647,11 @@ impl LayoutBox {
         // font_size and color are passed as the inherited values for its
         // inline children. Principal inline children will use their own
         // resolved values when recursing.
+        // Collect temporary positions for inline-block children.
+        // These are laid out at temporary positions during inline content
+        // processing and repositioned after line finalization.
+        let mut inline_block_positions: Vec<(NodeId, Rect)> = Vec::new();
+
         layout_inline_content(
             &mut self.children,
             &mut inline_layout,
@@ -2596,6 +2663,7 @@ impl LayoutBox {
             font_metrics,
             content_rect,
             abs_cb,
+            &mut inline_block_positions,
         );
 
         // STEP 3: Finalize the last line.
@@ -2623,6 +2691,41 @@ impl LayoutBox {
         // the correct positions, rather than reading from children's
         // dimensions (which are not set during inline layout).
         self.line_boxes = inline_layout.line_boxes;
+
+        // STEP 6: Reposition inline-block children to their final line positions.
+        //
+        // [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
+        //
+        // Inline-block children were laid out at temporary positions before
+        // line finalization (which applies text-align offsets and vertical
+        // alignment). Now walk the finalized line boxes, find each
+        // InlineBlock fragment, compute the delta from the temp position
+        // to the finalized fragment position, and shift the entire child
+        // subtree.
+        if !inline_block_positions.is_empty() {
+            for line_box in &self.line_boxes {
+                for fragment in &line_box.fragments {
+                    if let FragmentContent::InlineBlock(frag_node_id) = &fragment.content {
+                        // Find the temp position for this node_id.
+                        if let Some((_, temp_mb)) = inline_block_positions
+                            .iter()
+                            .find(|(nid, _)| nid == frag_node_id)
+                        {
+                            let dx = fragment.bounds.x - temp_mb.x;
+                            let dy = fragment.bounds.y - temp_mb.y;
+                            if dx != 0.0 || dy != 0.0 {
+                                // Find the child LayoutBox by NodeId and shift it.
+                                if let Some(child) =
+                                    find_child_by_node_id(&mut self.children, *frag_node_id)
+                                {
+                                    Self::shift_box_tree(child, dx, dy);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)

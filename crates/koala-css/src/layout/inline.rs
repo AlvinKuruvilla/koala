@@ -11,6 +11,8 @@
 //! "The height of the line box is determined by the rules given in the
 //! section on line height calculations."
 
+use koala_dom::NodeId;
+
 use crate::style::ColorValue;
 
 use super::box_model::Rect;
@@ -138,6 +140,16 @@ pub enum FragmentContent {
     InlineBox,
     /// A replaced inline element (e.g., `<img>`).
     ReplacedElement,
+    /// [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
+    ///
+    /// "An inline-level box that is not an inline box (such as replaced
+    /// inline-level elements, inline-block elements, and inline-table
+    /// elements) is called an atomic inline-level box because it
+    /// participates in its inline formatting context as a single opaque box."
+    ///
+    /// Stores the `NodeId` so the corresponding child `LayoutBox` can be
+    /// repositioned after line finalization.
+    InlineBlock(NodeId),
 }
 
 /// A contiguous run of text within a line fragment.
@@ -581,6 +593,55 @@ impl InlineLayout {
         }
     }
 
+    /// [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
+    ///
+    /// Add an atomic inline-level block container (display: inline-block)
+    /// to the current line.
+    ///
+    /// [§ 10.3.9 'Inline-block', non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
+    ///
+    /// "Inline-block elements participate in their parent's inline formatting
+    /// context as a single opaque box."
+    ///
+    /// Unlike regular inline boxes, inline-blocks are atomic — they cannot
+    /// be split across lines.
+    pub fn add_inline_block(&mut self, node_id: NodeId, width: f32, height: f32) {
+        // STEP 1: Check if the inline-block fits on the current line.
+        //
+        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+        //
+        // "When an inline box exceeds the width of a line box, it is split
+        // into several boxes..."
+        //
+        // Inline-blocks are atomic and cannot split; if they don't fit
+        // and we're not at the start of a line, wrap to a new line.
+        let fits_on_current_line =
+            self.current_x + width <= self.available_width || self.current_x == 0.0;
+
+        if !fits_on_current_line {
+            self.finish_line();
+        }
+
+        // STEP 2: Place the inline-block fragment on the current line.
+        let fragment = LineFragment {
+            bounds: Rect {
+                x: self.left_offset + self.current_x,
+                y: self.current_y,
+                width,
+                height,
+            },
+            content: FragmentContent::InlineBlock(node_id),
+            vertical_align: VerticalAlign::Baseline,
+        };
+        self.current_line_fragments.push(fragment);
+
+        // STEP 3: Advance current position and update line height.
+        self.current_x += width;
+        if height > self.current_line_max_height {
+            self.current_line_max_height = height;
+        }
+    }
+
     /// [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
     ///
     /// Begin a non-replaced inline box (e.g., `<span>`, `<a>`, `<em>`).
@@ -833,7 +894,9 @@ impl InlineLayout {
             FragmentContent::Text(run) => run.font_size,
             // For non-text fragments, treat the full height as the "font size"
             // so ascent = height × ascender_ratio.
-            FragmentContent::InlineBox | FragmentContent::ReplacedElement => frag_height,
+            FragmentContent::InlineBox
+            | FragmentContent::ReplacedElement
+            | FragmentContent::InlineBlock(_) => frag_height,
         };
 
         let half_leading = (frag_height - font_size) / 2.0;
