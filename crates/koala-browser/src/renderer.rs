@@ -1,6 +1,6 @@
 //! Software renderer for headless screenshot generation.
 //!
-//! Executes a DisplayList to a pixel buffer using fontdue for text rasterization.
+//! Executes a `DisplayList` to a pixel buffer using fontdue for text rasterization.
 //!
 //! # Architecture
 //!
@@ -102,12 +102,13 @@ pub struct Renderer {
     font_italic: Option<Font>,
     /// Bold-italic font variant (None falls back to bold or italic or regular)
     font_bold_italic: Option<Font>,
-    /// Loaded images keyed by src attribute. Used for DrawImage commands.
+    /// Loaded images keyed by src attribute. Used for `DrawImage` commands.
     images: HashMap<String, LoadedImage>,
 }
 
 impl Renderer {
     /// Create a new renderer with the given dimensions and optional image data.
+    #[must_use] 
     pub fn new(width: u32, height: u32, images: HashMap<String, LoadedImage>) -> Self {
         // Create white background
         let buffer = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
@@ -142,17 +143,17 @@ impl Renderer {
     /// Try to load a font from a list of filesystem paths.
     fn load_font_from_paths(paths: &[&str], label: &str) -> Option<Font> {
         for path in paths {
-            if let Ok(data) = std::fs::read(path) {
-                if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
+            if let Ok(data) = std::fs::read(path)
+                && let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
                     eprintln!("Loaded {label} font: {path}");
                     return Some(font);
                 }
-            }
         }
         None
     }
 
     /// Try to load the regular system font (public API, kept for compatibility).
+    #[must_use] 
     pub fn load_system_font() -> Option<Font> {
         Self::load_font_from_paths(FONT_SEARCH_PATHS, "regular")
     }
@@ -251,8 +252,8 @@ impl Renderer {
                 }
 
                 // Nearest-neighbor sampling
-                let sx = ((dx as u64 * src_w as u64) / dest_w as u64).min(src_w as u64 - 1) as u32;
-                let sy = ((dy as u64 * src_h as u64) / dest_h as u64).min(src_h as u64 - 1) as u32;
+                let sx = ((u64::from(dx) * u64::from(src_w)) / u64::from(dest_w)).min(u64::from(src_w) - 1) as u32;
+                let sy = ((u64::from(dy) * u64::from(src_h)) / u64::from(dest_h)).min(u64::from(src_h) - 1) as u32;
                 let src_idx = ((sy * src_w + sx) * 4) as usize;
 
                 let sr = img.rgba_data()[src_idx];
@@ -370,13 +371,13 @@ impl Renderer {
 
 /// Alpha blend a foreground color onto a background color.
 fn alpha_blend(fg: Rgba<u8>, bg: Rgba<u8>, alpha: u8) -> Rgba<u8> {
-    let a = alpha as f32 / 255.0;
+    let a = f32::from(alpha) / 255.0;
     let inv_a = 1.0 - a;
 
     Rgba([
-        (fg[0] as f32 * a + bg[0] as f32 * inv_a) as u8,
-        (fg[1] as f32 * a + bg[1] as f32 * inv_a) as u8,
-        (fg[2] as f32 * a + bg[2] as f32 * inv_a) as u8,
+        f32::from(fg[0]).mul_add(a, f32::from(bg[0]) * inv_a) as u8,
+        f32::from(fg[1]).mul_add(a, f32::from(bg[1]) * inv_a) as u8,
+        f32::from(fg[2]).mul_add(a, f32::from(bg[2]) * inv_a) as u8,
         255,
     ])
 }

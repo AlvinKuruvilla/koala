@@ -25,7 +25,8 @@ pub struct FontdueFontMetrics<'a> {
 
 impl<'a> FontdueFontMetrics<'a> {
     /// Create a new font metrics provider from a fontdue Font.
-    pub fn new(font: &'a Font) -> Self {
+    #[must_use] 
+    pub const fn new(font: &'a Font) -> Self {
         Self { font }
     }
 }
