@@ -155,7 +155,7 @@ fn compute_node_styles(
     let Some(node) = tree.get(id) else { return };
 
     match &node.node_type {
-        NodeType::Element(_element_data) => {
+        NodeType::Element(element_data) => {
             // [§ 7 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
             // Start with inherited styles
             let mut computed = inherit_styles(inherited);
@@ -190,6 +190,26 @@ fn compute_node_styles(
             // Apply declarations in order (lowest priority first, highest last wins)
             for m in matched {
                 for decl in &m.rule.declarations {
+                    computed.apply_declaration(decl);
+                }
+            }
+
+            // [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+            //
+            // "A declaration can be element-attached (via the style attribute)."
+            //
+            // "Element-attached declarations from the style attribute have
+            // Author origin and are always more specific than any selector."
+            //
+            // Apply inline style declarations last so they override all
+            // stylesheet rules (they have the highest cascade priority
+            // among author-level declarations).
+            if let Some(style_attr) = element_data.attrs.get("style") {
+                let mut tokenizer = crate::tokenizer::CSSTokenizer::new(style_attr.clone());
+                tokenizer.run();
+                let mut parser = crate::parser::CSSParser::new(tokenizer.into_tokens());
+                let declarations = parser.parse_declaration_list();
+                for decl in &declarations {
                     computed.apply_declaration(decl);
                 }
             }

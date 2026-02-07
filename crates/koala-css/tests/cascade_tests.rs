@@ -21,12 +21,25 @@ fn empty_stylesheet() -> Stylesheet {
 
 /// Helper to create element node types
 fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType {
+    make_element_with_attrs(tag, id, classes, &[])
+}
+
+/// Helper to create element node types with arbitrary extra attributes
+fn make_element_with_attrs(
+    tag: &str,
+    id: Option<&str>,
+    classes: &[&str],
+    extra_attrs: &[(&str, &str)],
+) -> NodeType {
     let mut attrs = AttributesMap::new();
     if let Some(id_val) = id {
         let _ = attrs.insert("id".to_string(), id_val.to_string());
     }
     if !classes.is_empty() {
         let _ = attrs.insert("class".to_string(), classes.join(" "));
+    }
+    for &(k, v) in extra_attrs {
+        let _ = attrs.insert(k.to_string(), v.to_string());
     }
     NodeType::Element(ElementData {
         tag_name: tag.to_string(),
@@ -622,4 +635,59 @@ fn test_hsl_black_white() {
     assert_eq!(white.r, 255);
     assert_eq!(white.g, 255);
     assert_eq!(white.b, 255);
+}
+
+// ===== Inline style attribute tests =====
+
+/// [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+///
+/// "Element-attached declarations from the style attribute have Author origin
+/// and are always more specific than any selector."
+///
+/// Inline `style` attribute should override stylesheet rules.
+#[test]
+fn test_inline_style_overrides_stylesheet() {
+    // Stylesheet says color: red, inline style says color: blue
+    let css = "p { color: #ff0000; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let p_id = tree.alloc(make_element_with_attrs(
+        "p",
+        None,
+        &[],
+        &[("style", "color: #0000ff;")],
+    ));
+    tree.append_child(NodeId::ROOT, p_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let p_style = styles.get(&p_id).unwrap();
+    let color = p_style.color.as_ref().unwrap();
+    // Inline style (blue) should win over stylesheet (red)
+    assert_eq!(color.r, 0x00, "Expected blue from inline style, got red component {}", color.r);
+    assert_eq!(color.g, 0x00);
+    assert_eq!(color.b, 0xff, "Expected blue from inline style, got blue component {}", color.b);
+}
+
+/// Inline style works even when no stylesheet rule matches.
+#[test]
+fn test_inline_style_standalone() {
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_with_attrs(
+        "div",
+        None,
+        &[],
+        &[("style", "background-color: #00ff00; padding: 10px;")],
+    ));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &empty_stylesheet());
+
+    let div_style = styles.get(&div_id).unwrap();
+    let bg = div_style.background_color.as_ref().unwrap();
+    assert_eq!(bg.r, 0x00);
+    assert_eq!(bg.g, 0xff);
+    assert_eq!(bg.b, 0x00);
+    assert!(div_style.padding_top.is_some());
 }
