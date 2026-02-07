@@ -196,6 +196,11 @@ pub struct HTMLTokenizer {
     /// "The temporary buffer is used to temporarily store characters during certain
     /// tokenization operations, particularly for end tag detection in RCDATA/RAWTEXT states."
     pub(super) temporary_buffer: String,
+
+    /// [§ 13.2.5.75 Numeric character reference state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-state)
+    /// "Set the character reference code to zero (0)."
+    /// Accumulates the code point value during decimal/hexadecimal character reference parsing.
+    pub(super) character_reference_code: u32,
 }
 impl HTMLTokenizer {
     /// Create a new tokenizer for the given input.
@@ -219,6 +224,7 @@ impl HTMLTokenizer {
             reconsume: false,
             last_start_tag_name: None,
             temporary_buffer: String::new(),
+            character_reference_code: 0,
         }
     }
 
@@ -1838,32 +1844,26 @@ impl HTMLTokenizer {
             }
         }
     }
+    /// [§ 13.2.5.75 Numeric character reference state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-state)
     fn handle_numeric_character_reference_state(&mut self) {
-        // Consume the next input character:
+        // "Set the character reference code to zero (0)."
+        self.character_reference_code = 0;
+
+        // "Consume the next input character:"
         match self.current_input_character {
-            // ASCII alphanumeric
-            // If the character reference was consumed as part of an attribute, then append the current input character to the current attribute's value. Otherwise, emit the current input character as a character token.
-            Some(c) if c.is_ascii_alphanumeric() => {
-                if self.is_consumed_as_part_of_attribute() {
-                    if let Some(ref mut token) = self.current_token {
-                        token.append_to_current_attribute_value(c);
-                    }
-                } else {
-                    self.emit_character_token(c);
-                }
+            // "U+0078 LATIN SMALL LETTER X"
+            // "U+0058 LATIN CAPITAL LETTER X"
+            // "Append the current input character to the temporary buffer.
+            // Switch to the hexadecimal character reference start state."
+            Some('x' | 'X') => {
+                self.temporary_buffer
+                    .push(self.current_input_character.unwrap());
+                self.switch_to(TokenizerState::HexadecimalCharacterReferenceStart);
             }
-            // U+003B SEMICOLON (;)
-            // This is an unknown-named-character-reference parse error. Reconsume in the return state.
-            Some(';') => {
-                self.log_parse_error();
-                let return_state = self.return_state.take().unwrap();
-                self.reconsume_in(return_state);
-            }
-            // Anything else
-            // Reconsume in the return state.
+            // "Anything else"
+            // "Reconsume in the decimal character reference start state."
             _ => {
-                let return_state = self.return_state.take().unwrap();
-                self.reconsume_in(return_state);
+                self.reconsume_in(TokenizerState::DecimalCharacterReferenceStart);
             }
         }
     }
@@ -2477,8 +2477,6 @@ impl HTMLTokenizer {
                 }
                 TokenizerState::AmbiguousAmpersand => self.handle_ambiguous_ampersand_state(),
 
-                // TODO: Implement numeric character references:
-                //
                 // STEP 8: NumericCharacterReference - saw "&#", determine hex or decimal
                 //   [§ 13.2.5.75](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-state)
                 //   "Consume the next input character:"
@@ -2488,41 +2486,268 @@ impl HTMLTokenizer {
                     self.handle_numeric_character_reference_state()
                 }
 
-                // STEP 9: Hexadecimal start - expect hex digits after "&#x"
-                //   [§ 13.2.5.76](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-start-state)
+                // [§ 13.2.5.76 Hexadecimal character reference start state](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-start-state)
+                //
+                // "Consume the next input character:"
                 TokenizerState::HexadecimalCharacterReferenceStart => {
-                    todo!("HexadecimalCharacterReferenceStart state - see STEP 9")
+                    match self.current_input_character {
+                        // "ASCII hex digit"
+                        // "Reconsume in the hexadecimal character reference state."
+                        Some(c) if c.is_ascii_hexdigit() => {
+                            self.reconsume_in(TokenizerState::HexadecimalCharacterReference);
+                        }
+                        // "Anything else"
+                        // "This is an absence-of-digits-in-numeric-character-reference
+                        // parse error. Flush code points consumed as a character
+                        // reference. Reconsume in the return state."
+                        _ => {
+                            self.log_parse_error();
+                            self.flush_code_points_consumed_as_character_reference();
+                            let return_state = self.return_state.take().unwrap();
+                            self.reconsume_in(return_state);
+                        }
+                    }
                 }
 
-                // STEP 10: Decimal start - expect digits after "&#"
-                //   [§ 13.2.5.77](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-start-state)
+                // [§ 13.2.5.77 Decimal character reference start state](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-start-state)
+                //
+                // "Consume the next input character:"
                 TokenizerState::DecimalCharacterReferenceStart => {
-                    todo!("DecimalCharacterReferenceStart state - see STEP 10")
+                    match self.current_input_character {
+                        // "ASCII digit"
+                        // "Reconsume in the decimal character reference state."
+                        Some(c) if c.is_ascii_digit() => {
+                            self.reconsume_in(TokenizerState::DecimalCharacterReference);
+                        }
+                        // "Anything else"
+                        // "This is an absence-of-digits-in-numeric-character-reference
+                        // parse error. Flush code points consumed as a character
+                        // reference. Reconsume in the return state."
+                        _ => {
+                            self.log_parse_error();
+                            self.flush_code_points_consumed_as_character_reference();
+                            let return_state = self.return_state.take().unwrap();
+                            self.reconsume_in(return_state);
+                        }
+                    }
                 }
 
-                // STEP 11: Hexadecimal digits - accumulate hex value
-                //   [§ 13.2.5.78](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-state)
-                //   Multiply accumulated value by 16, add digit value
+                // [§ 13.2.5.78 Hexadecimal character reference state](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-state)
+                //
+                // "Consume the next input character:"
                 TokenizerState::HexadecimalCharacterReference => {
-                    todo!("HexadecimalCharacterReference state - see STEP 11")
+                    match self.current_input_character {
+                        // "ASCII digit"
+                        // "Multiply the character reference code by 16. Add a numeric
+                        // version of the current input character (subtract 0x0030 from
+                        // the character's code point) to the character reference code."
+                        Some(c) if c.is_ascii_digit() => {
+                            self.character_reference_code = self
+                                .character_reference_code
+                                .saturating_mul(16)
+                                .saturating_add(u32::from(c) - 0x0030);
+                        }
+                        // "ASCII upper hex digit"
+                        // "Multiply the character reference code by 16. Add a numeric
+                        // version of the current input character as a hexadecimal digit
+                        // (subtract 0x0037 from the character's code point) to the
+                        // character reference code."
+                        Some(c @ 'A'..='F') => {
+                            self.character_reference_code = self
+                                .character_reference_code
+                                .saturating_mul(16)
+                                .saturating_add(u32::from(c) - 0x0037);
+                        }
+                        // "ASCII lower hex digit"
+                        // "Multiply the character reference code by 16. Add a numeric
+                        // version of the current input character as a hexadecimal digit
+                        // (subtract 0x0057 from the character's code point) to the
+                        // character reference code."
+                        Some(c @ 'a'..='f') => {
+                            self.character_reference_code = self
+                                .character_reference_code
+                                .saturating_mul(16)
+                                .saturating_add(u32::from(c) - 0x0057);
+                        }
+                        // "U+003B SEMICOLON"
+                        // "Switch to the numeric character reference end state."
+                        Some(';') => {
+                            self.switch_to(TokenizerState::NumericCharacterReferenceEnd);
+                        }
+                        // "Anything else"
+                        // "This is a missing-semicolon-after-character-reference parse
+                        // error. Reconsume in the numeric character reference end state."
+                        _ => {
+                            self.log_parse_error();
+                            self.reconsume_in(TokenizerState::NumericCharacterReferenceEnd);
+                        }
+                    }
                 }
 
-                // STEP 12: Decimal digits - accumulate decimal value
-                //   [§ 13.2.5.79](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-state)
-                //   Multiply accumulated value by 10, add digit value
+                // [§ 13.2.5.79 Decimal character reference state](https://html.spec.whatwg.org/multipage/parsing.html#decimal-character-reference-state)
+                //
+                // "Consume the next input character:"
                 TokenizerState::DecimalCharacterReference => {
-                    todo!("DecimalCharacterReference state - see STEP 12")
+                    match self.current_input_character {
+                        // "ASCII digit"
+                        // "Multiply the character reference code by 10. Add a numeric
+                        // version of the current input character (subtract 0x0030 from
+                        // the character's code point) to the character reference code."
+                        Some(c) if c.is_ascii_digit() => {
+                            self.character_reference_code = self
+                                .character_reference_code
+                                .saturating_mul(10)
+                                .saturating_add(u32::from(c) - 0x0030);
+                        }
+                        // "U+003B SEMICOLON"
+                        // "Switch to the numeric character reference end state."
+                        Some(';') => {
+                            self.switch_to(TokenizerState::NumericCharacterReferenceEnd);
+                        }
+                        // "Anything else"
+                        // "This is a missing-semicolon-after-character-reference parse
+                        // error. Reconsume in the numeric character reference end state."
+                        _ => {
+                            self.log_parse_error();
+                            self.reconsume_in(TokenizerState::NumericCharacterReferenceEnd);
+                        }
+                    }
                 }
 
-                // STEP 13: Numeric end - convert code point, emit character
-                //   [§ 13.2.5.80](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)
-                //   - Check for null (0x00), out of range (>0x10FFFF), surrogate, noncharacter
-                //   - Apply replacement table for C1 controls (0x80-0x9F)
-                //   - Emit the character token
+                // [§ 13.2.5.80 Numeric character reference end state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)
                 TokenizerState::NumericCharacterReferenceEnd => {
-                    todo!("NumericCharacterReferenceEnd state - see STEP 13")
+                    let code = self.character_reference_code;
+
+                    // "If the number is 0x00, then this is a null-character-reference
+                    // parse error. Set the character reference code to 0xFFFD."
+                    if code == 0x00 {
+                        self.log_parse_error();
+                        self.character_reference_code = 0xFFFD;
+                    }
+                    // "If the number is greater than 0x10FFFF, then this is a
+                    // character-reference-outside-unicode-range parse error. Set the
+                    // character reference code to 0xFFFD."
+                    else if code > 0x10_FFFF {
+                        self.log_parse_error();
+                        self.character_reference_code = 0xFFFD;
+                    }
+                    // "If the number is a surrogate, then this is a
+                    // surrogate-character-reference parse error. Set the character
+                    // reference code to 0xFFFD."
+                    else if (0xD800..=0xDFFF).contains(&code) {
+                        self.log_parse_error();
+                        self.character_reference_code = 0xFFFD;
+                    }
+                    // "If the number is a noncharacter, then this is a
+                    // noncharacter-character-reference parse error."
+                    // NOTE: Do NOT change the code point — just log the error.
+                    else if is_noncharacter(code) {
+                        self.log_parse_error();
+                    }
+                    // "If the number is 0x000D, or a control that's not ASCII
+                    // whitespace, then this is a control-character-reference parse error."
+                    else if code == 0x000D
+                        || (is_control(code) && !is_ascii_whitespace_codepoint(code))
+                    {
+                        self.log_parse_error();
+                    }
+
+                    // "If the number is one of the numbers in the first column of the
+                    // following table, then find the row with that number in the first
+                    // column, and set the character reference code to the number in the
+                    // second column of that row."
+                    if let Some(replacement) =
+                        c1_control_replacement(self.character_reference_code)
+                    {
+                        self.character_reference_code = replacement;
+                    }
+
+                    // "Set the temporary buffer to the empty string."
+                    self.temporary_buffer.clear();
+                    // "Append a code point equal to the character reference code to the
+                    // temporary buffer."
+                    if let Some(c) = char::from_u32(self.character_reference_code) {
+                        self.temporary_buffer.push(c);
+                    } else {
+                        // Fallback for invalid code points
+                        self.temporary_buffer.push('\u{FFFD}');
+                    }
+                    // "Flush code points consumed as a character reference."
+                    self.flush_code_points_consumed_as_character_reference();
+                    // "Switch to the return state."
+                    let return_state = self.return_state.take().unwrap();
+                    self.switch_to(return_state);
                 }
             }
         }
     }
+}
+
+/// [§ 13.2.5.80 Numeric character reference end state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)
+///
+/// "If the number is one of the numbers in the first column of the following
+/// table, then find the row with that number in the first column, and set the
+/// character reference code to the number in the second column of that row."
+///
+/// This maps Windows-1252 code points (0x80–0x9F) to their Unicode equivalents.
+fn c1_control_replacement(code: u32) -> Option<u32> {
+    match code {
+        0x80 => Some(0x20AC), // EURO SIGN (€)
+        0x82 => Some(0x201A), // SINGLE LOW-9 QUOTATION MARK (‚)
+        0x83 => Some(0x0192), // LATIN SMALL LETTER F WITH HOOK (ƒ)
+        0x84 => Some(0x201E), // DOUBLE LOW-9 QUOTATION MARK („)
+        0x85 => Some(0x2026), // HORIZONTAL ELLIPSIS (…)
+        0x86 => Some(0x2020), // DAGGER (†)
+        0x87 => Some(0x2021), // DOUBLE DAGGER (‡)
+        0x88 => Some(0x02C6), // MODIFIER LETTER CIRCUMFLEX ACCENT (ˆ)
+        0x89 => Some(0x2030), // PER MILLE SIGN (‰)
+        0x8A => Some(0x0160), // LATIN CAPITAL LETTER S WITH CARON (Š)
+        0x8B => Some(0x2039), // SINGLE LEFT-POINTING ANGLE QUOTATION MARK (‹)
+        0x8C => Some(0x0152), // LATIN CAPITAL LIGATURE OE (Œ)
+        0x8E => Some(0x017D), // LATIN CAPITAL LETTER Z WITH CARON (Ž)
+        0x91 => Some(0x2018), // LEFT SINGLE QUOTATION MARK (')
+        0x92 => Some(0x2019), // RIGHT SINGLE QUOTATION MARK (')
+        0x93 => Some(0x201C), // LEFT DOUBLE QUOTATION MARK (")
+        0x94 => Some(0x201D), // RIGHT DOUBLE QUOTATION MARK (")
+        0x95 => Some(0x2022), // BULLET (•)
+        0x96 => Some(0x2013), // EN DASH (–)
+        0x97 => Some(0x2014), // EM DASH (—)
+        0x98 => Some(0x02DC), // SMALL TILDE (˜)
+        0x99 => Some(0x2122), // TRADE MARK SIGN (™)
+        0x9A => Some(0x0161), // LATIN SMALL LETTER S WITH CARON (š)
+        0x9B => Some(0x203A), // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK (›)
+        0x9C => Some(0x0153), // LATIN SMALL LIGATURE OE (œ)
+        0x9E => Some(0x017E), // LATIN SMALL LETTER Z WITH CARON (ž)
+        0x9F => Some(0x0178), // LATIN CAPITAL LETTER Y WITH DIAERESIS (Ÿ)
+        _ => None,
+    }
+}
+
+/// [Infra Standard § 4.5](https://infra.spec.whatwg.org/#noncharacter)
+///
+/// "A noncharacter is a code point that is in the range U+FDD0 to U+FDEF,
+/// inclusive, or U+FFFE, U+FFFF, U+1FFFE, U+1FFFF, U+2FFFE, U+2FFFF,
+/// U+3FFFE, U+3FFFF, U+4FFFE, U+4FFFF, U+5FFFE, U+5FFFF, U+6FFFE,
+/// U+6FFFF, U+7FFFE, U+7FFFF, U+8FFFE, U+8FFFF, U+9FFFE, U+9FFFF,
+/// U+AFFFE, U+AFFFF, U+BFFFE, U+BFFFF, U+CFFFE, U+CFFFF, U+DFFFE,
+/// U+DFFFF, U+EFFFE, U+EFFFF, U+FFFFE, U+FFFFF, U+10FFFE, or U+10FFFF."
+fn is_noncharacter(code: u32) -> bool {
+    (0xFDD0..=0xFDEF).contains(&code) || (code & 0xFFFE == 0xFFFE && code <= 0x10_FFFF)
+}
+
+/// [Infra Standard § 4.5](https://infra.spec.whatwg.org/#control)
+///
+/// "A control is a code point that is in the range U+0000 NULL to U+001F
+/// INFORMATION SEPARATOR ONE, inclusive, or in the range U+007F DELETE to
+/// U+009F APPLICATION PROGRAM COMMAND, inclusive."
+fn is_control(code: u32) -> bool {
+    code <= 0x001F || (0x007F..=0x009F).contains(&code)
+}
+
+/// [Infra Standard § 4.5](https://infra.spec.whatwg.org/#ascii-whitespace)
+///
+/// "ASCII whitespace is U+0009 TAB, U+000A LF, U+000C FF, U+000D CR,
+/// or U+0020 SPACE."
+fn is_ascii_whitespace_codepoint(code: u32) -> bool {
+    matches!(code, 0x0009 | 0x000A | 0x000C | 0x000D | 0x0020)
 }
