@@ -53,11 +53,12 @@ use crate::style::DisplayValue;
 // [HTML Living Standard § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html)
 // defines the default CSS styles for HTML elements.
 
+/// Returns the default display value for an HTML element.
+///
 /// [§ 15.3.1 Hidden elements](https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements)
 /// [§ 15.3.2 The page](https://html.spec.whatwg.org/multipage/rendering.html#the-page)
 /// [§ 15.3.3 Flow content](https://html.spec.whatwg.org/multipage/rendering.html#flow-content-3)
-///
-/// Returns the default display value for an HTML element.
+#[must_use]
 pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
     // [§ 15.3.1 Hidden elements]
     // "The following elements must have their display set to none:"

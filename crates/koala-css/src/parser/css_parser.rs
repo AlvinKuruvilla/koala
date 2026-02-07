@@ -56,7 +56,7 @@ pub enum ComponentValue {
 }
 
 /// A CSS selector (simplified representation)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selector {
     /// Raw selector text
     pub text: String,
@@ -112,7 +112,7 @@ pub struct CSSParser {
     position: usize,
     /// [§ 2.1 Cascading](https://drafts.csswg.org/css-logical-1/#cascading)
     ///
-    /// Counter for assigning source_order to declarations. Incremented each
+    /// Counter for assigning `source_order` to declarations. Incremented each
     /// time a declaration is parsed, providing a total ordering of all
     /// declarations in the stylesheet for cascade resolution.
     declaration_counter: u32,
@@ -120,7 +120,8 @@ pub struct CSSParser {
 
 impl CSSParser {
     /// Create a new parser from a list of tokens.
-    pub fn new(tokens: Vec<CSSToken>) -> Self {
+    #[must_use]
+    pub const fn new(tokens: Vec<CSSToken>) -> Self {
         Self {
             tokens,
             position: 0,
@@ -165,7 +166,7 @@ impl CSSParser {
                 }
 
                 // "<CDO-token>" or "<CDC-token>"
-                Some(CSSToken::CDO) | Some(CSSToken::CDC) => {
+                Some(CSSToken::CDO | CSSToken::CDC) => {
                     if top_level {
                         // "Do nothing."
                         let _ = self.consume();
@@ -202,10 +203,10 @@ impl CSSParser {
     /// [§ 5.4.2 Consume an at-rule](https://www.w3.org/TR/css-syntax-3/#consume-at-rule)
     fn consume_at_rule(&mut self) -> Option<AtRule> {
         // "Consume the next input token."
-        let name = match self.consume() {
-            Some(CSSToken::AtKeyword(name)) => name.clone(),
-            _ => return None,
+        let Some(CSSToken::AtKeyword(name)) = self.consume() else {
+            return None;
         };
+        let name = name.clone();
 
         // "Create a new at-rule with its name set to the value of the current input
         // token, its prelude initially set to an empty list, and its value initially
@@ -354,13 +355,13 @@ impl CSSParser {
             match self.peek() {
                 // "<whitespace-token>" or "<semicolon-token>"
                 // "Do nothing."
-                Some(CSSToken::Whitespace) | Some(CSSToken::Semicolon) => {
+                Some(CSSToken::Whitespace | CSSToken::Semicolon) => {
                     let _ = self.consume();
                 }
 
                 // "<EOF-token>" or "<}-token>"
                 // "Return the list of declarations."
-                None | Some(CSSToken::EOF) | Some(CSSToken::RightBrace) => {
+                None | Some(CSSToken::EOF | CSSToken::RightBrace) => {
                     return declarations;
                 }
 
@@ -389,9 +390,7 @@ impl CSSParser {
                     let _ = self.consume();
                     while !matches!(
                         self.peek(),
-                        None | Some(CSSToken::Semicolon)
-                            | Some(CSSToken::RightBrace)
-                            | Some(CSSToken::EOF)
+                        None | Some(CSSToken::Semicolon | CSSToken::RightBrace | CSSToken::EOF)
                     ) {
                         let _ = self.consume_component_value();
                     }
@@ -403,10 +402,10 @@ impl CSSParser {
     /// [§ 5.4.6 Consume a declaration](https://www.w3.org/TR/css-syntax-3/#consume-declaration)
     fn consume_declaration(&mut self) -> Option<Declaration> {
         // "Consume the next input token."
-        let name = match self.consume() {
-            Some(CSSToken::Ident(name)) => name.clone(),
-            _ => return None,
+        let Some(CSSToken::Ident(name)) = self.consume() else {
+            return None;
         };
+        let name = name.clone();
 
         // "While the next input token is a <whitespace-token>, consume the next input token."
         while self.peek() == Some(&CSSToken::Whitespace) {
@@ -430,7 +429,7 @@ impl CSSParser {
         let mut value = Vec::new();
         while !matches!(
             self.peek(),
-            None | Some(CSSToken::EOF) | Some(CSSToken::Semicolon) | Some(CSSToken::RightBrace)
+            None | Some(CSSToken::EOF | CSSToken::Semicolon | CSSToken::RightBrace)
         ) {
             if let Some(v) = self.consume_component_value() {
                 value.push(v);
@@ -459,7 +458,7 @@ impl CSSParser {
     fn consume_component_value(&mut self) -> Option<ComponentValue> {
         match self.peek() {
             // "<{-token>", "<[-token>", "<(-token>"
-            Some(CSSToken::LeftBrace) | Some(CSSToken::LeftBracket) | Some(CSSToken::LeftParen) => {
+            Some(CSSToken::LeftBrace | CSSToken::LeftBracket | CSSToken::LeftParen) => {
                 let token = match self.peek() {
                     Some(CSSToken::LeftBrace) => '{',
                     Some(CSSToken::LeftBracket) => '[',
@@ -472,10 +471,10 @@ impl CSSParser {
 
             // "<function-token>"
             Some(CSSToken::Function(_)) => {
-                let name = match self.consume() {
-                    Some(CSSToken::Function(name)) => name.clone(),
-                    _ => return None,
+                let Some(CSSToken::Function(name)) = self.consume() else {
+                    return None;
                 };
+                let name = name.clone();
                 let mut value = Vec::new();
                 loop {
                     match self.peek() {
@@ -592,18 +591,21 @@ fn tokens_to_selector_string(tokens: &[CSSToken]) -> String {
 ///
 /// "A declaration is important if it has a !important annotation, i.e.
 /// if the last two (non-whitespace, non-comment) tokens in its value are
-/// a <delim-token> with the value "!" followed by an <ident-token> with
+/// a `<delim-token>` with the value "!" followed by an `<ident-token>` with
 /// a value that is an ASCII case-insensitive match for "important"."
 ///
 /// STEP 1: Skip trailing whitespace in the value.
-/// STEP 2: Check for <ident-token> "important".
+/// STEP 2: Check for `<ident-token>` "important".
 /// STEP 3: Skip any whitespace between "!" and "important".
-/// STEP 4: Check for <delim-token> "!".
+/// STEP 4: Check for `<delim-token>` "!".
 fn check_important(value: &[ComponentValue]) -> bool {
     let mut iter = value.iter().rev().peekable();
 
     // STEP 1: Skip trailing whitespace
-    while let Some(ComponentValue::Token(CSSToken::Whitespace)) = iter.peek() {
+    while matches!(
+        iter.peek(),
+        Some(ComponentValue::Token(CSSToken::Whitespace))
+    ) {
         let _ = iter.next();
     }
 
@@ -614,7 +616,10 @@ fn check_important(value: &[ComponentValue]) -> bool {
     }
 
     // STEP 3: Skip whitespace between ! and important
-    while let Some(ComponentValue::Token(CSSToken::Whitespace)) = iter.peek() {
+    while matches!(
+        iter.peek(),
+        Some(ComponentValue::Token(CSSToken::Whitespace))
+    ) {
         let _ = iter.next();
     }
 

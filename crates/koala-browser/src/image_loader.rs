@@ -35,10 +35,12 @@ pub enum ImageFormat {
 /// that the remaining path can be checked for a file extension.
 ///
 /// [URL Standard § 4.1](https://url.spec.whatwg.org/#concept-url-path)
-#[must_use] 
+#[must_use]
 pub fn strip_url_decorations(resolved: &str) -> &str {
     let without_fragment = resolved.split_once('#').map_or(resolved, |(b, _)| b);
-    without_fragment.split_once('?').map_or(without_fragment, |(b, _)| b)
+    without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(b, _)| b)
 }
 
 /// Emit `warn_once` messages for fragment identifiers and query strings
@@ -81,10 +83,13 @@ pub fn warn_url_decorations(src: &str, resolved: &str) {
 /// 3. **Magic-byte sniffing** — trims leading whitespace and checks the
 ///    first 256 bytes for `<?xml` or `<svg` prefixes.
 /// 4. **Default** — [`ImageFormat::Raster`].
-#[must_use] 
+#[must_use]
 pub fn detect_format(path_for_ext: &str, resolved_url: &str, bytes: &[u8]) -> ImageFormat {
     // 1. Extension check (.svg fast path)
-    if path_for_ext.ends_with(".svg") {
+    if std::path::Path::new(path_for_ext)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+    {
         return ImageFormat::Svg;
     }
 
@@ -118,6 +123,10 @@ pub trait ImageDecoder {
     fn supports(&self, format: ImageFormat) -> bool;
 
     /// Attempt to decode `bytes` into a [`LoadedImage`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the bytes cannot be decoded by this decoder.
     fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, String>;
 }
 
@@ -133,10 +142,11 @@ impl ImageDecoder for SvgDecoder {
         format == ImageFormat::Svg
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, String> {
         let opts = usvg::Options::default();
-        let tree = usvg::Tree::from_data(bytes, &opts)
-            .map_err(|e| format!("failed to parse SVG: {e}"))?;
+        let tree =
+            usvg::Tree::from_data(bytes, &opts).map_err(|e| format!("failed to parse SVG: {e}"))?;
 
         let size = tree.size();
         let (w, h) = (size.width() as u32, size.height() as u32);
@@ -166,8 +176,8 @@ impl ImageDecoder for RasterDecoder {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, String> {
-        let dynamic_img = image::load_from_memory(bytes)
-            .map_err(|e| format!("could not decode image ({e})"))?;
+        let dynamic_img =
+            image::load_from_memory(bytes).map_err(|e| format!("could not decode image ({e})"))?;
         let rgba = dynamic_img.to_rgba8();
         let (w, h) = rgba.dimensions();
         Ok(LoadedImage::new(w, h, rgba.into_raw()))
@@ -178,6 +188,11 @@ impl ImageDecoder for RasterDecoder {
 ///
 /// Consolidates the three-way fetch (HTTP, data URL, local file) into one
 /// function.
+///
+/// # Errors
+///
+/// Returns an error string if the fetch fails (network error, file not found,
+/// or invalid data URL).
 pub fn fetch_image_bytes(resolved_url: &str) -> Result<Vec<u8>, String> {
     if resolved_url.starts_with("http://") || resolved_url.starts_with("https://") {
         koala_common::net::fetch_bytes(resolved_url)
@@ -196,7 +211,7 @@ pub struct ImageLoaderPipeline {
 
 impl ImageLoaderPipeline {
     /// Create a pipeline with the default decoders (SVG + raster).
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             decoders: vec![Box::new(SvgDecoder), Box::new(RasterDecoder)],
@@ -208,6 +223,11 @@ impl ImageLoaderPipeline {
     /// `path_for_ext` is the URL stripped of query/fragment (for extension
     /// checking). `resolved_url` is the full resolved URL (for data-URL MIME
     /// detection).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if no decoder supports the detected format or
+    /// if decoding fails.
     pub fn decode(
         &self,
         bytes: &[u8],

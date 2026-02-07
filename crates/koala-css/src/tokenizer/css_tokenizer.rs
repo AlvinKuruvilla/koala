@@ -14,6 +14,7 @@ pub struct CSSTokenizer {
 
 impl CSSTokenizer {
     /// Create a new CSS tokenizer with the given input.
+    #[must_use]
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into().chars().collect(),
@@ -38,11 +39,13 @@ impl CSSTokenizer {
     }
 
     /// Return the collected tokens.
+    #[must_use]
     pub fn into_tokens(self) -> Vec<CSSToken> {
         self.tokens
     }
 
     /// Return a reference to the collected tokens.
+    #[must_use]
     pub fn tokens(&self) -> &[CSSToken] {
         &self.tokens
     }
@@ -53,9 +56,8 @@ impl CSSTokenizer {
         self.consume_comments();
 
         // "Consume the next input code point."
-        let c = match self.consume() {
-            Some(c) => c,
-            None => return CSSToken::EOF,
+        let Some(c) = self.consume() else {
+            return CSSToken::EOF;
         };
 
         match c {
@@ -74,7 +76,7 @@ impl CSSTokenizer {
             '#' => {
                 // "If the next input code point is an ident code point or the next
                 // two input code points are a valid escape..."
-                if self.peek().map(is_ident_code_point).unwrap_or(false)
+                if self.peek().is_some_and(is_ident_code_point)
                     || self.is_valid_escape(self.peek(), self.peek_at(1))
                 {
                     // "Create a <hash-token>."
@@ -265,7 +267,7 @@ impl CSSTokenizer {
                         let _ = self.consume(); // /
                         break;
                     }
-                    Some(_) => continue,
+                    Some(_) => {}
                     None => break, // EOF
                 }
             }
@@ -274,7 +276,7 @@ impl CSSTokenizer {
 
     /// Consume whitespace characters.
     fn consume_whitespace(&mut self) {
-        while self.peek().map(is_whitespace).unwrap_or(false) {
+        while self.peek().is_some_and(is_whitespace) {
             let _ = self.consume();
         }
     }
@@ -386,7 +388,7 @@ impl CSSTokenizer {
             let _ = self.consume(); // (
 
             // Consume whitespace
-            while self.peek().map(is_whitespace).unwrap_or(false) {
+            while self.peek().is_some_and(is_whitespace) {
                 let _ = self.consume();
             }
 
@@ -394,7 +396,7 @@ impl CSSTokenizer {
             // U+0027 APOSTROPHE, or whitespace followed by U+0022 QUOTATION MARK or
             // U+0027 APOSTROPHE..."
             match self.peek() {
-                Some('"') | Some('\'') => {
+                Some('"' | '\'') => {
                     // "return a <function-token> with its value set to string"
                     CSSToken::Function(string)
                 }
@@ -428,13 +430,10 @@ impl CSSTokenizer {
             match self.consume() {
                 // "U+0029 RIGHT PARENTHESIS ())"
                 // "Return the <url-token>."
-                Some(')') => {
-                    return CSSToken::Url(value);
-                }
-
+                //
                 // "EOF"
                 // "This is a parse error. Return the <url-token>."
-                None => {
+                Some(')') | None => {
                     return CSSToken::Url(value);
                 }
 
@@ -460,7 +459,7 @@ impl CSSTokenizer {
                 // or "non-printable code point"
                 // "This is a parse error. Consume the remnants of a bad url, create a
                 // <bad-url-token>, and return it."
-                Some('"') | Some('\'') | Some('(') => {
+                Some('"' | '\'' | '(') => {
                     self.consume_bad_url_remnants();
                     return CSSToken::BadUrl;
                 }
@@ -496,7 +495,7 @@ impl CSSTokenizer {
                         let _ = self.consume_escaped_code_point();
                     }
                 }
-                _ => continue,
+                _ => {}
             }
         }
     }
@@ -547,20 +546,19 @@ impl CSSTokenizer {
         }
 
         // "While the next input code point is a digit, consume it and append it to repr."
-        while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             repr.push(self.consume().unwrap());
         }
 
         // "If the next 2 input code points are U+002E FULL STOP (.) followed by a digit..."
-        if self.peek() == Some('.') && self.peek_at(1).map(|c| c.is_ascii_digit()).unwrap_or(false)
-        {
+        if self.peek() == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) {
             // "Consume them. Append them to repr. Set type to 'number'."
             repr.push(self.consume().unwrap()); // .
             repr.push(self.consume().unwrap()); // digit
             numeric_type = NumericType::Number;
 
             // "While the next input code point is a digit, consume it and append it to repr."
-            while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                 repr.push(self.consume().unwrap());
             }
         }
@@ -573,11 +571,7 @@ impl CSSTokenizer {
             let has_sign = next == Some('+') || next == Some('-');
             let digit_pos = if has_sign { 2 } else { 1 };
 
-            if self
-                .peek_at(digit_pos)
-                .map(|c| c.is_ascii_digit())
-                .unwrap_or(false)
-            {
+            if self.peek_at(digit_pos).is_some_and(|c| c.is_ascii_digit()) {
                 repr.push(self.consume().unwrap()); // e or E
                 if has_sign {
                     repr.push(self.consume().unwrap()); // + or -
@@ -585,7 +579,7 @@ impl CSSTokenizer {
                 repr.push(self.consume().unwrap()); // digit
                 numeric_type = NumericType::Number;
 
-                while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                     repr.push(self.consume().unwrap());
                 }
             }
@@ -610,14 +604,14 @@ impl CSSTokenizer {
                 let mut hex = c.to_string();
                 // "Consume as many hex digits as possible, but no more than 5."
                 for _ in 0..5 {
-                    if self.peek().map(|c| c.is_ascii_hexdigit()).unwrap_or(false) {
+                    if self.peek().is_some_and(|c| c.is_ascii_hexdigit()) {
                         hex.push(self.consume().unwrap());
                     } else {
                         break;
                     }
                 }
                 // "If the next input code point is whitespace, consume it."
-                if self.peek().map(is_whitespace).unwrap_or(false) {
+                if self.peek().is_some_and(is_whitespace) {
                     let _ = self.consume();
                 }
                 // "Interpret the hex digits as a hexadecimal number."
@@ -626,7 +620,7 @@ impl CSSTokenizer {
                 // maximum allowed code point, return U+FFFD REPLACEMENT CHARACTER."
                 if code_point == 0
                     || (0xD800..=0xDFFF).contains(&code_point)
-                    || code_point > 0x10FFFF
+                    || code_point > 0x0010_FFFF
                 {
                     Some('\u{FFFD}')
                 } else {
@@ -643,6 +637,7 @@ impl CSSTokenizer {
     }
 
     /// [§ 4.3.8 Check if two code points are a valid escape](https://www.w3.org/TR/css-syntax-3/#starts-with-a-valid-escape)
+    #[allow(clippy::unused_self)]
     fn is_valid_escape(&self, first: Option<char>, second: Option<char>) -> bool {
         // "If the first code point is not U+005C REVERSE SOLIDUS (\), return false."
         if first != Some('\\') {
@@ -668,7 +663,7 @@ impl CSSTokenizer {
                 let second = self.peek_at(1);
                 // "If the second code point is an ident-start code point or a U+002D HYPHEN-MINUS,
                 // or the second and third code points are a valid escape, return true."
-                second.map(is_ident_start_code_point).unwrap_or(false)
+                second.is_some_and(is_ident_start_code_point)
                     || second == Some('-')
                     || self.is_valid_escape(second, self.peek_at(2))
             }
@@ -685,21 +680,21 @@ impl CSSTokenizer {
     fn would_start_number(&self) -> bool {
         match self.peek() {
             // "U+002B PLUS SIGN (+)" or "U+002D HYPHEN-MINUS (-)"
-            Some('+') | Some('-') => {
+            Some('+' | '-') => {
                 let second = self.peek_at(1);
                 // "If the second code point is a digit, return true."
-                if second.map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if second.is_some_and(|c| c.is_ascii_digit()) {
                     return true;
                 }
                 // "Otherwise, if the second code point is U+002E FULL STOP (.) and the
                 // third code point is a digit, return true."
                 if second == Some('.') {
-                    return self.peek_at(2).map(|c| c.is_ascii_digit()).unwrap_or(false);
+                    return self.peek_at(2).is_some_and(|c| c.is_ascii_digit());
                 }
                 false
             }
             // "U+002E FULL STOP (.)"
-            Some('.') => self.peek_at(1).map(|c| c.is_ascii_digit()).unwrap_or(false),
+            Some('.') => self.peek_at(1).is_some_and(|c| c.is_ascii_digit()),
             // "digit"
             Some(c) if c.is_ascii_digit() => true,
             // "anything else"
@@ -719,7 +714,7 @@ impl CSSTokenizer {
     }
 
     /// Put back the last consumed character.
-    fn reconsume(&mut self) {
+    const fn reconsume(&mut self) {
         if self.position > 0 {
             self.position -= 1;
         }
@@ -739,20 +734,20 @@ impl CSSTokenizer {
 /// [§ 4.2 Definitions - whitespace](https://www.w3.org/TR/css-syntax-3/#whitespace)
 ///
 /// "A newline, U+0009 CHARACTER TABULATION, or U+0020 SPACE."
-fn is_whitespace(c: char) -> bool {
+const fn is_whitespace(c: char) -> bool {
     matches!(c, '\n' | '\t' | ' ' | '\r' | '\x0C')
 }
 
 /// [§ 4.2 Definitions - ident-start code point](https://www.w3.org/TR/css-syntax-3/#ident-start-code-point)
 ///
 /// "A letter, a non-ASCII code point, or U+005F LOW LINE (_)."
-fn is_ident_start_code_point(c: char) -> bool {
+const fn is_ident_start_code_point(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_' || !c.is_ascii()
 }
 
 /// [§ 4.2 Definitions - ident code point](https://www.w3.org/TR/css-syntax-3/#ident-code-point)
 ///
 /// "An ident-start code point, a digit, or U+002D HYPHEN-MINUS (-)."
-fn is_ident_code_point(c: char) -> bool {
+const fn is_ident_code_point(c: char) -> bool {
     is_ident_start_code_point(c) || c.is_ascii_digit() || c == '-'
 }

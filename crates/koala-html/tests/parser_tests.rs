@@ -13,10 +13,10 @@ fn parse(html: &str) -> DomTree {
 
 /// Helper to get element by tag name (first match, depth-first)
 fn find_element(tree: &DomTree, from: NodeId, tag: &str) -> Option<NodeId> {
-    if let Some(data) = tree.as_element(from) {
-        if data.tag_name == tag {
-            return Some(from);
-        }
+    if let Some(data) = tree.as_element(from)
+        && data.tag_name == tag
+    {
+        return Some(from);
     }
     for &child_id in tree.children(from) {
         if let Some(found) = find_element(tree, child_id, tag) {
@@ -83,11 +83,10 @@ fn test_comment_node() {
 
     // Body should have a comment child
     let has_comment = tree.children(body_id).iter().any(|&child_id| {
-        if let Some(node) = tree.get(child_id) {
-            matches!(&node.node_type, NodeType::Comment(data) if data == " test comment ")
-        } else {
-            false
-        }
+        tree.get(child_id).map_or(
+            false,
+            |node| matches!(&node.node_type, NodeType::Comment(data) if data == " test comment "),
+        )
     });
     assert!(has_comment);
 }

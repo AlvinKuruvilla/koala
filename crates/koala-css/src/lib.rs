@@ -36,7 +36,7 @@
 //! # Not Yet Implemented
 //!
 //! - Percentage and relative length units (em, rem, %)
-//! - rgb(), hsl() color functions
+//! - `rgb()`, `hsl()` color functions
 //! - Pseudo-classes and pseudo-elements
 //! - Attribute selectors
 //! - Media queries
@@ -64,16 +64,19 @@ pub mod ua_stylesheet;
 // Re-exports for convenience
 pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
-pub use layout::{ApproximateFontMetrics, BoxDimensions, BoxType, EdgeSizes, FontMetrics, FontStyle, LayoutBox, Rect};
+pub use layout::{
+    ApproximateFontMetrics, BoxDimensions, BoxType, EdgeSizes, FontMetrics, FontStyle, LayoutBox,
+    Rect,
+};
 pub use paint::{DisplayCommand, DisplayList, Painter};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{ParsedSelector, Specificity, parse_selector};
 pub use style::ComputedStyle;
-pub use tokenizer::{CSSToken, CSSTokenizer};
 pub use style::{
-    AutoLength, BorderValue, ColorValue, DisplayValue, InnerDisplayType,
-    LengthValue, OuterDisplayType, DEFAULT_FONT_SIZE_PX,
+    AutoLength, BorderValue, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue, InnerDisplayType,
+    LengthValue, OuterDisplayType,
 };
+pub use tokenizer::{CSSToken, CSSTokenizer};
 
 // Re-export resolve_url from koala-common for backwards compatibility.
 pub use koala_common::url::resolve_url;
@@ -86,6 +89,7 @@ use koala_dom::{DomTree, ElementData, NodeId, NodeType};
 /// [HTML Standard § 4.2.6 The style element](https://html.spec.whatwg.org/multipage/semantics.html#the-style-element)
 ///
 /// Extract CSS text from all `<style>` elements in the DOM tree.
+#[must_use]
 pub fn extract_style_content(tree: &DomTree) -> String {
     let mut css = String::new();
     collect_style_content(tree, tree.root(), &mut css);
@@ -229,10 +233,10 @@ fn collect_sources_recursive(tree: &DomTree, id: NodeId, sources: &mut Vec<Style
                 // [§ 4.2.4](https://html.spec.whatwg.org/multipage/semantics.html#the-link-element)
                 // "The href attribute gives the address (a valid non-empty URL potentially
                 // surrounded by spaces) of the linked resource."
-                if let Some(href) = data.attrs.get("href") {
-                    if !href.trim().is_empty() {
-                        sources.push(StylesheetSource::External { href: href.clone() });
-                    }
+                if let Some(href) = data.attrs.get("href")
+                    && !href.trim().is_empty()
+                {
+                    sources.push(StylesheetSource::External { href: href.clone() });
                 }
             }
         }
@@ -462,19 +466,19 @@ fn extract_nth_style_recursive(
         return false;
     };
 
-    if let NodeType::Element(data) = &node.node_type {
-        if data.tag_name.eq_ignore_ascii_case("style") {
-            if *count == target {
-                // Found the target style element - extract its content
-                for &child_id in tree.children(id) {
-                    if let Some(text) = tree.as_text(child_id) {
-                        css.push_str(text);
-                    }
+    if let NodeType::Element(data) = &node.node_type
+        && data.tag_name.eq_ignore_ascii_case("style")
+    {
+        if *count == target {
+            // Found the target style element - extract its content
+            for &child_id in tree.children(id) {
+                if let Some(text) = tree.as_text(child_id) {
+                    css.push_str(text);
                 }
-                return true; // Stop searching
             }
-            *count += 1;
+            return true; // Stop searching
         }
+        *count += 1;
     }
 
     // Continue searching children

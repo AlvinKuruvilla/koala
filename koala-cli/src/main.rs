@@ -4,7 +4,9 @@
 
 use anyhow::Result;
 use clap::Parser;
-use koala_browser::{FontProvider, LoadedDocument, load_document, parse_html_string, renderer::Renderer};
+use koala_browser::{
+    FontProvider, LoadedDocument, load_document, parse_html_string, renderer::Renderer,
+};
 use koala_css::{LayoutBox, Painter};
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
@@ -78,15 +80,20 @@ fn main() -> Result<()> {
             let stack_size = libc::pthread_get_stacksize_np(thread);
             let stack_bottom = stack_base - stack_size;
             let remaining = stack_addr.saturating_sub(stack_bottom);
-            eprintln!("[STACK] main(): addr=0x{stack_addr:x} base=0x{stack_base:x} size={stack_size} ({:.1}MB) bottom=0x{stack_bottom:x} remaining={remaining} ({:.1}KB)",
-                stack_size as f64 / 1024.0 / 1024.0, remaining as f64 / 1024.0);
+            eprintln!(
+                "[STACK] main(): addr=0x{stack_addr:x} base=0x{stack_base:x} size={stack_size} ({:.1}MB) bottom=0x{stack_bottom:x} remaining={remaining} ({:.1}KB)",
+                stack_size as f64 / 1024.0 / 1024.0,
+                remaining as f64 / 1024.0
+            );
         }
     }
     let cli = Cli::parse();
 
     // Validate screenshot output path before doing any expensive work.
     if let Some(ref output_path) = cli.screenshot {
-        let supported = ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "tga", "ico", "pnm", "webp"];
+        let supported = [
+            "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tga", "ico", "pnm", "webp",
+        ];
         match output_path.extension().and_then(|ext| ext.to_str()) {
             Some(ext) if supported.contains(&ext.to_ascii_lowercase().as_str()) => {}
             Some(ext) => {
@@ -333,19 +340,20 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
 
     // Get box name with tag if available
     let name = match &layout_box.box_type {
-        koala_css::BoxType::Principal(node_id) => {
-            if let Some(element) = doc.dom.as_element(*node_id) {
-                format!("<{}>", element.tag_name)
-            } else if doc
-                .dom
-                .get(*node_id)
-                .is_some_and(|n| matches!(n.node_type, NodeType::Document))
-            {
-                "Document".to_string()
-            } else {
-                format!("{node_id:?}")
-            }
-        }
+        koala_css::BoxType::Principal(node_id) => doc.dom.as_element(*node_id).map_or_else(
+            || {
+                if doc
+                    .dom
+                    .get(*node_id)
+                    .is_some_and(|n| matches!(n.node_type, NodeType::Document))
+                {
+                    "Document".to_string()
+                } else {
+                    format!("{node_id:?}")
+                }
+            },
+            |element| format!("<{}>", element.tag_name),
+        ),
         koala_css::BoxType::AnonymousBlock => "AnonymousBlock".to_string(),
         koala_css::BoxType::AnonymousInline(text) => {
             let preview: String = text.chars().take(25).collect();
@@ -449,10 +457,7 @@ fn print_computed_styles(doc: &LoadedDocument) {
 
         // Collect style properties
         if let Some(ref fs) = style.font_size {
-            props.push(format_style_prop(
-                "font-size",
-                &format!("{}px", fs.to_px()),
-            ));
+            props.push(format_style_prop("font-size", &format!("{}px", fs.to_px())));
         }
         if let Some(ref color) = style.color {
             props.push(format_style_prop("color", &color.to_hex_string()));

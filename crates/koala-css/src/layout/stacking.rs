@@ -19,7 +19,7 @@ use super::layout_box::LayoutBox;
 ///
 /// "Values have the following meanings:
 ///
-/// <integer>
+/// `<integer>`
 ///   This integer is the stack level of the generated box in the current
 ///   stacking context. The box also establishes a new stacking context.
 ///
@@ -27,18 +27,13 @@ use super::layout_box::LayoutBox;
 ///   The stack level of the generated box in the current stacking context
 ///   is 0. The box does not establish a new stacking context unless it is
 ///   the root element."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ZIndex {
     /// "The stack level is 0. Does not establish a new stacking context."
+    #[default]
     Auto,
     /// "This integer is the stack level. Establishes a new stacking context."
     Integer(i32),
-}
-
-impl Default for ZIndex {
-    fn default() -> Self {
-        ZIndex::Auto
-    }
 }
 
 /// A stacking context in the CSS painting order.
@@ -85,7 +80,8 @@ impl StackingContext {
     /// STEP 3: Sort children by stack level
     ///   // "Boxes with the same stack level in a stacking context are
     ///   //  stacked back-to-front according to document tree order."
-    pub fn collect_stacking_contexts(_layout_tree: &LayoutBox) -> StackingContext {
+    #[must_use]
+    pub fn collect_stacking_contexts(_layout_tree: &LayoutBox) -> Self {
         todo!("Build stacking context tree from layout tree per CSS 2.1 Appendix E")
     }
 
@@ -107,12 +103,12 @@ impl StackingContext {
     /// TODO: Implement painting order:
     ///
     /// STEP 1: Paint background and borders of this stacking context
-    ///   // paint_background(self.root_box);
-    ///   // paint_borders(self.root_box);
+    ///   `// paint_background(self.root_box);`
+    ///   `// paint_borders(self.root_box);`
     ///
     /// STEP 2: Paint child stacking contexts with negative z-index
-    ///   // for child in self.children.iter().filter(|c| c.stack_level < 0) {
-    ///   //     child.paint(display_list);
+    ///   `// for child in self.children.iter().filter(|c| c.stack_level < 0) {`
+    ///   `//     child.paint(display_list);`
     ///   // }
     ///
     /// STEP 3: Paint in-flow, non-inline, non-positioned descendants
@@ -125,14 +121,15 @@ impl StackingContext {
     ///   // Inline content, inline-blocks, inline-tables
     ///
     /// STEP 6: Paint positioned descendants with z-index: auto or 0
-    ///   // for child in self.children.iter().filter(|c| c.stack_level == 0) {
-    ///   //     child.paint(display_list);
+    ///   `// for child in self.children.iter().filter(|c| c.stack_level == 0) {`
+    ///   `//     child.paint(display_list);`
     ///   // }
     ///
     /// STEP 7: Paint child stacking contexts with positive z-index
-    ///   // for child in self.children.iter().filter(|c| c.stack_level > 0) {
-    ///   //     child.paint(display_list);
+    ///   `// for child in self.children.iter().filter(|c| c.stack_level > 0) {`
+    ///   `//     child.paint(display_list);`
     ///   // }
+    #[must_use]
     pub fn paint_stacking_context(&self) -> Vec<PaintCommand> {
         todo!("Paint stacking context in correct order per CSS 2.1 Appendix E")
     }

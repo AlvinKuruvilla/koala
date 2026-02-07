@@ -29,8 +29,8 @@ struct FlexItem {
     /// The flex base size.
     base_size: f32,
     /// [§ 9.2 step 3E](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
-    /// The hypothetical main size (base_size clamped by min/max, but we
-    /// skip min/max for MVP so this equals base_size).
+    /// The hypothetical main size (`base_size` clamped by min/max, but we
+    /// skip min/max for MVP so this equals `base_size`).
     hypothetical_size: f32,
     /// flex-grow factor.
     grow: f32,
@@ -60,9 +60,13 @@ pub fn layout_flex(
     #[cfg(feature = "layout-trace")]
     {
         let flex_stack_marker: u8 = 0;
-        eprintln!("[FLEX] layout_flex called, {} children, display={:?}/{:?}, stack=0x{:x}",
-            container.children.len(), container.display.outer, container.display.inner,
-            &flex_stack_marker as *const u8 as usize);
+        eprintln!(
+            "[FLEX] layout_flex called, {} children, display={:?}/{:?}, stack=0x{:x}",
+            container.children.len(),
+            container.display.outer,
+            container.display.inner,
+            &flex_stack_marker as *const u8 as usize
+        );
     }
 
     // STEP 1 (§ 9.2): Resolve container's own main size.
@@ -114,18 +118,18 @@ pub fn layout_flex(
         //   A. If flex-basis is a definite length, use it.
         //   B. If flex-basis is auto and the item has a definite width, use that.
         //   C. Otherwise, use max-content size via measure_content_size().
-        let base_size = if let Some(ref fb) = child.flex_basis {
-            let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport);
-            if !resolved.is_auto() {
-                resolved.to_px_or(0.0)
-            } else {
-                // flex-basis: auto — fall through to width or content sizing
-                flex_base_from_width_or_content(child, viewport, font_metrics)
-            }
-        } else {
-            // No flex-basis set (None = auto)
-            flex_base_from_width_or_content(child, viewport, font_metrics)
-        };
+        let base_size = child.flex_basis.as_ref().map_or_else(
+            || flex_base_from_width_or_content(child, viewport, font_metrics),
+            |fb| {
+                let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport);
+                if resolved.is_auto() {
+                    // flex-basis: auto — fall through to width or content sizing
+                    flex_base_from_width_or_content(child, viewport, font_metrics)
+                } else {
+                    resolved.to_px_or(0.0)
+                }
+            },
+        );
 
         // [§ 9.2 step 3E](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
         //
@@ -151,7 +155,10 @@ pub fn layout_flex(
     #[cfg(feature = "layout-trace")]
     {
         let m: u8 = 0;
-        eprintln!("[FLEX] after step 3 (measures done), stack=0x{:x}", &m as *const u8 as usize);
+        eprintln!(
+            "[FLEX] after step 3 (measures done), stack=0x{:x}",
+            &m as *const u8 as usize
+        );
     }
     resolve_flexible_lengths(&mut items, available_main);
 
@@ -181,7 +188,10 @@ pub fn layout_flex(
     #[cfg(feature = "layout-trace")]
     {
         let m: u8 = 0;
-        eprintln!("[FLEX] before step 6 (child layout), stack=0x{:x}", &m as *const u8 as usize);
+        eprintln!(
+            "[FLEX] before step 6 (child layout), stack=0x{:x}",
+            &m as *const u8 as usize
+        );
     }
 
     for (item_idx, item) in items.iter().enumerate() {
@@ -191,9 +201,9 @@ pub fn layout_flex(
         // [§ 9.7](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
         //
         // "Set each item's used main size to its target main size."
-        child.width = Some(AutoLength::Length(
-            crate::style::LengthValue::Px(item.target_size as f64),
-        ));
+        child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
+            f64::from(item.target_size),
+        )));
 
         let child_containing = Rect {
             x: current_x,
@@ -203,8 +213,12 @@ pub fn layout_flex(
         };
 
         #[cfg(feature = "layout-trace")]
-        eprintln!("[FLEX] STEP 6: laying out child {item_idx}, display={:?}/{:?}, {} grandchildren",
-            child.display.outer, child.display.inner, child.children.len());
+        eprintln!(
+            "[FLEX] STEP 6: laying out child {item_idx}, display={:?}/{:?}, {} grandchildren",
+            child.display.outer,
+            child.display.inner,
+            child.children.len()
+        );
         child.layout(child_containing, viewport, font_metrics);
         #[cfg(feature = "layout-trace")]
         eprintln!("[FLEX] STEP 6: child {item_idx} layout complete");
@@ -222,8 +236,11 @@ pub fn layout_flex(
     // "If the cross size property is a definite size, use that; otherwise,
     // use the largest of the flex lines' cross sizes."
     if let Some(AutoLength::Length(ref l)) = container.height {
-        container.dimensions.content.height =
-            l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32;
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            container.dimensions.content.height =
+                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height)) as f32;
+        }
     } else {
         // Auto height: max of children's margin-box heights.
         let max_height = container
@@ -390,7 +407,7 @@ fn resolve_flexible_lengths(items: &mut [FlexItem], available_main: f32) {
                 for item in items.iter_mut().filter(|item| !item.frozen) {
                     let scaled = item.shrink * item.base_size;
                     let ratio = scaled / scaled_shrink_sum;
-                    item.target_size = item.base_size - free_space.abs() * ratio;
+                    item.target_size = free_space.abs().mul_add(-ratio, item.base_size);
                 }
             }
         }
@@ -448,9 +465,6 @@ fn compute_justify_offsets(keyword: &str, free_space: f32, item_count: usize) ->
     }
 
     match keyword {
-        // "Flex items are packed toward the start of the line."
-        "flex-start" => (0.0, 0.0),
-
         // "Flex items are packed toward the end of the line."
         "flex-end" => (free_space, 0.0),
 
@@ -464,6 +478,7 @@ fn compute_justify_offsets(keyword: &str, free_space: f32, item_count: usize) ->
             if item_count <= 1 || free_space <= 0.0 {
                 (0.0, 0.0)
             } else {
+                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
                 let gap = free_space / (item_count - 1) as f32;
                 (0.0, gap)
             }
@@ -475,11 +490,13 @@ fn compute_justify_offsets(keyword: &str, free_space: f32, item_count: usize) ->
             if free_space <= 0.0 {
                 (0.0, 0.0)
             } else {
+                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
                 let gap = free_space / item_count as f32;
                 (gap / 2.0, gap)
             }
         }
 
+        // "Flex items are packed toward the start of the line."
         // Default: flex-start
         _ => (0.0, 0.0),
     }

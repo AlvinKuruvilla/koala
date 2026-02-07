@@ -5,8 +5,8 @@
 //! The display list is the output of the painting phase. It contains all the
 //! drawing commands needed to render a page, in the correct z-order.
 
-use crate::layout::inline::FontStyle;
 use crate::ColorValue;
+use crate::layout::inline::FontStyle;
 
 /// A single drawing command.
 ///
@@ -90,7 +90,7 @@ pub struct DisplayList {
 impl DisplayList {
     /// Create an empty display list.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             commands: Vec::new(),
         }
@@ -109,13 +109,13 @@ impl DisplayList {
 
     /// Get the number of commands.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.commands.len()
     }
 
     /// Check if the display list is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }
 }

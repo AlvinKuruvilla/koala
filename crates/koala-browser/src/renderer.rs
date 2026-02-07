@@ -108,7 +108,7 @@ pub struct Renderer {
 
 impl Renderer {
     /// Create a new renderer with the given dimensions and optional image data.
-    #[must_use] 
+    #[must_use]
     pub fn new(width: u32, height: u32, images: HashMap<String, LoadedImage>) -> Self {
         // Create white background
         let buffer = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
@@ -144,16 +144,17 @@ impl Renderer {
     fn load_font_from_paths(paths: &[&str], label: &str) -> Option<Font> {
         for path in paths {
             if let Ok(data) = std::fs::read(path)
-                && let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
-                    eprintln!("Loaded {label} font: {path}");
-                    return Some(font);
-                }
+                && let Ok(font) = Font::from_bytes(data, FontSettings::default())
+            {
+                eprintln!("Loaded {label} font: {path}");
+                return Some(font);
+            }
         }
         None
     }
 
     /// Try to load the regular system font (public API, kept for compatibility).
-    #[must_use] 
+    #[must_use]
     pub fn load_system_font() -> Option<Font> {
         Self::load_font_from_paths(FONT_SEARCH_PATHS, "regular")
     }
@@ -204,6 +205,11 @@ impl Renderer {
     }
 
     /// Fill a rectangle with the given color.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
     fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: &ColorValue) {
         let rgba = Rgba([color.r, color.g, color.b, color.a]);
         let x = x as i32;
@@ -226,6 +232,11 @@ impl Renderer {
     ///
     /// Uses nearest-neighbor sampling to scale the source RGBA data to the
     /// destination size, then alpha-blends onto the buffer.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
     fn draw_image(&mut self, src: &str, x: f32, y: f32, width: f32, height: f32) {
         let Some(img) = self.images.get(src) else {
             return;
@@ -252,8 +263,10 @@ impl Renderer {
                 }
 
                 // Nearest-neighbor sampling
-                let sx = ((u64::from(dx) * u64::from(src_w)) / u64::from(dest_w)).min(u64::from(src_w) - 1) as u32;
-                let sy = ((u64::from(dy) * u64::from(src_h)) / u64::from(dest_h)).min(u64::from(src_h) - 1) as u32;
+                let sx = ((u64::from(dx) * u64::from(src_w)) / u64::from(dest_w))
+                    .min(u64::from(src_w) - 1) as u32;
+                let sy = ((u64::from(dy) * u64::from(src_h)) / u64::from(dest_h))
+                    .min(u64::from(src_h) - 1) as u32;
                 let src_idx = ((sy * src_w + sx) * 4) as usize;
 
                 let sr = img.rgba_data()[src_idx];
@@ -278,6 +291,12 @@ impl Renderer {
     }
 
     /// Draw text at the given position.
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
     fn draw_text(
         &mut self,
         text: &str,
@@ -304,9 +323,8 @@ impl Renderer {
             (false, false) => self.font.as_ref(),
         };
 
-        let font = match font {
-            Some(f) => f,
-            None => return,
+        let Some(font) = font else {
+            return;
         };
 
         let rgba = Rgba([color.r, color.g, color.b, color.a]);
@@ -358,18 +376,20 @@ impl Renderer {
     }
 
     /// Save the rendered image to a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the image cannot be saved to the given path.
     pub fn save(&self, path: &Path) -> Result<()> {
         self.buffer.save(path).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to save screenshot to '{}': {e}",
-                path.display()
-            )
+            anyhow::anyhow!("failed to save screenshot to '{}': {e}", path.display())
         })?;
         Ok(())
     }
 }
 
 /// Alpha blend a foreground color onto a background color.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn alpha_blend(fg: Rgba<u8>, bg: Rgba<u8>, alpha: u8) -> Rgba<u8> {
     let a = f32::from(alpha) / 255.0;
     let inv_a = 1.0 - a;

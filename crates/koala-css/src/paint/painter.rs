@@ -29,7 +29,7 @@ pub struct Painter<'a> {
 impl<'a> Painter<'a> {
     /// Create a new painter with access to computed styles.
     #[must_use]
-    pub fn new(styles: &'a HashMap<NodeId, ComputedStyle>) -> Self {
+    pub const fn new(styles: &'a HashMap<NodeId, ComputedStyle>) -> Self {
         Self { styles }
     }
 
@@ -56,6 +56,7 @@ impl<'a> Painter<'a> {
     /// 3. Border
     /// 4. Descendants (in tree order for non-positioned, non-floated elements)
     /// 5. Outline
+    #[allow(clippy::cast_possible_truncation)]
     fn paint_box(
         &self,
         layout_box: &LayoutBox,
@@ -87,10 +88,22 @@ impl<'a> Painter<'a> {
                 //
                 // "The initial value of 'background-clip' is 'border-box', meaning
                 // the background is painted within the border box."
-                let border_top = style.border_top.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
-                let border_right = style.border_right.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
-                let border_bottom = style.border_bottom.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
-                let border_left = style.border_left.as_ref().map_or(0.0, |b| b.width.to_px() as f32);
+                let border_top = style
+                    .border_top
+                    .as_ref()
+                    .map_or(0.0, |b| b.width.to_px() as f32);
+                let border_right = style
+                    .border_right
+                    .as_ref()
+                    .map_or(0.0, |b| b.width.to_px() as f32);
+                let border_bottom = style
+                    .border_bottom
+                    .as_ref()
+                    .map_or(0.0, |b| b.width.to_px() as f32);
+                let border_left = style
+                    .border_left
+                    .as_ref()
+                    .map_or(0.0, |b| b.width.to_px() as f32);
 
                 display_list.push(DisplayCommand::FillRect {
                     x: padding_x - border_left,
@@ -103,7 +116,14 @@ impl<'a> Painter<'a> {
 
             // [CSS 2.1 Appendix E.2 Step 2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
             // "the border of the element"
-            self.paint_borders(style, padding_x, padding_y, padding_width, padding_height, display_list);
+            self.paint_borders(
+                style,
+                padding_x,
+                padding_y,
+                padding_width,
+                padding_height,
+                display_list,
+            );
         }
 
         // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
@@ -111,16 +131,16 @@ impl<'a> Painter<'a> {
         //
         // If this is a replaced element (e.g., <img>), emit a DrawImage
         // command using the content rect dimensions and src attribute.
-        if layout_box.is_replaced {
-            if let Some(ref src) = layout_box.replaced_src {
-                display_list.push(DisplayCommand::DrawImage {
-                    x: dims.content.x,
-                    y: dims.content.y,
-                    width: dims.content.width,
-                    height: dims.content.height,
-                    src: src.clone(),
-                });
-            }
+        if layout_box.is_replaced
+            && let Some(ref src) = layout_box.replaced_src
+        {
+            display_list.push(DisplayCommand::DrawImage {
+                x: dims.content.x,
+                y: dims.content.y,
+                width: dims.content.width,
+                height: dims.content.height,
+                src: src.clone(),
+            });
         }
 
         // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
@@ -156,12 +176,9 @@ impl<'a> Painter<'a> {
 
             let font_size = effective_style
                 .and_then(|s| s.font_size.as_ref())
-                .map(|fs| fs.to_px() as f32)
-                .unwrap_or(16.0);
+                .map_or(16.0, |fs| fs.to_px() as f32);
 
-            let font_weight = effective_style
-                .and_then(|s| s.font_weight)
-                .unwrap_or(400);
+            let font_weight = effective_style.and_then(|s| s.font_weight).unwrap_or(400);
 
             let font_style = effective_style
                 .and_then(|s| s.font_style.as_deref())
@@ -197,6 +214,7 @@ impl<'a> Painter<'a> {
     /// Borders are drawn outside the padding box. For simplicity, we draw solid
     /// rectangles for each border side (ignoring border-style for now — all styles
     /// render as solid).
+    #[allow(clippy::cast_possible_truncation, clippy::unused_self)]
     fn paint_borders(
         &self,
         style: &ComputedStyle,
@@ -210,74 +228,70 @@ impl<'a> Painter<'a> {
         let top_width = style
             .border_top
             .as_ref()
-            .map(|b| b.width.to_px() as f32)
-            .unwrap_or(0.0);
+            .map_or(0.0, |b| b.width.to_px() as f32);
         let right_width = style
             .border_right
             .as_ref()
-            .map(|b| b.width.to_px() as f32)
-            .unwrap_or(0.0);
+            .map_or(0.0, |b| b.width.to_px() as f32);
         let bottom_width = style
             .border_bottom
             .as_ref()
-            .map(|b| b.width.to_px() as f32)
-            .unwrap_or(0.0);
+            .map_or(0.0, |b| b.width.to_px() as f32);
         let left_width = style
             .border_left
             .as_ref()
-            .map(|b| b.width.to_px() as f32)
-            .unwrap_or(0.0);
+            .map_or(0.0, |b| b.width.to_px() as f32);
 
         // Top border: spans full width including corners
-        if let Some(border) = &style.border_top {
-            if top_width > 0.0 {
-                display_list.push(DisplayCommand::FillRect {
-                    x: padding_x - left_width,
-                    y: padding_y - top_width,
-                    width: padding_width + left_width + right_width,
-                    height: top_width,
-                    color: border.color.clone(),
-                });
-            }
+        if let Some(border) = &style.border_top
+            && top_width > 0.0
+        {
+            display_list.push(DisplayCommand::FillRect {
+                x: padding_x - left_width,
+                y: padding_y - top_width,
+                width: padding_width + left_width + right_width,
+                height: top_width,
+                color: border.color.clone(),
+            });
         }
 
         // Bottom border: spans full width including corners
-        if let Some(border) = &style.border_bottom {
-            if bottom_width > 0.0 {
-                display_list.push(DisplayCommand::FillRect {
-                    x: padding_x - left_width,
-                    y: padding_y + padding_height,
-                    width: padding_width + left_width + right_width,
-                    height: bottom_width,
-                    color: border.color.clone(),
-                });
-            }
+        if let Some(border) = &style.border_bottom
+            && bottom_width > 0.0
+        {
+            display_list.push(DisplayCommand::FillRect {
+                x: padding_x - left_width,
+                y: padding_y + padding_height,
+                width: padding_width + left_width + right_width,
+                height: bottom_width,
+                color: border.color.clone(),
+            });
         }
 
         // Left border: between top and bottom borders
-        if let Some(border) = &style.border_left {
-            if left_width > 0.0 {
-                display_list.push(DisplayCommand::FillRect {
-                    x: padding_x - left_width,
-                    y: padding_y,
-                    width: left_width,
-                    height: padding_height,
-                    color: border.color.clone(),
-                });
-            }
+        if let Some(border) = &style.border_left
+            && left_width > 0.0
+        {
+            display_list.push(DisplayCommand::FillRect {
+                x: padding_x - left_width,
+                y: padding_y,
+                width: left_width,
+                height: padding_height,
+                color: border.color.clone(),
+            });
         }
 
         // Right border: between top and bottom borders
-        if let Some(border) = &style.border_right {
-            if right_width > 0.0 {
-                display_list.push(DisplayCommand::FillRect {
-                    x: padding_x + padding_width,
-                    y: padding_y,
-                    width: right_width,
-                    height: padding_height,
-                    color: border.color.clone(),
-                });
-            }
+        if let Some(border) = &style.border_right
+            && right_width > 0.0
+        {
+            display_list.push(DisplayCommand::FillRect {
+                x: padding_x + padding_width,
+                y: padding_y,
+                width: right_width,
+                height: padding_height,
+                color: border.color.clone(),
+            });
         }
     }
 }

@@ -125,7 +125,9 @@ impl ElementData {
     /// space-separated tokens representing the various classes that the element belongs to."
     #[must_use]
     pub fn classes(&self) -> HashSet<&str> {
-        self.attrs.get("class").map_or_else(HashSet::new, |classlist| classlist.split(' ').collect())
+        self.attrs
+            .get("class")
+            .map_or_else(HashSet::new, |classlist| classlist.split(' ').collect())
     }
 }
 
@@ -455,7 +457,12 @@ impl DomTree {
         // DOCTYPE and Comment nodes are not Elements.
         children
             .iter()
-            .find(|&&id| matches!(self.get(id).map(|n| &n.node_type), Some(NodeType::Element(_))))
+            .find(|&&id| {
+                matches!(
+                    self.get(id).map(|n| &n.node_type),
+                    Some(NodeType::Element(_))
+                )
+            })
             .copied()
     }
 

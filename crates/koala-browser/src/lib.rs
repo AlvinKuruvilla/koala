@@ -28,7 +28,9 @@ pub use koala_js as js;
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
 
-use image_loader::{ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations};
+use image_loader::{
+    ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations,
+};
 use koala_css::{
     ComputedStyle, LayoutBox, Stylesheet, compute_styles, extract_all_stylesheets,
     extract_style_content,
@@ -116,14 +118,15 @@ impl std::error::Error for LoadError {}
 ///
 /// * `path` - A file path or URL to load
 ///
-/// # Returns
+/// # Errors
 ///
-/// A `LoadedDocument` containing all parsed data, or a `LoadError`.
+/// Returns [`LoadError::FileError`] if the path is a local file that cannot
+/// be read, or [`LoadError::NetworkError`] if it is a URL that cannot be
+/// fetched.
 pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     // Fetch or read the HTML source
     let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
-        let text = koala_common::net::fetch_text(path)
-            .map_err(LoadError::NetworkError)?;
+        let text = koala_common::net::fetch_text(path).map_err(LoadError::NetworkError)?;
         (text, Some(path))
     } else {
         let content = fs::read_to_string(path)
@@ -142,7 +145,7 @@ pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
 ///
 /// Use this when you already have the HTML content as a string.
 /// Note: External stylesheets cannot be loaded without a base URL.
-#[must_use] 
+#[must_use]
 pub fn parse_html_string(html: &str) -> LoadedDocument {
     parse_html_with_base_url(html, None)
 }
@@ -297,28 +300,29 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
     for node_id in dom.iter_all() {
         // Check if this is a <script> element
         if let Some(element) = dom.as_element(node_id)
-            && element.tag_name.eq_ignore_ascii_case("script") {
-                // Skip external scripts (those with src attribute)
-                // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
-                // "If the element has a src content attribute..."
-                if element.attrs.contains_key("src") {
-                    continue;
-                }
+            && element.tag_name.eq_ignore_ascii_case("script")
+        {
+            // Skip external scripts (those with src attribute)
+            // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
+            // "If the element has a src content attribute..."
+            if element.attrs.contains_key("src") {
+                continue;
+            }
 
-                // Collect text content from child text nodes
-                // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
-                // "...the script block's source is the value of the text content..."
-                let mut script_text = String::new();
-                for child_id in dom.children(node_id) {
-                    if let Some(text) = dom.as_text(*child_id) {
-                        script_text.push_str(text);
-                    }
-                }
-
-                if !script_text.is_empty() {
-                    scripts.push(script_text);
+            // Collect text content from child text nodes
+            // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
+            // "...the script block's source is the value of the text content..."
+            let mut script_text = String::new();
+            for child_id in dom.children(node_id) {
+                if let Some(text) = dom.as_text(*child_id) {
+                    script_text.push_str(text);
                 }
             }
+
+            if !script_text.is_empty() {
+                scripts.push(script_text);
+            }
+        }
     }
 
     scripts
@@ -328,7 +332,7 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
 ///
 /// Searches common system font paths (macOS, Linux, Windows) and returns
 /// the first font that loads successfully, or None if no font is found.
-#[must_use] 
+#[must_use]
 pub fn load_system_font() -> Option<fontdue::Font> {
     renderer::Renderer::load_system_font()
 }
@@ -340,10 +344,8 @@ pub fn load_system_font() -> Option<fontdue::Font> {
 ///
 /// "CSS assumes that every font has font metrics that specify a
 /// characteristic height above the baseline and a depth below it."
-#[must_use] 
-pub fn create_font_metrics(
-    font: Option<&fontdue::Font>,
-) -> Box<dyn koala_css::FontMetrics + '_> {
+#[must_use]
+pub fn create_font_metrics(font: Option<&fontdue::Font>) -> Box<dyn koala_css::FontMetrics + '_> {
     match font {
         Some(f) => Box::new(font_metrics::FontdueFontMetrics::new(f)),
         None => Box::new(koala_css::ApproximateFontMetrics),
@@ -370,7 +372,7 @@ impl FontProvider {
     /// Searches common system font paths and loads the first one found.
     /// If no font is available, [`metrics()`](Self::metrics) will return
     /// an approximate metrics provider.
-    #[must_use] 
+    #[must_use]
     pub fn load() -> Self {
         Self {
             font: renderer::Renderer::load_system_font(),
@@ -381,7 +383,7 @@ impl FontProvider {
     ///
     /// Returns real per-glyph metrics if a font was loaded, or an
     /// approximation (0.6 × font size per character) otherwise.
-    #[must_use] 
+    #[must_use]
     pub fn metrics(&self) -> Box<dyn koala_css::FontMetrics + '_> {
         create_font_metrics(self.font.as_ref())
     }

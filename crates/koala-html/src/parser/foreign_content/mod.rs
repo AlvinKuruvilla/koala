@@ -20,7 +20,7 @@ use crate::tokenizer::Attribute;
 /// name being the string in the third column, and the namespace being the
 /// namespace in the fourth column."
 ///
-/// Format: (attribute_name, prefix, local_name, namespace)
+/// Format: (`attribute_name`, prefix, `local_name`, namespace)
 ///
 /// NOTE: Our current DOM doesn't support namespaced attributes, so we just
 /// adjust the attribute name to include the prefix for now.
@@ -100,7 +100,7 @@ const FOREIGN_ATTRIBUTE_ADJUSTMENTS: &[(&str, &str, &str, &str)] = &[
 /// correct format (e.g., "xlink:href"). Full namespace support would require
 /// DOM changes to store namespace information per attribute.
 pub fn adjust_foreign_attributes(attributes: &mut [Attribute]) {
-    for attr in attributes.iter_mut() {
+    for attr in &mut *attributes {
         for &(from, prefix, local_name, _namespace) in FOREIGN_ATTRIBUTE_ADJUSTMENTS {
             if attr.name == from {
                 // Ensure the attribute name is properly formatted
@@ -109,7 +109,7 @@ pub fn adjust_foreign_attributes(attributes: &mut [Attribute]) {
                 if prefix.is_empty() {
                     attr.name = local_name.to_string();
                 } else {
-                    attr.name = format!("{}:{}", prefix, local_name);
+                    attr.name = format!("{prefix}:{local_name}");
                 }
                 break;
             }

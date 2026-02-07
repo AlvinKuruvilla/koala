@@ -58,6 +58,7 @@ pub trait FontMetrics {
 pub struct ApproximateFontMetrics;
 
 impl FontMetrics for ApproximateFontMetrics {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn text_width(&self, text: &str, font_size: f32) -> f32 {
         const CHAR_WIDTH_RATIO: f32 = 0.6;
         text.chars().count() as f32 * font_size * CHAR_WIDTH_RATIO
@@ -202,15 +203,16 @@ pub struct TextRun {
 /// bottom
 ///   Align the bottom of the aligned subtree with the bottom of the line box.
 ///
-/// <percentage>
+/// `<percentage>`
 ///   Raise (positive) or lower (negative) the box by this distance
 ///   (a percentage of the 'line-height' value).
 ///
-/// <length>
+/// `<length>`
 ///   Raise (positive) or lower (negative) the box by this distance."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum VerticalAlign {
     /// "Align the baseline of the box with the baseline of the parent box."
+    #[default]
     Baseline,
     /// "Align the vertical midpoint of the box with the baseline plus half x-height."
     Middle,
@@ -228,12 +230,6 @@ pub enum VerticalAlign {
     Bottom,
     /// Offset from baseline by a specific pixel amount.
     Length(f32),
-}
-
-impl Default for VerticalAlign {
-    fn default() -> Self {
-        VerticalAlign::Baseline
-    }
 }
 
 /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
@@ -259,9 +255,10 @@ impl Default for VerticalAlign {
 ///
 /// "The initial value is 'left' if 'direction' is 'ltr', and 'right' if
 /// 'direction' is 'rtl'."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
     /// "Inline-level content is aligned to the left line edge."
+    #[default]
     Left,
     /// "Inline-level content is aligned to the right line edge."
     Right,
@@ -269,15 +266,6 @@ pub enum TextAlign {
     Center,
     /// "Inline-level content is justified."
     Justify,
-}
-
-impl Default for TextAlign {
-    fn default() -> Self {
-        // [§ 16.2](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
-        //
-        // "The initial value is 'left' if 'direction' is 'ltr'."
-        TextAlign::Left
-    }
 }
 
 /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
@@ -300,11 +288,12 @@ pub enum FontStyle {
 
 impl FontStyle {
     /// Parse a CSS font-style keyword string.
+    #[must_use]
     pub fn from_css(s: &str) -> Self {
         match s {
-            "italic" => FontStyle::Italic,
-            "oblique" => FontStyle::Oblique,
-            _ => FontStyle::Normal,
+            "italic" => Self::Italic,
+            "oblique" => Self::Oblique,
+            _ => Self::Normal,
         }
     }
 }
@@ -337,8 +326,9 @@ pub struct InlineLayout {
 
 impl InlineLayout {
     /// Create a new inline layout context.
-    pub fn new(available_width: f32, start_y: f32, text_align: TextAlign) -> Self {
-        InlineLayout {
+    #[must_use]
+    pub const fn new(available_width: f32, start_y: f32, text_align: TextAlign) -> Self {
+        Self {
             line_boxes: Vec::new(),
             current_line_fragments: Vec::new(),
             current_x: 0.0,
@@ -433,7 +423,14 @@ impl InlineLayout {
                 // "A sequence of collapsible spaces at the beginning of a line is removed."
                 let rest_trimmed = rest.trim_start();
                 if !rest_trimmed.is_empty() {
-                    self.add_text(rest_trimmed, font_size, color, font_weight, font_style, font_metrics);
+                    self.add_text(
+                        rest_trimmed,
+                        font_size,
+                        color,
+                        font_weight,
+                        font_style,
+                        font_metrics,
+                    );
                 }
                 return;
             }
@@ -444,18 +441,34 @@ impl InlineLayout {
             // prevents infinite recursion: on a fresh line we always place
             // the text even if it overflows.
             self.finish_line();
-            self.add_text(text, font_size, color, font_weight, font_style, font_metrics);
+            self.add_text(
+                text,
+                font_size,
+                color,
+                font_weight,
+                font_style,
+                font_metrics,
+            );
             return;
         }
 
         // STEP 4: Place fragment on the current line.
-        self.place_text_fragment(text, font_size, line_height, color, font_weight, font_style, font_metrics);
+        self.place_text_fragment(
+            text,
+            font_size,
+            line_height,
+            color,
+            font_weight,
+            font_style,
+            font_metrics,
+        );
     }
 
     /// Place a text fragment at the current position on the current line.
     ///
     /// This is the shared placement logic used by `add_text` after measurement
     /// and line-breaking decisions have been made.
+    #[allow(clippy::too_many_arguments)]
     fn place_text_fragment(
         &mut self,
         text: &str,
@@ -624,21 +637,6 @@ impl InlineLayout {
     /// "This property describes how inline-level content of a block container
     ///  is aligned."
     pub fn finish_line(&mut self) {
-        // Don't create empty line boxes.
-        if self.current_line_fragments.is_empty() {
-            // Even though we skip creating a LineBox, reset horizontal
-            // position so the next content starts at the line's leading edge.
-            //
-            // Without this, begin_inline_box() advances from
-            // prior inline-box edges persist across the "line break" and
-            // cause infinite recursion in add_text()'s wrap-to-new-line
-            // path: current_x stays non-zero → text doesn't fit →
-            // finish_line() is a no-op → recurse with same state.
-            self.current_x = 0.0;
-            self.current_line_max_height = 0.0;
-            return;
-        }
-
         // STEP 1: Calculate line box height and baseline.
         // [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
         //
@@ -661,6 +659,21 @@ impl InlineLayout {
         // fonts (e.g., Helvetica ascender ≈ 0.77, Arial ≈ 0.81).
         const ASCENDER_RATIO: f32 = 0.8;
 
+        // Don't create empty line boxes.
+        if self.current_line_fragments.is_empty() {
+            // Even though we skip creating a LineBox, reset horizontal
+            // position so the next content starts at the line's leading edge.
+            //
+            // Without this, begin_inline_box() advances from
+            // prior inline-box edges persist across the "line break" and
+            // cause infinite recursion in add_text()'s wrap-to-new-line
+            // path: current_x stays non-zero → text doesn't fit →
+            // finish_line() is a no-op → recurse with same state.
+            self.current_x = 0.0;
+            self.current_line_max_height = 0.0;
+            return;
+        }
+
         let mut max_ascent: f32 = 0.0;
         let mut max_descent: f32 = 0.0;
 
@@ -672,8 +685,7 @@ impl InlineLayout {
                     // the baseline is established.
                 }
                 _ => {
-                    let (ascent, descent) =
-                        Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
+                    let (ascent, descent) = Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
                     if ascent > max_ascent {
                         max_ascent = ascent;
                     }
@@ -693,22 +705,17 @@ impl InlineLayout {
         // "The 'vertical-align' property affects the vertical positioning
         // inside a line box of the boxes generated by an inline-level element."
         for frag in &mut self.current_line_fragments {
-            let (frag_ascent, _) =
-                Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
+            let (frag_ascent, _) = Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
 
             frag.bounds.y = match frag.vertical_align {
                 // "Align the baseline of the box with the baseline of the
                 // parent box."
-                VerticalAlign::Baseline => {
-                    self.current_y + baseline - frag_ascent
-                }
+                VerticalAlign::Baseline => self.current_y + baseline - frag_ascent,
                 // "Align the vertical midpoint of the box with the baseline
                 // of the parent box plus half the x-height of the parent."
                 //
                 // Approximation: x-height ≈ 0.5 × font_size of the strut.
-                VerticalAlign::Middle => {
-                    self.current_y + baseline - frag.bounds.height / 2.0
-                }
+                VerticalAlign::Middle => self.current_y + baseline - frag.bounds.height / 2.0,
                 // "Lower the baseline of the box to the proper position
                 // for subscripts of the parent's box."
                 //
@@ -727,25 +734,19 @@ impl InlineLayout {
                 }
                 // "Align the top of the box with the top of the parent's
                 // content area."
-                VerticalAlign::TextTop => self.current_y,
-                // "Align the bottom of the box with the bottom of the
-                // parent's content area."
-                VerticalAlign::TextBottom => {
-                    self.current_y + line_height - frag.bounds.height
-                }
                 // "Align the top of the aligned subtree with the top of
                 // the line box."
-                VerticalAlign::Top => self.current_y,
+                VerticalAlign::TextTop | VerticalAlign::Top => self.current_y,
+                // "Align the bottom of the box with the bottom of the
+                // parent's content area."
                 // "Align the bottom of the aligned subtree with the bottom
                 // of the line box."
-                VerticalAlign::Bottom => {
+                VerticalAlign::TextBottom | VerticalAlign::Bottom => {
                     self.current_y + line_height - frag.bounds.height
                 }
                 // "Raise (positive value) or lower (negative value) the box
                 // by this distance."
-                VerticalAlign::Length(offset) => {
-                    self.current_y + baseline - frag_ascent - offset
-                }
+                VerticalAlign::Length(offset) => self.current_y + baseline - frag_ascent - offset,
             };
         }
 
@@ -757,17 +758,16 @@ impl InlineLayout {
         let line_width = self.current_x;
         let x_offset = match self.text_align {
             // "Inline-level content is aligned to the left line edge."
-            TextAlign::Left => 0.0,
+            //
+            // "Inline-level content is justified."
+            // TODO: Distribute extra space between words. For now, treat
+            // justify as left-aligned (per spec, the last line of a
+            // justified block is left-aligned anyway).
+            TextAlign::Left | TextAlign::Justify => 0.0,
             // "Inline-level content is aligned to the right line edge."
             TextAlign::Right => (self.available_width - line_width).max(0.0),
             // "Inline-level content is centered within the line box."
             TextAlign::Center => ((self.available_width - line_width) / 2.0).max(0.0),
-            // "Inline-level content is justified."
-            //
-            // TODO: Distribute extra space between words. For now, treat
-            // justify as left-aligned (per spec, the last line of a
-            // justified block is left-aligned anyway).
-            TextAlign::Justify => 0.0,
         };
 
         if x_offset > 0.0 {
@@ -805,11 +805,11 @@ impl InlineLayout {
     /// half-leading on each side and is thus exactly 'line-height'."
     ///
     /// For a text fragment:
-    ///   half_leading = (line_height - font_size) / 2
-    ///   ascent = half_leading + font_size × ascender_ratio
-    ///   descent = line_height - ascent
+    ///   `half_leading = (line_height - font_size) / 2`
+    ///   `ascent = half_leading + font_size × ascender_ratio`
+    ///   `descent = line_height - ascent`
     ///
-    /// For non-text fragments (InlineBox, ReplacedElement), we approximate
+    /// For non-text fragments (`InlineBox`, `ReplacedElement`), we approximate
     /// using the fragment height directly.
     fn fragment_ascent_descent(frag: &LineFragment, ascender_ratio: f32) -> (f32, f32) {
         let frag_height = frag.bounds.height;
@@ -822,7 +822,7 @@ impl InlineLayout {
         };
 
         let half_leading = (frag_height - font_size) / 2.0;
-        let ascent = half_leading + font_size * ascender_ratio;
+        let ascent = font_size.mul_add(ascender_ratio, half_leading);
         let descent = frag_height - ascent;
 
         (ascent.max(0.0), descent.max(0.0))
@@ -847,6 +847,7 @@ impl InlineLayout {
     ///  [§ 3.3 overflow-wrap](https://www.w3.org/TR/css-text-3/#overflow-wrap-property)
     ///  "If the word is too long to fit on a line by itself, break at
     ///   an arbitrary point."
+    #[must_use]
     pub fn find_break_opportunity(
         text: &str,
         max_width: f32,
@@ -905,6 +906,7 @@ impl InlineLayout {
     ///
     /// "The 'height' property does not apply. The height of the content area
     /// should be based on the font, but this specification does not specify how."
+    #[must_use]
     pub fn total_height(&self) -> f32 {
         self.line_boxes.iter().map(|lb| lb.line_height).sum()
     }

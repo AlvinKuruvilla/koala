@@ -8,7 +8,7 @@ impl HTMLTokenizer {
     /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
     /// Returns true if the return state is an attribute value state.
     /// Per spec: "consumed as part of an attribute"
-    pub(super) fn is_consumed_as_part_of_attribute(&self) -> bool {
+    pub(super) const fn is_consumed_as_part_of_attribute(&self) -> bool {
         matches!(
             self.return_state,
             Some(
@@ -25,14 +25,15 @@ impl HTMLTokenizer {
     /// then append each character to the current attribute's value. Otherwise,
     /// emit each character as a character token."
     pub(super) fn flush_code_points_consumed_as_character_reference(&mut self) {
+        let buffer = self.temporary_buffer.clone();
         if self.is_consumed_as_part_of_attribute() {
-            for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+            for c in buffer.chars() {
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(c);
                 }
             }
         } else {
-            for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+            for c in buffer.chars() {
                 self.emit_character_token(c);
             }
         }

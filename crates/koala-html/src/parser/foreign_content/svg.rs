@@ -78,7 +78,7 @@ const SVG_ATTRIBUTE_ADJUSTMENTS: &[(&str, &str)] = &[
 ///
 /// Adjust attribute names for SVG elements to restore proper casing.
 pub fn adjust_svg_attributes(attributes: &mut [Attribute]) {
-    for attr in attributes.iter_mut() {
+    for attr in &mut *attributes {
         for &(from, to) in SVG_ATTRIBUTE_ADJUSTMENTS {
             if attr.name == from {
                 attr.name = to.to_string();

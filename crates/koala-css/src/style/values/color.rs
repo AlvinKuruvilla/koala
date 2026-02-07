@@ -9,7 +9,7 @@ use crate::tokenizer::CSSToken;
 
 /// [§ 4 Color syntax](https://www.w3.org/TR/css-color-4/#color-syntax)
 /// sRGB color represented as RGBA components.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ColorValue {
     /// "the red color channel" (0-255)
     pub r: u8,
@@ -23,14 +23,25 @@ pub struct ColorValue {
 
 impl ColorValue {
     /// Black (#000000)
-    pub const BLACK: Self = Self { r: 0, g: 0, b: 0, a: 255 };
+    pub const BLACK: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
 
     /// White (#ffffff)
-    pub const WHITE: Self = Self { r: 255, g: 255, b: 255, a: 255 };
+    pub const WHITE: Self = Self {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
 
     /// [§ 4.2 The RGB hexadecimal notations](https://www.w3.org/TR/css-color-4/#hex-notation)
-    /// "The syntax of a <hex-color> is a <hash-token> token whose value consists of
+    /// "The syntax of a `<hex-color>` is a `<hash-token>` token whose value consists of
     /// 3, 4, 6, or 8 hexadecimal digits."
+    #[must_use]
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.strip_prefix('#').unwrap_or(hex);
         match hex.len() {
@@ -41,7 +52,7 @@ impl ColorValue {
                 let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
                 let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
                 let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                Some(ColorValue { r, g, b, a: 255 })
+                Some(Self { r, g, b, a: 255 })
             }
             // Four-digit RGBA notation (#RGBA)
             4 => {
@@ -49,14 +60,14 @@ impl ColorValue {
                 let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
                 let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
                 let a = u8::from_str_radix(&hex[3..4].repeat(2), 16).ok()?;
-                Some(ColorValue { r, g, b, a })
+                Some(Self { r, g, b, a })
             }
             // Six-digit RGB notation (#RRGGBB)
             6 => {
                 let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
                 let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
                 let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                Some(ColorValue { r, g, b, a: 255 })
+                Some(Self { r, g, b, a: 255 })
             }
             // Eight-digit RGBA notation (#RRGGBBAA)
             8 => {
@@ -64,7 +75,7 @@ impl ColorValue {
                 let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
                 let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
                 let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-                Some(ColorValue { r, g, b, a })
+                Some(Self { r, g, b, a })
             }
             _ => None,
         }
@@ -72,52 +83,53 @@ impl ColorValue {
 
     /// [§ 6.1 Named Colors](https://www.w3.org/TR/css-color-4/#named-colors)
     /// "CSS defines a large set of named colors..."
+    #[must_use]
     pub fn from_named(name: &str) -> Option<Self> {
         // MVP: Common colors from the named color table
         match name.to_ascii_lowercase().as_str() {
-            "white" => Some(ColorValue {
+            "white" => Some(Self {
                 r: 255,
                 g: 255,
                 b: 255,
                 a: 255,
             }),
-            "black" => Some(ColorValue {
+            "black" => Some(Self {
                 r: 0,
                 g: 0,
                 b: 0,
                 a: 255,
             }),
-            "red" => Some(ColorValue {
+            "red" => Some(Self {
                 r: 255,
                 g: 0,
                 b: 0,
                 a: 255,
             }),
-            "green" => Some(ColorValue {
+            "green" => Some(Self {
                 r: 0,
                 g: 128,
                 b: 0,
                 a: 255,
             }),
-            "blue" => Some(ColorValue {
+            "blue" => Some(Self {
                 r: 0,
                 g: 0,
                 b: 255,
                 a: 255,
             }),
-            "yellow" => Some(ColorValue {
+            "yellow" => Some(Self {
                 r: 255,
                 g: 255,
                 b: 0,
                 a: 255,
             }),
-            "gray" | "grey" => Some(ColorValue {
+            "gray" | "grey" => Some(Self {
                 r: 128,
                 g: 128,
                 b: 128,
                 a: 255,
             }),
-            "transparent" => Some(ColorValue {
+            "transparent" => Some(Self {
                 r: 0,
                 g: 0,
                 b: 0,
@@ -125,55 +137,55 @@ impl ColorValue {
             }),
             // Basic 16 HTML colors (completing the set)
             // [§ 6.1 Named Colors](https://www.w3.org/TR/css-color-4/#named-colors)
-            "aqua" | "cyan" => Some(ColorValue {
+            "aqua" | "cyan" => Some(Self {
                 r: 0,
                 g: 255,
                 b: 255,
                 a: 255,
             }),
-            "fuchsia" | "magenta" => Some(ColorValue {
+            "fuchsia" | "magenta" => Some(Self {
                 r: 255,
                 g: 0,
                 b: 255,
                 a: 255,
             }),
-            "lime" => Some(ColorValue {
+            "lime" => Some(Self {
                 r: 0,
                 g: 255,
                 b: 0,
                 a: 255,
             }),
-            "maroon" => Some(ColorValue {
+            "maroon" => Some(Self {
                 r: 128,
                 g: 0,
                 b: 0,
                 a: 255,
             }),
-            "navy" => Some(ColorValue {
+            "navy" => Some(Self {
                 r: 0,
                 g: 0,
                 b: 128,
                 a: 255,
             }),
-            "olive" => Some(ColorValue {
+            "olive" => Some(Self {
                 r: 128,
                 g: 128,
                 b: 0,
                 a: 255,
             }),
-            "purple" => Some(ColorValue {
+            "purple" => Some(Self {
                 r: 128,
                 g: 0,
                 b: 128,
                 a: 255,
             }),
-            "silver" => Some(ColorValue {
+            "silver" => Some(Self {
                 r: 192,
                 g: 192,
                 b: 192,
                 a: 255,
             }),
-            "teal" => Some(ColorValue {
+            "teal" => Some(Self {
                 r: 0,
                 g: 128,
                 b: 128,
@@ -192,9 +204,10 @@ impl ColorValue {
         }
     }
 
-    /// Convert to hex string notation (#RRGGBB or #RRGGBBAA if alpha != 255)
+    /// Convert to hex string notation (`#RRGGBB` or `#RRGGBBAA` if alpha != 255)
     ///
     /// [§ 4.2 The RGB hexadecimal notations](https://www.w3.org/TR/css-color-4/#hex-notation)
+    #[must_use]
     pub fn to_hex_string(&self) -> String {
         if self.a == 255 {
             format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
@@ -206,6 +219,7 @@ impl ColorValue {
 
 /// [§ 4.2 RGB hex notation](https://www.w3.org/TR/css-color-4/#hex-notation)
 /// Parse a color value from component values.
+#[must_use]
 pub fn parse_color_value(values: &[ComponentValue]) -> Option<ColorValue> {
     for v in values {
         if let Some(color) = parse_single_color(v) {
@@ -216,6 +230,7 @@ pub fn parse_color_value(values: &[ComponentValue]) -> Option<ColorValue> {
 }
 
 /// Parse a single component value as a color.
+#[must_use]
 pub fn parse_single_color(v: &ComponentValue) -> Option<ColorValue> {
     match v {
         ComponentValue::Token(CSSToken::Hash { value, .. }) => ColorValue::from_hex(value),
@@ -228,13 +243,13 @@ pub fn parse_single_color(v: &ComponentValue) -> Option<ColorValue> {
 /// [§ 4.1 The RGB Functions: rgb() and rgba()](https://www.w3.org/TR/css-color-4/#rgb-functions)
 /// [§ 4.1 The HSL Functions: hsl() and hsla()](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
 ///
-/// "For legacy reasons, rgb() also supports an alternate syntax that
+/// "For legacy reasons, `rgb()` also supports an alternate syntax that
 /// separates all of its arguments with commas."
 ///
-/// "For legacy reasons, hsl() also supports an alternate syntax that
+/// "For legacy reasons, `hsl()` also supports an alternate syntax that
 /// separates all of its arguments with commas."
 ///
-/// Per CSS Color 4, rgb()/rgba() and hsl()/hsla() are aliases.
+/// Per CSS Color 4, `rgb()`/`rgba()` and `hsl()`/`hsla()` are aliases.
 fn parse_color_function(name: &str, args: &[ComponentValue]) -> Option<ColorValue> {
     match name.to_ascii_lowercase().as_str() {
         "rgb" | "rgba" => parse_rgb_function(args),
@@ -281,8 +296,7 @@ fn extract_color_args(args: &[ComponentValue]) -> Vec<ColorArg> {
             ComponentValue::Token(CSSToken::Delim('/')) => {
                 saw_slash = true;
             }
-            // Skip whitespace and commas (both legacy and modern syntax)
-            ComponentValue::Token(CSSToken::Whitespace | CSSToken::Comma) => {}
+            // Skip whitespace, commas, and other tokens (both legacy and modern syntax)
             _ => {}
         }
     }
@@ -297,11 +311,11 @@ fn extract_color_args(args: &[ComponentValue]) -> Vec<ColorArg> {
 
 /// [§ 4.1 The RGB Functions](https://www.w3.org/TR/css-color-4/#rgb-functions)
 ///
-/// "rgb() = rgb( <percentage>{3} [ / <alpha-value> ]? ) |
-///          rgb( <number>{3} [ / <alpha-value> ]? )"
+/// `rgb() = rgb( <percentage>{3} [ / <alpha-value> ]? ) |`
+/// `         rgb( <number>{3} [ / <alpha-value> ]? )`
 ///
-/// Legacy: "rgb( <percentage>#{3} , <alpha-value>? ) |
-///          rgb( <number>#{3} , <alpha-value>? )"
+/// Legacy: `rgb( <percentage>#{3} , <alpha-value>? ) |`
+/// `         rgb( <number>#{3} , <alpha-value>? )`
 ///
 /// "Values outside these ranges are not invalid, but are clamped to the
 /// ranges defined here at parsed-value time."
@@ -330,11 +344,11 @@ fn parse_rgb_function(args: &[ComponentValue]) -> Option<ColorValue> {
 
 /// [§ 4.1 The HSL Functions](https://www.w3.org/TR/css-color-4/#the-hsl-notation)
 ///
-/// "hsl() = hsl( <hue> <percentage> <percentage> [ / <alpha-value> ]? )"
+/// `hsl() = hsl( <hue> <percentage> <percentage> [ / <alpha-value> ]? )`
 ///
-/// Legacy: "hsl( <hue>, <percentage>, <percentage>, <alpha-value>? )"
+/// Legacy: `hsl( <hue>, <percentage>, <percentage>, <alpha-value>? )`
 ///
-/// "<hue> is a <number> or <angle>, interpreted as degrees."
+/// "`<hue>` is a `<number>` or `<angle>`, interpreted as degrees."
 fn parse_hsl_function(args: &[ComponentValue]) -> Option<ColorValue> {
     let vals = extract_color_args(args);
     if vals.len() < 3 {
@@ -353,14 +367,12 @@ fn parse_hsl_function(args: &[ComponentValue]) -> Option<ColorValue> {
 
     // "The second argument is the saturation... interpreted as a percentage."
     let saturation = match vals[1] {
-        ColorArg::Percentage(v) => v / 100.0,
-        ColorArg::Number(v) => v / 100.0,
+        ColorArg::Percentage(v) | ColorArg::Number(v) => v / 100.0,
     };
 
     // "The third argument is the lightness... interpreted as a percentage."
     let lightness = match vals[2] {
-        ColorArg::Percentage(v) => v / 100.0,
-        ColorArg::Number(v) => v / 100.0,
+        ColorArg::Percentage(v) | ColorArg::Number(v) => v / 100.0,
     };
 
     let a = if vals.len() >= 4 {
@@ -386,15 +398,18 @@ fn color_channel_to_u8(arg: ColorArg) -> u8 {
         // "100% = 255"
         ColorArg::Percentage(p) => p * 255.0 / 100.0,
     };
-    v.round().clamp(0.0, 255.0) as u8
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        v.round().clamp(0.0, 255.0) as u8
+    }
 }
 
 /// Convert an alpha argument to a u8 (0-255).
 ///
 /// [§ 4.1](https://www.w3.org/TR/css-color-4/#rgb-functions)
 ///
-/// "The <alpha-value> can be a <number> (clamped to [0, 1]) or a
-/// <percentage> (clamped to [0%, 100%])."
+/// "The `<alpha-value>` can be a `<number>` (clamped to \[0, 1\]) or a
+/// `<percentage>` (clamped to \[0%, 100%\])."
 fn alpha_to_u8(arg: ColorArg) -> u8 {
     let v = match arg {
         // Numbers: 0.0 = transparent, 1.0 = opaque
@@ -402,7 +417,10 @@ fn alpha_to_u8(arg: ColorArg) -> u8 {
         // Percentages: 0% = transparent, 100% = opaque
         ColorArg::Percentage(p) => p * 255.0 / 100.0,
     };
-    v.round().clamp(0.0, 255.0) as u8
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        v.round().clamp(0.0, 255.0) as u8
+    }
 }
 
 /// [§ 4.2.4 HSL-to-RGB](https://www.w3.org/TR/css-color-4/#hsl-to-rgb)
@@ -414,6 +432,7 @@ fn alpha_to_u8(arg: ColorArg) -> u8 {
 /// - lightness: 0.0-1.0
 ///
 /// Returns (r, g, b) as u8 values.
+#[allow(clippy::many_single_char_names)]
 fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
     // Normalize hue to [0, 360)
     let h = ((hue % 360.0) + 360.0) % 360.0;
@@ -425,10 +444,11 @@ fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
     // "HOW TO RETURN hsl.h, hsl.s, hsl.l converted to an idealized-rgb color"
     //
     // Standard algorithm using chroma and intermediate value.
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let c = (1.0 - 2.0f64.mul_add(l, -1.0).abs()) * s;
     let h_prime = h / 60.0;
     let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let (r1, g1, b1) = match h_prime as u32 {
         0 => (c, x, 0.0),
         1 => (x, c, 0.0),
@@ -440,6 +460,7 @@ fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
     };
 
     let m = l - c / 2.0;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let to_u8 = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
 
     (to_u8(r1), to_u8(g1), to_u8(b1))

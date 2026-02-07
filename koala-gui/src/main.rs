@@ -14,7 +14,7 @@ mod theme;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use eframe::egui;
@@ -125,10 +125,11 @@ fn load_doc(cli: &Cli) -> anyhow::Result<LoadedDocument> {
 /// Take a screenshot of the rendered page
 fn take_screenshot(
     doc: &LoadedDocument,
-    output_path: &PathBuf,
+    output_path: &Path,
     width: u32,
     height: u32,
 ) -> anyhow::Result<()> {
+    #[allow(clippy::cast_precision_loss)]
     let viewport = Rect {
         x: 0.0,
         y: 0.0,
@@ -187,9 +188,7 @@ fn print_layout(doc: &LoadedDocument) {
     let viewport_width = 1280.0;
     let viewport_height = 720.0;
 
-    println!(
-        "=== Layout Tree (viewport: {viewport_width}x{viewport_height}) ===\n"
-    );
+    println!("=== Layout Tree (viewport: {viewport_width}x{viewport_height}) ===\n");
 
     if let Some(ref layout_tree) = doc.layout_tree {
         let mut layout = layout_tree.clone();
@@ -214,19 +213,20 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
     let dims = &layout_box.dimensions;
 
     let name = match &layout_box.box_type {
-        koala_css::BoxType::Principal(node_id) => {
-            if let Some(element) = doc.dom.as_element(*node_id) {
-                format!("<{}> ({:?})", element.tag_name, node_id)
-            } else if doc
-                .dom
-                .get(*node_id)
-                .is_some_and(|n| matches!(n.node_type, NodeType::Document))
-            {
-                format!("Document ({node_id:?})")
-            } else {
-                format!("{node_id:?}")
-            }
-        }
+        koala_css::BoxType::Principal(node_id) => doc.dom.as_element(*node_id).map_or_else(
+            || {
+                if doc
+                    .dom
+                    .get(*node_id)
+                    .is_some_and(|n| matches!(n.node_type, NodeType::Document))
+                {
+                    format!("Document ({node_id:?})")
+                } else {
+                    format!("{node_id:?}")
+                }
+            },
+            |element| format!("<{}> ({:?})", element.tag_name, node_id),
+        ),
         koala_css::BoxType::AnonymousBlock => "AnonymousBlock".to_string(),
         koala_css::BoxType::AnonymousInline(text) => {
             let preview: String = text.chars().take(30).collect();
@@ -466,6 +466,7 @@ impl BrowserApp {
     /// Load and parse a page from a file path or URL
     ///
     /// Uses `koala_browser::load_document` for the actual loading/parsing.
+    #[allow(clippy::unused_self)]
     fn load_page(&self, path: &str) -> Result<PageState, String> {
         let doc = load_document(path).map_err(|e| e.to_string())?;
 
@@ -494,7 +495,7 @@ impl BrowserApp {
             self.history_index -= 1;
             let path = self.history[self.history_index - 1].clone();
             println!("[Koala GUI] Going back to: {path}");
-            self.url_input = path.clone();
+            self.url_input.clone_from(&path);
             if let Ok(page) = self.load_page(&path) {
                 self.page = Some(page);
                 self.status_message = format!("Loaded: {path}");
@@ -507,7 +508,7 @@ impl BrowserApp {
             self.history_index += 1;
             let path = self.history[self.history_index - 1].clone();
             println!("[Koala GUI] Going forward to: {path}");
-            self.url_input = path.clone();
+            self.url_input.clone_from(&path);
             if let Ok(page) = self.load_page(&path) {
                 self.page = Some(page);
                 self.status_message = format!("Loaded: {path}");
@@ -835,31 +836,35 @@ impl eframe::App for BrowserApp {
                     {
                         let page = self.page.as_mut().unwrap();
                         if page.last_layout_viewport != Some(viewport_size)
-                            && let Some(ref mut root) = page.doc.layout_tree {
-                                // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
-                                //
-                                // "The containing block in which the root element lives is a
-                                // rectangle called the initial containing block. For continuous
-                                // media, it has the dimensions of the viewport..."
-                                let initial_containing_block = Rect {
-                                    x: 0.0,
-                                    y: 0.0,
-                                    width: viewport_size.0,
-                                    height: viewport_size.1,
-                                };
-                                // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
-                                //
-                                // "The viewport-percentage lengths are relative to the size
-                                // of the initial containing block."
-                                let viewport = initial_containing_block;
-                                let font_metrics = self.font_provider.metrics();
-                                root.layout(initial_containing_block, viewport, &*font_metrics);
-                                page.last_layout_viewport = Some(viewport_size);
+                            && let Some(ref mut root) = page.doc.layout_tree
+                        {
+                            // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
+                            //
+                            // "The containing block in which the root element lives is a
+                            // rectangle called the initial containing block. For continuous
+                            // media, it has the dimensions of the viewport..."
+                            let initial_containing_block = Rect {
+                                x: 0.0,
+                                y: 0.0,
+                                width: viewport_size.0,
+                                height: viewport_size.1,
+                            };
+                            // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
+                            //
+                            // "The viewport-percentage lengths are relative to the size
+                            // of the initial containing block."
+                            let viewport = initial_containing_block;
+                            let font_metrics = self.font_provider.metrics();
+                            root.layout(initial_containing_block, viewport, &*font_metrics);
+                            page.last_layout_viewport = Some(viewport_size);
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            {
                                 println!(
                                     "[Koala GUI] Layout computed for viewport {}x{}",
                                     viewport_size.0 as u32, viewport_size.1 as u32
                                 );
                             }
+                        }
                     }
 
                     // Now borrow immutably for rendering
@@ -1048,7 +1053,7 @@ impl BrowserApp {
         };
 
         // Get computed style and node info
-        let (tag, style) = if let Some(id) = node_id {
+        let (tag, style) = node_id.map_or((None, None), |id| {
             let style = page.doc.styles.get(&id);
             let tag = page.doc.dom.get(id).and_then(|n| {
                 if let NodeType::Element(data) = &n.node_type {
@@ -1058,9 +1063,7 @@ impl BrowserApp {
                 }
             });
             (tag, style)
-        } else {
-            (None, None)
-        };
+        });
 
         // Skip non-visual elements
         if let Some(ref t) = tag {
@@ -1086,29 +1089,30 @@ impl BrowserApp {
         // "The initial value of 'background-clip' is 'border-box', meaning
         // the background is painted within the border box."
         if let Some(s) = style
-            && let Some(ref bg) = s.background_color {
-                let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
-                // Paint at the border box (content + padding + border)
-                let border_rect = egui::Rect::from_min_size(
-                    egui::pos2(
-                        origin.x + dims.content.x - dims.padding.left - dims.border.left,
-                        origin.y + dims.content.y - dims.padding.top - dims.border.top,
-                    ),
-                    egui::vec2(
-                        dims.content.width
-                            + dims.padding.left
-                            + dims.padding.right
-                            + dims.border.left
-                            + dims.border.right,
-                        dims.content.height
-                            + dims.padding.top
-                            + dims.padding.bottom
-                            + dims.border.top
-                            + dims.border.bottom,
-                    ),
-                );
-                let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
-            }
+            && let Some(ref bg) = s.background_color
+        {
+            let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
+            // Paint at the border box (content + padding + border)
+            let border_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    origin.x + dims.content.x - dims.padding.left - dims.border.left,
+                    origin.y + dims.content.y - dims.padding.top - dims.border.top,
+                ),
+                egui::vec2(
+                    dims.content.width
+                        + dims.padding.left
+                        + dims.padding.right
+                        + dims.border.left
+                        + dims.border.right,
+                    dims.content.height
+                        + dims.padding.top
+                        + dims.padding.bottom
+                        + dims.border.top
+                        + dims.border.bottom,
+                ),
+            );
+            let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
+        }
 
         // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the replaced content of replaced inline-level elements"
@@ -1116,50 +1120,43 @@ impl BrowserApp {
         // If this is a replaced element (e.g., <img>), paint the image.
         if layout_box.is_replaced
             && let Some(ref src) = layout_box.replaced_src
-                && let Some(page_ref) = &self.page
-                    && let Some(loaded_img) = page_ref.doc.images.get(src) {
-                        let mut textures = self.image_textures.borrow_mut();
-                        let texture = textures.entry(src.clone()).or_insert_with(|| {
-                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                [loaded_img.width() as usize, loaded_img.height() as usize],
-                                loaded_img.rgba_data(),
-                            );
-                            ui.ctx().load_texture(
-                                src.clone(),
-                                color_image,
-                                egui::TextureOptions::LINEAR,
-                            )
-                        });
-                        let img_rect = content_rect;
-                        let uv = egui::Rect::from_min_max(
-                            egui::pos2(0.0, 0.0),
-                            egui::pos2(1.0, 1.0),
-                        );
-                        let _ = ui.painter().image(
-                            texture.id(),
-                            img_rect,
-                            uv,
-                            egui::Color32::WHITE,
-                        );
-                    }
+            && let Some(page_ref) = &self.page
+            && let Some(loaded_img) = page_ref.doc.images.get(src)
+        {
+            let mut textures = self.image_textures.borrow_mut();
+            let texture = textures.entry(src.clone()).or_insert_with(|| {
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    [loaded_img.width() as usize, loaded_img.height() as usize],
+                    loaded_img.rgba_data(),
+                );
+                ui.ctx()
+                    .load_texture(src.clone(), color_image, egui::TextureOptions::LINEAR)
+            });
+            let img_rect = content_rect;
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            let _ = ui
+                .painter()
+                .image(texture.id(), img_rect, uv, egui::Color32::WHITE);
+        }
 
         // Determine text formatting from style
-        let font_size = style
-            .and_then(|s| s.font_size.as_ref())
-            .map(koala_css::LengthValue::to_px)
-            .unwrap_or_else(|| match tag.as_deref() {
+        let font_size = style.and_then(|s| s.font_size.as_ref()).map_or_else(
+            || match tag.as_deref() {
                 Some("h1") => 32.0,
                 Some("h2") => 24.0,
                 Some("h3") => 18.72,
-                Some("h4") => 16.0,
+                // h4 = 16.0 (same as default body text size)
                 Some("h5") => 13.28,
                 Some("h6") => 10.72,
                 _ => 16.0,
-            });
+            },
+            koala_css::LengthValue::to_px,
+        );
 
-        let text_color = style
-            .and_then(|s| s.color.as_ref())
-            .map_or(ui.visuals().text_color(), |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
+        let text_color = style.and_then(|s| s.color.as_ref()).map_or_else(
+            || ui.visuals().text_color(),
+            |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a),
+        );
 
         // Render text content.
         //
@@ -1216,21 +1213,23 @@ impl BrowserApp {
             let mut text_y = content_rect.min.y;
             for &child_id in page.doc.dom.children(id) {
                 if let Some(child_node) = page.doc.dom.get(child_id)
-                    && let NodeType::Text(text) = &child_node.node_type {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            // Paint text at the computed position
-                            let text_pos = egui::pos2(content_rect.min.x, text_y);
-                            let galley = ui.painter().layout(
-                                trimmed.to_string(),
-                                egui::FontId::new(font_size as f32, fallback_family.clone()),
-                                text_color,
-                                content_rect.width(),
-                            );
-                            ui.painter().galley(text_pos, galley.clone(), text_color);
-                            text_y += galley.rect.height() + 4.0; // Line spacing
-                        }
+                    && let NodeType::Text(text) = &child_node.node_type
+                {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        // Paint text at the computed position
+                        let text_pos = egui::pos2(content_rect.min.x, text_y);
+                        let galley = ui.painter().layout(
+                            trimmed.to_string(),
+                            #[allow(clippy::cast_possible_truncation)]
+                            egui::FontId::new(font_size as f32, fallback_family.clone()),
+                            text_color,
+                            content_rect.width(),
+                        );
+                        ui.painter().galley(text_pos, galley.clone(), text_color);
+                        text_y += galley.rect.height() + 4.0; // Line spacing
                     }
+                }
             }
         }
 
@@ -1245,7 +1244,8 @@ impl BrowserApp {
     }
 
     /// Recursively render a DOM node's content
-    fn render_node_content(&self, ui: &mut egui::Ui, page: &PageState, id: NodeId, _depth: usize) {
+    #[allow(clippy::only_used_in_recursion)]
+    fn render_node_content(&self, ui: &mut egui::Ui, page: &PageState, id: NodeId, depth: usize) {
         let Some(node) = page.doc.dom.get(id) else {
             return;
         };
@@ -1270,13 +1270,10 @@ impl BrowserApp {
                 if let Some(s) = style {
                     // background-color only supported on body (via canvas_background)
                     if tag != "body"
-                        && let Some(bg) = &s.background_color {
-                            self.warn_unsupported_css(
-                                "background-color",
-                                &tag,
-                                &bg.to_hex_string(),
-                            );
-                        }
+                        && let Some(bg) = &s.background_color
+                    {
+                        self.warn_unsupported_css("background-color", &tag, &bg.to_hex_string());
+                    }
 
                     // font-family is parsed but not applied
                     if let Some(ff) = &s.font_family {
@@ -1307,26 +1304,27 @@ impl BrowserApp {
                     tag.as_str(),
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "strong" | "b"
                 );
-                let font_size = style
-                    .and_then(|s| s.font_size.as_ref())
-                    .map(koala_css::LengthValue::to_px)
-                    .unwrap_or_else(|| {
+                let font_size = style.and_then(|s| s.font_size.as_ref()).map_or_else(
+                    || {
                         // User-agent default sizes when no CSS specified
                         // [§ 15.3.1 HTML headings](https://html.spec.whatwg.org/#sections-and-headings)
                         match tag.as_str() {
                             "h1" => 32.0,
                             "h2" => 24.0,
                             "h3" => 18.72,
-                            "h4" => 16.0,
+                            // h4 = 16.0 (same as default body text size)
                             "h5" => 13.28,
                             "h6" => 10.72,
                             _ => 16.0, // Default body text size
                         }
-                    });
+                    },
+                    koala_css::LengthValue::to_px,
+                );
 
-                let text_color = style
-                    .and_then(|s| s.color.as_ref())
-                    .map_or(ui.visuals().text_color(), |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
+                let text_color = style.and_then(|s| s.color.as_ref()).map_or_else(
+                    || ui.visuals().text_color(),
+                    |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a),
+                );
 
                 let is_block = matches!(
                     tag.as_str(),
@@ -1363,6 +1361,7 @@ impl BrowserApp {
                             NodeType::Text(text) => {
                                 let trimmed = text.trim();
                                 if !trimmed.is_empty() {
+                                    #[allow(clippy::cast_possible_truncation)]
                                     let job = egui::text::LayoutJob::simple_singleline(
                                         trimmed.to_string(),
                                         egui::FontId::new(
@@ -1375,7 +1374,7 @@ impl BrowserApp {
                                 }
                             }
                             _ => {
-                                self.render_node_content(ui, page, child_id, _depth + 1);
+                                self.render_node_content(ui, page, child_id, depth + 1);
                             }
                         }
                     }
@@ -1400,9 +1399,7 @@ impl BrowserApp {
         let key = (property.to_string(), tag.to_string());
         let mut logged = self.css_warnings_logged.borrow_mut();
         if !logged.contains(&key) {
-            println!(
-                "[Koala CSS] Ignoring {property}: {value} on <{tag}> (not yet implemented)"
-            );
+            println!("[Koala CSS] Ignoring {property}: {value} on <{tag}> (not yet implemented)");
             let _ = logged.insert(key);
         }
     }
@@ -1431,10 +1428,12 @@ impl BrowserApp {
             NodeType::Element(data) => {
                 let mut label = format!("{}<{}", indent, data.tag_name);
                 if let Some(id_attr) = data.attrs.get("id") {
-                    label.push_str(&format!(" id=\"{id_attr}\""));
+                    use std::fmt::Write;
+                    let _ = write!(label, " id=\"{id_attr}\"");
                 }
                 if let Some(class) = data.attrs.get("class") {
-                    label.push_str(&format!(" class=\"{class}\""));
+                    use std::fmt::Write;
+                    let _ = write!(label, " class=\"{class}\"");
                 }
                 label.push('>');
 
@@ -1479,6 +1478,7 @@ impl BrowserApp {
         }
     }
 
+    #[allow(clippy::unused_self)]
     fn render_debug_tokens(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
             egui::RichText::new(format!("HTML Tokens ({})", page.doc.tokens.len()))
@@ -1518,6 +1518,7 @@ impl BrowserApp {
             });
     }
 
+    #[allow(clippy::unused_self)]
     fn render_debug_styles(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
             egui::RichText::new(format!(
@@ -1531,38 +1532,37 @@ impl BrowserApp {
 
         for (node_id, style) in &page.doc.styles {
             if let Some(node) = page.doc.dom.get(*node_id)
-                && let NodeType::Element(data) = &node.node_type {
-                    let _ =
-                        ui.collapsing(format!("<{}> (node {})", data.tag_name, node_id.0), |ui| {
-                            if let Some(ref color) = style.color {
-                                let _ = ui.monospace(format!("color: {}", color.to_hex_string()));
+                && let NodeType::Element(data) = &node.node_type
+            {
+                let _ = ui.collapsing(format!("<{}> (node {})", data.tag_name, node_id.0), |ui| {
+                    if let Some(ref color) = style.color {
+                        let _ = ui.monospace(format!("color: {}", color.to_hex_string()));
+                    }
+                    if let Some(ref bg) = style.background_color {
+                        let _ = ui.monospace(format!("background-color: {}", bg.to_hex_string()));
+                    }
+                    if let Some(ref fs) = style.font_size {
+                        let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
+                    }
+                    if let Some(ref m) = style.margin_top {
+                        match m {
+                            AutoLength::Length(len) => {
+                                let _ = ui.monospace(format!("margin-top: {}px", len.to_px()));
                             }
-                            if let Some(ref bg) = style.background_color {
-                                let _ = ui
-                                    .monospace(format!("background-color: {}", bg.to_hex_string()));
+                            AutoLength::Auto => {
+                                let _ = ui.monospace("margin-top: auto");
                             }
-                            if let Some(ref fs) = style.font_size {
-                                let _ = ui.monospace(format!("font-size: {}px", fs.to_px()));
-                            }
-                            if let Some(ref m) = style.margin_top {
-                                match m {
-                                    AutoLength::Length(len) => {
-                                        let _ =
-                                            ui.monospace(format!("margin-top: {}px", len.to_px()));
-                                    }
-                                    AutoLength::Auto => {
-                                        let _ = ui.monospace("margin-top: auto");
-                                    }
-                                }
-                            }
-                            if let Some(ref p) = style.padding_top {
-                                let _ = ui.monospace(format!("padding-top: {}px", p.to_px()));
-                            }
-                        });
-                }
+                        }
+                    }
+                    if let Some(ref p) = style.padding_top {
+                        let _ = ui.monospace(format!("padding-top: {}px", p.to_px()));
+                    }
+                });
+            }
         }
     }
 
+    #[allow(clippy::unused_self)]
     fn render_debug_source(&self, ui: &mut egui::Ui, page: &PageState) {
         let _ = ui.label(
             egui::RichText::new(format!(

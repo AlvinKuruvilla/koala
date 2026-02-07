@@ -1,9 +1,9 @@
 //! Integration tests for CSS cascade and style computation.
 
+use koala_css::Stylesheet;
 use koala_css::cascade::compute_styles;
 use koala_css::parser::CSSParser;
 use koala_css::tokenizer::CSSTokenizer;
-use koala_css::Stylesheet;
 use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 
 fn parse_css(css: &str) -> Stylesheet {

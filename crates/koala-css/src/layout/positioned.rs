@@ -45,9 +45,10 @@ use super::box_model::{BoxDimensions, Rect};
 /// sticky (CSS Positioned Layout Module Level 3)
 ///   The box's position is calculated according to the normal flow, then
 ///   offset relative to its nearest scrolling ancestor."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PositionType {
     /// "The box is a normal box, laid out according to the normal flow."
+    #[default]
     Static,
     /// "The box's position is calculated according to the normal flow.
     /// Then the box is offset relative to its normal position."
@@ -66,12 +67,6 @@ pub enum PositionType {
     Sticky,
 }
 
-impl Default for PositionType {
-    fn default() -> Self {
-        PositionType::Static
-    }
-}
-
 /// [§ 9.3.2 Box offsets: 'top', 'right', 'bottom', 'left'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
 ///
 /// "An element is said to be positioned if its 'position' property has
@@ -80,16 +75,17 @@ impl Default for PositionType {
 ///
 /// "Values have the following meanings:
 ///
-/// <length>
+/// `<length>`
 ///   The offset is a fixed distance from the reference edge.
 ///
-/// <percentage>
+/// `<percentage>`
 ///   The offset is a percentage of the containing block's width (for
 ///   'left' or 'right') or height (for 'top' or 'bottom').
 ///
 /// auto
 ///   For non-replaced elements, the effect of this value depends on which
 ///   of related properties have the value 'auto' as well."
+#[derive(Default)]
 pub struct BoxOffsets {
     /// "The 'top' property specifies how far the top margin edge of the
     /// box is offset below the top edge of the box's containing block."
@@ -104,17 +100,6 @@ pub struct BoxOffsets {
     /// "The 'left' property specifies how far the left margin edge of the
     /// box is offset to the right of the left edge of the box's containing block."
     pub left: Option<f32>,
-}
-
-impl Default for BoxOffsets {
-    fn default() -> Self {
-        BoxOffsets {
-            top: None,
-            right: None,
-            bottom: None,
-            left: None,
-        }
-    }
 }
 
 /// Layout engine for positioned elements.
@@ -147,18 +132,15 @@ impl PositionedLayout {
     ///   // "If 'right' is 'auto', its used value is minus the value of 'left'."
     ///   // "If neither is 'auto', the position is over-constrained, and one
     ///   //  must be ignored. If 'direction' is 'ltr', 'right' is ignored."
-    ///   // box.dimensions.content.x += offset_x;
+    ///   `// box.dimensions.content.x += offset_x;`
     ///
     /// STEP 3: Apply vertical offset
     ///   // "If both 'top' and 'bottom' are 'auto', the used values are both 0."
     ///   // "If 'top' is 'auto', its used value is minus the value of 'bottom'."
     ///   // "If 'bottom' is 'auto', its used value is minus the value of 'top'."
     ///   // "If neither is 'auto', 'bottom' is ignored."
-    ///   // box.dimensions.content.y += offset_y;
-    pub fn layout_relative(
-        _box_dims: &mut BoxDimensions,
-        _offsets: &BoxOffsets,
-    ) {
+    ///   `// box.dimensions.content.y += offset_y;`
+    pub fn layout_relative(_box_dims: &mut BoxDimensions, _offsets: &BoxOffsets) {
         todo!("Relative positioning: offset box from normal-flow position")
     }
 
@@ -207,8 +189,8 @@ impl PositionedLayout {
     ///   // Same pattern as horizontal but with top/height/bottom.
     ///
     /// STEP 4: Position the box relative to the containing block
-    ///   // box.dimensions.content.x = containing_block.x + left + margin_left + ...
-    ///   // box.dimensions.content.y = containing_block.y + top + margin_top + ...
+    ///   `// box.dimensions.content.x = containing_block.x + left + margin_left + ...`
+    ///   `// box.dimensions.content.y = containing_block.y + top + margin_top + ...`
     pub fn layout_absolute(
         _box_dims: &mut BoxDimensions,
         _offsets: &BoxOffsets,
@@ -229,19 +211,15 @@ impl PositionedLayout {
     /// TODO: Implement fixed positioning:
     ///
     /// STEP 1: Use the viewport as the containing block
-    ///   // let containing_block = viewport;
+    ///   `// let containing_block = viewport;`
     ///
     /// STEP 2: Apply the same algorithm as absolute positioning
-    ///   // Self::layout_absolute(box_dims, offsets, viewport);
+    ///   `// Self::layout_absolute(box_dims, offsets, viewport);`
     ///
     /// STEP 3: Mark the box as fixed (for scroll behavior)
     ///   // During painting, fixed boxes are positioned relative to the viewport
     ///   // regardless of scroll position.
-    pub fn layout_fixed(
-        _box_dims: &mut BoxDimensions,
-        _offsets: &BoxOffsets,
-        _viewport: Rect,
-    ) {
+    pub fn layout_fixed(_box_dims: &mut BoxDimensions, _offsets: &BoxOffsets, _viewport: Rect) {
         todo!("Fixed positioning: position box relative to viewport")
     }
 

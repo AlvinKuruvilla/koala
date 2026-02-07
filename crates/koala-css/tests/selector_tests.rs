@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use koala_css::selector::{parse_selector, Combinator, SimpleSelector, Specificity};
+use koala_css::selector::{Combinator, SimpleSelector, Specificity, parse_selector};
 use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 
 fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> ElementData {

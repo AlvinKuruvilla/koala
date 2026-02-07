@@ -5,7 +5,7 @@ use super::token::Token;
 /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
 ///
 /// The tokenizer state machine. Each state corresponds to a section in § 13.2.5.
-#[derive(Debug, PartialEq, Display)]
+#[derive(Debug, PartialEq, Eq, Display)]
 pub enum TokenizerState {
     /// [§ 13.2.5.1 Data state](https://html.spec.whatwg.org/multipage/parsing.html#data-state)
     Data,
@@ -208,11 +208,12 @@ impl HTMLTokenizer {
     /// [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization):
     /// "The tokenizer state machine consists of the states defined in the
     /// following subsections. The initial state is the data state."
-    pub fn new(input: String) -> Self {
+    #[must_use]
+    pub const fn new(input: String) -> Self {
         // [§ 13.2.5 Tokenization](https://html.spec.whatwg.org/multipage/parsing.html#tokenization)
         // "The tokenizer state machine consists of the states defined in the
         // following subsections. The initial state is the data state."
-        HTMLTokenizer {
+        Self {
             state: TokenizerState::Data,
             return_state: None,
             input,
@@ -229,7 +230,8 @@ impl HTMLTokenizer {
     }
 
     /// Consume the tokenizer and return the token stream.
-    /// Call this after run() to get the tokens for the parser.
+    /// Call this after `run()` to get the tokens for the parser.
+    #[must_use]
     pub fn into_tokens(self) -> Vec<Token> {
         self.token_stream
     }
@@ -303,19 +305,16 @@ impl HTMLTokenizer {
 
     /// [§ 13.2.5.9 RCDATA less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rcdata-less-than-sign-state)
     fn handle_rcdata_less_than_sign_state(&mut self) {
-        match self.current_input_character {
-            // "U+002F SOLIDUS (/)"
-            // "Set the temporary buffer to the empty string. Switch to the RCDATA end tag open state."
-            Some('/') => {
-                self.temporary_buffer.clear();
-                self.switch_to(TokenizerState::RCDATAEndTagOpen);
-            }
+        // "U+002F SOLIDUS (/)"
+        // "Set the temporary buffer to the empty string. Switch to the RCDATA end tag open state."
+        if self.current_input_character == Some('/') {
+            self.temporary_buffer.clear();
+            self.switch_to(TokenizerState::RCDATAEndTagOpen);
+        } else {
             // "Anything else"
             // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the RCDATA state."
-            _ => {
-                self.emit_character_token('<');
-                self.reconsume_in(TokenizerState::RCDATA);
-            }
+            self.emit_character_token('<');
+            self.reconsume_in(TokenizerState::RCDATA);
         }
     }
 
@@ -579,19 +578,16 @@ impl HTMLTokenizer {
 
     /// [§ 13.2.5.12 RAWTEXT less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state)
     fn handle_rawtext_less_than_sign_state(&mut self) {
-        match self.current_input_character {
-            // "U+002F SOLIDUS (/)"
-            // "Set the temporary buffer to the empty string. Switch to the RAWTEXT end tag open state."
-            Some('/') => {
-                self.temporary_buffer.clear();
-                self.switch_to(TokenizerState::RAWTEXTEndTagOpen);
-            }
+        // "U+002F SOLIDUS (/)"
+        // "Set the temporary buffer to the empty string. Switch to the RAWTEXT end tag open state."
+        if self.current_input_character == Some('/') {
+            self.temporary_buffer.clear();
+            self.switch_to(TokenizerState::RAWTEXTEndTagOpen);
+        } else {
             // "Anything else"
             // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the RAWTEXT state."
-            _ => {
-                self.emit_character_token('<');
-                self.reconsume_in(TokenizerState::RAWTEXT);
-            }
+            self.emit_character_token('<');
+            self.reconsume_in(TokenizerState::RAWTEXT);
         }
     }
 
@@ -1054,11 +1050,7 @@ impl HTMLTokenizer {
                 self.check_duplicate_attribute();
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
-            Some('/' | '>') => {
-                self.check_duplicate_attribute();
-                self.reconsume_in(TokenizerState::AfterAttributeName);
-            }
-            None => {
+            Some('/' | '>') | None => {
                 self.check_duplicate_attribute();
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
@@ -1444,7 +1436,7 @@ impl HTMLTokenizer {
     }
 
     /// [§ 13.2.5.47 Comment less-than sign bang state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-state)
-    fn handle_comment_less_than_sign_bang_state(&mut self) {
+    const fn handle_comment_less_than_sign_bang_state(&mut self) {
         match self.current_input_character {
             // "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash state."
             Some('-') => {
@@ -1458,7 +1450,7 @@ impl HTMLTokenizer {
     }
 
     /// [§ 13.2.5.48 Comment less-than sign bang dash state](https://html.spec.whatwg.org/multipage/parsing.html#comment-less-than-sign-bang-dash-state)
-    fn handle_comment_less_than_sign_bang_dash_state(&mut self) {
+    const fn handle_comment_less_than_sign_bang_dash_state(&mut self) {
         match self.current_input_character {
             // "U+002D HYPHEN-MINUS (-) - Switch to the comment less-than sign bang dash dash state."
             Some('-') => {
@@ -1475,11 +1467,8 @@ impl HTMLTokenizer {
     fn handle_comment_less_than_sign_bang_dash_dash_state(&mut self) {
         match self.current_input_character {
             // "U+003E GREATER-THAN SIGN (>) - Reconsume in the comment end state."
-            Some('>') => {
-                self.reconsume_in(TokenizerState::CommentEnd);
-            }
             // "EOF - Reconsume in the comment end state."
-            None => {
+            Some('>') | None => {
                 self.reconsume_in(TokenizerState::CommentEnd);
             }
             // "Anything else - This is a nested-comment parse error. Reconsume in the
@@ -1633,6 +1622,11 @@ impl HTMLTokenizer {
     }
 
     /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `return_state` is `None`, which indicates a bug in the tokenizer
+    /// state machine (this state should only be reached with a valid return state).
     fn handle_character_reference_state(&mut self) {
         // "Set the temporary buffer to the empty string."
         self.temporary_buffer.clear();
@@ -1663,6 +1657,11 @@ impl HTMLTokenizer {
         }
     }
     /// [§ 13.2.5.73 Named character reference state](https://html.spec.whatwg.org/multipage/parsing.html#named-character-reference-state)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `return_state` is `None`, which indicates a bug in the tokenizer
+    /// state machine (this state should only be reached with a valid return state).
     fn handle_named_character_reference_state(&mut self) {
         use super::named_character_references::{any_entity_has_prefix, lookup_entity};
 
@@ -1813,6 +1812,11 @@ impl HTMLTokenizer {
     }
 
     /// [§ 13.2.5.74 Ambiguous ampersand state](https://html.spec.whatwg.org/multipage/parsing.html#ambiguous-ampersand-state)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `return_state` is `None`, which indicates a bug in the tokenizer
+    /// state machine (this state should only be reached with a valid return state).
     fn handle_ambiguous_ampersand_state(&mut self) {
         match self.current_input_character {
             // "ASCII alphanumeric"
@@ -1845,6 +1849,12 @@ impl HTMLTokenizer {
         }
     }
     /// [§ 13.2.5.75 Numeric character reference state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-state)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `current_input_character` is `None` when accessed via `unwrap()`
+    /// in the 'x'/'X' match arm, which should not happen since the match arm
+    /// guards against `Some('x' | 'X')`.
     fn handle_numeric_character_reference_state(&mut self) {
         // "Set the character reference code to zero (0)."
         self.character_reference_code = 0;
@@ -1871,6 +1881,11 @@ impl HTMLTokenizer {
     /// Run the tokenizer to completion.
     ///
     /// Processes the input and populates the token stream.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tokenizer encounters an unimplemented state (e.g., PLAINTEXT,
+    /// script data escape states, DOCTYPE identifier states, CDATA states).
     pub fn run(&mut self) {
         loop {
             // Each state begins by consuming the next input character,
@@ -1932,19 +1947,15 @@ impl HTMLTokenizer {
                 }
                 TokenizerState::RCDATAEndTagName => {
                     self.handle_rcdata_end_tag_name_state();
-                    continue;
                 }
                 TokenizerState::RAWTEXTLessThanSign => {
                     self.handle_rawtext_less_than_sign_state();
-                    continue;
                 }
                 TokenizerState::RAWTEXTEndTagOpen => {
                     self.handle_rawtext_end_tag_open_state();
-                    continue;
                 }
                 TokenizerState::RAWTEXTEndTagName => {
                     self.handle_rawtext_end_tag_name_state();
-                    continue;
                 }
                 TokenizerState::ScriptDataLessThanSign => {
                     self.handle_script_data_less_than_sign_state();
@@ -2288,99 +2299,75 @@ impl HTMLTokenizer {
                 }
                 TokenizerState::BeforeAttributeName => {
                     self.handle_before_attribute_name_state();
-                    continue;
                 }
                 TokenizerState::AttributeName => {
                     self.handle_attribute_name_state();
-                    continue;
                 }
                 TokenizerState::AfterAttributeName => {
                     self.handle_after_attribute_name_state();
-                    continue;
                 }
                 TokenizerState::BeforeAttributeValue => {
                     self.handle_before_attribute_value_state();
-                    continue;
                 }
                 TokenizerState::AttributeValueDoubleQuoted => {
                     self.handle_attribute_value_double_quoted_state();
-                    continue;
                 }
                 TokenizerState::AttributeValueSingleQuoted => {
                     self.handle_attribute_value_single_quoted_state();
-                    continue;
                 }
                 TokenizerState::AttributeValueUnquoted => {
                     self.handle_attribute_value_unquoted_state();
-                    continue;
                 }
                 TokenizerState::AfterAttributeValueQuoted => {
                     self.handle_after_attribute_value_quoted_state();
-                    continue;
                 }
                 TokenizerState::SelfClosingStartTag => {
                     self.handle_self_closing_start_tag_state();
-                    continue;
                 }
                 TokenizerState::BogusComment => {
                     self.handle_bogus_comment_state();
-                    continue;
                 }
                 TokenizerState::MarkupDeclarationOpen => {
                     self.handle_markup_declaration_open_state();
-                    continue;
                 }
                 TokenizerState::CommentStart => {
                     self.handle_comment_start_state();
-                    continue;
                 }
                 TokenizerState::CommentStartDash => {
                     self.handle_comment_start_dash_state();
-                    continue;
                 }
                 TokenizerState::Comment => {
                     self.handle_comment_state();
-                    continue;
                 }
                 TokenizerState::CommentLessThanSign => {
                     self.handle_comment_less_than_sign_state();
-                    continue;
                 }
                 TokenizerState::CommentLessThanSignBang => {
                     self.handle_comment_less_than_sign_bang_state();
-                    continue;
                 }
                 TokenizerState::CommentLessThanSignBangDash => {
                     self.handle_comment_less_than_sign_bang_dash_state();
-                    continue;
                 }
                 TokenizerState::CommentLessThanSignBangDashDash => {
                     self.handle_comment_less_than_sign_bang_dash_dash_state();
-                    continue;
                 }
                 TokenizerState::CommentEndDash => {
                     self.handle_comment_end_dash_state();
-                    continue;
                 }
                 TokenizerState::CommentEnd => {
                     self.handle_comment_end_state();
-                    continue;
                 }
                 TokenizerState::CommentEndBang => {
                     self.handle_comment_end_bang_state();
-                    continue;
                 }
                 TokenizerState::DOCTYPE => {
                     self.handle_doctype_state();
-                    continue;
                 }
                 TokenizerState::BeforeDOCTYPEName => {
                     self.handle_before_doctype_name_state();
-                    continue;
                 }
                 TokenizerState::DOCTYPEName => {
                     self.handle_doctype_name_state();
-                    continue;
                 }
                 // ===== DOCTYPE IDENTIFIER STATES =====
                 // [§ 13.2.5.55-67](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
@@ -2473,7 +2460,7 @@ impl HTMLTokenizer {
                 // Named references (implemented):
                 TokenizerState::CharacterReference => self.handle_character_reference_state(),
                 TokenizerState::NamedCharacterReference => {
-                    self.handle_named_character_reference_state()
+                    self.handle_named_character_reference_state();
                 }
                 TokenizerState::AmbiguousAmpersand => self.handle_ambiguous_ampersand_state(),
 
@@ -2483,7 +2470,7 @@ impl HTMLTokenizer {
                 //   - "X" or "x": switch to HexadecimalCharacterReferenceStart
                 //   - Anything else: reconsume in DecimalCharacterReferenceStart
                 TokenizerState::NumericCharacterReference => {
-                    self.handle_numeric_character_reference_state()
+                    self.handle_numeric_character_reference_state();
                 }
 
                 // [§ 13.2.5.76 Hexadecimal character reference start state](https://html.spec.whatwg.org/multipage/parsing.html#hexadecimal-character-reference-start-state)
@@ -2620,33 +2607,26 @@ impl HTMLTokenizer {
 
                     // "If the number is 0x00, then this is a null-character-reference
                     // parse error. Set the character reference code to 0xFFFD."
-                    if code == 0x00 {
-                        self.log_parse_error();
-                        self.character_reference_code = 0xFFFD;
-                    }
+                    //
                     // "If the number is greater than 0x10FFFF, then this is a
                     // character-reference-outside-unicode-range parse error. Set the
                     // character reference code to 0xFFFD."
-                    else if code > 0x10_FFFF {
-                        self.log_parse_error();
-                        self.character_reference_code = 0xFFFD;
-                    }
+                    //
                     // "If the number is a surrogate, then this is a
                     // surrogate-character-reference parse error. Set the character
                     // reference code to 0xFFFD."
-                    else if (0xD800..=0xDFFF).contains(&code) {
+                    if code == 0x00 || code > 0x10_FFFF || (0xD800..=0xDFFF).contains(&code) {
                         self.log_parse_error();
                         self.character_reference_code = 0xFFFD;
                     }
                     // "If the number is a noncharacter, then this is a
                     // noncharacter-character-reference parse error."
                     // NOTE: Do NOT change the code point — just log the error.
-                    else if is_noncharacter(code) {
-                        self.log_parse_error();
-                    }
+                    //
                     // "If the number is 0x000D, or a control that's not ASCII
                     // whitespace, then this is a control-character-reference parse error."
-                    else if code == 0x000D
+                    else if is_noncharacter(code)
+                        || code == 0x000D
                         || (is_control(code) && !is_ascii_whitespace_codepoint(code))
                     {
                         self.log_parse_error();
@@ -2656,8 +2636,7 @@ impl HTMLTokenizer {
                     // following table, then find the row with that number in the first
                     // column, and set the character reference code to the number in the
                     // second column of that row."
-                    if let Some(replacement) =
-                        c1_control_replacement(self.character_reference_code)
+                    if let Some(replacement) = c1_control_replacement(self.character_reference_code)
                     {
                         self.character_reference_code = replacement;
                     }
@@ -2690,7 +2669,7 @@ impl HTMLTokenizer {
 /// character reference code to the number in the second column of that row."
 ///
 /// This maps Windows-1252 code points (0x80–0x9F) to their Unicode equivalents.
-fn c1_control_replacement(code: u32) -> Option<u32> {
+const fn c1_control_replacement(code: u32) -> Option<u32> {
     match code {
         0x80 => Some(0x20AC), // EURO SIGN (€)
         0x82 => Some(0x201A), // SINGLE LOW-9 QUOTATION MARK (‚)
@@ -2748,6 +2727,6 @@ fn is_control(code: u32) -> bool {
 ///
 /// "ASCII whitespace is U+0009 TAB, U+000A LF, U+000C FF, U+000D CR,
 /// or U+0020 SPACE."
-fn is_ascii_whitespace_codepoint(code: u32) -> bool {
+const fn is_ascii_whitespace_codepoint(code: u32) -> bool {
     matches!(code, 0x0009 | 0x000A | 0x000C | 0x000D | 0x0020)
 }

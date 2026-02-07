@@ -42,7 +42,7 @@ fn collapse_two_margins(a: f32, b: f32) -> f32 {
 }
 
 /// Recursively walk inline-level children, feeding their content into an
-/// InlineLayout.
+/// `InlineLayout`.
 ///
 /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
 ///
@@ -58,6 +58,7 @@ fn collapse_two_margins(a: f32, b: f32) -> f32 {
 ///
 /// "An inline box is one that is both inline-level and whose contents
 /// participate in its containing inline formatting context."
+#[allow(clippy::too_many_arguments)]
 fn layout_inline_content(
     children: &mut [LayoutBox],
     inline_layout: &mut InlineLayout,
@@ -192,7 +193,7 @@ pub enum BoxType {
     /// [§ 9.2 Principal box](https://www.w3.org/TR/css-display-3/#principal-box)
     ///
     /// "Most elements generate a single principal box."
-    /// Contains the NodeId to reference back to the DOM element.
+    /// Contains the `NodeId` to reference back to the DOM element.
     Principal(NodeId),
 
     /// [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -208,7 +209,7 @@ pub enum BoxType {
 
     /// [§ 9.2.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
     ///
-    /// "In a document like this: <div>Some text<p>More text</p></div>
+    /// "In a document like this: `<div>`Some text`<p>`More text`</p></div>`
     /// ...the 'Some text' part generates an anonymous block box."
     AnonymousBlock,
 }
@@ -300,7 +301,7 @@ pub struct LayoutBox {
     /// "This property describes how inline-level content of a block
     /// container is aligned."
     ///
-    /// Inherited from ComputedStyle. Passed to InlineLayout when this box
+    /// Inherited from `ComputedStyle`. Passed to `InlineLayout` when this box
     /// establishes an inline formatting context.
     pub text_align: TextAlign,
 
@@ -308,14 +309,14 @@ pub struct LayoutBox {
     ///
     /// "This property specifies the weight of glyphs in the font."
     ///
-    /// Numeric weight: 400 = normal, 700 = bold. Inherited from ComputedStyle.
+    /// Numeric weight: 400 = normal, 700 = bold. Inherited from `ComputedStyle`.
     pub font_weight: u16,
 
     /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
     ///
     /// "The 'font-style' property allows italic or oblique faces to be selected."
     ///
-    /// Inherited from ComputedStyle.
+    /// Inherited from `ComputedStyle`.
     pub font_style: FontStyle,
 
     /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -343,7 +344,6 @@ pub struct LayoutBox {
     pub collapsed_margin_bottom: Option<f32>,
 
     // ===== Replaced element fields =====
-
     /// [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
     ///
     /// "A replaced element is an element whose content is outside the scope
@@ -375,7 +375,6 @@ pub struct LayoutBox {
     pub intrinsic_height: Option<f32>,
 
     // ===== Flexbox fields =====
-
     /// [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
     ///
     /// "The flex-direction property specifies how flex items are placed in
@@ -416,6 +415,7 @@ impl LayoutBox {
     /// Return the effective top margin for this box, accounting for
     /// parent-child collapsing. If no collapsing occurred, falls back
     /// to the resolved `dimensions.margin.top`.
+    #[must_use]
     pub fn effective_margin_top(&self) -> f32 {
         self.collapsed_margin_top
             .unwrap_or(self.dimensions.margin.top)
@@ -426,6 +426,7 @@ impl LayoutBox {
     /// Return the effective bottom margin for this box, accounting for
     /// parent-child collapsing. If no collapsing occurred, falls back
     /// to the resolved `dimensions.margin.bottom`.
+    #[must_use]
     pub fn effective_margin_bottom(&self) -> f32 {
         self.collapsed_margin_bottom
             .unwrap_or(self.dimensions.margin.bottom)
@@ -462,8 +463,7 @@ impl LayoutBox {
 
         // height must be zero or auto.
         let height_zero_or_auto = match &self.height {
-            None => true,
-            Some(AutoLength::Auto) => true,
+            None | Some(AutoLength::Auto) => true,
             Some(AutoLength::Length(l)) => l.to_px() == 0.0,
         };
         if !height_zero_or_auto {
@@ -496,6 +496,7 @@ impl LayoutBox {
     ///
     /// Recursion safety: depth-limited to [`Self::MAX_MEASURE_DEPTH`].
     /// Never calls `layout()`; `layout()` never calls this.
+    #[must_use]
     pub fn measure_content_size(&self, viewport: Rect, font_metrics: &dyn FontMetrics) -> f32 {
         self.measure_content_size_inner(viewport, font_metrics, 0)
     }
@@ -572,17 +573,17 @@ impl LayoutBox {
     /// "The display property, determines the type of box or boxes that
     /// are generated for an element."
     ///
-    /// `image_dimensions` maps NodeId to (width, height) for replaced
+    /// `image_dimensions` maps `NodeId` to (width, height) for replaced
     /// elements like `<img>` whose intrinsic size was resolved externally.
+    #[must_use]
+    #[allow(clippy::implicit_hasher)]
     pub fn build_layout_tree(
         tree: &DomTree,
         styles: &HashMap<NodeId, ComputedStyle>,
         node_id: NodeId,
         image_dimensions: &HashMap<NodeId, (f32, f32)>,
-    ) -> Option<LayoutBox> {
-        let Some(node) = tree.get(node_id) else {
-            return None;
-        };
+    ) -> Option<Self> {
+        let node = tree.get(node_id)?;
 
         match &node.node_type {
             // [§ 9.1.1 The viewport](https://www.w3.org/TR/CSS2/visuren.html#viewport)
@@ -597,12 +598,12 @@ impl LayoutBox {
                 let mut children = Vec::new();
                 for &child_id in tree.children(node_id) {
                     if let Some(child_box) =
-                        LayoutBox::build_layout_tree(tree, styles, child_id, image_dimensions)
+                        Self::build_layout_tree(tree, styles, child_id, image_dimensions)
                     {
                         children.push(child_box);
                     }
                 }
-                Some(LayoutBox {
+                Some(Self {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
                     display: DisplayValue::block(),
@@ -645,10 +646,10 @@ impl LayoutBox {
                 // "The element and its descendants generate no boxes or text runs."
                 //
                 // Check if CSS explicitly sets display: none
-                if let Some(s) = style {
-                    if s.display_none {
-                        return None;
-                    }
+                if let Some(s) = style
+                    && s.display_none
+                {
+                    return None;
                 }
 
                 // [§ 2 The display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
@@ -666,7 +667,7 @@ impl LayoutBox {
                 let mut children = Vec::new();
                 for &child_id in tree.children(node_id) {
                     if let Some(child_box) =
-                        LayoutBox::build_layout_tree(tree, styles, child_id, image_dimensions)
+                        Self::build_layout_tree(tree, styles, child_id, image_dimensions)
                     {
                         children.push(child_box);
                     }
@@ -680,10 +681,10 @@ impl LayoutBox {
                 // [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
                 //
                 // Resolve font-size to pixels. Defaults to 16px ('medium').
+                #[allow(clippy::cast_possible_truncation)]
                 let font_size = style
                     .and_then(|s| s.font_size.as_ref())
-                    .map(|fs| fs.to_px() as f32)
-                    .unwrap_or(16.0);
+                    .map_or(16.0, |fs| fs.to_px() as f32);
 
                 // [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
                 //
@@ -738,27 +739,27 @@ impl LayoutBox {
                 // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
                 let flex_shrink = style.and_then(|s| s.flex_shrink).unwrap_or(1.0);
                 // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
-                let flex_basis = style.and_then(|s| s.flex_basis.clone());
+                let flex_basis = style.and_then(|s| s.flex_basis);
 
                 // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
                 //
                 // Detect replaced elements (e.g., <img>) and record their
                 // intrinsic dimensions and src attribute for layout and paint.
-                let (is_replaced, replaced_src, intrinsic_width, intrinsic_height) =
-                    if tag == "img" {
-                        let src = data.attrs.get("src").cloned();
-                        let dims = image_dimensions.get(&node_id);
-                        (
-                            src.is_some(),
-                            src,
-                            dims.map(|(w, _)| *w),
-                            dims.map(|(_, h)| *h),
-                        )
-                    } else {
-                        (false, None, None, None)
-                    };
+                let (is_replaced, replaced_src, intrinsic_width, intrinsic_height) = if tag == "img"
+                {
+                    let src = data.attrs.get("src").cloned();
+                    let dims = image_dimensions.get(&node_id);
+                    (
+                        src.is_some(),
+                        src,
+                        dims.map(|(w, _)| *w),
+                        dims.map(|(_, h)| *h),
+                    )
+                } else {
+                    (false, None, None, None)
+                };
 
-                Some(LayoutBox {
+                Some(Self {
                     box_type: BoxType::Principal(node_id),
                     dimensions: BoxDimensions::default(),
                     display,
@@ -805,7 +806,7 @@ impl LayoutBox {
                 if text.trim().is_empty() {
                     return None;
                 }
-                Some(LayoutBox {
+                Some(Self {
                     box_type: BoxType::AnonymousInline(text.clone()),
                     dimensions: BoxDimensions::default(),
                     display: DisplayValue::inline(),
@@ -856,7 +857,7 @@ impl LayoutBox {
     /// These are unresolved values - viewport units (vw, vh) are preserved
     /// and resolved during layout when viewport dimensions are available.
     ///
-    /// Returns (margin, padding, border_width, width, height) as unresolved values.
+    /// Returns (margin, padding, `border_width`, width, height) as unresolved values.
     fn extract_box_style_values(
         style: Option<&ComputedStyle>,
     ) -> (
@@ -886,10 +887,10 @@ impl LayoutBox {
         //
         // Store unresolved AutoLength values. Resolution happens during layout.
         let margin = UnresolvedAutoEdgeSizes {
-            top: s.margin_top.clone(),
-            right: s.margin_right.clone(),
-            bottom: s.margin_bottom.clone(),
-            left: s.margin_left.clone(),
+            top: s.margin_top,
+            right: s.margin_right,
+            bottom: s.margin_bottom,
+            left: s.margin_left,
         };
 
         // [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
@@ -898,10 +899,10 @@ impl LayoutBox {
         //
         // Store unresolved LengthValue values. Resolution happens during layout.
         let padding = UnresolvedEdgeSizes {
-            top: s.padding_top.clone(),
-            right: s.padding_right.clone(),
-            bottom: s.padding_bottom.clone(),
-            left: s.padding_left.clone(),
+            top: s.padding_top,
+            right: s.padding_right,
+            bottom: s.padding_bottom,
+            left: s.padding_left,
         };
 
         // [§ 8.5 Border properties](https://www.w3.org/TR/CSS2/box.html#border-properties)
@@ -910,23 +911,23 @@ impl LayoutBox {
         //
         // Extract the width LengthValue from BorderValue. Resolution happens during layout.
         let border_width = UnresolvedEdgeSizes {
-            top: s.border_top.as_ref().map(|b| b.width.clone()),
-            right: s.border_right.as_ref().map(|b| b.width.clone()),
-            bottom: s.border_bottom.as_ref().map(|b| b.width.clone()),
-            left: s.border_left.as_ref().map(|b| b.width.clone()),
+            top: s.border_top.as_ref().map(|b| b.width),
+            right: s.border_right.as_ref().map(|b| b.width),
+            bottom: s.border_bottom.as_ref().map(|b| b.width),
+            left: s.border_left.as_ref().map(|b| b.width),
         };
 
         // [§ 10.2 Content width](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
         //
         // "This property specifies the content width of boxes."
         // None means 'auto' - width is calculated during layout.
-        let width = s.width.clone();
+        let width = s.width;
 
         // [§ 10.5 Content height](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
         //
         // "This property specifies the content height of boxes."
         // None means 'auto' - height depends on content.
-        let height = s.height.clone();
+        let height = s.height;
 
         (margin, padding, border_width, width, height)
     }
@@ -959,8 +960,13 @@ impl LayoutBox {
             });
             let stack_marker: u8 = 0;
             let stack_addr = &stack_marker as *const u8 as usize;
-            eprintln!("[LAYOUT DEPTH] depth={depth} box={:?} display={:?}/{:?} children={} stack_addr=0x{stack_addr:x}",
-                self.box_type, self.display.outer, self.display.inner, self.children.len());
+            eprintln!(
+                "[LAYOUT DEPTH] depth={depth} box={:?} display={:?}/{:?} children={} stack_addr=0x{stack_addr:x}",
+                self.box_type,
+                self.display.outer,
+                self.display.inner,
+                self.children.len()
+            );
             // Guard struct decrements depth counter on all return paths.
             struct DepthGuard;
             impl Drop for DepthGuard {
@@ -1025,7 +1031,7 @@ impl LayoutBox {
                 //
                 // TEMPORARY: Fall back to block layout until inline is implemented.
                 // This causes inline elements to stack vertically instead of horizontally.
-                self.layout_block(containing_block, viewport, font_metrics)
+                self.layout_block(containing_block, viewport, font_metrics);
             }
             OuterDisplayType::RunIn => {
                 // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
@@ -1070,10 +1076,18 @@ impl LayoutBox {
         // box... is broken around the block-level box... The line boxes before
         // the break and after the break are enclosed in anonymous block boxes."
         #[cfg(feature = "layout-trace")]
-        eprintln!("[BLOCK STEP3] generating anon boxes for {:?}, {} children before", self.box_type, self.children.len());
+        eprintln!(
+            "[BLOCK STEP3] generating anon boxes for {:?}, {} children before",
+            self.box_type,
+            self.children.len()
+        );
         self.generate_anonymous_boxes();
         #[cfg(feature = "layout-trace")]
-        eprintln!("[BLOCK STEP3] after anon boxes: {} children, all_inline={}", self.children.len(), self.all_children_inline());
+        eprintln!(
+            "[BLOCK STEP3] after anon boxes: {} children, all_inline={}",
+            self.children.len(),
+            self.all_children_inline()
+        );
 
         // STEP 4: Layout children.
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -1083,11 +1097,18 @@ impl LayoutBox {
         // context. Otherwise, use block formatting context.
         if self.all_children_inline() && !self.children.is_empty() {
             #[cfg(feature = "layout-trace")]
-            eprintln!("[BLOCK STEP4] layout_inline_children for {:?}", self.box_type);
+            eprintln!(
+                "[BLOCK STEP4] layout_inline_children for {:?}",
+                self.box_type
+            );
             self.layout_inline_children(viewport, font_metrics);
         } else {
             #[cfg(feature = "layout-trace")]
-            eprintln!("[BLOCK STEP4] layout_block_children for {:?}, {} children", self.box_type, self.children.len());
+            eprintln!(
+                "[BLOCK STEP4] layout_block_children for {:?}, {} children",
+                self.box_type,
+                self.children.len()
+            );
             self.layout_block_children(viewport, font_metrics);
         }
 
@@ -1392,7 +1413,7 @@ impl LayoutBox {
         // resolved by calculate_block_position() before this method runs.
         let no_top_separator =
             self.dimensions.border.top == 0.0 && self.dimensions.padding.top == 0.0;
-        let parent_mt = self.dimensions.margin.top;
+        let parent_margin_top = self.dimensions.margin.top;
         let child_count = self.children.len();
 
         for i in 0..child_count {
@@ -1412,7 +1433,7 @@ impl LayoutBox {
             if i == 0 && no_top_separator && child.display.outer == OuterDisplayType::Block {
                 let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
                 current_y -= child_mt;
-                self.collapsed_margin_top = Some(collapse_two_margins(parent_mt, child_mt));
+                self.collapsed_margin_top = Some(collapse_two_margins(parent_margin_top, child_mt));
             }
 
             // STEP 3b: Collapse margins between adjacent siblings.
@@ -1454,9 +1475,9 @@ impl LayoutBox {
             // margins collapse into a single margin that participates in
             // sibling collapsing with its neighbours.
             if child.is_empty_collapsible_box() {
-                let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
-                let child_mb = child.margin.resolve(viewport).bottom.to_px_or(0.0);
-                let self_collapsed = collapse_two_margins(child_mt, child_mb);
+                let child_margin_top = child.margin.resolve(viewport).top.to_px_or(0.0);
+                let child_margin_bottom = child.margin.resolve(viewport).bottom.to_px_or(0.0);
+                let self_collapsed = collapse_two_margins(child_margin_top, child_margin_bottom);
 
                 // Lay out the child so its dimensions are resolved (even
                 // though it has zero content).
@@ -1471,11 +1492,9 @@ impl LayoutBox {
                 // The empty box's self-collapsed margin merges with the
                 // accumulated prev_margin_bottom for subsequent sibling
                 // collapsing.
-                prev_margin_bottom = Some(if let Some(prev_mb) = prev_margin_bottom {
+                prev_margin_bottom = Some(prev_margin_bottom.map_or(self_collapsed, |prev_mb| {
                     collapse_two_margins(prev_mb, self_collapsed)
-                } else {
-                    self_collapsed
-                });
+                }));
                 continue;
             }
 
@@ -1508,15 +1527,15 @@ impl LayoutBox {
         // that has clearance."
         let no_bottom_separator =
             self.dimensions.border.bottom == 0.0 && self.dimensions.padding.bottom == 0.0;
-        if no_bottom_separator && self.height.is_none() {
-            if let Some(last) = self.children.last() {
-                if last.display.outer == OuterDisplayType::Block {
-                    let parent_mb = self.dimensions.margin.bottom;
-                    let last_child_mb = last.effective_margin_bottom();
-                    self.collapsed_margin_bottom =
-                        Some(collapse_two_margins(parent_mb, last_child_mb));
-                }
-            }
+        if no_bottom_separator
+            && self.height.is_none()
+            && let Some(last) = self.children.last()
+            && last.display.outer == OuterDisplayType::Block
+        {
+            let parent_margin_bottom = self.dimensions.margin.bottom;
+            let last_child_mb = last.effective_margin_bottom();
+            self.collapsed_margin_bottom =
+                Some(collapse_two_margins(parent_margin_bottom, last_child_mb));
         }
     }
 
@@ -1538,8 +1557,12 @@ impl LayoutBox {
             // [§ 6.1.1 Specified, computed, and actual values](https://www.w3.org/TR/CSS2/cascade.html#value-stages)
             //
             // Resolve the computed value to a used value using the viewport.
-            self.dimensions.content.height =
-                l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                self.dimensions.content.height = l
+                    .to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
+                    as f32;
+            }
             return;
         }
 
@@ -1557,30 +1580,33 @@ impl LayoutBox {
         //
         // "The height of the inline box encloses all glyphs and their half-leading
         // on each side and is thus exactly 'line-height'."
-        if let BoxType::AnonymousInline(ref text) = self.box_type {
-            if !text.trim().is_empty() {
-                // [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
-                //
-                // "The 'line-height' property specifies the minimal height of line boxes
-                // within the element."
-                //
-                // The default value for 'line-height' is 'normal', which the spec says:
-                // "Tells user agents to set the used value to a 'reasonable' value based
-                // on the font of the element. The value has the same meaning as <number>.
-                // We recommend a used value for 'normal' between 1.0 to 1.2."
-                //
-                // Use FontMetrics to get the line height for the default font size (16px).
-                let default_font_size: f32 = 16.0;
-                let line_height = font_metrics.line_height(default_font_size);
+        if let BoxType::AnonymousInline(ref text) = self.box_type
+            && !text.trim().is_empty()
+        {
+            // [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
+            //
+            // "The 'line-height' property specifies the minimal height of line boxes
+            // within the element."
+            //
+            // The default value for 'line-height' is 'normal', which the spec says:
+            // "Tells user agents to set the used value to a 'reasonable' value based
+            // on the font of the element. The value has the same meaning as <number>.
+            // We recommend a used value for 'normal' between 1.0 to 1.2."
+            //
+            // Use FontMetrics to get the line height for the default font size (16px).
+            let default_font_size: f32 = 16.0;
+            let line_height = font_metrics.line_height(default_font_size);
 
-                // Count lines in text content.
-                // NOTE: This is a simplification. Proper implementation would wrap
-                // text based on available width and font metrics.
-                let line_count = text.lines().count().max(1);
+            // Count lines in text content.
+            // NOTE: This is a simplification. Proper implementation would wrap
+            // text based on available width and font metrics.
+            let line_count = text.lines().count().max(1);
 
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+            {
                 self.dimensions.content.height = (line_count as f32) * line_height;
-                return;
             }
+            return;
         }
 
         // STEP 3: Handle inline formatting context.
@@ -1648,28 +1674,37 @@ impl LayoutBox {
     ///
     /// TODO: Implement min/max width constraints:
     ///
-    /// STEP 1: Get the tentative used width (already computed by calculate_block_width)
-    ///   // let tentative_width = self.dimensions.content.width;
+    /// STEP 1: Get the tentative used width (already computed by `calculate_block_width`)
+    ///
+    /// ```text
+    /// let tentative_width = self.dimensions.content.width;
+    /// ```
     ///
     /// STEP 2: Apply max-width constraint
-    ///   // if let Some(max_width) = self.max_width {
-    ///   //     let max_px = max_width.resolve(viewport);
-    ///   //     if tentative_width > max_px {
-    ///   //         // Re-run width calculation with max_width as the width
-    ///   //         self.dimensions.content.width = max_px;
-    ///   //         // Re-solve margin equation with new width
-    ///   //     }
-    ///   // }
+    ///
+    /// ```text
+    /// if let Some(max_width) = self.max_width {
+    ///     let max_px = max_width.resolve(viewport);
+    ///     if tentative_width > max_px {
+    ///         // Re-run width calculation with max_width as the width
+    ///         self.dimensions.content.width = max_px;
+    ///         // Re-solve margin equation with new width
+    ///     }
+    /// }
+    /// ```
     ///
     /// STEP 3: Apply min-width constraint
-    ///   // if let Some(min_width) = self.min_width {
-    ///   //     let min_px = min_width.resolve(viewport);
-    ///   //     if self.dimensions.content.width < min_px {
-    ///   //         self.dimensions.content.width = min_px;
-    ///   //         // Re-solve margin equation with new width
-    ///   //     }
-    ///   // }
-    fn apply_min_max_width(&mut self, _containing_block: Rect, _viewport: Rect) {
+    ///
+    /// ```text
+    /// if let Some(min_width) = self.min_width {
+    ///     let min_px = min_width.resolve(viewport);
+    ///     if self.dimensions.content.width < min_px {
+    ///         self.dimensions.content.width = min_px;
+    ///         // Re-solve margin equation with new width
+    ///     }
+    /// }
+    /// ```
+    fn apply_min_max_width(&self, _containing_block: Rect, _viewport: Rect) {
         todo!("Apply min-width/max-width constraints per CSS 2.1 § 10.4")
     }
 
@@ -1694,25 +1729,34 @@ impl LayoutBox {
     ///
     /// TODO: Implement min/max height constraints:
     ///
-    /// STEP 1: Get the tentative used height (already computed by calculate_block_height)
-    ///   // let tentative_height = self.dimensions.content.height;
+    /// STEP 1: Get the tentative used height (already computed by `calculate_block_height`)
+    ///
+    /// ```text
+    /// let tentative_height = self.dimensions.content.height;
+    /// ```
     ///
     /// STEP 2: Apply max-height constraint
-    ///   // if let Some(max_height) = self.max_height {
-    ///   //     let max_px = max_height.resolve(viewport);
-    ///   //     if tentative_height > max_px {
-    ///   //         self.dimensions.content.height = max_px;
-    ///   //     }
-    ///   // }
+    ///
+    /// ```text
+    /// if let Some(max_height) = self.max_height {
+    ///     let max_px = max_height.resolve(viewport);
+    ///     if tentative_height > max_px {
+    ///         self.dimensions.content.height = max_px;
+    ///     }
+    /// }
+    /// ```
     ///
     /// STEP 3: Apply min-height constraint
-    ///   // if let Some(min_height) = self.min_height {
-    ///   //     let min_px = min_height.resolve(viewport);
-    ///   //     if self.dimensions.content.height < min_px {
-    ///   //         self.dimensions.content.height = min_px;
-    ///   //     }
-    ///   // }
-    fn apply_min_max_height(&mut self, _viewport: Rect) {
+    ///
+    /// ```text
+    /// if let Some(min_height) = self.min_height {
+    ///     let min_px = min_height.resolve(viewport);
+    ///     if self.dimensions.content.height < min_px {
+    ///         self.dimensions.content.height = min_px;
+    ///     }
+    /// }
+    /// ```
+    fn apply_min_max_height(&self, _viewport: Rect) {
         todo!("Apply min-height/max-height constraints per CSS 2.1 § 10.7")
     }
 
@@ -1768,8 +1812,8 @@ impl LayoutBox {
         //   - Add the block child as-is
         //   - Start a new inline run
         // After the loop, wrap any remaining inline run.
-        let mut new_children: Vec<LayoutBox> = Vec::new();
-        let mut inline_run: Vec<LayoutBox> = Vec::new();
+        let mut new_children: Vec<Self> = Vec::new();
+        let mut inline_run: Vec<Self> = Vec::new();
 
         for child in std::mem::take(&mut self.children) {
             if child.display.outer == OuterDisplayType::Block {
@@ -1800,8 +1844,8 @@ impl LayoutBox {
     ///
     /// "Anonymous block boxes are generated to wrap inline-level content
     /// that appears alongside block-level boxes inside a block container."
-    fn wrap_in_anonymous_block(children: Vec<LayoutBox>) -> LayoutBox {
-        LayoutBox {
+    fn wrap_in_anonymous_block(children: Vec<Self>) -> Self {
+        Self {
             box_type: BoxType::AnonymousBlock,
             display: DisplayValue::block(),
             dimensions: BoxDimensions::default(),
@@ -1979,21 +2023,25 @@ impl LayoutBox {
         // "If 'height' has a computed value of 'auto', and the element has an
         // intrinsic height, then that intrinsic height is the used value of 'height'."
         let used_height = if height_is_auto {
-            if let Some(ih) = self.intrinsic_height {
-                ih
-            } else if let Some(ratio) = intrinsic_ratio {
-                // "Otherwise, if 'height' has a computed value of 'auto', and
-                // the element has an intrinsic ratio then the used value of
-                // 'height' is: used width / ratio"
-                if ratio > 0.0 {
-                    used_width / ratio
-                } else {
-                    150.0
-                }
-            } else {
-                // [§ 10.6.2] Fallback: 150px
-                150.0
-            }
+            self.intrinsic_height.map_or_else(
+                || {
+                    // "Otherwise, if 'height' has a computed value of 'auto', and
+                    // the element has an intrinsic ratio then the used value of
+                    // 'height' is: used width / ratio"
+                    intrinsic_ratio.map_or(
+                        // [§ 10.6.2] Fallback: 150px
+                        150.0,
+                        |ratio| {
+                            if ratio > 0.0 {
+                                used_width / ratio
+                            } else {
+                                150.0
+                            }
+                        },
+                    )
+                },
+                |ih| ih,
+            )
         } else {
             self.height.as_ref().map_or(150.0, |al| {
                 UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(150.0)
@@ -2049,21 +2097,33 @@ impl LayoutBox {
     /// TODO: Implement overflow handling:
     ///
     /// STEP 1: Determine if content overflows
-    ///   // let content_height = self.dimensions.content.height;
-    ///   // let box_height = specified_height or auto;
-    ///   // overflows = content_height > box_height
+    ///
+    /// ```text
+    /// let content_height = self.dimensions.content.height;
+    /// let box_height = specified_height or auto;
+    /// overflows = content_height > box_height
+    /// ```
     ///
     /// STEP 2: Apply clipping if overflow is hidden/scroll/auto
-    ///   // Create a clip rect matching the padding box
-    ///   // clip_rect = self.dimensions.padding_box();
+    ///
+    /// ```text
+    /// // Create a clip rect matching the padding box
+    /// clip_rect = self.dimensions.padding_box();
+    /// ```
     ///
     /// STEP 3: Handle scrollable overflow
-    ///   // [CSS Overflow Module Level 3 § 2](https://www.w3.org/TR/css-overflow-3/#overflow-properties)
-    ///   // Calculate scrollable overflow region:
-    ///   // "The scrollable overflow region is the union of the border boxes
-    ///   //  of all descendants that extend beyond the padding edge."
-    ///   // scroll_width = max(child.margin_box().x + child.margin_box().width) - content.x
-    ///   // scroll_height = max(child.margin_box().y + child.margin_box().height) - content.y
+    ///
+    /// [CSS Overflow Module Level 3 § 2](https://www.w3.org/TR/css-overflow-3/#overflow-properties)
+    ///
+    /// Calculate scrollable overflow region:
+    ///
+    /// "The scrollable overflow region is the union of the border boxes
+    ///  of all descendants that extend beyond the padding edge."
+    ///
+    /// ```text
+    /// scroll_width = max(child.margin_box().x + child.margin_box().width) - content.x
+    /// scroll_height = max(child.margin_box().y + child.margin_box().height) - content.y
+    /// ```
     fn apply_overflow_clipping(&self) -> Option<Rect> {
         todo!("Apply overflow clipping per CSS 2.1 § 11.1")
     }
@@ -2091,18 +2151,30 @@ impl LayoutBox {
     /// TODO: Implement shrink-to-fit width:
     ///
     /// STEP 1: Calculate preferred width
-    ///   // Format content with no line breaks except explicit ones.
-    ///   // preferred_width = max line width across all lines
+    ///
+    /// ```text
+    /// // Format content with no line breaks except explicit ones.
+    /// preferred_width = max line width across all lines
+    /// ```
     ///
     /// STEP 2: Calculate preferred minimum width
-    ///   // Try all possible line breaks.
-    ///   // preferred_min_width = max word width (or widest unbreakable unit)
+    ///
+    /// ```text
+    /// // Try all possible line breaks.
+    /// preferred_min_width = max word width (or widest unbreakable unit)
+    /// ```
     ///
     /// STEP 3: Calculate available width
-    ///   // available_width = containing_block.width - margins - borders - padding
+    ///
+    /// ```text
+    /// available_width = containing_block.width - margins - borders - padding
+    /// ```
     ///
     /// STEP 4: Compute shrink-to-fit width
-    ///   // shrink_to_fit = min(max(preferred_min_width, available_width), preferred_width)
+    ///
+    /// ```text
+    /// shrink_to_fit = min(max(preferred_min_width, available_width), preferred_width)
+    /// ```
     fn shrink_to_fit_width(&self, _containing_block: Rect, _viewport: Rect) -> f32 {
         todo!("Calculate shrink-to-fit width per CSS 2.1 § 10.3.5")
     }
@@ -2116,6 +2188,7 @@ impl LayoutBox {
     /// around the block-level box."
     ///
     /// Returns true if children contain both block-level and inline-level boxes.
+    #[must_use]
     pub fn has_mixed_children(&self) -> bool {
         let mut has_block = false;
         let mut has_inline = false;
@@ -2123,7 +2196,7 @@ impl LayoutBox {
             match child.display.outer {
                 OuterDisplayType::Block => has_block = true,
                 OuterDisplayType::Inline => has_inline = true,
-                _ => {}
+                OuterDisplayType::RunIn => {}
             }
             if has_block && has_inline {
                 return true;
@@ -2141,6 +2214,7 @@ impl LayoutBox {
     ///
     /// If all children are inline-level, the parent establishes an
     /// inline formatting context for its contents instead.
+    #[must_use]
     pub fn all_children_inline(&self) -> bool {
         self.children
             .iter()
@@ -2165,18 +2239,17 @@ impl LayoutBox {
     /// renders instead of crashing.
     fn flatten_block_in_inline(&mut self) {
         loop {
-            let needs_flatten = self.children.iter().any(|c| {
-                c.display.outer == OuterDisplayType::Inline && c.has_block_descendant()
-            });
+            let needs_flatten = self
+                .children
+                .iter()
+                .any(|c| c.display.outer == OuterDisplayType::Inline && c.has_block_descendant());
             if !needs_flatten {
                 break;
             }
 
             let old_children = std::mem::take(&mut self.children);
             for child in old_children {
-                if child.display.outer == OuterDisplayType::Inline
-                    && child.has_block_descendant()
-                {
+                if child.display.outer == OuterDisplayType::Inline && child.has_block_descendant() {
                     // Replace the inline wrapper with its children.
                     self.children.extend(child.children);
                 } else {
@@ -2193,8 +2266,8 @@ impl LayoutBox {
     /// Used to detect the case where an inline box contains a block-level
     /// descendant, which requires splitting the inline box per the spec.
     fn has_block_descendant(&self) -> bool {
-        self.children.iter().any(|c| {
-            c.display.outer == OuterDisplayType::Block || c.has_block_descendant()
-        })
+        self.children
+            .iter()
+            .any(|c| c.display.outer == OuterDisplayType::Block || c.has_block_descendant())
     }
 }

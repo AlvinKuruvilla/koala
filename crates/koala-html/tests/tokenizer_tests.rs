@@ -346,9 +346,7 @@ fn test_textarea_element_rcdata() {
 
     // Content should be literal text, not parsed tags
     assert_eq!(content, "<b>bold?</b>");
-    assert!(
-        matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "textarea")
-    );
+    assert!(matches!(&tokens[tokens.len() - 2], Token::EndTag { name, .. } if name == "textarea"));
 }
 
 #[test]

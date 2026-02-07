@@ -9,7 +9,7 @@
 //!   - Attribute parsing
 //!
 //! - **HTML Parser / Tree Builder** ([WHATWG § 13.2.6](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction))
-//!   - Insertion modes: Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody
+//!   - Insertion modes: `Initial`, `BeforeHtml`, `BeforeHead`, `InHead`, `AfterHead`, `InBody`, `Text`, `AfterBody`, `AfterAfterBody`
 //!   - Implicit tag handling and stack of open elements
 //!
 //! # Not Yet Implemented

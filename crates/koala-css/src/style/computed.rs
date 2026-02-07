@@ -133,13 +133,13 @@ pub struct ComputedStyle {
     /// [§ 10.2 'width'](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
     ///
     /// "This property specifies the content width of boxes."
-    /// "Value: <length> | <percentage> | auto | inherit"
+    /// "Value: `<length>` | `<percentage>` | auto | inherit"
     pub width: Option<AutoLength>,
 
     /// [§ 10.5 'height'](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
     ///
     /// "This property specifies the content height of boxes."
-    /// "Value: <length> | <percentage> | auto | inherit"
+    /// "Value: `<length>` | `<percentage>` | auto | inherit"
     pub height: Option<AutoLength>,
 
     // [§ 2 Flex Layout Box Model](https://www.w3.org/TR/css-flexbox-1/#box-model)
@@ -165,7 +165,7 @@ pub struct ComputedStyle {
     /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
     ///
     /// "The flex-grow property sets the flex grow factor to the provided
-    /// <number>. Negative values are invalid."
+    /// `<number>`. Negative values are invalid."
     ///
     /// Initial: 0
     pub flex_grow: Option<f32>,
@@ -173,7 +173,7 @@ pub struct ComputedStyle {
     /// [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
     ///
     /// "The flex-shrink property sets the flex shrink factor to the provided
-    /// <number>. Negative values are invalid."
+    /// `<number>`. Negative values are invalid."
     ///
     /// Initial: 1
     pub flex_shrink: Option<f32>,
@@ -183,7 +183,7 @@ pub struct ComputedStyle {
     /// "The flex-basis property sets the flex basis: the initial main size
     /// of the flex item, before free space is distributed."
     ///
-    /// Values: auto | <length>
+    /// Values: auto | `<length>`
     /// Initial: auto
     pub flex_basis: Option<AutoLength>,
 
@@ -201,16 +201,16 @@ pub struct ComputedStyle {
     // These fields track which declaration (by source_order) set each physical margin,
     // allowing proper cascade resolution when both logical and physical properties
     // target the same computed value.
-    /// Source order of the declaration that set margin_top (for cascade resolution)
+    /// Source order of the declaration that set `margin_top` (for cascade resolution)
     #[serde(skip)]
     pub margin_top_source_order: Option<u32>,
-    /// Source order of the declaration that set margin_right (for cascade resolution)
+    /// Source order of the declaration that set `margin_right` (for cascade resolution)
     #[serde(skip)]
     pub margin_right_source_order: Option<u32>,
-    /// Source order of the declaration that set margin_bottom (for cascade resolution)
+    /// Source order of the declaration that set `margin_bottom` (for cascade resolution)
     #[serde(skip)]
     pub margin_bottom_source_order: Option<u32>,
-    /// Source order of the declaration that set margin_left (for cascade resolution)
+    /// Source order of the declaration that set `margin_left` (for cascade resolution)
     #[serde(skip)]
     pub margin_left_source_order: Option<u32>,
 }
@@ -308,36 +308,35 @@ impl ComputedStyle {
             // Physical and logical properties compete in the cascade. We track
             // source_order to determine which declaration wins.
             "margin-top" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
-                    // Check cascade: only update if we have higher source_order
-                    if self.should_update_margin(PhysicalSide::Top, decl.source_order) {
-                        self.margin_top = Some(self.resolve_auto_length(al));
-                        self.margin_top_source_order = Some(decl.source_order);
-                    }
+                if let Some(al) = parse_auto_length_value(&decl.value)
+                    && self.should_update_margin(PhysicalSide::Top, decl.source_order)
+                {
+                    self.margin_top = Some(self.resolve_auto_length(al));
+                    self.margin_top_source_order = Some(decl.source_order);
                 }
             }
             "margin-right" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
-                    if self.should_update_margin(PhysicalSide::Right, decl.source_order) {
-                        self.margin_right = Some(self.resolve_auto_length(al));
-                        self.margin_right_source_order = Some(decl.source_order);
-                    }
+                if let Some(al) = parse_auto_length_value(&decl.value)
+                    && self.should_update_margin(PhysicalSide::Right, decl.source_order)
+                {
+                    self.margin_right = Some(self.resolve_auto_length(al));
+                    self.margin_right_source_order = Some(decl.source_order);
                 }
             }
             "margin-bottom" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
-                    if self.should_update_margin(PhysicalSide::Bottom, decl.source_order) {
-                        self.margin_bottom = Some(self.resolve_auto_length(al));
-                        self.margin_bottom_source_order = Some(decl.source_order);
-                    }
+                if let Some(al) = parse_auto_length_value(&decl.value)
+                    && self.should_update_margin(PhysicalSide::Bottom, decl.source_order)
+                {
+                    self.margin_bottom = Some(self.resolve_auto_length(al));
+                    self.margin_bottom_source_order = Some(decl.source_order);
                 }
             }
             "margin-left" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
-                    if self.should_update_margin(PhysicalSide::Left, decl.source_order) {
-                        self.margin_left = Some(self.resolve_auto_length(al));
-                        self.margin_left_source_order = Some(decl.source_order);
-                    }
+                if let Some(al) = parse_auto_length_value(&decl.value)
+                    && self.should_update_margin(PhysicalSide::Left, decl.source_order)
+                {
+                    self.margin_left = Some(self.resolve_auto_length(al));
+                    self.margin_left_source_order = Some(decl.source_order);
                 }
             }
             // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
@@ -361,7 +360,7 @@ impl ComputedStyle {
                     if self.should_update_margin(physical_side, decl.source_order) {
                         // STEP 4: Apply to both the logical field (for reference)
                         // and the corresponding physical property.
-                        self.margin_block_start = Some(self.resolve_auto_length(al.clone()));
+                        self.margin_block_start = Some(self.resolve_auto_length(al));
                         self.set_margin_for_side(physical_side, al, decl.source_order);
                     }
                 }
@@ -372,7 +371,7 @@ impl ComputedStyle {
                     let physical_side = self.writing_mode.block_end_physical();
 
                     if self.should_update_margin(physical_side, decl.source_order) {
-                        self.margin_block_end = Some(self.resolve_auto_length(al.clone()));
+                        self.margin_block_end = Some(self.resolve_auto_length(al));
                         self.set_margin_for_side(physical_side, al, decl.source_order);
                     }
                 }
@@ -445,23 +444,23 @@ impl ComputedStyle {
             // [§ 10.2 'width'](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
             //
             // "This property specifies the content width of boxes."
-            // "Value: <length> | <percentage> | auto | inherit"
+            // "Value: `<length>` | `<percentage>` | auto | inherit"
             "width" => {
-                if let Some(first) = decl.value.first() {
-                    if let Some(auto_len) = parse_single_auto_length(first) {
-                        self.width = Some(self.resolve_auto_length(auto_len));
-                    }
+                if let Some(first) = decl.value.first()
+                    && let Some(auto_len) = parse_single_auto_length(first)
+                {
+                    self.width = Some(self.resolve_auto_length(auto_len));
                 }
             }
             // [§ 10.5 'height'](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
             //
             // "This property specifies the content height of boxes."
-            // "Value: <length> | <percentage> | auto | inherit"
+            // "Value: `<length>` | `<percentage>` | auto | inherit"
             "height" => {
-                if let Some(first) = decl.value.first() {
-                    if let Some(auto_len) = parse_single_auto_length(first) {
-                        self.height = Some(self.resolve_auto_length(auto_len));
-                    }
+                if let Some(first) = decl.value.first()
+                    && let Some(auto_len) = parse_single_auto_length(first)
+                {
+                    self.height = Some(self.resolve_auto_length(auto_len));
                 }
             }
             // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
@@ -495,7 +494,8 @@ impl ComputedStyle {
             // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
             //
             // "The flex-grow property sets the flex grow factor to the provided
-            // <number>. Negative values are invalid."
+            // `<number>`. Negative values are invalid."
+            #[allow(clippy::cast_possible_truncation)]
             "flex-grow" => {
                 if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
                     decl.value.first()
@@ -509,7 +509,8 @@ impl ComputedStyle {
             // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
             //
             // "The flex-shrink property sets the flex shrink factor to the provided
-            // <number>. Negative values are invalid."
+            // `<number>`. Negative values are invalid."
+            #[allow(clippy::cast_possible_truncation)]
             "flex-shrink" => {
                 if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
                     decl.value.first()
@@ -524,10 +525,10 @@ impl ComputedStyle {
             //
             // "Values: auto | <length>"
             "flex-basis" => {
-                if let Some(first) = decl.value.first() {
-                    if let Some(auto_len) = parse_single_auto_length(first) {
-                        self.flex_basis = Some(self.resolve_auto_length(auto_len));
-                    }
+                if let Some(first) = decl.value.first()
+                    && let Some(auto_len) = parse_single_auto_length(first)
+                {
+                    self.flex_basis = Some(self.resolve_auto_length(auto_len));
                 }
             }
             unknown => {
@@ -542,8 +543,8 @@ impl ComputedStyle {
     /// 'margin-right', 'margin-bottom', and 'margin-left' at the same place in
     /// the style sheet."
     ///
-    /// "Value: <margin-width>{1,4} | inherit"
-    /// "<margin-width> = <length> | <percentage> | auto"
+    /// "Value: `<margin-width>`{1,4} | inherit"
+    /// "`<margin-width>` = `<length>` | `<percentage>` | auto"
     fn apply_margin_shorthand(&mut self, values: &[ComponentValue]) {
         // STEP 1: Parse all <margin-width> values from the declaration.
         // [§ 8.3](https://www.w3.org/TR/CSS2/box.html#margin-properties)
@@ -565,33 +566,33 @@ impl ComputedStyle {
         match auto_lengths.len() {
             // RULE 1-VALUE: "it applies to all sides."
             1 => {
-                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_right = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_left = Some(self.resolve_auto_length(auto_lengths[0].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[0]));
             }
             // RULE 2-VALUE: "the top and bottom margins are set to the first value
             //               and the right and left margins are set to the second."
             2 => {
-                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1].clone()));
-                self.margin_left = Some(self.resolve_auto_length(auto_lengths[1].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1]));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[1]));
             }
             // RULE 3-VALUE: "the top is set to the first value, the left and right
             //               are set to the second, and the bottom is set to the third."
             3 => {
-                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1].clone()));
-                self.margin_left = Some(self.resolve_auto_length(auto_lengths[1].clone()));
-                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1]));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[1]));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2]));
             }
             // RULE 4-VALUE: "they apply to the top, right, bottom, and left, respectively."
             4 => {
-                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0].clone()));
-                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1].clone()));
-                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2].clone()));
-                self.margin_left = Some(self.resolve_auto_length(auto_lengths[3].clone()));
+                self.margin_top = Some(self.resolve_auto_length(auto_lengths[0]));
+                self.margin_right = Some(self.resolve_auto_length(auto_lengths[1]));
+                self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2]));
+                self.margin_left = Some(self.resolve_auto_length(auto_lengths[3]));
             }
             _ => {}
         }
@@ -603,28 +604,28 @@ impl ComputedStyle {
 
         match lengths.len() {
             1 => {
-                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_right = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_bottom = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_left = Some(self.resolve_length(lengths[0].clone()));
+                self.padding_top = Some(self.resolve_length(lengths[0]));
+                self.padding_right = Some(self.resolve_length(lengths[0]));
+                self.padding_bottom = Some(self.resolve_length(lengths[0]));
+                self.padding_left = Some(self.resolve_length(lengths[0]));
             }
             2 => {
-                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_bottom = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_right = Some(self.resolve_length(lengths[1].clone()));
-                self.padding_left = Some(self.resolve_length(lengths[1].clone()));
+                self.padding_top = Some(self.resolve_length(lengths[0]));
+                self.padding_bottom = Some(self.resolve_length(lengths[0]));
+                self.padding_right = Some(self.resolve_length(lengths[1]));
+                self.padding_left = Some(self.resolve_length(lengths[1]));
             }
             3 => {
-                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_right = Some(self.resolve_length(lengths[1].clone()));
-                self.padding_left = Some(self.resolve_length(lengths[1].clone()));
-                self.padding_bottom = Some(self.resolve_length(lengths[2].clone()));
+                self.padding_top = Some(self.resolve_length(lengths[0]));
+                self.padding_right = Some(self.resolve_length(lengths[1]));
+                self.padding_left = Some(self.resolve_length(lengths[1]));
+                self.padding_bottom = Some(self.resolve_length(lengths[2]));
             }
             4 => {
-                self.padding_top = Some(self.resolve_length(lengths[0].clone()));
-                self.padding_right = Some(self.resolve_length(lengths[1].clone()));
-                self.padding_bottom = Some(self.resolve_length(lengths[2].clone()));
-                self.padding_left = Some(self.resolve_length(lengths[3].clone()));
+                self.padding_top = Some(self.resolve_length(lengths[0]));
+                self.padding_right = Some(self.resolve_length(lengths[1]));
+                self.padding_bottom = Some(self.resolve_length(lengths[2]));
+                self.padding_left = Some(self.resolve_length(lengths[3]));
             }
             _ => {}
         }
@@ -663,8 +664,7 @@ impl ComputedStyle {
                 let base = self
                     .font_size
                     .as_ref()
-                    .map(|fs| fs.to_px())
-                    .unwrap_or(DEFAULT_FONT_SIZE_PX);
+                    .map_or(DEFAULT_FONT_SIZE_PX, LengthValue::to_px);
                 LengthValue::Px(em * base)
             }
             other => other,
@@ -673,7 +673,7 @@ impl ComputedStyle {
 
     /// [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
     ///
-    /// Resolve relative length units (em) to absolute units (px) for AutoLength.
+    /// Resolve relative length units (em) to absolute units (px) for `AutoLength`.
     /// 'auto' values are preserved unchanged.
     fn resolve_auto_length(&self, al: AutoLength) -> AutoLength {
         match al {
@@ -686,12 +686,12 @@ impl ComputedStyle {
     ///
     /// Check if a margin declaration should update the value for a physical side.
     /// Returns true if:
-    /// - No value has been set yet (source_order is None), or
-    /// - The new source_order is greater than or equal to the existing one
+    /// - No value has been set yet (`source_order` is None), or
+    /// - The new `source_order` is greater than or equal to the existing one
     ///
     /// This implements cascade resolution: later declarations win, and logical
     /// and physical properties compete based on source order.
-    fn should_update_margin(&self, side: PhysicalSide, new_order: u32) -> bool {
+    const fn should_update_margin(&self, side: PhysicalSide, new_order: u32) -> bool {
         let existing_order = match side {
             PhysicalSide::Top => self.margin_top_source_order,
             PhysicalSide::Right => self.margin_right_source_order,
@@ -707,7 +707,7 @@ impl ComputedStyle {
 
     /// [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
     ///
-    /// Set the margin value for a physical side and update its source_order.
+    /// Set the margin value for a physical side and update its `source_order`.
     /// Used by logical properties to update the corresponding physical property.
     fn set_margin_for_side(&mut self, side: PhysicalSide, value: AutoLength, source_order: u32) {
         let resolved = self.resolve_auto_length(value);
@@ -738,13 +738,13 @@ impl ComputedStyle {
     /// Syntax: `<line-width> || <line-style> || <color>`
     ///
     /// [§ 4.1 Line Width](https://www.w3.org/TR/css-backgrounds-3/#border-width)
-    /// "<line-width> = <length [0,∞]> | thin | medium | thick"
+    /// "`<line-width>` = `<length>` \[0,Inf\] | thin | medium | thick"
     ///
     /// [§ 4.2 Line Style](https://www.w3.org/TR/css-backgrounds-3/#border-style)
-    /// "<line-style> = none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset"
+    /// "`<line-style>` = none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset"
     ///
     /// [§ 4.3 Line Color](https://www.w3.org/TR/css-backgrounds-3/#border-color)
-    /// "<color>"
+    /// "`<color>`"
     ///
     /// Values can appear in any order. Missing values use initial values:
     /// - width: medium (typically 3px)
@@ -756,11 +756,17 @@ impl ComputedStyle {
         let mut color = None;
 
         for v in values {
-            if width.is_none() && let Some(len) = parse_single_length(v) {
+            if width.is_none()
+                && let Some(len) = parse_single_length(v)
+            {
                 width = Some(self.resolve_length(len));
-            } else if color.is_none() && let Some(c) = parse_single_color(v) {
+            } else if color.is_none()
+                && let Some(c) = parse_single_color(v)
+            {
                 color = Some(c);
-            } else if style.is_none() && let Some(s) = Self::parse_border_style(v) {
+            } else if style.is_none()
+                && let Some(s) = Self::parse_border_style(v)
+            {
                 style = Some(s);
             }
         }
@@ -779,8 +785,16 @@ impl ComputedStyle {
             let lower = ident.to_ascii_lowercase();
             matches!(
                 lower.as_str(),
-                "solid" | "dashed" | "dotted" | "double" | "none" | "hidden" |
-                "groove" | "ridge" | "inset" | "outset"
+                "solid"
+                    | "dashed"
+                    | "dotted"
+                    | "double"
+                    | "none"
+                    | "hidden"
+                    | "groove"
+                    | "ridge"
+                    | "inset"
+                    | "outset"
             )
             .then_some(lower)
         } else {

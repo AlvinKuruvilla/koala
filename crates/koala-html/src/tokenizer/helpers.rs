@@ -11,8 +11,8 @@
 
 use koala_common::warning::warn_once;
 
-use super::token::Token;
 use super::core::{HTMLTokenizer, TokenizerState};
+use super::token::Token;
 
 // =============================================================================
 // State Transition Helpers
@@ -25,7 +25,7 @@ impl HTMLTokenizer {
     ///
     /// Transitions to a new state. The next character will be consumed on the
     /// next iteration of the main loop.
-    pub(super) fn switch_to(&mut self, new_state: TokenizerState) {
+    pub(super) const fn switch_to(&mut self, new_state: TokenizerState) {
         self.state = new_state;
     }
 
@@ -35,7 +35,7 @@ impl HTMLTokenizer {
     ///
     /// Transitions to a new state without consuming the current character.
     /// The same character will be processed again in the new state.
-    pub(super) fn reconsume_in(&mut self, new_state: TokenizerState) {
+    pub(super) const fn reconsume_in(&mut self, new_state: TokenizerState) {
         self.reconsume = true;
         self.state = new_state;
     }
@@ -65,6 +65,7 @@ impl HTMLTokenizer {
     ///
     /// Peek at a codepoint at the given offset from the current position without
     /// consuming it. Used for lookahead operations like "the next few characters are".
+    #[must_use]
     pub fn peek_codepoint(&self, offset: usize) -> Option<char> {
         let slice = &self.input[self.current_pos..];
         slice.chars().nth(offset)
@@ -75,6 +76,7 @@ impl HTMLTokenizer {
     /// "If the next few characters are..."
     ///
     /// Check if the next few characters match the target string exactly.
+    #[must_use]
     pub fn next_few_characters_are(&self, target: &str) -> bool {
         let target_chars: Vec<char> = target.chars().collect();
 
@@ -97,6 +99,7 @@ impl HTMLTokenizer {
     ///
     /// Check if the next few characters match the target string using
     /// ASCII case-insensitive comparison.
+    #[must_use]
     pub fn next_few_characters_are_case_insensitive(&self, target: &str) -> bool {
         let target_chars: Vec<char> = target.chars().collect();
 
@@ -117,7 +120,7 @@ impl HTMLTokenizer {
     ///
     /// Consume the given string from the input.
     /// Caller must have already verified the characters are present.
-    pub fn consume_string(&mut self, target: &str) {
+    pub const fn consume_string(&mut self, target: &str) {
         // Advance by the number of bytes in the target string.
         // This is safe for ASCII strings (like "DOCTYPE", "--", "[CDATA[").
         self.current_pos += target.len();
@@ -129,7 +132,7 @@ impl HTMLTokenizer {
     /// or U+0020 SPACE."
     ///
     /// NOTE: HTML tokenizer uses a subset excluding CR (which is normalized earlier).
-    pub(super) fn is_whitespace_char(input_char: char) -> bool {
+    pub(super) const fn is_whitespace_char(input_char: char) -> bool {
         // "U+0009 CHARACTER TABULATION (tab)"
         // "U+000A LINE FEED (LF)"
         // "U+000C FORM FEED (FF)"
@@ -225,12 +228,10 @@ impl HTMLTokenizer {
     ///
     /// Used to determine if `</title>` should close the current `<title>` element.
     pub(super) fn is_appropriate_end_tag_token(&self) -> bool {
-        if let (Some(last_start_tag), Some(current_token)) =
+        if let (Some(last_start_tag), Some(Token::EndTag { name, .. })) =
             (&self.last_start_tag_name, &self.current_token)
         {
-            if let Token::EndTag { name, .. } = current_token {
-                return name == last_start_tag;
-            }
+            return name == last_start_tag;
         }
         false
     }
@@ -247,7 +248,8 @@ impl HTMLTokenizer {
         // STEP 2: "Emit a U+002F SOLIDUS character token"
         self.emit_character_token('/');
         // STEP 3: "Emit a character token for each of the characters in the temporary buffer"
-        for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+        let buffer = self.temporary_buffer.clone();
+        for c in buffer.chars() {
             self.emit_character_token(c);
         }
         // STEP 4: Discard the current end tag token
@@ -268,7 +270,8 @@ impl HTMLTokenizer {
         // STEP 2: "Emit a U+002F SOLIDUS character token"
         self.emit_character_token('/');
         // STEP 3: "Emit a character token for each of the characters in the temporary buffer"
-        for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+        let buffer = self.temporary_buffer.clone();
+        for c in buffer.chars() {
             self.emit_character_token(c);
         }
         // STEP 4: Discard the current end tag token
@@ -289,7 +292,8 @@ impl HTMLTokenizer {
         // STEP 2: "Emit a U+002F SOLIDUS character token"
         self.emit_character_token('/');
         // STEP 3: "Emit a character token for each of the characters in the temporary buffer"
-        for c in self.temporary_buffer.chars().collect::<Vec<_>>() {
+        let buffer = self.temporary_buffer.clone();
+        for c in buffer.chars() {
             self.emit_character_token(c);
         }
         // STEP 4: Discard the current end tag token
@@ -320,8 +324,7 @@ impl HTMLTokenizer {
         let is_duplicate = self
             .current_token
             .as_ref()
-            .map(|t| t.current_attribute_name_is_duplicate())
-            .unwrap_or(false);
+            .is_some_and(Token::current_attribute_name_is_duplicate);
 
         if is_duplicate {
             // STEP 2: "This is a duplicate-attribute parse error"
@@ -345,9 +348,7 @@ impl HTMLTokenizer {
     /// Logs a parse error using the koala-common warning system.
     /// Parse errors in HTML are not fatal - the parser recovers and continues.
     pub(super) fn log_parse_error(&self) {
-        warn_once(
-            "HTML Tokenizer",
-            &format!("parse error at position {}", self.current_pos),
-        );
+        let pos = self.current_pos;
+        warn_once("HTML Tokenizer", &format!("parse error at position {pos}"));
     }
 }

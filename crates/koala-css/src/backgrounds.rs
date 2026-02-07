@@ -24,6 +24,7 @@ use crate::style::{ColorValue, ComputedStyle};
 ///
 /// "The used value of that body element's background is then `transparent`."
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn canvas_background(
     tree: &DomTree,
     styles: &HashMap<NodeId, ComputedStyle>,
@@ -36,11 +37,11 @@ pub fn canvas_background(
     // NOTE: We don't support background-image yet, so we only check background-color.
     // Per spec, we should also check "background-image is none", which we treat as
     // the default when unset.
-    if let Some(style) = html_style {
-        if style.background_color.is_some() {
-            // Root has background, use it
-            return style.background_color.clone();
-        }
+    if let Some(style) = html_style
+        && style.background_color.is_some()
+    {
+        // Root has background, use it
+        return style.background_color.clone();
     }
 
     // "if the computed value of background-image on the root element is none

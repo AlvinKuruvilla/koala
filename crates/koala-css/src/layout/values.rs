@@ -13,7 +13,7 @@ use super::box_model::{EdgeSizes, Rect};
 ///
 /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
 ///
-/// "The computed value of a <length> where... the viewport size is needed
+/// "The computed value of a `<length>` where... the viewport size is needed
 /// to resolve the value, is the specified value."
 ///
 /// Edge sizes storing unresolved length values.
@@ -38,36 +38,28 @@ impl UnresolvedEdgeSizes {
     /// theoretical value used in the layout of the document."
     ///
     /// Resolve to concrete pixel values using viewport dimensions.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn resolve(&self, viewport: Rect) -> EdgeSizes {
+        let vw = f64::from(viewport.width);
+        let vh = f64::from(viewport.height);
         EdgeSizes {
             top: self
                 .top
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
-                .unwrap_or(0.0),
+                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
             right: self
                 .right
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
-                .unwrap_or(0.0),
+                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
             bottom: self
                 .bottom
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
-                .unwrap_or(0.0),
+                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
             left: self
                 .left
                 .as_ref()
-                .map(|l| {
-                    l.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32
-                })
-                .unwrap_or(0.0),
+                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
         }
     }
 }
@@ -91,36 +83,30 @@ pub struct UnresolvedAutoEdgeSizes {
 impl UnresolvedAutoEdgeSizes {
     /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
     ///
-    /// Resolve to AutoOr values using viewport dimensions.
+    /// Resolve to `AutoOr` values using viewport dimensions.
     /// 'auto' is preserved for later resolution during width/margin calculation.
+    #[must_use]
     pub fn resolve(&self, viewport: Rect) -> AutoEdgeSizes {
         AutoEdgeSizes {
-            top: self
-                .top
-                .as_ref()
-                .map(|al| Self::resolve_auto_length(al, viewport))
-                .unwrap_or(AutoOr::Length(0.0)),
-            right: self
-                .right
-                .as_ref()
-                .map(|al| Self::resolve_auto_length(al, viewport))
-                .unwrap_or(AutoOr::Length(0.0)),
-            bottom: self
-                .bottom
-                .as_ref()
-                .map(|al| Self::resolve_auto_length(al, viewport))
-                .unwrap_or(AutoOr::Length(0.0)),
-            left: self
-                .left
-                .as_ref()
-                .map(|al| Self::resolve_auto_length(al, viewport))
-                .unwrap_or(AutoOr::Length(0.0)),
+            top: self.top.as_ref().map_or(AutoOr::Length(0.0), |al| {
+                Self::resolve_auto_length(al, viewport)
+            }),
+            right: self.right.as_ref().map_or(AutoOr::Length(0.0), |al| {
+                Self::resolve_auto_length(al, viewport)
+            }),
+            bottom: self.bottom.as_ref().map_or(AutoOr::Length(0.0), |al| {
+                Self::resolve_auto_length(al, viewport)
+            }),
+            left: self.left.as_ref().map_or(AutoOr::Length(0.0), |al| {
+                Self::resolve_auto_length(al, viewport)
+            }),
         }
     }
 
     /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
     ///
-    /// Resolve a single AutoLength to AutoOr using viewport dimensions.
+    /// Resolve a single `AutoLength` to `AutoOr` using viewport dimensions.
+    #[must_use]
     pub fn resolve_auto_length(al: &AutoLength, viewport: Rect) -> AutoOr {
         match al {
             // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -128,8 +114,10 @@ impl UnresolvedAutoEdgeSizes {
             // 'auto' is preserved - it will be resolved during width calculation.
             AutoLength::Auto => AutoOr::Auto,
             // Resolve length using viewport for vw/vh units.
+            #[allow(clippy::cast_possible_truncation)]
             AutoLength::Length(len) => AutoOr::Length(
-                len.to_px_with_viewport(viewport.width as f64, viewport.height as f64) as f32,
+                len.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
+                    as f32,
             ),
         }
     }
@@ -141,31 +129,28 @@ impl UnresolvedAutoEdgeSizes {
 /// allows the user agent to compute the value based on other properties."
 ///
 /// This enum represents a value that can either be 'auto' or a specific length.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AutoOr {
     /// The value is 'auto' and must be resolved during layout.
+    #[default]
     Auto,
     /// The value is a specific length in pixels.
     Length(f32),
 }
 
-impl Default for AutoOr {
-    fn default() -> Self {
-        AutoOr::Auto
-    }
-}
-
 impl AutoOr {
     /// Check if the value is 'auto'.
-    pub fn is_auto(&self) -> bool {
-        matches!(self, AutoOr::Auto)
+    #[must_use]
+    pub const fn is_auto(&self) -> bool {
+        matches!(self, Self::Auto)
     }
 
     /// Get the length value, or a default if 'auto'.
-    pub fn to_px_or(&self, default: f32) -> f32 {
+    #[must_use]
+    pub const fn to_px_or(&self, default: f32) -> f32 {
         match self {
-            AutoOr::Length(v) => *v,
-            AutoOr::Auto => default,
+            Self::Length(v) => *v,
+            Self::Auto => default,
         }
     }
 }

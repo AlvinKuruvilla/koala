@@ -21,7 +21,7 @@ use koala_dom::{DomTree, NodeId, NodeType};
 /// Origin and Importance > Context > Element-Attached Styles >
 /// Specificity > Order of Appearance"
 ///
-/// UserAgent (0) < Author (1): author rules always override UA rules
+/// `UserAgent` (0) < `Author` (1): author rules always override UA rules
 /// regardless of specificity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum CascadeOrigin {
@@ -104,15 +104,18 @@ fn parse_stylesheet_rules<'a>(
 }
 
 /// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
+///
 /// "The cascade takes an unordered list of declared values for a given property
 /// on a given element, sorts them by their declaration's precedence..."
 ///
 /// Compute styles for the entire DOM tree given UA and author stylesheets.
-/// Returns a map from NodeId to computed style.
+/// Returns a map from `NodeId` to computed style.
 ///
 /// [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
 ///
 /// UA rules are always overridden by author rules (origin beats specificity).
+#[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn compute_styles(
     tree: &DomTree,
     ua_stylesheet: &Stylesheet,
@@ -205,10 +208,9 @@ fn compute_node_styles(
                 compute_node_styles(tree, child_id, rules, inherited, styles);
             }
         }
-        NodeType::Text(_) | NodeType::Comment(_) => {
-            // Text and comment nodes don't have styles applied directly.
-            // They inherit from their parent element when rendered.
-        }
+        // Text and comment nodes don't have styles applied directly.
+        // They inherit from their parent element when rendered.
+        NodeType::Text(_) | NodeType::Comment(_) => {}
     }
 }
 
@@ -229,7 +231,7 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
 
         // [§ 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
         // "Inherited: yes"
-        font_size: parent.font_size.clone(),
+        font_size: parent.font_size,
 
         // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
         // "Inherited: yes"

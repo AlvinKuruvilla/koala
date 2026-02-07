@@ -47,8 +47,9 @@ pub struct BlockFormattingContext {
 
 impl BlockFormattingContext {
     /// Create a new block formatting context.
-    pub fn new(containing_width: f32, start_y: f32) -> Self {
-        BlockFormattingContext {
+    #[must_use]
+    pub const fn new(containing_width: f32, start_y: f32) -> Self {
+        Self {
             current_y: start_y,
             containing_width,
             float_context: FloatContext::new(containing_width),
@@ -75,23 +76,23 @@ impl BlockFormattingContext {
     /// STEP 2: Determine horizontal position
     ///   // "Each box's left outer edge touches the left edge of the
     ///   //  containing block (for right-to-left formatting, right edges touch)."
-    ///   // box.x = containing_block.x + margin_left + border_left + padding_left
+    ///   // `box.x = containing_block.x + margin_left + border_left + padding_left`
     ///
     /// STEP 3: Determine vertical position (with margin collapsing)
     ///   // [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
-    ///   // box.y = self.current_y + collapsed_margin_top
+    ///   // `box.y = self.current_y + collapsed_margin_top`
     ///
     /// STEP 4: Layout child boxes recursively
     ///   // For block children: use this BFC (or create new if needed)
-    ///   // For inline children: create an InlineFormattingContext
+    ///   // For inline children: create an `InlineFormattingContext`
     ///
     /// STEP 5: Calculate the used height
     ///   // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
     ///   // If 'height' is 'auto': sum of children's margin box heights
     ///   // If 'height' is a length: use that value
     ///
-    /// STEP 6: Advance current_y for the next sibling
-    ///   // self.current_y += box.margin_box().height
+    /// STEP 6: Advance `current_y` for the next sibling
+    ///   // `self.current_y += box.margin_box().height`
     pub fn layout_block_box(&mut self, _box_dims: &mut BoxDimensions) {
         todo!("Layout a block-level box in block formatting context")
     }
@@ -134,7 +135,7 @@ impl BlockFormattingContext {
     /// STEP 2: Calculate the collapsed margin
     ///   // "When two or more margins collapse, the resulting margin width
     ///   //  is the maximum of the collapsing margins' widths."
-    ///   // collapsed = max(margin_a, margin_b)
+    ///   // `collapsed = max(margin_a, margin_b)`
     ///   //
     ///   // "If there are no positive margins, the maximum of the absolute
     ///   //  values of the adjoining margins is deducted from zero."
@@ -150,6 +151,7 @@ impl BlockFormattingContext {
     /// STEP 4: Handle empty block collapsing
     ///   // "An element that has had clearance applied to it never collapses
     ///   //  its top margin with its parent block's bottom margin."
+    #[must_use]
     pub fn collapse_vertical_margins(
         &self,
         _margin_bottom_above: f32,
@@ -180,6 +182,8 @@ impl BlockFormattingContext {
     /// - overflow != visible (and != clip)
     ///
     /// TODO: Check all conditions that establish a new BFC.
+    #[must_use]
+    #[allow(clippy::fn_params_excessive_bools)]
     pub fn establishes_bfc(
         _is_float: bool,
         _is_absolutely_positioned: bool,
@@ -215,8 +219,9 @@ pub struct InlineFormattingContext {
 
 impl InlineFormattingContext {
     /// Create a new inline formatting context.
-    pub fn new(max_width: f32, start_y: f32, line_height: f32) -> Self {
-        InlineFormattingContext {
+    #[must_use]
+    pub const fn new(max_width: f32, start_y: f32, line_height: f32) -> Self {
+        Self {
             current_x: 0.0,
             current_y: start_y,
             max_width,
@@ -236,18 +241,18 @@ impl InlineFormattingContext {
     ///   // For replaced elements (img): use intrinsic width
     ///
     /// STEP 2: Add horizontal margin, border, padding
-    ///   // inline_box_width = margin_left + border_left + padding_left
-    ///   //                  + content_width
-    ///   //                  + padding_right + border_right + margin_right
+    ///   // `inline_box_width = margin_left + border_left + padding_left`
+    ///   //                  `+ content_width`
+    ///   //                  `+ padding_right + border_right + margin_right`
     ///
     /// STEP 3: Check if box fits on current line
-    ///   // if current_x + inline_box_width > max_width {
-    ///   //     self.wrap_line();
+    ///   // `if current_x + inline_box_width > max_width {`
+    ///   //     `self.wrap_line();`
     ///   // }
     ///
     /// STEP 4: Position box horizontally
-    ///   // box.x = self.current_x;
-    ///   // self.current_x += inline_box_width;
+    ///   // `box.x = self.current_x;`
+    ///   // `self.current_x += inline_box_width;`
     ///
     /// STEP 5: Calculate vertical alignment within line box
     ///   // Based on vertical-align property (baseline, top, middle, etc.)
@@ -267,12 +272,12 @@ impl InlineFormattingContext {
     /// STEP 1: Finalize current line box
     ///   // Calculate line box height from tallest inline box
     ///   // Apply text-align for horizontal distribution
-    ///   // self.line_boxes.push(current_line);
+    ///   // `self.line_boxes.push(current_line);`
     ///
     /// STEP 2: Start new line
-    ///   // self.current_x = 0;
-    ///   // self.current_y += line_box_height;
-    ///   // self.current_line = Vec::new();
+    ///   // `self.current_x = 0;`
+    ///   // `self.current_y += line_box_height;`
+    ///   // `self.current_line = Vec::new();`
     ///
     /// STEP 3: Handle word breaking
     ///   // [§ 5.5.1 Line Breaking](https://www.w3.org/TR/css-text-3/#line-breaking)

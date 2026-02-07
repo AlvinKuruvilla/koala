@@ -12,7 +12,7 @@ use crate::tokenizer::{Attribute, Token};
 ///
 /// "The insertion mode is a state variable that controls the primary operation
 /// of the tree construction stage."
-#[derive(Debug, Clone, Copy, PartialEq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum InsertionMode {
     /// [§ 13.2.6.4.1 The "initial" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode)
     Initial,
@@ -91,7 +91,7 @@ pub enum ActiveFormattingElement {
     /// Formatting elements are: a, b, big, code, em, font, i, nobr, s, small,
     /// strike, strong, tt, u.
     Element {
-        /// The NodeId of the element in the DOM tree.
+        /// The `NodeId` of the element in the DOM tree.
         node_id: NodeId,
         /// The original token, kept to recreate the element if needed during
         /// the adoption agency algorithm or when reconstructing.
@@ -120,7 +120,7 @@ pub struct HTMLParser {
 
     /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
     ///
-    /// Stores NodeIds into the arena.
+    /// Stores `NodeId`s into the arena.
     stack_of_open_elements: Vec<NodeId>,
 
     /// [§ 13.2.4.4 The element pointers](https://html.spec.whatwg.org/multipage/parsing.html#the-element-pointers)
@@ -135,7 +135,7 @@ pub struct HTMLParser {
     active_formatting_elements: Vec<ActiveFormattingElement>,
 
     /// DOM tree with parent/sibling pointers.
-    /// NodeId::ROOT (index 0) is the Document node.
+    /// `NodeId::ROOT` (index 0) is the Document node.
     tree: DomTree,
 
     /// Input tokens from the tokenizer.
@@ -156,9 +156,10 @@ pub struct HTMLParser {
 
 impl HTMLParser {
     /// Create a new parser from a token stream.
+    #[must_use]
     pub fn new(tokens: Vec<Token>) -> Self {
         // DomTree::new() creates the Document node at NodeId::ROOT
-        HTMLParser {
+        Self {
             insertion_mode: InsertionMode::Initial,
             original_insertion_mode: None,
             stack_of_open_elements: Vec::new(),
@@ -174,12 +175,14 @@ impl HTMLParser {
     }
 
     /// Enable strict mode - panics on unhandled tokens.
-    pub fn with_strict_mode(mut self) -> Self {
+    #[must_use]
+    pub const fn with_strict_mode(mut self) -> Self {
         self.strict_mode = true;
         self
     }
 
     /// Get all parse issues (errors and warnings) encountered during parsing.
+    #[must_use]
     pub fn get_issues(&self) -> &[ParseIssue] {
         &self.issues
     }
@@ -187,6 +190,7 @@ impl HTMLParser {
     /// Record a parse warning (for unhandled but recoverable situations).
     ///
     /// Logs via koala-common's warning system and stores the issue for later retrieval.
+    #[allow(dead_code)]
     fn parse_warning(&mut self, message: &str) {
         warn_once("HTML Parser", message);
         self.issues.push(ParseIssue {
@@ -198,8 +202,14 @@ impl HTMLParser {
 
     /// Run the parser and return the DOM tree.
     ///
-    /// The returned DomTree preserves parent/sibling relationships
+    /// The returned `DomTree` preserves parent/sibling relationships
     /// for efficient traversal.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the parser encounters an unimplemented insertion mode
+    /// (e.g., `InTable`, `InTemplate`, `InFrameset`).
+    #[must_use]
     pub fn run(mut self) -> DomTree {
         while !self.stopped && self.token_index < self.tokens.len() {
             let token = self.tokens[self.token_index].clone();
@@ -209,7 +219,13 @@ impl HTMLParser {
         self.tree
     }
 
-    /// Run the parser and return both the DomTree and any parse issues.
+    /// Run the parser and return both the `DomTree` and any parse issues.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the parser encounters an unimplemented insertion mode
+    /// (e.g., `InTable`, `InTemplate`, `InFrameset`).
+    #[must_use]
     pub fn run_with_issues(mut self) -> (DomTree, Vec<ParseIssue>) {
         while !self.stopped && self.token_index < self.tokens.len() {
             let token = self.tokens[self.token_index].clone();
@@ -221,6 +237,10 @@ impl HTMLParser {
     }
 
     /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the parser encounters an unimplemented insertion mode.
     fn process_token(&mut self, token: &Token) {
         match self.insertion_mode {
             InsertionMode::Initial => self.handle_initial_mode(token),
@@ -229,7 +249,7 @@ impl HTMLParser {
             InsertionMode::InHead => self.handle_in_head_mode(token),
             InsertionMode::InHeadNoscript => {
                 // TODO: [§ 13.2.6.4.5](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inheadnoscript)
-                self.handle_in_head_noscript_mode(token)
+                self.handle_in_head_noscript_mode(token);
             }
             InsertionMode::AfterHead => self.handle_after_head_mode(token),
             InsertionMode::InBody => self.handle_in_body_mode(token),
@@ -332,7 +352,7 @@ impl HTMLParser {
     ///
     /// "ASCII whitespace is U+0009 TAB, U+000A LF, U+000C FF, U+000D CR,
     /// or U+0020 SPACE."
-    fn is_whitespace(c: char) -> bool {
+    const fn is_whitespace(c: char) -> bool {
         matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ')
     }
 
@@ -356,7 +376,7 @@ impl HTMLParser {
 
     /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#creating-and-inserting-nodes)
     ///
-    /// Convert token attributes to the AttributesMap used by ElementData.
+    /// Convert token attributes to the `AttributesMap` used by `ElementData`.
     fn attributes_to_map(attributes: &[Attribute]) -> AttributesMap {
         attributes
             .iter()
@@ -410,20 +430,19 @@ impl HTMLParser {
 
         // STEP 2: "If there is a Text node immediately before the adjusted
         //         insertion location, then append data to that Text node's data."
-        if let Some(&last_child_id) = self.tree.children(parent_id).last() {
-            if let Some(arena_node) = self.tree.get_mut(last_child_id) {
-                if let NodeType::Text(ref mut text_data) = arena_node.node_type {
-                    text_data.push(c);
-                    return;
-                }
-            }
+        if let Some(&last_child_id) = self.tree.children(parent_id).last()
+            && let Some(arena_node) = self.tree.get_mut(last_child_id)
+            && let NodeType::Text(ref mut text_data) = arena_node.node_type
+        {
+            text_data.push(c);
+            return;
         }
 
         // STEP 3: "Otherwise, create a new Text node whose data is data and
         //         whose node document is the same as that of the element in
         //         which the adjusted insertion location finds itself, and
         //         insert the newly created node at the adjusted insertion location."
-        let text_id = self.create_text_node(c.to_string());
+        let text_id = self.create_text_node(String::from(c));
         self.append_child(parent_id, text_id);
     }
 
@@ -456,6 +475,10 @@ impl HTMLParser {
     /// "When the steps below require the user agent to insert an HTML element
     /// for a token, the user agent must insert a foreign element for the token,
     /// in the HTML namespace."
+    ///
+    /// # Panics
+    ///
+    /// Panics if called with a non-`StartTag` token, indicating a parser bug.
     fn insert_html_element(&mut self, token: &Token) -> NodeId {
         if let Token::StartTag {
             name, attributes, ..
@@ -550,7 +573,7 @@ impl HTMLParser {
     ///
     /// The scope markers for "has an element in scope" (default scope) are:
     /// - applet, caption, html, table, td, th, marquee, object, template
-    /// - MathML: mi, mo, mn, ms, mtext, annotation-xml
+    /// - `MathML`: mi, mo, mn, ms, mtext, annotation-xml
     /// - SVG: foreignObject, desc, title
     ///
     /// Other scope types add additional markers:
@@ -782,9 +805,20 @@ impl HTMLParser {
     /// [§ 13.2.6.4.2 The "before html" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode)
     fn handle_before_html_mode(&mut self, token: &Token) {
         match token {
+            // "An end tag whose tag name is one of: "head", "body", "html", "br""
+            // "Act as described in the "anything else" entry below."
+            Token::EndTag { name, .. }
+                if matches!(name.as_str(), "head" | "body" | "html" | "br") =>
+            {
+                self.handle_before_html_anything_else(token);
+            }
+
             // "A DOCTYPE token"
             // "Parse error. Ignore the token."
-            Token::Doctype { .. } => {}
+            //
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } | Token::EndTag { .. } => {}
 
             // "A comment token"
             // "Insert a comment as the last child of the Document object."
@@ -811,18 +845,6 @@ impl HTMLParser {
                 self.stack_of_open_elements.push(html_idx);
                 self.insertion_mode = InsertionMode::BeforeHead;
             }
-
-            // "An end tag whose tag name is one of: "head", "body", "html", "br""
-            // "Act as described in the "anything else" entry below."
-            Token::EndTag { name, .. }
-                if matches!(name.as_str(), "head" | "body" | "html" | "br") =>
-            {
-                self.handle_before_html_anything_else(token);
-            }
-
-            // "Any other end tag"
-            // "Parse error. Ignore the token."
-            Token::EndTag { .. } => {}
 
             // "Anything else"
             _ => {
@@ -869,10 +891,6 @@ impl HTMLParser {
                 self.insert_comment(data);
             }
 
-            // "A DOCTYPE token"
-            // "Parse error. Ignore the token."
-            Token::Doctype { .. } => {}
-
             // "A start tag whose tag name is "html""
             // "Process the token using the rules for the "in body" insertion mode."
             Token::StartTag { name, .. } if name == "html" => {
@@ -897,9 +915,12 @@ impl HTMLParser {
                 self.handle_before_head_anything_else(token);
             }
 
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            //
             // "Any other end tag"
             // "Parse error. Ignore the token."
-            Token::EndTag { .. } => {}
+            Token::Doctype { .. } | Token::EndTag { .. } => {}
 
             // "Anything else"
             _ => {
@@ -947,9 +968,26 @@ impl HTMLParser {
                 self.insert_comment(data);
             }
 
+            // "An end tag whose tag name is "head""
+            // "Pop the current node (which will be the head element) off the stack of open elements."
+            // "Switch the insertion mode to "after head"."
+            Token::EndTag { name, .. } if name == "head" => {
+                let _ = self.stack_of_open_elements.pop();
+                self.insertion_mode = InsertionMode::AfterHead;
+            }
+
+            // "An end tag whose tag name is one of: "body", "html", "br""
+            // "Act as described in the "anything else" entry below."
+            Token::EndTag { name, .. } if matches!(name.as_str(), "body" | "html" | "br") => {
+                self.handle_in_head_anything_else(token);
+            }
+
             // "A DOCTYPE token"
             // "Parse error. Ignore the token."
-            Token::Doctype { .. } => {}
+            //
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } | Token::EndTag { .. } => {}
 
             // "A start tag whose tag name is "html""
             // "Process the token using the rules for the "in body" insertion mode."
@@ -988,7 +1026,7 @@ impl HTMLParser {
             Token::StartTag { name, .. } if name == "title" => {
                 let _ = self.insert_html_element(token);
                 // "Let the original insertion mode be the current insertion mode."
-                self.original_insertion_mode = Some(self.insertion_mode.clone());
+                self.original_insertion_mode = Some(self.insertion_mode);
                 self.insertion_mode = InsertionMode::Text;
                 // NOTE: The spec also says "Switch the tokenizer to the RCDATA state."
                 // We don't have tokenizer integration, so we rely on the tokenizer
@@ -1007,7 +1045,7 @@ impl HTMLParser {
             {
                 let _ = self.insert_html_element(token);
                 // "Let the original insertion mode be the current insertion mode."
-                self.original_insertion_mode = Some(self.insertion_mode.clone());
+                self.original_insertion_mode = Some(self.insertion_mode);
                 self.insertion_mode = InsertionMode::Text;
                 // NOTE: The tokenizer handles switching to RAWTEXT state for these elements
             }
@@ -1022,7 +1060,7 @@ impl HTMLParser {
             Token::StartTag { name, .. } if name == "script" => {
                 let _ = self.insert_html_element(token);
                 // "Let the original insertion mode be the current insertion mode."
-                self.original_insertion_mode = Some(self.insertion_mode.clone());
+                self.original_insertion_mode = Some(self.insertion_mode);
                 self.insertion_mode = InsertionMode::Text;
                 // NOTE: The tokenizer handles switching to ScriptData state for script elements
             }
@@ -1045,24 +1083,6 @@ impl HTMLParser {
                 let _ = self.insert_html_element(token);
                 // TODO: Implement full template handling with InTemplate mode
             }
-
-            // "An end tag whose tag name is "head""
-            // "Pop the current node (which will be the head element) off the stack of open elements."
-            // "Switch the insertion mode to "after head"."
-            Token::EndTag { name, .. } if name == "head" => {
-                let _ = self.stack_of_open_elements.pop();
-                self.insertion_mode = InsertionMode::AfterHead;
-            }
-
-            // "An end tag whose tag name is one of: "body", "html", "br""
-            // "Act as described in the "anything else" entry below."
-            Token::EndTag { name, .. } if matches!(name.as_str(), "body" | "html" | "br") => {
-                self.handle_in_head_anything_else(token);
-            }
-
-            // "Any other end tag"
-            // "Parse error. Ignore the token."
-            Token::EndTag { .. } => {}
 
             // "Anything else"
             _ => {
@@ -1089,11 +1109,7 @@ impl HTMLParser {
         self.reprocess_token(token);
     }
     fn handle_in_head_noscript_mode(&mut self, token: &Token) {
-        // A DOCTYPE token
         match token {
-            Token::Doctype { .. } => {
-                // TODO: Parse error. Ignore the token.
-            }
             // A start tag whose tag name is "html"
             Token::StartTag { name, .. } if name == "html" => {
                 // Process the token using the rules for the "in body" insertion mode.
@@ -1145,12 +1161,17 @@ impl HTMLParser {
             }
 
             // "A start tag whose tag name is one of: "head", "noscript""
-            // "Any other end tag"
             // "Parse error. Ignore the token."
             Token::StartTag { name, .. } if matches!(name.as_str(), "head" | "noscript") => {
                 // Parse error. Ignore the token.
             }
-            Token::EndTag { .. } => {
+
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            //
+            // "Any other end tag"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } | Token::EndTag { .. } => {
                 // Parse error. Ignore the token.
             }
 
@@ -1207,8 +1228,7 @@ impl HTMLParser {
             // per the tokenizer's behavior. If they do, it indicates a bug.
             _ => {
                 panic!(
-                    "Unexpected token in Text mode: {:?}. This indicates a tokenizer or parser bug.",
-                    token
+                    "Unexpected token in Text mode: {token:?}. This indicates a tokenizer or parser bug."
                 );
             }
         }
@@ -1229,10 +1249,6 @@ impl HTMLParser {
             Token::Comment { data } => {
                 self.insert_comment(data);
             }
-
-            // "A DOCTYPE token"
-            // "Parse error. Ignore the token."
-            Token::Doctype { .. } => {}
 
             // "A start tag whose tag name is "html""
             // "Process the token using the rules for the "in body" insertion mode."
@@ -1259,9 +1275,12 @@ impl HTMLParser {
                 self.handle_after_head_anything_else(token);
             }
 
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            //
             // "Any other end tag"
             // "Parse error. Ignore the token."
-            Token::EndTag { .. } => {}
+            Token::Doctype { .. } | Token::EndTag { .. } => {}
 
             // "Anything else"
             _ => {
@@ -1325,7 +1344,10 @@ impl HTMLParser {
         match token {
             // "A character token that is U+0000 NULL"
             // "Parse error. Ignore the token."
-            Token::Character { data: '\0' } => {}
+            //
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Character { data: '\0' } | Token::Doctype { .. } => {}
 
             // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED (LF),
             // U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
@@ -1347,10 +1369,6 @@ impl HTMLParser {
             Token::Comment { data } => {
                 self.insert_comment(data);
             }
-
-            // "A DOCTYPE token"
-            // "Parse error. Ignore the token."
-            Token::Doctype { .. } => {}
 
             // "A start tag whose tag name is "html""
             // "Parse error."
@@ -1465,12 +1483,11 @@ impl HTMLParser {
             {
                 self.close_element_if_in_scope("p");
                 // If currently in a heading, close it (headings don't nest)
-                if let Some(idx) = self.current_node() {
-                    if let Some(tag) = self.get_tag_name(idx) {
-                        if matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
-                            let _ = self.stack_of_open_elements.pop();
-                        }
-                    }
+                if let Some(idx) = self.current_node()
+                    && let Some(tag) = self.get_tag_name(idx)
+                    && matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+                {
+                    let _ = self.stack_of_open_elements.pop();
                 }
                 let _ = self.insert_html_element(token);
             }
@@ -1665,10 +1682,10 @@ impl HTMLParser {
             // "Insert an HTML element for the token."
             Token::StartTag { name, .. } if matches!(name.as_str(), "optgroup" | "option") => {
                 // Close current option if any
-                if let Some(&node_id) = self.stack_of_open_elements.last() {
-                    if self.get_tag_name(node_id) == Some("option") {
-                        let _ = self.stack_of_open_elements.pop();
-                    }
+                if let Some(&node_id) = self.stack_of_open_elements.last()
+                    && self.get_tag_name(node_id) == Some("option")
+                {
+                    let _ = self.stack_of_open_elements.pop();
                 }
                 self.reconstruct_active_formatting_elements();
                 let _ = self.insert_html_element(token);
@@ -2237,7 +2254,7 @@ impl HTMLParser {
                     attributes: adjusted_attributes,
                     self_closing: *self_closing,
                 };
-                let element_id = self.insert_html_element(&adjusted_token);
+                let _element_id = self.insert_html_element(&adjusted_token);
 
                 // STEP 4: Handle self-closing flag
                 //   "If the token has its self-closing flag set, pop the current node off
@@ -2251,7 +2268,6 @@ impl HTMLParser {
                 // STEP 5: If not self-closing, future tokens should be processed by
                 //   "in foreign content" rules (§ 13.2.6.5). This is not yet implemented.
                 //   For now, we continue processing as HTML which works for simple cases.
-                let _ = element_id;
             }
 
             Token::StartTag {
@@ -2276,14 +2292,12 @@ impl HTMLParser {
                     attributes: adjusted_attributes,
                     self_closing: *self_closing,
                 };
-                let element_id = self.insert_html_element(&adjusted_token);
+                let _element_id = self.insert_html_element(&adjusted_token);
 
                 // STEP 4: Handle self-closing flag
                 if *self_closing {
                     let _ = self.stack_of_open_elements.pop();
                 }
-
-                let _ = element_id;
             }
 
             // [§ 13.2.6.4.7 "in body" - Any other start tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -2305,7 +2319,7 @@ impl HTMLParser {
                 if !name.contains('-') {
                     warn_once(
                         "HTML Parser",
-                        &format!("using generic handler for <{}>", name),
+                        &format!("using generic handler for <{name}>"),
                     );
                 }
             }
@@ -2434,11 +2448,11 @@ pub fn print_tree(tree: &DomTree, id: NodeId, indent: usize) {
     if let Some(node) = tree.get(id) {
         match &node.node_type {
             NodeType::Document => {
-                println!("{}Document", prefix);
+                println!("{prefix}Document");
             }
             NodeType::Element(data) => {
                 if data.attrs.is_empty() {
-                    println!("{}<{}>", prefix, data.tag_name);
+                    println!("{prefix}<{}>", data.tag_name);
                 } else {
                     let attrs: Vec<String> = data
                         .attrs
@@ -2447,19 +2461,19 @@ pub fn print_tree(tree: &DomTree, id: NodeId, indent: usize) {
                             if v.is_empty() {
                                 k.clone()
                             } else {
-                                format!("{}=\"{}\"", k, v)
+                                format!("{k}=\"{v}\"")
                             }
                         })
                         .collect();
-                    println!("{}<{} {}>", prefix, data.tag_name, attrs.join(" "));
+                    println!("{prefix}<{} {}>", data.tag_name, attrs.join(" "));
                 }
             }
             NodeType::Text(data) => {
                 let display = data.replace('\n', "\\n").replace(' ', "\u{00B7}");
-                println!("{}\"{}\"", prefix, display);
+                println!("{prefix}\"{display}\"");
             }
             NodeType::Comment(data) => {
-                println!("{}<!-- {} -->", prefix, data);
+                println!("{prefix}<!-- {data} -->");
             }
         }
         for &child_id in tree.children(id) {

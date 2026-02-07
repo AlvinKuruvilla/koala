@@ -14,6 +14,6 @@ pub use border::BorderValue;
 pub use color::{ColorValue, parse_color_value, parse_single_color};
 pub use font::{parse_font_family, parse_font_weight, parse_line_height};
 pub use length::{
-    AutoLength, LengthValue, DEFAULT_FONT_SIZE_PX,
-    parse_auto_length_value, parse_length_value, parse_single_auto_length, parse_single_length,
+    AutoLength, DEFAULT_FONT_SIZE_PX, LengthValue, parse_auto_length_value, parse_length_value,
+    parse_single_auto_length, parse_single_length,
 };

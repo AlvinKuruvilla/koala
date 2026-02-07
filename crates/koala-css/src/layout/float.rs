@@ -23,7 +23,7 @@ use super::box_model::Rect;
 ///
 /// none
 ///   The box is not floated."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatSide {
     /// "The element generates a block box that is floated to the left."
     Left,
@@ -52,7 +52,7 @@ pub enum FloatSide {
 ///
 /// none
 ///   No constraint on the box's position with respect to floats."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClearSide {
     /// "Requires the top border edge be below any left-floating boxes."
     Left,
@@ -93,8 +93,9 @@ pub struct FloatContext {
 
 impl FloatContext {
     /// Create a new float context for a containing block.
-    pub fn new(containing_width: f32) -> Self {
-        FloatContext {
+    #[must_use]
+    pub const fn new(containing_width: f32) -> Self {
+        Self {
             left_floats: Vec::new(),
             right_floats: Vec::new(),
             containing_width,
@@ -184,10 +185,11 @@ impl FloatContext {
     ///   // For clear: both → find max of both
     ///
     /// STEP 2: Compute clearance
-    ///   // clearance = max(0, lowest_float_bottom - hypothetical_top)
+    ///   // `clearance = max(0, lowest_float_bottom - hypothetical_top)`
     ///
     /// STEP 3: Return the new Y position
-    ///   // new_y = hypothetical_top + clearance
+    ///   // `new_y = hypothetical_top + clearance`
+    #[must_use]
     pub fn clear(&self, _clear_side: ClearSide, _current_y: f32) -> f32 {
         todo!("Compute clearance for clear property per CSS 2.1 § 9.5.2")
     }
@@ -204,20 +206,21 @@ impl FloatContext {
     ///
     /// STEP 1: Find all active floats at the given Y position
     ///   // A float is "active" at Y if:
-    ///   //   float.margin_box.y <= y < float.margin_box.y + float.margin_box.height
+    ///   //   `float.margin_box.y <= y < float.margin_box.y + float.margin_box.height`
     ///
     /// STEP 2: Calculate left intrusion
-    ///   // left_edge = max(float.margin_box.x + float.margin_box.width)
+    ///   // `left_edge = max(float.margin_box.x + float.margin_box.width)`
     ///   //             for all active left floats
     ///
     /// STEP 3: Calculate right intrusion
-    ///   // right_edge = min(float.margin_box.x)
+    ///   // `right_edge = min(float.margin_box.x)`
     ///   //              for all active right floats
-    ///   // If no right floats, right_edge = containing_width
+    ///   // If no right floats, `right_edge = containing_width`
     ///
     /// STEP 4: Return available width and left offset
-    ///   // available_width = right_edge - left_edge
-    ///   // left_offset = left_edge
+    ///   // `available_width = right_edge - left_edge`
+    ///   // `left_offset = left_edge`
+    #[must_use]
     pub fn available_width_at(&self, _y: f32, _height: f32) -> (f32, f32) {
         todo!("Calculate available width between floats at given Y per CSS 2.1 § 9.5")
     }

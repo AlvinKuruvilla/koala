@@ -13,7 +13,7 @@ use koala_common::warning::warn_once;
 pub const DEFAULT_FONT_SIZE_PX: f64 = 16.0;
 
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
-/// "Lengths refer to distance measurements and are denoted by <length> in the
+/// "Lengths refer to distance measurements and are denoted by `<length>` in the
 /// property definitions."
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum LengthValue {
@@ -56,17 +56,18 @@ impl LengthValue {
     ///
     /// NOTE: For viewport units (vw, vh), this returns 0.0 as a fallback.
     /// Use `to_px_with_viewport()` instead when viewport dimensions are available.
+    #[must_use]
     pub fn to_px(&self) -> f64 {
         match self {
             // [§ 6.1 Absolute lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths)
-            LengthValue::Px(px) => *px,
+            Self::Px(px) => *px,
             // [§ 5.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
             // "Equal to the computed value of the font-size property of the element"
-            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
+            Self::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
             // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
             // Viewport units require viewport dimensions - return 0 as fallback.
             // The layout engine should use to_px_with_viewport() instead.
-            LengthValue::Vw(_) | LengthValue::Vh(_) => 0.0,
+            Self::Vw(_) | Self::Vh(_) => 0.0,
         }
     }
 
@@ -75,14 +76,15 @@ impl LengthValue {
     /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
     /// "The viewport-percentage lengths are relative to the size of the
     /// initial containing block."
+    #[must_use]
     pub fn to_px_with_viewport(&self, viewport_width: f64, viewport_height: f64) -> f64 {
         match self {
-            LengthValue::Px(px) => *px,
-            LengthValue::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
+            Self::Px(px) => *px,
+            Self::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
             // "1vw = 1% of viewport width"
-            LengthValue::Vw(vw) => *vw * viewport_width / 100.0,
+            Self::Vw(vw) => *vw * viewport_width / 100.0,
             // "1vh = 1% of viewport height"
-            LengthValue::Vh(vh) => *vh * viewport_height / 100.0,
+            Self::Vh(vh) => *vh * viewport_height / 100.0,
         }
     }
 }
@@ -94,8 +96,8 @@ impl LengthValue {
 ///
 /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
 ///
-/// "Value: <margin-width>{1,4} | inherit"
-/// "<margin-width> = <length> | <percentage> | auto"
+/// "Value: `<margin-width>`{1,4} | inherit"
+/// "`<margin-width>` = `<length>` | `<percentage>` | auto"
 ///
 /// This type represents a CSS value that can be either 'auto' or a specific length.
 /// Used for properties like margin where 'auto' has special meaning.
@@ -105,7 +107,7 @@ impl LengthValue {
 /// "If both 'margin-left' and 'margin-right' are 'auto', their used values
 /// are equal. This horizontally centers the element with respect to the
 /// edges of the containing block."
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum AutoLength {
     /// [§ 4.4](https://www.w3.org/TR/CSS2/cascade.html#value-def-auto)
     ///
@@ -121,8 +123,9 @@ pub enum AutoLength {
 
 impl AutoLength {
     /// Check if the value is 'auto'.
-    pub fn is_auto(&self) -> bool {
-        matches!(self, AutoLength::Auto)
+    #[must_use]
+    pub const fn is_auto(&self) -> bool {
+        matches!(self, Self::Auto)
     }
 
     /// Get the length value in pixels, or 0.0 if 'auto'.
@@ -130,16 +133,18 @@ impl AutoLength {
     /// NOTE: When 'auto', this returns 0.0 as a fallback. The actual
     /// resolved value depends on the layout algorithm (e.g., centering
     /// for `margin: auto`). See [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth).
+    #[must_use]
     pub fn to_px(&self) -> f64 {
         match self {
-            AutoLength::Auto => 0.0,
-            AutoLength::Length(len) => len.to_px(),
+            Self::Auto => 0.0,
+            Self::Length(len) => len.to_px(),
         }
     }
 }
 
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
 /// Parse a length value from component values.
+#[must_use]
 pub fn parse_length_value(values: &[ComponentValue]) -> Option<LengthValue> {
     for v in values {
         if let Some(len) = parse_single_length(v) {
@@ -150,7 +155,8 @@ pub fn parse_length_value(values: &[ComponentValue]) -> Option<LengthValue> {
 }
 
 /// [§ 4.1 Lengths](https://www.w3.org/TR/css-values-4/#lengths)
-/// Parse a single component value as a <length>.
+/// Parse a single component value as a `<length>`.
+#[must_use]
 pub fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
     match v {
         ComponentValue::Token(CSSToken::Dimension { value, unit, .. }) => {
@@ -176,6 +182,7 @@ pub fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
 
 /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
 /// Parse a value that can be either 'auto' or a length.
+#[must_use]
 pub fn parse_auto_length_value(values: &[ComponentValue]) -> Option<AutoLength> {
     for v in values {
         if let Some(al) = parse_single_auto_length(v) {
@@ -186,11 +193,12 @@ pub fn parse_auto_length_value(values: &[ComponentValue]) -> Option<AutoLength> 
 }
 
 /// Parse a single component value as 'auto' or a length.
+#[must_use]
 pub fn parse_single_auto_length(v: &ComponentValue) -> Option<AutoLength> {
-    if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
-        if ident.eq_ignore_ascii_case("auto") {
-            return Some(AutoLength::Auto);
-        }
+    if let ComponentValue::Token(CSSToken::Ident(ident)) = v
+        && ident.eq_ignore_ascii_case("auto")
+    {
+        return Some(AutoLength::Auto);
     }
     parse_single_length(v).map(AutoLength::Length)
 }

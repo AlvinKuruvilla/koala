@@ -15,7 +15,7 @@ use crate::tokenizer::CSSToken;
 /// This property is essential for CSS Logical Properties, which map abstract
 /// directions (block-start, inline-end, etc.) to physical directions based on
 /// the writing mode.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 pub enum WritingMode {
     /// [§ 2](https://www.w3.org/TR/css-writing-modes-4/#valdef-writing-mode-horizontal-tb)
     ///
@@ -58,7 +58,7 @@ pub enum WritingMode {
 /// Physical side of a box
 ///
 /// Used to map logical directions (block-start, etc.) to physical sides.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhysicalSide {
     /// Top edge of the box
     Top,
@@ -80,11 +80,12 @@ impl WritingMode {
     /// | horizontal-tb  | top         |
     /// | vertical-rl    | right       |
     /// | vertical-lr    | left        |
-    pub fn block_start_physical(&self) -> PhysicalSide {
+    #[must_use]
+    pub const fn block_start_physical(&self) -> PhysicalSide {
         match self {
-            WritingMode::HorizontalTb => PhysicalSide::Top,
-            WritingMode::VerticalRl => PhysicalSide::Right,
-            WritingMode::VerticalLr => PhysicalSide::Left,
+            Self::HorizontalTb => PhysicalSide::Top,
+            Self::VerticalRl => PhysicalSide::Right,
+            Self::VerticalLr => PhysicalSide::Left,
         }
     }
 
@@ -95,11 +96,12 @@ impl WritingMode {
     /// | horizontal-tb  | bottom    |
     /// | vertical-rl    | left      |
     /// | vertical-lr    | right     |
-    pub fn block_end_physical(&self) -> PhysicalSide {
+    #[must_use]
+    pub const fn block_end_physical(&self) -> PhysicalSide {
         match self {
-            WritingMode::HorizontalTb => PhysicalSide::Bottom,
-            WritingMode::VerticalRl => PhysicalSide::Left,
-            WritingMode::VerticalLr => PhysicalSide::Right,
+            Self::HorizontalTb => PhysicalSide::Bottom,
+            Self::VerticalRl => PhysicalSide::Left,
+            Self::VerticalLr => PhysicalSide::Right,
         }
     }
 
@@ -116,6 +118,7 @@ impl WritingMode {
 ///   - horizontal-tb: Top-to-bottom block flow (default)
 ///   - vertical-rl: Right-to-left block flow
 ///   - vertical-lr: Left-to-right block flow
+#[must_use]
 pub fn parse_writing_mode(values: &[ComponentValue]) -> Option<WritingMode> {
     for v in values {
         if let ComponentValue::Token(CSSToken::Ident(ident)) = v {

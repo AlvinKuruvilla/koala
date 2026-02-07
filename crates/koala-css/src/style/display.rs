@@ -19,9 +19,9 @@ use koala_common::warning::warn_once;
 
 /// [§ 2.1 Outer Display Roles](https://www.w3.org/TR/css-display-3/#outer-role)
 ///
-/// "The <display-outside> keywords specify the element's outer display type,
+/// "The `<display-outside>` keywords specify the element's outer display type,
 /// which is essentially its principal box's role in flow layout."
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum OuterDisplayType {
     /// "The element generates a block-level box when placed in flow layout."
     Block,
@@ -33,9 +33,9 @@ pub enum OuterDisplayType {
 
 /// [§ 2.2 Inner Display Layout Models](https://www.w3.org/TR/css-display-3/#inner-model)
 ///
-/// "The <display-inside> keywords specify the element's inner display type,
+/// "The `<display-inside>` keywords specify the element's inner display type,
 /// which defines the type of formatting context that lays out its contents."
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum InnerDisplayType {
     /// "The element lays out its contents using flow layout (block-and-inline layout)."
     Flow,
@@ -52,7 +52,7 @@ pub enum InnerDisplayType {
 
 /// Combined display value
 /// [§ 2 Box Layout Modes](https://www.w3.org/TR/css-display-3/#the-display-properties)
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DisplayValue {
     /// "The outer display type, which dictates how the box participates in flow layout."
     pub outer: OuterDisplayType,
@@ -62,7 +62,8 @@ pub struct DisplayValue {
 
 impl DisplayValue {
     /// `display: block` - block outer, flow inner
-    pub fn block() -> Self {
+    #[must_use]
+    pub const fn block() -> Self {
         Self {
             outer: OuterDisplayType::Block,
             inner: InnerDisplayType::Flow,
@@ -70,7 +71,8 @@ impl DisplayValue {
     }
 
     /// `display: inline` - inline outer, flow inner
-    pub fn inline() -> Self {
+    #[must_use]
+    pub const fn inline() -> Self {
         Self {
             outer: OuterDisplayType::Inline,
             inner: InnerDisplayType::Flow,
@@ -78,7 +80,8 @@ impl DisplayValue {
     }
 
     /// `display: inline-block` - inline outer, flow-root inner
-    pub fn inline_block() -> Self {
+    #[must_use]
+    pub const fn inline_block() -> Self {
         Self {
             outer: OuterDisplayType::Inline,
             inner: InnerDisplayType::FlowRoot,
@@ -86,7 +89,8 @@ impl DisplayValue {
     }
 
     /// `display: flex` - block outer, flex inner
-    pub fn flex() -> Self {
+    #[must_use]
+    pub const fn flex() -> Self {
         Self {
             outer: OuterDisplayType::Block,
             inner: InnerDisplayType::Flex,
@@ -94,7 +98,8 @@ impl DisplayValue {
     }
 
     /// `display: grid` - block outer, grid inner
-    pub fn grid() -> Self {
+    #[must_use]
+    pub const fn grid() -> Self {
         Self {
             outer: OuterDisplayType::Block,
             inner: InnerDisplayType::Grid,
@@ -105,7 +110,8 @@ impl DisplayValue {
 /// [§ 2 The display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
 ///
 /// Parse a display value from component values.
-/// Returns None if the value is "none" or unrecognized (use is_display_none for "none").
+/// Returns None if the value is "none" or unrecognized (use `is_display_none` for "none").
+#[must_use]
 pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
     for v in values {
         if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
@@ -134,7 +140,7 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
                 "none" => return None,
 
                 _ => {
-                    warn_once("CSS", &format!("unsupported display value '{}'", ident));
+                    warn_once("CSS", &format!("unsupported display value '{ident}'"));
                 }
             }
         }
@@ -145,12 +151,13 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
 /// [§ 2.6 display: none](https://www.w3.org/TR/css-display-3/#valdef-display-none)
 ///
 /// Check if the display value is "none".
+#[must_use]
 pub fn is_display_none(values: &[ComponentValue]) -> bool {
     for v in values {
-        if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
-            if ident.eq_ignore_ascii_case("none") {
-                return true;
-            }
+        if let ComponentValue::Token(CSSToken::Ident(ident)) = v
+            && ident.eq_ignore_ascii_case("none")
+        {
+            return true;
         }
     }
     false

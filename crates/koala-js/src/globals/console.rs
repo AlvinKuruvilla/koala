@@ -6,8 +6,8 @@
 //! and `error` methods that output to stdout/stderr.
 
 use boa_engine::{
-    js_string, object::ObjectInitializer, property::Attribute, Context, JsResult, JsValue,
-    NativeFunction,
+    Context, JsResult, JsValue, NativeFunction, js_string, object::ObjectInitializer,
+    property::Attribute,
 };
 
 /// Register the console global object on the context.
@@ -108,10 +108,7 @@ fn console_error(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
 fn format_console_args(args: &[JsValue], context: &mut Context) -> JsResult<String> {
     let strings: Result<Vec<String>, _> = args
         .iter()
-        .map(|arg| {
-            arg.to_string(context)
-                .map(|s| s.to_std_string_escaped())
-        })
+        .map(|arg| arg.to_string(context).map(|s| s.to_std_string_escaped()))
         .collect();
 
     Ok(strings?.join(" "))

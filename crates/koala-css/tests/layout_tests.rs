@@ -238,8 +238,7 @@ fn test_parent_child_top_margin_collapsing() {
 
     // The h1's content.y should be body_content_top + h1.border.top +
     // h1.padding.top (with margin absorbed into the parent).
-    let expected_h1_y =
-        body_content_top + h1.dimensions.border.top + h1.dimensions.padding.top;
+    let expected_h1_y = body_content_top + h1.dimensions.border.top + h1.dimensions.padding.top;
     assert!(
         (h1_content_top - expected_h1_y).abs() < 1.0,
         "h1 content.y should be ~{expected_h1_y:.1} (flush with body content top), \
@@ -295,8 +294,7 @@ fn test_parent_child_bottom_margin_collapsing() {
 
     // Body's content height should exclude the last child's collapsed margin
     let last_mb = p.dimensions.margin_box();
-    let height_with_margin =
-        (last_mb.y + last_mb.height) - body.dimensions.content.y;
+    let height_with_margin = (last_mb.y + last_mb.height) - body.dimensions.content.y;
     assert!(
         body.dimensions.content.height < height_with_margin - 0.5,
         "body content height ({:.1}) should be less than full margin-box height ({:.1})",
@@ -536,8 +534,7 @@ fn test_flex_justify_space_between() {
     );
 
     // Last item at right edge.
-    let right_edge =
-        item_c.dimensions.margin_box().x + item_c.dimensions.margin_box().width;
+    let right_edge = item_c.dimensions.margin_box().x + item_c.dimensions.margin_box().width;
     let container_right = flex.dimensions.content.x + flex.dimensions.content.width;
     assert!(
         (right_edge - container_right).abs() < 2.0,

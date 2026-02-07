@@ -9,7 +9,7 @@ use koala_dom::{DomTree, ElementData, NodeId};
 /// [§ 6 Attribute selectors](https://www.w3.org/TR/selectors-4/#attribute-selectors)
 ///
 /// A simple selector is a single condition on an element.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimpleSelector {
     /// [§ 5.1 Type selector](https://www.w3.org/TR/selectors-4/#type-selectors)
     /// "A type selector is the name of a document language element type,
@@ -33,10 +33,11 @@ pub enum SimpleSelector {
 }
 
 /// [§ 4.2 Compound selectors](https://www.w3.org/TR/selectors-4/#compound)
+///
 /// "A compound selector is a sequence of simple selectors that are not
 /// separated by a combinator, and represents a set of simultaneous
 /// conditions on a single element."
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompoundSelector {
     /// The list of simple selectors that make up this compound selector.
     pub simple_selectors: Vec<SimpleSelector>,
@@ -46,7 +47,7 @@ pub struct CompoundSelector {
 ///
 /// "A combinator is punctuation that represents a particular kind of
 /// relationship between the selectors on either side."
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Combinator {
     /// [§ 16.1 Descendant combinator](https://www.w3.org/TR/selectors-4/#descendant-combinators)
     /// "A descendant combinator is whitespace that separates two compound selectors.
@@ -85,7 +86,7 @@ pub enum Combinator {
 /// ```text
 /// [div.container] --(Child)--> [ul.nav] --(Descendant)--> [li] --(Descendant)--> [a.active]
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComplexSelector {
     /// The rightmost compound selector (the subject of the selector).
     /// [§ 4.3](https://www.w3.org/TR/selectors-4/#complex)
@@ -93,7 +94,7 @@ pub struct ComplexSelector {
     /// by the last compound selector in the complex selector."
     pub subject: CompoundSelector,
 
-    /// Chain of (combinator, compound_selector) pairs going left from the subject.
+    /// Chain of (combinator, `compound_selector`) pairs going left from the subject.
     /// Empty if this is a simple compound selector with no combinators.
     ///
     /// For `A > B C`, this would be:
@@ -109,19 +110,21 @@ pub struct ComplexSelector {
 ///  - count the number of ID selectors in the selector (= A)
 ///  - count the number of class selectors, attributes selectors, and pseudo-classes in the selector (= B)
 ///  - count the number of type selectors and pseudo-elements in the selector (= C)
+///
 /// Specificities are compared by comparing the three components in order."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Specificity(pub u32, pub u32, pub u32);
 
 impl Specificity {
     /// Create a new specificity with (A, B, C) components.
-    pub fn new(a: u32, b: u32, c: u32) -> Self {
-        Specificity(a, b, c)
+    #[must_use]
+    pub const fn new(a: u32, b: u32, c: u32) -> Self {
+        Self(a, b, c)
     }
 }
 
 /// A parsed CSS selector ready for matching.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSelector {
     /// The complex selector (compound selectors with combinators).
     pub complex: ComplexSelector,
@@ -131,7 +134,8 @@ pub struct ParsedSelector {
 
 impl ParsedSelector {
     /// Check if this is a simple selector (no combinators).
-    pub fn is_simple(&self) -> bool {
+    #[must_use]
+    pub const fn is_simple(&self) -> bool {
         self.complex.combinators.is_empty()
     }
 
@@ -143,6 +147,7 @@ impl ParsedSelector {
     ///
     /// NOTE: This method only works for simple selectors. For complex selectors
     /// with combinators, use `matches_in_tree` which has access to DOM context.
+    #[must_use]
     pub fn matches(&self, element: &ElementData) -> bool {
         // First, the subject (rightmost compound) must match the element
         let subject_matches = self
@@ -174,10 +179,11 @@ impl ParsedSelector {
     ///
     /// # Arguments
     /// * `tree` - The DOM tree containing the element
-    /// * `node_id` - The NodeId of the element to match
+    /// * `node_id` - The `NodeId` of the element to match
     ///
     /// # Returns
     /// `true` if the selector matches the element
+    #[must_use]
     pub fn matches_in_tree(&self, tree: &DomTree, node_id: NodeId) -> bool {
         // Get the element data for this node
         let Some(element) = tree.as_element(node_id) else {
@@ -216,7 +222,7 @@ impl ParsedSelector {
     ///
     /// # Arguments
     /// * `tree` - The DOM tree
-    /// * `subject_id` - The NodeId of the subject element (already matched)
+    /// * `subject_id` - The `NodeId` of the subject element (already matched)
     ///
     /// # Returns
     /// `true` if all combinator relationships are satisfied
@@ -232,11 +238,8 @@ impl ParsedSelector {
                 Combinator::Descendant => {
                     // Find any ancestor that matches the compound selector
                     let matched_ancestor = tree.ancestors(current_id).find(|&ancestor_id| {
-                        if let Some(ancestor_elem) = tree.as_element(ancestor_id) {
-                            compound_matches(compound, ancestor_elem)
-                        } else {
-                            false
-                        }
+                        tree.as_element(ancestor_id)
+                            .is_some_and(|ancestor_elem| compound_matches(compound, ancestor_elem))
                     });
 
                     match matched_ancestor {
@@ -325,12 +328,8 @@ fn compound_matches(compound: &CompoundSelector, element: &ElementData) -> bool 
 /// Per spec, the next-sibling combinator considers element nodes only.
 fn find_previous_element_sibling(tree: &DomTree, node_id: NodeId) -> Option<NodeId> {
     // Walk backwards through preceding siblings until we find an element
-    for sibling_id in tree.preceding_siblings(node_id) {
-        if tree.as_element(sibling_id).is_some() {
-            return Some(sibling_id);
-        }
-    }
-    None
+    tree.preceding_siblings(node_id)
+        .find(|&sibling_id| tree.as_element(sibling_id).is_some())
 }
 
 /// [§ 16.4 Subsequent-sibling combinator](https://www.w3.org/TR/selectors-4/#general-sibling-combinators)
@@ -342,10 +341,10 @@ fn find_matching_preceding_sibling(
     compound: &CompoundSelector,
 ) -> Option<NodeId> {
     for sibling_id in tree.preceding_siblings(node_id) {
-        if let Some(sibling_elem) = tree.as_element(sibling_id) {
-            if compound_matches(compound, sibling_elem) {
-                return Some(sibling_id);
-            }
+        if let Some(sibling_elem) = tree.as_element(sibling_id)
+            && compound_matches(compound, sibling_elem)
+        {
+            return Some(sibling_id);
         }
     }
     None
@@ -356,6 +355,7 @@ impl ComplexSelector {
     ///
     /// Calculate specificity for the entire complex selector by summing
     /// specificity of all compound selectors in the chain.
+    #[must_use]
     pub fn calculate_specificity(&self) -> Specificity {
         let mut spec = calculate_compound_specificity(&self.subject);
 
@@ -398,43 +398,44 @@ fn calculate_compound_specificity(compound: &CompoundSelector) -> Specificity {
 
 impl SimpleSelector {
     /// Check if this simple selector matches the given element.
+    #[must_use]
     pub fn matches(&self, element: &ElementData) -> bool {
         match self {
             // [§ 5.1 Type selector](https://www.w3.org/TR/selectors-4/#type-selectors)
             // "A type selector written in the style sheet as an identifier represents
             // an element in the document tree with the same qualified name as the identifier."
-            SimpleSelector::Type(name) => element.tag_name.eq_ignore_ascii_case(name),
+            Self::Type(name) => element.tag_name.eq_ignore_ascii_case(name),
 
             // [§ 6.6 Class selector](https://www.w3.org/TR/selectors-4/#class-html)
             // "For documents that use the class attribute (which most do), authors
             // can use the 'period' (.) notation as an alternative."
-            SimpleSelector::Class(class_name) => element.classes().contains(class_name.as_str()),
+            Self::Class(class_name) => element.classes().contains(class_name.as_str()),
 
             // [§ 6.7 ID selector](https://www.w3.org/TR/selectors-4/#id-selectors)
             // "An ID selector represents an element instance that has an identifier
             // that matches the identifier in the ID selector."
-            SimpleSelector::Id(id) => element.id().map_or(false, |el_id| el_id == id),
+            Self::Id(id) => element.id().is_some_and(|el_id| el_id == id),
 
             // [§ 5.2 Universal selector](https://www.w3.org/TR/selectors-4/#universal-selector)
             // "The universal selector...represents the qualified name of any element type."
-            SimpleSelector::Universal => true,
+            Self::Universal => true,
         }
     }
 }
 
 /// Check if a character can start an identifier.
 /// [§ 4.3.10 ident-start code point](https://www.w3.org/TR/css-syntax-3/#ident-start-code-point)
-fn is_ident_start_char(c: char) -> bool {
+const fn is_ident_start_char(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_' || !c.is_ascii()
 }
 
 /// Check if a character can continue an identifier.
 /// [§ 4.3.9 ident code point](https://www.w3.org/TR/css-syntax-3/#ident-code-point)
-fn is_ident_char(c: char) -> bool {
+const fn is_ident_char(c: char) -> bool {
     is_ident_start_char(c) || c.is_ascii_digit() || c == '-'
 }
 
-/// Parse a raw selector string into a ParsedSelector.
+/// Parse a raw selector string into a `ParsedSelector`.
 ///
 /// [§ 4 Selector syntax](https://www.w3.org/TR/selectors-4/#syntax)
 ///
@@ -449,27 +450,13 @@ fn is_ident_char(c: char) -> bool {
 /// - Complex selectors with combinators: `div p`, `ul > li`, `h1 + p`, `h1 ~ p`
 ///
 /// Returns None for unsupported selectors (pseudo-classes, attribute selectors, etc.).
+///
+/// # Panics
+///
+/// Panics if the internal compound/combinator bookkeeping is inconsistent
+/// (this should not happen with valid input).
+#[must_use]
 pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    // [§ 4.3 Complex selectors](https://www.w3.org/TR/selectors-4/#complex)
-    // "A complex selector is a chain of one or more compound selectors
-    // separated by combinators."
-    //
-    // We parse left-to-right, collecting compound selectors and the
-    // combinators between them. At the end, we reverse so the rightmost
-    // (subject) is easily accessible.
-
-    let mut compounds: Vec<CompoundSelector> = Vec::new();
-    let mut combinators_between: Vec<Combinator> = Vec::new();
-
-    let mut chars = trimmed.chars().peekable();
-    let mut current_compound = Vec::new();
-    let mut current_ident = String::new();
-
     /// Flush the current identifier as a type selector into the compound.
     fn flush_ident(ident: &mut String, compound: &mut Vec<SimpleSelector>) {
         if !ident.is_empty() {
@@ -495,6 +482,26 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
         true
     }
 
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // [§ 4.3 Complex selectors](https://www.w3.org/TR/selectors-4/#complex)
+    // "A complex selector is a chain of one or more compound selectors
+    // separated by combinators."
+    //
+    // We parse left-to-right, collecting compound selectors and the
+    // combinators between them. At the end, we reverse so the rightmost
+    // (subject) is easily accessible.
+
+    let mut compounds: Vec<CompoundSelector> = Vec::new();
+    let mut combinators_between: Vec<Combinator> = Vec::new();
+
+    let mut chars = trimmed.chars().peekable();
+    let mut current_compound = Vec::new();
+    let mut current_ident = String::new();
+
     while let Some(c) = chars.next() {
         match c {
             // [§ 6.6 Class selector](https://www.w3.org/TR/selectors-4/#class-html)
@@ -503,7 +510,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
             '.' => {
                 flush_ident(&mut current_ident, &mut current_compound);
                 // Collect class name
-                while chars.peek().map_or(false, |&ch| is_ident_char(ch)) {
+                while chars.peek().is_some_and(|&ch| is_ident_char(ch)) {
                     current_ident.push(chars.next().unwrap());
                 }
                 if !current_ident.is_empty() {
@@ -517,7 +524,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
             '#' => {
                 flush_ident(&mut current_ident, &mut current_compound);
                 // Collect ID
-                while chars.peek().map_or(false, |&ch| is_ident_char(ch)) {
+                while chars.peek().is_some_and(|&ch| is_ident_char(ch)) {
                     current_ident.push(chars.next().unwrap());
                 }
                 if !current_ident.is_empty() {
@@ -548,7 +555,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 }
 
                 // Consume all contiguous whitespace
-                while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
+                while chars.peek().is_some_and(|&ch| ch.is_ascii_whitespace()) {
                     let _ = chars.next();
                 }
 
@@ -568,7 +575,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     // [§ 16.4 Subsequent-sibling combinator](https://www.w3.org/TR/selectors-4/#general-sibling-combinators)
                     // Explicit combinator follows - just flush the identifier into the compound,
                     // but don't flush the compound itself. The combinator case will handle that.
-                    Some('>') | Some('+') | Some('~') => {
+                    Some('>' | '+' | '~') => {
                         flush_ident(&mut current_ident, &mut current_compound);
                     }
 
@@ -598,7 +605,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     return None; // Invalid: > without left-hand side
                 }
                 // Skip whitespace after combinator
-                while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
+                while chars.peek().is_some_and(|&ch| ch.is_ascii_whitespace()) {
                     let _ = chars.next();
                 }
                 combinators_between.push(Combinator::Child);
@@ -613,7 +620,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     return None; // Invalid: + without left-hand side
                 }
                 // Skip whitespace after combinator
-                while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
+                while chars.peek().is_some_and(|&ch| ch.is_ascii_whitespace()) {
                     let _ = chars.next();
                 }
                 combinators_between.push(Combinator::NextSibling);
@@ -629,7 +636,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     return None; // Invalid: ~ without left-hand side
                 }
                 // Skip whitespace after combinator
-                while chars.peek().map_or(false, |&ch| ch.is_ascii_whitespace()) {
+                while chars.peek().is_some_and(|&ch| ch.is_ascii_whitespace()) {
                     let _ = chars.next();
                 }
                 combinators_between.push(Combinator::SubsequentSibling);
@@ -653,18 +660,11 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
             //
             // [§ 11 Pseudo-elements](https://www.w3.org/TR/selectors-4/#pseudo-elements)
             // TODO: Implement pseudo-element selectors (::before, ::after, etc.)
-            ':' => {
-                // Pseudo-classes and pseudo-elements are not yet implemented
-                return None;
-            }
-
+            //
             // [§ 6.4 Attribute selectors](https://www.w3.org/TR/selectors-4/#attribute-selectors)
             // TODO: Implement attribute selectors ([attr], [attr=value], etc.)
-            '[' => {
-                return None;
-            }
-
-            // Unknown character - unsupported selector syntax
+            //
+            // Unknown character (including ':', '[') - unsupported selector syntax
             _ => {
                 return None;
             }

@@ -105,6 +105,7 @@ impl BoxDimensions {
     ///        + border.top + border.bottom
     ///        + margin.top + margin.bottom
     /// ```
+    #[must_use]
     pub fn margin_box(&self) -> Rect {
         Rect {
             x: self.content.x - self.padding.left - self.border.left - self.margin.left,
@@ -142,6 +143,7 @@ impl BoxDimensions {
     /// width = content.width + padding.left + padding.right
     /// height = content.height + padding.top + padding.bottom
     /// ```
+    #[must_use]
     pub fn padding_box(&self) -> Rect {
         Rect {
             x: self.content.x - self.padding.left,
@@ -172,6 +174,7 @@ impl BoxDimensions {
     ///        + padding.top + padding.bottom
     ///        + border.top + border.bottom
     /// ```
+    #[must_use]
     pub fn border_box(&self) -> Rect {
         Rect {
             x: self.content.x - self.padding.left - self.border.left,
@@ -190,7 +193,8 @@ impl BoxDimensions {
     }
     /// [§ 3 The CSS Box Model](https://www.w3.org/TR/css-box-3/#box-model)
     /// "The content box contains the actual content of the element."
-    pub fn content_box(&self) -> Rect {
+    #[must_use]
+    pub const fn content_box(&self) -> Rect {
         self.content
     }
 }
