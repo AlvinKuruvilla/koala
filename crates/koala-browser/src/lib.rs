@@ -17,6 +17,7 @@
 //! - DOM manipulation from JavaScript
 
 pub mod font_metrics;
+pub mod image_loader;
 pub mod renderer;
 
 pub use koala_css as css;
@@ -26,8 +27,8 @@ pub use koala_js as js;
 
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
-use koala_common::warning::warn_once;
 
+use image_loader::{ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations};
 use koala_css::{
     ComputedStyle, LayoutBox, Stylesheet, compute_styles, extract_all_stylesheets,
     extract_style_content,
@@ -93,8 +94,8 @@ pub enum LoadError {
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::FileError(msg) => write!(f, "File error: {}", msg),
-            LoadError::NetworkError(msg) => write!(f, "Network error: {}", msg),
+            Self::FileError(msg) => write!(f, "File error: {msg}"),
+            Self::NetworkError(msg) => write!(f, "Network error: {msg}"),
         }
     }
 }
@@ -122,11 +123,11 @@ pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     // Fetch or read the HTML source
     let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
         let text = koala_common::net::fetch_text(path)
-            .map_err(|e| LoadError::NetworkError(e))?;
+            .map_err(LoadError::NetworkError)?;
         (text, Some(path))
     } else {
         let content = fs::read_to_string(path)
-            .map_err(|e| LoadError::FileError(format!("Failed to read '{}': {}", path, e)))?;
+            .map_err(|e| LoadError::FileError(format!("Failed to read '{path}': {e}")))?;
         (content, None)
     };
 
@@ -137,10 +138,11 @@ pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     Ok(doc)
 }
 
-/// Parse an HTML string into a LoadedDocument.
+/// Parse an HTML string into a `LoadedDocument`.
 ///
 /// Use this when you already have the HTML content as a string.
 /// Note: External stylesheets cannot be loaded without a base URL.
+#[must_use] 
 pub fn parse_html_string(html: &str) -> LoadedDocument {
     parse_html_with_base_url(html, None)
 }
@@ -211,15 +213,19 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
 /// Walks the DOM for `<img>` elements with a `src` attribute, fetches the
 /// image data (network or filesystem), and decodes it to RGBA pixels.
 ///
+/// Uses [`ImageLoaderPipeline`] to detect format (SVG vs raster) and
+/// dispatch to the appropriate decoder.
+///
 /// Returns:
-/// - A map of src → LoadedImage for the renderer
-/// - A map of NodeId → (width, height) for layout intrinsic dimensions
+/// - A map of src → `LoadedImage` for the renderer
+/// - A map of `NodeId` → (width, height) for layout intrinsic dimensions
 fn load_images(
     dom: &DomTree,
     base_url: Option<&str>,
 ) -> (HashMap<String, LoadedImage>, HashMap<NodeId, (f32, f32)>) {
     let mut images: HashMap<String, LoadedImage> = HashMap::new();
     let mut image_dims: HashMap<NodeId, (f32, f32)> = HashMap::new();
+    let pipeline = ImageLoaderPipeline::new();
 
     for node_id in dom.iter_all() {
         if let Some(element) = dom.as_element(node_id) {
@@ -241,139 +247,34 @@ fn load_images(
                 continue;
             }
 
-            // Resolve URL and fetch bytes.
+            // Resolve URL.
             let resolved = koala_common::url::resolve_url(src, base_url);
 
-            // Handle SVG images separately (resvg for rasterization).
-            //
-            // Real-world URLs often carry query strings (`?w=1024`) or
-            // fragment identifiers (`#globe-blue`).  Strip these before
-            // checking the file extension so we still recognise the SVG.
-            let (path_for_ext, query, fragment) = {
-                let (before_frag, frag) = resolved.split_once('#')
-                    .map_or((&*resolved, None), |(b, f)| (b, Some(f)));
-                let (path, qry) = before_frag.split_once('?')
-                    .map_or((before_frag, None), |(b, q)| (b, Some(q)));
-                (path, qry, frag)
-            };
+            // Strip query/fragment for extension-based format detection.
+            let path_for_ext = strip_url_decorations(&resolved);
 
-            // TODO: Handle SVG fragment identifiers (§ 7.1 of SVG spec) —
-            // e.g. `icons.svg#globe-blue` should extract a single element
-            // from a sprite sheet rather than rendering the whole document.
-            if let Some(frag) = fragment {
-                warn_once("image", &format!(
-                    "ignoring SVG fragment identifier '#{frag}' in '{src}' (sprite sheets not yet supported)"
-                ));
-            }
+            // Emit warnings for unhandled URL decorations.
+            warn_url_decorations(src, &resolved);
 
-            // TODO: Handle URL query parameters that hint at image sizing —
-            // e.g. `?w=1024` may indicate a server-side resize or could
-            // inform client-side rasterization dimensions.
-            if let Some(qry) = query {
-                warn_once("image", &format!(
-                    "ignoring query string '?{qry}' in '{src}' (URL parameters not yet handled)"
-                ));
-            }
-
-            if path_for_ext.ends_with(".svg") || resolved.starts_with("data:image/svg") {
-                let svg_data = if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                    match koala_common::net::fetch_bytes(&resolved) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            eprintln!("[Koala] Warning: failed to fetch SVG '{}': {}", src, e);
-                            continue;
-                        }
-                    }
-                } else if resolved.starts_with("data:") {
-                    match koala_common::net::fetch_bytes_from_data_url(&resolved) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            eprintln!("[Koala] Warning: failed to decode SVG data URL '{}': {}", src, e);
-                            continue;
-                        }
-                    }
-                } else {
-                    match fs::read(&resolved) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            eprintln!("[Koala] Warning: failed to read SVG '{}': {}", resolved, e);
-                            continue;
-                        }
-                    }
-                };
-
-                // Parse and render the SVG
-                let opts = usvg::Options::default();
-                let tree = match usvg::Tree::from_data(&svg_data, &opts) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!("[Koala] Warning: failed to parse SVG '{}': {}", src, e);
-                        continue;
-                    }
-                };
-
-                let size = tree.size();
-                let (w, h) = (size.width() as u32, size.height() as u32);
-                if w == 0 || h == 0 {
+            // Fetch bytes (HTTP / data URL / local file).
+            let bytes = match fetch_image_bytes(&resolved) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("[Koala] Warning: failed to load image '{src}': {e}");
                     continue;
-                }
-
-                let Some(mut pixmap) = tiny_skia::Pixmap::new(w, h) else {
-                    continue;
-                };
-
-                resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
-
-                let loaded = LoadedImage::new(w, h, pixmap.take().to_vec());
-                let _ = image_dims.insert(node_id, (w as f32, h as f32));
-                let _ = images.insert(src.to_string(), loaded);
-                continue;
-            }
-
-            // Handle raster images (PNG, JPEG, GIF, WebP, etc.)
-            let bytes = if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                match koala_common::net::fetch_bytes(&resolved) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        eprintln!("[Koala] Warning: failed to fetch image '{}': {}", src, e);
-                        continue;
-                    }
-                }
-            }
-            else if resolved.starts_with("data:") {
-                match koala_common::net::fetch_bytes_from_data_url(&resolved) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        eprintln!("[Koala] Warning: failed to decode data URL '{}': {}", src, e);
-                        continue;
-                    }
-                }
-            }
-            else {
-                match fs::read(&resolved) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        eprintln!("[Koala] Warning: failed to read image '{}': {}", resolved, e);
-                        continue;
-                    }
                 }
             };
 
-            // Decode with the `image` crate.
-            match image::load_from_memory(&bytes) {
-                Ok(dynamic_img) => {
-                    let rgba = dynamic_img.to_rgba8();
-                    let (w, h) = rgba.dimensions();
-                    let loaded = LoadedImage::new(w, h, rgba.into_raw());
-                    let _ = image_dims.insert(node_id, (w as f32, h as f32));
+            // Detect format and decode.
+            match pipeline.decode(&bytes, path_for_ext, &resolved) {
+                Ok(loaded) => {
+                    let _ = image_dims.insert(node_id, loaded.dimensions_f32());
                     let _ = images.insert(src.to_string(), loaded);
                 }
                 Err(e) => {
                     eprintln!(
-                        "[Koala] Warning: skipping <img src=\"{}\">: \
-                         could not decode image ({e}). \
-                         The page will still render but this image will be missing.",
-                        src
+                        "[Koala] Warning: skipping <img src=\"{src}\">: {e}. \
+                         The page will still render but this image will be missing."
                     );
                 }
             }
@@ -395,8 +296,8 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
     // Walk the DOM in document order
     for node_id in dom.iter_all() {
         // Check if this is a <script> element
-        if let Some(element) = dom.as_element(node_id) {
-            if element.tag_name.eq_ignore_ascii_case("script") {
+        if let Some(element) = dom.as_element(node_id)
+            && element.tag_name.eq_ignore_ascii_case("script") {
                 // Skip external scripts (those with src attribute)
                 // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
                 // "If the element has a src content attribute..."
@@ -418,7 +319,6 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
                     scripts.push(script_text);
                 }
             }
-        }
     }
 
     scripts
@@ -428,6 +328,7 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
 ///
 /// Searches common system font paths (macOS, Linux, Windows) and returns
 /// the first font that loads successfully, or None if no font is found.
+#[must_use] 
 pub fn load_system_font() -> Option<fontdue::Font> {
     renderer::Renderer::load_system_font()
 }
@@ -439,6 +340,7 @@ pub fn load_system_font() -> Option<fontdue::Font> {
 ///
 /// "CSS assumes that every font has font metrics that specify a
 /// characteristic height above the baseline and a depth below it."
+#[must_use] 
 pub fn create_font_metrics(
     font: Option<&fontdue::Font>,
 ) -> Box<dyn koala_css::FontMetrics + '_> {
@@ -468,6 +370,7 @@ impl FontProvider {
     /// Searches common system font paths and loads the first one found.
     /// If no font is available, [`metrics()`](Self::metrics) will return
     /// an approximate metrics provider.
+    #[must_use] 
     pub fn load() -> Self {
         Self {
             font: renderer::Renderer::load_system_font(),
@@ -478,6 +381,7 @@ impl FontProvider {
     ///
     /// Returns real per-glyph metrics if a font was loaded, or an
     /// approximation (0.6 × font size per character) otherwise.
+    #[must_use] 
     pub fn metrics(&self) -> Box<dyn koala_css::FontMetrics + '_> {
         create_font_metrics(self.font.as_ref())
     }
