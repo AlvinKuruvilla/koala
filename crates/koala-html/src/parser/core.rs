@@ -570,55 +570,92 @@ impl HTMLParser {
     ///
     /// STEP 4: "Otherwise, set node to the previous entry in the stack of
     ///          open elements and return to step 2."
+    fn has_element_in_specific_scope(&self, tag_name: &str, scope_markers: &[&str]) -> bool {
+        // Walk the stack from top (current node) downward.
+        for &node_id in self.stack_of_open_elements.iter().rev() {
+            if let Some(node_tag) = self.get_tag_name(node_id) {
+                // STEP 2: If node is the target, match.
+                if node_tag == tag_name {
+                    return true;
+                }
+                // STEP 3: If node is a scope marker, failure.
+                if scope_markers.contains(&node_tag) {
+                    return false;
+                }
+            }
+            // STEP 4: Continue to previous entry.
+        }
+        false
+    }
+
+    /// [§ 13.2.4.2](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-scope)
     ///
-    /// The scope markers for "has an element in scope" (default scope) are:
-    /// - applet, caption, html, table, td, th, marquee, object, template
-    /// - `MathML`: mi, mo, mn, ms, mtext, annotation-xml
-    /// - SVG: foreignObject, desc, title
+    /// "has an element in scope" (default scope).
     ///
-    /// Other scope types add additional markers:
-    /// - "has an element in list item scope": adds ol, ul
-    /// - "has an element in button scope": adds button
-    /// - "has an element in table scope": html, table, template only
-    /// - "has an element in select scope": optgroup, option only (inverted)
-    ///
-    /// NOTE: Current implementation is simplified - checks if element exists
-    /// anywhere on stack without respecting scope boundaries. Full implementation
-    /// would require checking against scope marker lists above.
+    /// Scope markers: applet, caption, html, table, td, th, marquee, object, template
+    /// (plus MathML/SVG markers omitted for now)
     fn has_element_in_scope(&self, tag_name: &str) -> bool {
-        // TODO: Implement proper scope checking algorithm:
-        //
-        // STEP 1: Initialize node to be the current node (bottommost on stack).
-        //         let mut node_index = self.stack_of_open_elements.len() - 1;
-        //
-        // STEP 2: Loop:
-        //         let node = self.stack_of_open_elements[node_index];
-        //         let node_tag = self.get_tag_name(node);
-        //
-        //         // STEP 2a: If node is the target, return true (match state)
-        //         if node_tag == Some(tag_name) {
-        //             return true;
-        //         }
-        //
-        //         // STEP 2b: If node is a scope marker, return false (failure state)
-        //         // TODO: Check against scope marker list:
-        //         //   DEFAULT_SCOPE_MARKERS = ["applet", "caption", "html", "table",
-        //         //     "td", "th", "marquee", "object", "template",
-        //         //     // MathML: "mi", "mo", "mn", "ms", "mtext", "annotation-xml",
-        //         //     // SVG: "foreignObject", "desc", "title"
-        //         //   ];
-        //         // if DEFAULT_SCOPE_MARKERS.contains(&node_tag) {
-        //         //     return false;
-        //         // }
-        //
-        //         // STEP 2c: Move to previous node and continue loop
-        //         if node_index == 0 { break; }
-        //         node_index -= 1;
-        //
-        // Current simplified implementation: just check if element exists anywhere
-        self.stack_of_open_elements
-            .iter()
-            .any(|&idx| self.get_tag_name(idx) == Some(tag_name))
+        const DEFAULT_SCOPE: &[&str] = &[
+            "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template",
+            // MathML: mi, mo, mn, ms, mtext, annotation-xml
+            // SVG: foreignObject, desc, title
+        ];
+        self.has_element_in_specific_scope(tag_name, DEFAULT_SCOPE)
+    }
+
+    /// [§ 13.2.4.2](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-button-scope)
+    ///
+    /// "has an element in button scope" — default scope markers plus button.
+    fn has_element_in_button_scope(&self, tag_name: &str) -> bool {
+        const BUTTON_SCOPE: &[&str] = &[
+            "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template",
+            "button",
+        ];
+        self.has_element_in_specific_scope(tag_name, BUTTON_SCOPE)
+    }
+
+    /// [§ 13.2.4.2](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-list-item-scope)
+    ///
+    /// "has an element in list item scope" — default scope markers plus ol, ul.
+    #[allow(dead_code)]
+    fn has_element_in_list_item_scope(&self, tag_name: &str) -> bool {
+        const LIST_ITEM_SCOPE: &[&str] = &[
+            "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template",
+            "ol", "ul",
+        ];
+        self.has_element_in_specific_scope(tag_name, LIST_ITEM_SCOPE)
+    }
+
+    /// [§ 13.2.6.2 Generate implied end tags](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
+    ///
+    /// "When the steps below require the user agent to generate implied end tags,
+    /// then, while the current node is a dd element, a dt element, an li element,
+    /// an optgroup element, an option element, a p element, an rb element, an rp
+    /// element, an rt element, or an rtc element, the user agent must pop the
+    /// current node off the stack of open elements."
+    fn generate_implied_end_tags(&mut self) {
+        self.generate_implied_end_tags_excluding(None);
+    }
+
+    /// [§ 13.2.6.2 Generate implied end tags](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
+    ///
+    /// "If a step requires the user agent to generate implied end tags but lists
+    /// an element to exclude from the process, then the user agent must perform
+    /// the above steps as if that element was not in the above list."
+    fn generate_implied_end_tags_excluding(&mut self, exclude: Option<&str>) {
+        const IMPLIED_END_TAG_ELEMENTS: &[&str] =
+            &["dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"];
+
+        while let Some(&current) = self.stack_of_open_elements.last() {
+            if let Some(tag) = self.get_tag_name(current)
+                && IMPLIED_END_TAG_ELEMENTS.contains(&tag)
+                && exclude != Some(tag)
+            {
+                let _ = self.stack_of_open_elements.pop();
+                continue;
+            }
+            break;
+        }
     }
 
     /// [§ 13.2.6.4.7 The "in body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -626,36 +663,23 @@ impl HTMLParser {
     /// This helper combines two spec operations commonly used together:
     ///
     /// [§ 13.2.6.2 Generate implied end tags](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
-    /// "While the current node is a dd, dt, li, optgroup, option, p, rb, rp, rt,
-    ///  or rtc element, the UA must pop the current node off the stack."
-    ///
     /// Then: Check if element is in scope and pop until found.
     ///
     /// Used for elements like <li>, <p>, <dd>, <dt> that implicitly close
     /// when a new one is encountered.
-    ///
-    /// NOTE: Current implementation skips "generate implied end tags" step.
-    /// Full implementation would first pop dd/dt/li/optgroup/option/p/rb/rp/rt/rtc.
     fn close_element_if_in_scope(&mut self, tag_name: &str) {
-        // TODO: STEP 1: Generate implied end tags
-        // [§ 13.2.6.2](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
-        //
-        // const IMPLIED_END_TAG_ELEMENTS: &[&str] = &[
-        //     "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"
-        // ];
-        //
-        // while let Some(&current) = self.stack_of_open_elements.last() {
-        //     if let Some(tag) = self.get_tag_name(current) {
-        //         if IMPLIED_END_TAG_ELEMENTS.contains(&tag) && tag != tag_name {
-        //             self.stack_of_open_elements.pop();
-        //             continue;
-        //         }
-        //     }
-        //     break;
-        // }
+        // STEP 1: Generate implied end tags (excluding the target)
+        self.generate_implied_end_tags_excluding(Some(tag_name));
 
-        // STEP 2: Check if element is in scope
-        if self.has_element_in_scope(tag_name) {
+        // STEP 2: Check if element is in scope.
+        // Per spec, "p" uses button scope; others use default scope.
+        let in_scope = if tag_name == "p" {
+            self.has_element_in_button_scope(tag_name)
+        } else {
+            self.has_element_in_scope(tag_name)
+        };
+
+        if in_scope {
             // STEP 3: Pop elements until target is found
             self.pop_until_tag(tag_name);
         }
@@ -765,6 +789,586 @@ impl HTMLParser {
             }
         }
     }
+    /// [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#push-onto-the-list-of-active-formatting-elements)
+    ///
+    /// "When the steps below require the UA to push onto the list of active
+    /// formatting elements an element element, the UA must perform the
+    /// following steps:"
+    ///
+    /// Includes the Noah's Ark clause: "If there are already three elements
+    /// in the list of active formatting elements after the last marker...
+    /// that have the same tag name, namespace, and attributes as element,
+    /// then remove the earliest such element from the list."
+    fn push_active_formatting_element(&mut self, node_id: NodeId, token: &Token) {
+        // Noah's Ark clause:
+        // STEP 1: Count matching elements after the last marker.
+        if let Token::StartTag {
+            name, attributes, ..
+        } = token
+        {
+            let mut count = 0;
+            let mut earliest_match_index = None;
+
+            for (i, entry) in self.active_formatting_elements.iter().enumerate().rev() {
+                match entry {
+                    ActiveFormattingElement::Marker => break,
+                    ActiveFormattingElement::Element {
+                        token: entry_token, ..
+                    } => {
+                        if let Token::StartTag {
+                            name: entry_name,
+                            attributes: entry_attrs,
+                            ..
+                        } = entry_token
+                            && entry_name == name
+                            && entry_attrs == attributes
+                        {
+                            count += 1;
+                            earliest_match_index = Some(i);
+                        }
+                    }
+                }
+            }
+
+            // STEP 2: If 3 or more matches, remove the earliest.
+            if count >= 3
+                && let Some(idx) = earliest_match_index
+            {
+                let _ = self.active_formatting_elements.remove(idx);
+            }
+        }
+
+        // STEP 3: Push the new entry.
+        self.active_formatting_elements
+            .push(ActiveFormattingElement::Element {
+                node_id,
+                token: token.clone(),
+            });
+    }
+
+    /// [§ 13.2.4.3 Clear the list of active formatting elements up to the last marker](https://html.spec.whatwg.org/multipage/parsing.html#clear-the-list-of-active-formatting-elements-up-to-the-last-marker)
+    ///
+    /// "When the steps below require the UA to clear the list of active
+    /// formatting elements up to the last marker, the UA must perform
+    /// the following steps:
+    ///
+    /// 1. Let entry be the last (most recently added) entry in the list.
+    /// 2. Remove entry from the list.
+    /// 3. If entry was a marker, stop. Otherwise, go to step 1."
+    fn clear_active_formatting_elements_to_last_marker(&mut self) {
+        while let Some(entry) = self.active_formatting_elements.pop() {
+            if matches!(entry, ActiveFormattingElement::Marker) {
+                break;
+            }
+        }
+    }
+
+    /// [§ 13.1.1 Special](https://html.spec.whatwg.org/multipage/parsing.html#special)
+    ///
+    /// "The following elements have varying levels of special parsing rules:
+    /// ... they are collectively known as special elements."
+    fn is_special_element(tag_name: &str) -> bool {
+        matches!(
+            tag_name,
+            "address"
+                | "applet"
+                | "area"
+                | "article"
+                | "aside"
+                | "base"
+                | "basefont"
+                | "bgsound"
+                | "blockquote"
+                | "body"
+                | "br"
+                | "button"
+                | "caption"
+                | "center"
+                | "col"
+                | "colgroup"
+                | "dd"
+                | "details"
+                | "dir"
+                | "div"
+                | "dl"
+                | "dt"
+                | "embed"
+                | "fieldset"
+                | "figcaption"
+                | "figure"
+                | "footer"
+                | "form"
+                | "frame"
+                | "frameset"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "head"
+                | "header"
+                | "hgroup"
+                | "hr"
+                | "html"
+                | "iframe"
+                | "img"
+                | "input"
+                | "keygen"
+                | "li"
+                | "link"
+                | "listing"
+                | "main"
+                | "marquee"
+                | "menu"
+                | "meta"
+                | "nav"
+                | "noembed"
+                | "noframes"
+                | "noscript"
+                | "object"
+                | "ol"
+                | "p"
+                | "param"
+                | "plaintext"
+                | "pre"
+                | "script"
+                | "search"
+                | "section"
+                | "select"
+                | "source"
+                | "style"
+                | "summary"
+                | "table"
+                | "tbody"
+                | "td"
+                | "template"
+                | "textarea"
+                | "tfoot"
+                | "th"
+                | "thead"
+                | "title"
+                | "tr"
+                | "track"
+                | "ul"
+                | "wbr"
+                | "xmp"
+        )
+        // NOTE: MathML and SVG special elements omitted for now:
+        // mi, mo, mn, ms, mtext, annotation-xml (MathML)
+        // foreignObject, desc, title (SVG)
+    }
+
+    /// [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#formatting)
+    ///
+    /// "The elements in the formatting category are: a, b, big, code, em, font,
+    /// i, nobr, s, small, strike, strong, tt, u."
+    #[allow(dead_code)]
+    fn is_formatting_element(tag_name: &str) -> bool {
+        matches!(
+            tag_name,
+            "a" | "b"
+                | "big"
+                | "code"
+                | "em"
+                | "font"
+                | "i"
+                | "nobr"
+                | "s"
+                | "small"
+                | "strike"
+                | "strong"
+                | "tt"
+                | "u"
+        )
+    }
+
+    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#create-an-element-for-the-token)
+    ///
+    /// "Create an element for a token" — creates a DOM element from a token
+    /// without inserting it into the tree or pushing onto the stack.
+    /// Used by the adoption agency algorithm when creating replacement elements.
+    fn create_element_for_token(&mut self, token: &Token) -> NodeId {
+        if let Token::StartTag {
+            name, attributes, ..
+        } = token
+        {
+            self.create_element(name, attributes)
+        } else {
+            panic!("create_element_for_token called with non-StartTag token");
+        }
+    }
+
+    /// [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    ///
+    /// 1. "Initialize node to be the current node (the bottommost node of the stack)."
+    /// 2. "Loop: If node is an HTML element with the same tag name as the token, then:"
+    ///    a. "Generate implied end tags, except for HTML elements with the same tag name
+    ///    as the token."
+    ///    b. "If node is not the current node, then this is a parse error."
+    ///    c. "Pop all the nodes from the current node up to node, including node, then stop
+    ///    these steps."
+    /// 3. "Otherwise, if node is in the special category, then this is a parse error;
+    ///    ignore the token, and return."
+    /// 4. "Set node to the previous entry in the stack of open elements and return to
+    ///    the step labeled loop."
+    fn any_other_end_tag(&mut self, tag_name: &str) {
+        // Walk the stack from top (current node) downward.
+        let mut i = self.stack_of_open_elements.len();
+        while i > 0 {
+            i -= 1;
+            let node_id = self.stack_of_open_elements[i];
+            if let Some(node_tag) = self.get_tag_name(node_id) {
+                // STEP 2: If node matches the tag name...
+                if node_tag == tag_name {
+                    // STEP 2a: Generate implied end tags, excluding same tag name.
+                    self.generate_implied_end_tags_excluding(Some(tag_name));
+                    // STEP 2c: Pop all nodes from current node up to and including node.
+                    self.stack_of_open_elements.truncate(i);
+                    return;
+                }
+                // STEP 3: If node is in the special category, ignore the token.
+                if Self::is_special_element(node_tag) {
+                    return;
+                }
+            }
+            // STEP 4: Continue to previous entry.
+        }
+    }
+
+    /// [§ 13.2.6.4.7 The adoption agency algorithm](https://html.spec.whatwg.org/multipage/parsing.html#adoption-agency-algorithm)
+    ///
+    /// "When the steps below require the UA to run the adoption agency algorithm
+    /// for a token, the UA must perform the following steps:"
+    fn run_adoption_agency(&mut self, tag_name: &str) {
+        // STEP 1: "Let subject be token's tag name."
+        let subject = tag_name;
+
+        // STEP 2: "If the current node is an HTML element whose tag name is subject,
+        //          and the current node is not in the list of active formatting elements,
+        //          then pop the current node off the stack of open elements and return."
+        if let Some(&current) = self.stack_of_open_elements.last()
+            && self.get_tag_name(current) == Some(subject)
+        {
+            let in_afl = self.active_formatting_elements.iter().any(|e| {
+                matches!(e, ActiveFormattingElement::Element { node_id, .. } if *node_id == current)
+            });
+            if !in_afl {
+                let _ = self.stack_of_open_elements.pop();
+                return;
+            }
+        }
+
+        // STEP 3: "Let outer loop counter be 0."
+        let mut outer_loop_counter = 0;
+
+        // STEP 4: "Outer loop:"
+        loop {
+            // STEP 5: "If outer loop counter is greater than or equal to 8, then return."
+            if outer_loop_counter >= 8 {
+                return;
+            }
+
+            // STEP 6: "Increment outer loop counter by 1."
+            outer_loop_counter += 1;
+
+            // STEP 7: "Let formatting element be the last element in the list of active
+            //          formatting elements that: is between the end of the list and the
+            //          last marker in the list, if any, or the start of the list otherwise;
+            //          and has the tag name subject."
+            let formatting_element_afl_index = {
+                let mut found = None;
+                for (i, entry) in self.active_formatting_elements.iter().enumerate().rev() {
+                    match entry {
+                        ActiveFormattingElement::Marker => break,
+                        ActiveFormattingElement::Element { token, .. } => {
+                            if let Token::StartTag { name, .. } = token
+                                && name == subject
+                            {
+                                found = Some(i);
+                                break;
+                            }
+                        }
+                    }
+                }
+                found
+            };
+
+            // STEP 8: "If there is no such element, then return and instead act as
+            //          described in the 'any other end tag' entry above."
+            let Some(formatting_element_afl_index) = formatting_element_afl_index else {
+                self.any_other_end_tag(subject);
+                return;
+            };
+
+            // Get the formatting element's NodeId
+            let formatting_element_id = match &self.active_formatting_elements
+                [formatting_element_afl_index]
+            {
+                ActiveFormattingElement::Element { node_id, .. } => *node_id,
+                ActiveFormattingElement::Marker => unreachable!(),
+            };
+
+            // STEP 9: "If formatting element is not in the stack of open elements,
+            //          then this is a parse error; remove the element from the list,
+            //          and return."
+            let formatting_element_stack_index = self
+                .stack_of_open_elements
+                .iter()
+                .position(|&id| id == formatting_element_id);
+
+            let Some(formatting_element_stack_index) = formatting_element_stack_index else {
+                let _ = self
+                    .active_formatting_elements
+                    .remove(formatting_element_afl_index);
+                return;
+            };
+
+            // STEP 10: "If formatting element is in the stack of open elements, but
+            //           the element is not in scope, then this is a parse error; return."
+            if !self.has_element_in_scope(subject) {
+                return;
+            }
+
+            // STEP 11: "If formatting element is not the current node, this is a parse error."
+            // (Continue regardless — parse error is informational.)
+
+            // STEP 12: "Let furthest block be the topmost node in the stack of open
+            //           elements that is lower than the formatting element in the stack
+            //           and is an element in the special category."
+            let furthest_block_index = {
+                let mut found = None;
+                for i in (formatting_element_stack_index + 1)..self.stack_of_open_elements.len() {
+                    let node_id = self.stack_of_open_elements[i];
+                    if let Some(tag) = self.get_tag_name(node_id)
+                        && Self::is_special_element(tag)
+                    {
+                        found = Some(i);
+                        break;
+                    }
+                }
+                found
+            };
+
+            // STEP 13: "If there is no furthest block, then the UA must first pop all
+            //           the nodes from the bottom of the stack of open elements, from the
+            //           current node up to and including the formatting element, then remove
+            //           the formatting element from the list of active formatting elements,
+            //           and finally return."
+            let Some(furthest_block_index) = furthest_block_index else {
+                self.stack_of_open_elements
+                    .truncate(formatting_element_stack_index);
+                let _ = self
+                    .active_formatting_elements
+                    .remove(formatting_element_afl_index);
+                return;
+            };
+
+            let furthest_block_id = self.stack_of_open_elements[furthest_block_index];
+
+            // STEP 14: "Let common ancestor be the element immediately above the
+            //           formatting element in the stack of open elements."
+            let common_ancestor_id =
+                self.stack_of_open_elements[formatting_element_stack_index - 1];
+
+            // STEP 15: "Let a bookmark note the position of the formatting element
+            //           in the list of active formatting elements relative to the
+            //           elements on either side of it in the list."
+            let mut bookmark = formatting_element_afl_index;
+
+            // STEP 16: "Let node and last node be the furthest block."
+            let mut node_stack_index = furthest_block_index;
+            let mut last_node_id = furthest_block_id;
+
+            // STEP 17: "Let inner loop counter be 0."
+            let mut inner_loop_counter = 0;
+
+            // STEP 18: "Inner loop:"
+            loop {
+                // STEP 18.1: "Increment inner loop counter by 1."
+                inner_loop_counter += 1;
+
+                // STEP 18.2: "Let node be the element immediately above node in the
+                //             stack of open elements..."
+                // We need to go UP the stack (toward index 0), but node_stack_index
+                // might have shifted due to removals. We find the previous entry.
+                node_stack_index -= 1;
+
+                // "...or if node is no longer in the stack of open elements (e.g.,
+                //  because it got removed by this algorithm), the element that was
+                //  immediately above node in the stack of open elements before node
+                //  was removed."
+                let node_id = self.stack_of_open_elements[node_stack_index];
+
+                // STEP 18.3: "If node is the formatting element, then break."
+                if node_id == formatting_element_id {
+                    break;
+                }
+
+                // STEP 18.4: "If inner loop counter is greater than 3 and node is in
+                //             the list of active formatting elements, then remove node
+                //             from the list."
+                let node_afl_index = self
+                    .active_formatting_elements
+                    .iter()
+                    .position(|e| matches!(e, ActiveFormattingElement::Element { node_id: nid, .. } if *nid == node_id));
+
+                if inner_loop_counter > 3
+                    && let Some(afl_idx) = node_afl_index
+                {
+                    let _ = self.active_formatting_elements.remove(afl_idx);
+                    // Adjust bookmark if it was after the removed entry.
+                    if bookmark > afl_idx {
+                        bookmark -= 1;
+                    }
+                    // node_afl_index is now invalid; node is no longer in AFL.
+                    // Fall through to step 18.5 which checks "not in AFL".
+                }
+
+                // Re-check node_afl_index after potential removal above.
+                let node_afl_index = self
+                    .active_formatting_elements
+                    .iter()
+                    .position(|e| matches!(e, ActiveFormattingElement::Element { node_id: nid, .. } if *nid == node_id));
+
+                // STEP 18.5: "If node is not in the list of active formatting elements,
+                //             then remove node from the stack of open elements and continue."
+                if node_afl_index.is_none() {
+                    let _ = self.stack_of_open_elements.remove(node_stack_index);
+                    // node_stack_index now points to the next element (which was below node),
+                    // but since we decrement at the top of the loop, we need to NOT decrement
+                    // extra. Actually, the next iteration will decrement node_stack_index
+                    // again. Since we removed the element at node_stack_index, the element
+                    // that was at node_stack_index-1 is now still at node_stack_index-1,
+                    // but node_stack_index is now pointing at the element that was below node.
+                    // We need node_stack_index to be positioned so that decrementing gives
+                    // us the element above the removed node. Since the element above was at
+                    // node_stack_index-1 and is now at node_stack_index-1 (unchanged),
+                    // we need to keep node_stack_index the same (it already points to what
+                    // was below, and the loop will decrement to go above).
+                    // Actually after remove, the elements shift down, so node_stack_index
+                    // now points to what was below node. The element above the removed node
+                    // is at node_stack_index - 1. Since the loop starts by decrementing,
+                    // setting node_stack_index to node_stack_index (current) means next
+                    // iteration will look at node_stack_index - 1 = element above removed.
+                    // This is correct.
+                    continue;
+                }
+
+                let node_afl_index = node_afl_index.unwrap();
+
+                // STEP 18.6: "Create an element for the token for which the element
+                //             node was created, in the HTML namespace, with common
+                //             ancestor as the intended parent; replace the entry for
+                //             node in the list of active formatting elements with an
+                //             entry for the new element, replace the entry for node
+                //             in the stack of open elements with an entry for the new
+                //             element, and let node be the new element."
+                let node_token = match &self.active_formatting_elements[node_afl_index] {
+                    ActiveFormattingElement::Element { token, .. } => token.clone(),
+                    ActiveFormattingElement::Marker => unreachable!(),
+                };
+                let new_element_id = self.create_element_for_token(&node_token);
+
+                // Replace in AFL
+                self.active_formatting_elements[node_afl_index] =
+                    ActiveFormattingElement::Element {
+                        node_id: new_element_id,
+                        token: node_token,
+                    };
+
+                // Replace in stack
+                self.stack_of_open_elements[node_stack_index] = new_element_id;
+
+                let node_id = new_element_id;
+
+                // STEP 18.7: "If last node is the furthest block, then move the
+                //             bookmark to be immediately after the new node in the
+                //             list of active formatting elements."
+                if last_node_id == furthest_block_id {
+                    bookmark = node_afl_index + 1;
+                }
+
+                // STEP 18.8: "Append last node to node."
+                // First remove last_node from its current parent.
+                if let Some(parent) = self.tree.parent(last_node_id) {
+                    self.tree.remove_child(parent, last_node_id);
+                }
+                self.tree.append_child(node_id, last_node_id);
+
+                // STEP 18.9: "Set last node to node."
+                last_node_id = node_id;
+            }
+
+            // STEP 19: "Insert whatever last node ended up being in the previous step
+            //           at the appropriate place for inserting a node, but using common
+            //           ancestor as the override target."
+            // Remove last_node from its current parent first.
+            if let Some(parent) = self.tree.parent(last_node_id) {
+                self.tree.remove_child(parent, last_node_id);
+            }
+            self.tree.append_child(common_ancestor_id, last_node_id);
+
+            // STEP 20: "Create an element for the token for which the formatting
+            //           element was created, in the HTML namespace, with the furthest
+            //           block as the intended parent."
+            let formatting_token = match &self.active_formatting_elements
+                [formatting_element_afl_index]
+            {
+                ActiveFormattingElement::Element { token, .. } => token.clone(),
+                ActiveFormattingElement::Marker => unreachable!(),
+            };
+            let new_element_id = self.create_element_for_token(&formatting_token);
+
+            // STEP 21: "Take all of the child nodes of the furthest block and append
+            //           them to the new element created in the previous step."
+            self.tree.move_children(furthest_block_id, new_element_id);
+
+            // STEP 22: "Append that new element to the furthest block."
+            self.tree.append_child(furthest_block_id, new_element_id);
+
+            // STEP 23: "Remove the formatting element from the list of active formatting
+            //           elements, and insert the new element into the list of active
+            //           formatting elements at the position of the aforementioned bookmark."
+            // First remove old entry. Adjust bookmark if needed.
+            let _ = self.active_formatting_elements
+                .remove(formatting_element_afl_index);
+            if bookmark > formatting_element_afl_index {
+                bookmark -= 1;
+            }
+            // Clamp bookmark to valid range.
+            if bookmark > self.active_formatting_elements.len() {
+                bookmark = self.active_formatting_elements.len();
+            }
+            self.active_formatting_elements
+                .insert(bookmark, ActiveFormattingElement::Element {
+                    node_id: new_element_id,
+                    token: formatting_token,
+                });
+
+            // STEP 24: "Remove the formatting element from the stack of open elements,
+            //           and insert the new element into the stack of open elements
+            //           immediately below the position of the furthest block in that stack."
+            // Remove old formatting element from stack.
+            if let Some(pos) = self
+                .stack_of_open_elements
+                .iter()
+                .position(|&id| id == formatting_element_id)
+            {
+                let _ = self.stack_of_open_elements.remove(pos);
+            }
+            // Find furthest block position (may have shifted after removal).
+            if let Some(fb_pos) = self
+                .stack_of_open_elements
+                .iter()
+                .position(|&id| id == furthest_block_id)
+            {
+                self.stack_of_open_elements
+                    .insert(fb_pos + 1, new_element_id);
+            }
+        }
+    }
+
     /// [§ 13.2.6.4.1 The "initial" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode)
     fn handle_initial_mode(&mut self, token: &Token) {
         match token {
@@ -1493,15 +2097,50 @@ impl HTMLParser {
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "a"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
             // "A start tag whose tag name is "a""
-            // ... complex adoption agency handling for nested <a> tags ...
+            // "If the list of active formatting elements contains an a element between the end
+            //  of the list and the last marker on the list (or the start of the list if there
+            //  is no marker on the list), then this is a parse error; run the adoption agency
+            //  algorithm for the token 'a', then remove that element from the list of active
+            //  formatting elements and the stack of open elements if the adoption agency
+            //  algorithm didn't already remove it."
             // "Reconstruct the active formatting elements, if any."
             // "Insert an HTML element for the token."
             // "Push onto the list of active formatting elements that element."
             Token::StartTag { name, .. } if name == "a" => {
-                // NOTE: We skip the adoption agency algorithm for nested <a> tags
-                // and the list of active formatting elements for simplicity
-                let _ = self.insert_html_element(token);
+                // STEP 1: Check for existing <a> in AFL (after last marker).
+                let existing_a = self
+                    .active_formatting_elements
+                    .iter()
+                    .rev()
+                    .take_while(|e| !matches!(e, ActiveFormattingElement::Marker))
+                    .find_map(|e| {
+                        if let ActiveFormattingElement::Element { node_id, token } = e
+                            && let Token::StartTag { name, .. } = token
+                            && name == "a"
+                        {
+                            return Some(*node_id);
+                        }
+                        None
+                    });
+
+                if let Some(existing_a_id) = existing_a {
+                    // Run adoption agency for "a"
+                    self.run_adoption_agency("a");
+                    // Remove from AFL if still there
+                    self.active_formatting_elements.retain(|e| {
+                        !matches!(e, ActiveFormattingElement::Element { node_id, .. } if *node_id == existing_a_id)
+                    });
+                    // Remove from stack if still there
+                    self.stack_of_open_elements
+                        .retain(|&id| id != existing_a_id);
+                }
+
+                // STEP 2: Reconstruct and insert.
+                self.reconstruct_active_formatting_elements();
+                let element_id = self.insert_html_element(token);
+                self.push_active_formatting_element(element_id, token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Formatting element start tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -1512,45 +2151,6 @@ impl HTMLParser {
             // "Reconstruct the active formatting elements, if any."
             // "Insert an HTML element for the token."
             // "Push onto the list of active formatting elements that element."
-            //
-            // [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#the-list-of-active-formatting-elements)
-            //
-            // TODO: Implement active formatting elements list:
-            //
-            // // Data structure to track formatting elements
-            // enum ActiveFormattingEntry {
-            //     Element { node_id: NodeId, token: Token },
-            //     Marker,  // Inserted when entering applet, object, marquee, template, td, th, caption
-            // }
-            // active_formatting_elements: Vec<ActiveFormattingEntry>
-            //
-            // // Push formatting element onto list (called here)
-            // fn push_active_formatting_element(&mut self, element: NodeId, token: &Token) {
-            //     // STEP 1: If there are already 3 elements with same tag name, remove earliest
-            //     // STEP 2: Push Element entry onto list
-            //     self.active_formatting_elements.push(ActiveFormattingEntry::Element {
-            //         node_id: element,
-            //         token: token.clone(),
-            //     });
-            // }
-            //
-            // // Reconstruct active formatting elements (called before inserting content)
-            // fn reconstruct_active_formatting_elements(&mut self) {
-            //     // STEP 1: If list is empty, return
-            //     // STEP 2: If last entry is marker or in stack of open elements, return
-            //     // STEP 3: Let entry be the last element in the list
-            //     // STEP 4: Rewind: If entry is first in list, jump to Create
-            //     // STEP 5: Let entry = previous entry in list
-            //     // STEP 6: If entry is not marker and not in stack, go to Rewind
-            //     // STEP 7: Advance: entry = next entry in list
-            //     // STEP 8: Create: insert element for entry's token, replace entry with new element
-            //     // STEP 9: If entry is not last in list, go to Advance
-            // }
-            //
-            // NOTE: Current implementation skips active formatting elements.
-            // This means we don't handle implicit reopening of formatting across blocks.
-            // Example that would render incorrectly:
-            //   <p><b>bold<p>still bold</b>  -- second p should inherit bold
             Token::StartTag { name, .. }
                 if matches!(
                     name.as_str(),
@@ -1566,7 +2166,21 @@ impl HTMLParser {
                         | "tt"
                         | "u"
                         | "nobr"
-                        | "span"
+                ) =>
+            {
+                self.reconstruct_active_formatting_elements();
+                let element_id = self.insert_html_element(token);
+                self.push_active_formatting_element(element_id, token);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Other inline start tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // These are NOT formatting elements per § 13.2.4.3, so they are not pushed
+            // onto the active formatting elements list. They still reconstruct.
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "span"
                         | "label"
                         | "abbr"
                         | "cite"
@@ -1585,7 +2199,7 @@ impl HTMLParser {
                         | "data"
                 ) =>
             {
-                // Simplified: just insert element without active formatting elements tracking
+                self.reconstruct_active_formatting_elements();
                 let _ = self.insert_html_element(token);
             }
 
@@ -1656,7 +2270,10 @@ impl HTMLParser {
             {
                 self.reconstruct_active_formatting_elements();
                 let _ = self.insert_html_element(token);
-                todo!("Insert marker at end of active formatting elements list");
+                // "Insert a marker at the end of the list of active formatting elements."
+                self.active_formatting_elements
+                    .push(ActiveFormattingElement::Marker);
+                // TODO: Set the frameset-ok flag to "not ok".
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "select"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -1963,8 +2580,23 @@ impl HTMLParser {
             // 3. "Pop elements from the stack of open elements until a p element has been
             //     popped from the stack."
             Token::EndTag { name, .. } if name == "p" => {
-                // NOTE: We skip the scope check for simplicity
-                self.pop_until_tag("p");
+                if self.has_element_in_button_scope("p") {
+                    // STEP 1: "Generate implied end tags, except for p elements."
+                    self.generate_implied_end_tags_excluding(Some("p"));
+                    // STEP 3: "Pop elements from the stack until a p element has been popped."
+                    self.pop_until_tag("p");
+                } else {
+                    // "If the stack of open elements does not have a p element in button scope,
+                    //  then this is a parse error; act as if a start tag with the tag name "p"
+                    //  had been seen, then reprocess the current token."
+                    let fake_p = Token::StartTag {
+                        name: "p".to_string(),
+                        self_closing: false,
+                        attributes: Vec::new(),
+                    };
+                    let _ = self.insert_html_element(&fake_p);
+                    self.reprocess_token(token);
+                }
             }
 
             // [§ 13.2.6.4.7 "in body" - End tag "applet", "marquee", "object"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -1983,9 +2615,10 @@ impl HTMLParser {
                 if matches!(name.as_str(), "applet" | "marquee" | "object") =>
             {
                 if self.has_element_in_scope(name) {
-                    // TODO: generate_implied_end_tags() before popping
+                    self.generate_implied_end_tags();
                     self.pop_until_tag(name);
-                    todo!("Clear active formatting elements up to last marker");
+                    // "Clear the list of active formatting elements up to the last marker."
+                    self.clear_active_formatting_elements_to_last_marker();
                 }
                 // Otherwise: parse error, ignore the token
             }
@@ -2062,83 +2695,41 @@ impl HTMLParser {
                 // Otherwise: parse error, ignore the token
             }
 
-            // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            // [§ 13.2.6.4.7 "in body" - Formatting element end tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             //
-            // For formatting elements, the spec uses the Adoption Agency Algorithm:
-            // [§ 13.2.6.4.7 Adoption agency algorithm](https://html.spec.whatwg.org/multipage/parsing.html#adoption-agency-algorithm)
+            // "An end tag whose tag name is one of: "a", "b", "big", "code", "em", "font",
+            //  "i", "nobr", "s", "small", "strike", "strong", "tt", "u""
             //
-            // The algorithm handles misnested formatting like: <b>text<i>more</b>text</i>
-            // by "adopting" nodes between the formatting element and the misnested end tag.
+            // "Run the adoption agency algorithm for the token."
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "a" | "b"
+                        | "big"
+                        | "code"
+                        | "em"
+                        | "font"
+                        | "i"
+                        | "nobr"
+                        | "s"
+                        | "small"
+                        | "strike"
+                        | "strong"
+                        | "tt"
+                        | "u"
+                ) =>
+            {
+                self.run_adoption_agency(name);
+            }
+
+            // [§ 13.2.6.4.7 "in body" - Other inline end tags](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             //
-            // TODO: Implement full adoption agency algorithm:
-            //
-            // fn run_adoption_agency(&mut self, tag_name: &str) {
-            //     // STEP 1: Let outer loop counter be 0.
-            //     let mut outer_loop_counter = 0;
-            //
-            //     loop {
-            //         // STEP 2: If outer loop counter >= 8, return.
-            //         if outer_loop_counter >= 8 { return; }
-            //
-            //         // STEP 3: Increment outer loop counter.
-            //         outer_loop_counter += 1;
-            //
-            //         // STEP 4: Let formatting element be the last element in the list of
-            //         //         active formatting elements that:
-            //         //         - has the same tag name as the token
-            //         //         - is between the end of the list and the last marker
-            //         // let formatting_element = self.active_formatting_elements
-            //         //     .iter().rev()
-            //         //     .take_while(|e| !e.is_marker())
-            //         //     .find(|e| e.tag_name == tag_name);
-            //
-            //         // STEP 5: If there is no such element, return (use "any other end tag" steps)
-            //         // if formatting_element.is_none() { return self.any_other_end_tag(tag_name); }
-            //
-            //         // STEP 6: If formatting element is not in stack of open elements, remove
-            //         //         from active formatting elements and return.
-            //
-            //         // STEP 7: If formatting element is in stack but not in scope, parse error, return.
-            //
-            //         // STEP 8: If formatting element is not the current node, parse error (continue).
-            //
-            //         // STEP 9: Let furthest block be the topmost element in the stack that is
-            //         //         lower than formatting element AND is in the "special" category.
-            //         //         Special elements: address, applet, area, article, aside, base, ...
-            //
-            //         // STEP 10: If there is no furthest block, pop until formatting element,
-            //         //          remove from active formatting elements, return.
-            //
-            //         // STEP 11-21: The complex reparenting loop:
-            //         //   - Create bookmark at formatting element position
-            //         //   - Let node = furthest block, last node = furthest block
-            //         //   - Inner loop (up to 3 iterations):
-            //         //     - Move node up the stack
-            //         //     - If node is formatting element, break
-            //         //     - If node is not in active formatting elements, remove from stack, continue
-            //         //     - Create new element, replace in active formatting elements
-            //         //     - Reparent last node to new element
-            //         //   - Insert last node at appropriate place
-            //         //   - Create new element for formatting element
-            //         //   - Reparent furthest block's children to new element
-            //         //   - Append new element to furthest block
-            //         //   - Remove old formatting element, insert new at bookmark
-            //     }
-            // }
-            //
-            // Current simplified implementation - just pops until matching tag.
-            // This works for properly nested content but won't handle misnesting correctly.
+            // Non-formatting inline end tags use "any other end tag" algorithm.
             Token::EndTag { name, .. }
                 if matches!(
                     name.as_str(),
                     "span"
-                        | "a"
-                        | "b"
-                        | "i"
-                        | "em"
-                        | "strong"
-                        | "small"
-                        | "s"
+                        | "label"
                         | "cite"
                         | "q"
                         | "dfn"
@@ -2148,23 +2739,18 @@ impl HTMLParser {
                         | "rp"
                         | "data"
                         | "time"
-                        | "code"
                         | "var"
                         | "samp"
                         | "kbd"
                         | "sub"
                         | "sup"
-                        | "u"
                         | "mark"
                         | "bdi"
                         | "bdo"
                         | "wbr"
-                        | "nobr"
-                        | "label"
                 ) =>
             {
-                // Simplified: just pop until matching tag (works for properly nested content)
-                self.pop_until_tag(name);
+                self.any_other_end_tag(name);
             }
 
             // [§ 13.2.6.4.7 "in body" - End tag "form"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -2327,22 +2913,8 @@ impl HTMLParser {
             // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             //
             // "Any other end tag"
-            // 1. "Initialize node to be the current node (the bottommost node of the stack)."
-            // 2. "Loop: If node is an HTML element with the same tag name as the token, then:"
-            //    a. "Generate implied end tags, except for elements with the same tag name"
-            //    b. "If node is not the current node, then this is a parse error."
-            //    c. "Pop all the nodes from the current node up to node, including node, then stop."
-            // 3. "Otherwise, if node is in the special category, parse error; ignore the token."
-            // 4. "Set node to the previous entry in the stack of open elements."
-            // 5. "Return to the step labeled loop."
-            //
-            // NOTE: Simplified implementation - we just pop up to and including the tag.
-            // Full implementation would check special category at each step.
             Token::EndTag { name, .. } => {
-                if self.has_element_in_scope(name) {
-                    self.pop_until_tag(name);
-                }
-                // Otherwise: parse error, ignore the token
+                self.any_other_end_tag(name);
             }
         }
     }

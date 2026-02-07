@@ -466,6 +466,113 @@ impl DomTree {
             .copied()
     }
 
+    /// [§ 4.2.3 Remove](https://dom.spec.whatwg.org/#concept-node-remove)
+    ///
+    /// "To remove a node, run these steps:"
+    ///
+    /// Removes `child` from `parent`'s children list and fixes sibling links.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `child` is not found in `parent`'s children list.
+    pub fn remove_child(&mut self, parent: NodeId, child: NodeId) {
+        // STEP 1: Find child's position in parent's children list.
+        let children = &self.nodes[parent.0].children;
+        let pos = children
+            .iter()
+            .position(|&id| id == child)
+            .expect("remove_child: child not found in parent's children");
+
+        // STEP 2: Get the child's sibling links before removal.
+        let prev = self.nodes[child.0].prev_sibling;
+        let next = self.nodes[child.0].next_sibling;
+
+        // STEP 3: Reconnect siblings around the removed child.
+        // [§ 4.4](https://dom.spec.whatwg.org/#concept-tree-previous-sibling)
+        if let Some(prev_id) = prev {
+            self.nodes[prev_id.0].next_sibling = next;
+        }
+        if let Some(next_id) = next {
+            self.nodes[next_id.0].prev_sibling = prev;
+        }
+
+        // STEP 4: Remove from parent's children vec.
+        let _ = self.nodes[parent.0].children.remove(pos);
+
+        // STEP 5: Clear child's relationship pointers.
+        self.nodes[child.0].parent = None;
+        self.nodes[child.0].prev_sibling = None;
+        self.nodes[child.0].next_sibling = None;
+    }
+
+    /// [§ 4.2.1 Insert](https://dom.spec.whatwg.org/#concept-node-insert)
+    ///
+    /// "To insert a node into a parent before a child..."
+    ///
+    /// Inserts `new_child` into `parent`'s children list immediately before
+    /// `reference`. The `new_child` must not already be in the tree (call
+    /// `remove_child` first if needed).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `reference` is not found in `parent`'s children list.
+    pub fn insert_before(&mut self, parent: NodeId, new_child: NodeId, reference: NodeId) {
+        // STEP 1: Find reference's position in parent's children.
+        let children = &self.nodes[parent.0].children;
+        let ref_pos = children
+            .iter()
+            .position(|&id| id == reference)
+            .expect("insert_before: reference not found in parent's children");
+
+        // STEP 2: Get reference's previous sibling (will become new_child's prev).
+        let prev = self.nodes[reference.0].prev_sibling;
+
+        // STEP 3: Insert into parent's children vec at the reference's position.
+        self.nodes[parent.0].children.insert(ref_pos, new_child);
+
+        // STEP 4: Set new_child's parent.
+        self.nodes[new_child.0].parent = Some(parent);
+
+        // STEP 5: Wire sibling links.
+        // new_child's next sibling is the reference.
+        self.nodes[new_child.0].next_sibling = Some(reference);
+        // new_child's prev sibling is reference's old prev sibling.
+        self.nodes[new_child.0].prev_sibling = prev;
+        // Reference's prev sibling is now new_child.
+        self.nodes[reference.0].prev_sibling = Some(new_child);
+        // The old prev sibling's next is now new_child.
+        if let Some(prev_id) = prev {
+            self.nodes[prev_id.0].next_sibling = Some(new_child);
+        }
+    }
+
+    /// Move all children of `from` to become children of `to`.
+    ///
+    /// Children are appended to `to`'s existing children list.
+    /// After this call, `from` has no children.
+    pub fn move_children(&mut self, from: NodeId, to: NodeId) {
+        // STEP 1: Take from's children list.
+        let children: Vec<NodeId> = std::mem::take(&mut self.nodes[from.0].children);
+
+        if children.is_empty() {
+            return;
+        }
+
+        // STEP 2: Fix sibling boundary between to's existing last child
+        // and the first moved child.
+        let to_last = self.nodes[to.0].children.last().copied();
+        if let Some(to_last_id) = to_last {
+            self.nodes[to_last_id.0].next_sibling = Some(children[0]);
+            self.nodes[children[0].0].prev_sibling = Some(to_last_id);
+        }
+
+        // STEP 3: Update parent pointers and append to `to`.
+        for &child_id in &children {
+            self.nodes[child_id.0].parent = Some(to);
+        }
+        self.nodes[to.0].children.extend(children);
+    }
+
     /// [§ 3.1.3 The body element](https://html.spec.whatwg.org/multipage/dom.html#the-body-element-2)
     ///
     /// "The body element of a document is the first of the html element's children
