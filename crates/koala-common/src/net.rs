@@ -32,12 +32,21 @@ pub struct DataURL {
 }
 impl DataURL {
     /// Create a new `DataURL` from a raw data URL string.
-    pub fn new(raw_data: String) -> Self {
+    #[must_use]
+    pub const fn new(raw_data: String) -> Self {
         Self { raw_data }
     }
     /// Decode the data URL payload into raw bytes.
     ///
     /// Currently supports base64-encoded data URLs only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if base64 decoding fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the data URL uses an encoding other than base64.
     pub fn decode(&self) -> Result<Vec<u8>, String> {
         let data_url = self.raw_data.trim_start_matches("data:");
         let (metadata, data) = match data_url.find(',') {
@@ -111,6 +120,10 @@ pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to read response body: {e}"))
 }
 /// Decode a `data:` URL and return its payload as raw bytes.
+///
+/// # Errors
+///
+/// Returns an error string if the data URL cannot be decoded.
 ///
 /// # Panics
 ///

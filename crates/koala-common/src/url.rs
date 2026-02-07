@@ -61,18 +61,20 @@ pub fn resolve_url(href: &str, base_url: Option<&str>) -> String {
         //
         // TODO(url-resolution): Extract origin from base_url properly
         // For now, find the third slash (after scheme://) and take everything before it
-        if let Some(scheme_end) = base.find("://") {
-            let after_scheme = &base[scheme_end + 3..];
-            if let Some(path_start) = after_scheme.find('/') {
-                let origin = &base[..scheme_end + 3 + path_start];
-                format!("{origin}{href}")
-            } else {
-                // No path in base, just append
-                format!("{base}{href}")
-            }
-        } else {
-            href.to_string()
-        }
+        base.find("://").map_or_else(
+            || href.to_string(),
+            |scheme_end| {
+                let after_scheme = &base[scheme_end + 3..];
+                after_scheme.find('/').map_or_else(
+                    // No path in base, just append
+                    || format!("{base}{href}"),
+                    |path_start| {
+                        let origin = &base[..scheme_end + 3 + path_start];
+                        format!("{origin}{href}")
+                    },
+                )
+            },
+        )
     } else {
         // Relative path - join with base directory
         //

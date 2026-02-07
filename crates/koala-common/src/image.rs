@@ -26,7 +26,7 @@ impl LoadedImage {
     /// * `height` - Intrinsic height of the image in pixels
     /// * `rgba_data` - Raw RGBA pixel data (must be `width * height * 4` bytes)
     #[must_use]
-    pub fn new(width: u32, height: u32, rgba_data: Vec<u8>) -> Self {
+    pub const fn new(width: u32, height: u32, rgba_data: Vec<u8>) -> Self {
         Self {
             width,
             height,
@@ -48,7 +48,8 @@ impl LoadedImage {
 
     /// Intrinsic dimensions as `(width, height)` in `f32`, for layout.
     #[must_use]
-    pub fn dimensions_f32(&self) -> (f32, f32) {
+    #[allow(clippy::cast_precision_loss)]
+    pub const fn dimensions_f32(&self) -> (f32, f32) {
         (self.width as f32, self.height as f32)
     }
 
