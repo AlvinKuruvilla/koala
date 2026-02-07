@@ -642,3 +642,204 @@ fn test_flex_content_based_sizing() {
         "long item should have non-zero width"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Relative positioning tests
+//
+// [§ 9.4.3 Relative positioning](https://www.w3.org/TR/CSS2/visuren.html#relative-positioning)
+//
+// "Once a box has been laid out according to the normal flow, it may be
+// shifted relative to its normal position."
+// ---------------------------------------------------------------------------
+
+/// position: relative with left offset shifts the box to the right.
+#[test]
+fn test_relative_position_left_offset() {
+    let root = layout_html(
+        "<html><head><style>\
+         .rel { position: relative; left: 20px; }\
+         </style></head>\
+         <body><div>Static</div><div class='rel'>Relative</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(body.children.len() >= 2);
+
+    let static_div = &body.children[0];
+    let relative_div = &body.children[1];
+
+    // Both should have the same normal-flow x-position base, but the
+    // relative div is shifted right by 20px.
+    let expected_offset = 20.0;
+    let actual_offset = relative_div.dimensions.content.x - static_div.dimensions.content.x;
+    assert!(
+        (actual_offset - expected_offset).abs() < 0.1,
+        "relative div should be 20px right of static div, got offset {actual_offset:.1}"
+    );
+}
+
+/// position: relative with top offset shifts the box downward.
+#[test]
+fn test_relative_position_top_offset() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .rel { position: relative; top: 15px; }\
+         </style></head>\
+         <body><div class='rel'>Moved</div><div>After</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(body.children.len() >= 2);
+
+    let moved_div = &body.children[0];
+    let after_div = &body.children[1];
+
+    // "Moved" div should be shifted down by 15px from its normal position.
+    // "After" div should NOT be affected by the offset — it should be
+    // positioned as if "Moved" were in its normal-flow position.
+    //
+    // The body's content box is the containing block. The normal-flow y
+    // for the first child is body.content.y + margin_top.
+    let body_content_y = body.dimensions.content.y;
+    assert!(
+        (moved_div.dimensions.content.y - body_content_y - 15.0).abs() < 0.1,
+        "moved div should be 15px below body content top, got y={:.1} (body.y={body_content_y:.1})",
+        moved_div.dimensions.content.y
+    );
+
+    // "After" div should be positioned as if the first div were NOT offset.
+    // Its y should be body.content.y + first_div_height (normal flow).
+    assert!(
+        after_div.dimensions.content.y < moved_div.dimensions.content.y + moved_div.dimensions.content.height,
+        "after div should overlap with moved div since relative positioning \
+         does not affect subsequent siblings"
+    );
+}
+
+/// position: relative with right offset shifts the box to the left.
+#[test]
+fn test_relative_position_right_offset() {
+    let root = layout_html(
+        "<html><head><style>\
+         .rel { position: relative; right: 10px; }\
+         </style></head>\
+         <body><div>Static</div><div class='rel'>Relative</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(body.children.len() >= 2);
+
+    let static_div = &body.children[0];
+    let relative_div = &body.children[1];
+
+    // right: 10px means "shift left by 10px"
+    let actual_offset = relative_div.dimensions.content.x - static_div.dimensions.content.x;
+    assert!(
+        (actual_offset - (-10.0)).abs() < 0.1,
+        "relative div should be 10px left of static div, got offset {actual_offset:.1}"
+    );
+}
+
+/// position: relative with bottom offset shifts the box upward.
+#[test]
+fn test_relative_position_bottom_offset() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .rel { position: relative; bottom: 5px; }\
+         </style></head>\
+         <body><div>Before</div><div class='rel'>Moved</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(body.children.len() >= 2);
+
+    let before_div = &body.children[0];
+    let moved_div = &body.children[1];
+
+    // bottom: 5px means "shift up by 5px". The normal-flow y of the second
+    // div is after the first div. The offset should reduce y by 5.
+    let normal_flow_y =
+        before_div.dimensions.content.y + before_div.dimensions.content.height;
+    let actual_y = moved_div.dimensions.content.y;
+    assert!(
+        (actual_y - (normal_flow_y - 5.0)).abs() < 0.1,
+        "moved div should be 5px above normal flow position, got y={actual_y:.1} \
+         (normal={normal_flow_y:.1})"
+    );
+}
+
+/// position: relative with no offsets should not move the box.
+#[test]
+fn test_relative_position_no_offsets() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .rel { position: relative; }\
+         </style></head>\
+         <body><div>Static</div><div class='rel'>Relative</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(body.children.len() >= 2);
+
+    let static_div = &body.children[0];
+    let relative_div = &body.children[1];
+
+    // No offsets means no movement — same x position.
+    assert!(
+        (relative_div.dimensions.content.x - static_div.dimensions.content.x).abs() < 0.1,
+        "relative div with no offsets should have same x as static div"
+    );
+}
+
+/// Over-constrained: when both left and right are set, left wins (LTR).
+#[test]
+fn test_relative_position_overconstrained_horizontal() {
+    let root = layout_html(
+        "<html><head><style>\
+         .rel { position: relative; left: 30px; right: 10px; }\
+         </style></head>\
+         <body><div>Static</div><div class='rel'>Relative</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(body.children.len() >= 2);
+
+    let static_div = &body.children[0];
+    let relative_div = &body.children[1];
+
+    // [§ 9.4.3]: "If neither 'left' nor 'right' is 'auto', the position is
+    // over-constrained... If 'direction' is 'ltr', the value of 'left' wins."
+    let actual_offset = relative_div.dimensions.content.x - static_div.dimensions.content.x;
+    assert!(
+        (actual_offset - 30.0).abs() < 0.1,
+        "left should win over right in LTR, got offset {actual_offset:.1}"
+    );
+}
+
+/// Over-constrained: when both top and bottom are set, top wins.
+#[test]
+fn test_relative_position_overconstrained_vertical() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .rel { position: relative; top: 25px; bottom: 10px; }\
+         </style></head>\
+         <body><div class='rel'>Moved</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    assert!(!body.children.is_empty());
+
+    let moved_div = &body.children[0];
+
+    // [§ 9.4.3]: "If neither is 'auto', 'bottom' is ignored."
+    let body_content_y = body.dimensions.content.y;
+    assert!(
+        (moved_div.dimensions.content.y - body_content_y - 25.0).abs() < 0.1,
+        "top should win over bottom, got y={:.1} (body.y={body_content_y:.1})",
+        moved_div.dimensions.content.y
+    );
+}

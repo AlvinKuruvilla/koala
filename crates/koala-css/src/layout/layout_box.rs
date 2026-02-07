@@ -16,6 +16,7 @@ use crate::style::{
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
 use super::inline::{FontMetrics, FontStyle, InlineLayout, LineBox, TextAlign};
+use super::positioned::{BoxOffsets, PositionType, PositionedLayout};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
 #[cfg(feature = "layout-trace")]
@@ -405,6 +406,20 @@ pub struct LayoutBox {
     /// "The flex-basis property sets the flex basis."
     /// None = auto
     pub flex_basis: Option<AutoLength>,
+
+    // ===== Positioning fields =====
+    /// [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+    ///
+    /// "The 'position' and 'float' properties determine which of the CSS 2
+    /// positioning algorithms is used to calculate the position of a box."
+    pub position_type: PositionType,
+
+    /// [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+    ///
+    /// "An element is said to be positioned if its 'position' property has
+    /// a value other than 'static'. Positioned elements generate positioned
+    /// boxes, laid out according to four properties: top, right, bottom, left."
+    pub offsets: BoxOffsets,
 }
 
 impl LayoutBox {
@@ -631,6 +646,8 @@ impl LayoutBox {
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
+                    position_type: PositionType::Static,
+                    offsets: BoxOffsets::default(),
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -741,6 +758,49 @@ impl LayoutBox {
                 // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
                 let flex_basis = style.and_then(|s| s.flex_basis);
 
+                // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+                //
+                // "Values: static | relative | absolute | fixed | sticky"
+                // Initial: static
+                let position_type = style
+                    .and_then(|s| s.position.as_deref())
+                    .map(|p| match p {
+                        "relative" => PositionType::Relative,
+                        "absolute" => PositionType::Absolute,
+                        "fixed" => PositionType::Fixed,
+                        "sticky" => PositionType::Sticky,
+                        _ => PositionType::Static,
+                    })
+                    .unwrap_or(PositionType::Static);
+
+                // [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+                //
+                // "These properties specify offsets with respect to the box's
+                // containing block."
+                //
+                // None in ComputedStyle means property not set (treated as 'auto').
+                // AutoLength::Auto also means 'auto'. Both map to None in BoxOffsets.
+                // Length values are resolved to px during cascade.
+                #[allow(clippy::cast_possible_truncation)]
+                let offsets = BoxOffsets {
+                    top: style.and_then(|s| s.top.as_ref()).and_then(|al| match al {
+                        AutoLength::Auto => None,
+                        AutoLength::Length(l) => Some(l.to_px() as f32),
+                    }),
+                    right: style.and_then(|s| s.right.as_ref()).and_then(|al| match al {
+                        AutoLength::Auto => None,
+                        AutoLength::Length(l) => Some(l.to_px() as f32),
+                    }),
+                    bottom: style.and_then(|s| s.bottom.as_ref()).and_then(|al| match al {
+                        AutoLength::Auto => None,
+                        AutoLength::Length(l) => Some(l.to_px() as f32),
+                    }),
+                    left: style.and_then(|s| s.left.as_ref()).and_then(|al| match al {
+                        AutoLength::Auto => None,
+                        AutoLength::Length(l) => Some(l.to_px() as f32),
+                    }),
+                };
+
                 // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
                 //
                 // Detect replaced elements (e.g., <img>) and record their
@@ -786,6 +846,8 @@ impl LayoutBox {
                     flex_grow,
                     flex_shrink,
                     flex_basis,
+                    position_type,
+                    offsets,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -839,6 +901,8 @@ impl LayoutBox {
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
+                    position_type: PositionType::Static,
+                    offsets: BoxOffsets::default(),
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -986,57 +1050,66 @@ impl LayoutBox {
         // normal block/inline layout dispatch.
         if self.is_replaced {
             self.layout_replaced(containing_block, viewport);
-            return;
-        }
-
-        // [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
-        //
-        // Check inner display type — flex containers use their own algorithm.
-        if self.display.inner == InnerDisplayType::Flex {
+        } else if self.display.inner == InnerDisplayType::Flex {
+            // [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
+            //
+            // Check inner display type — flex containers use their own algorithm.
             super::flex::layout_flex(self, containing_block, viewport, font_metrics);
-            return;
+        } else {
+            match self.display.outer {
+                OuterDisplayType::Block => {
+                    self.layout_block(containing_block, viewport, font_metrics);
+                }
+                OuterDisplayType::Inline => {
+                    // TODO: Implement proper inline layout with line box construction
+                    // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+                    //
+                    // Proper inline layout requires:
+                    //
+                    // STEP 1: Create or get parent's InlineFormattingContext
+                    //   // let ifc = parent.get_or_create_ifc();
+                    //
+                    // STEP 2: Add this inline box to the line
+                    //   // ifc.add_inline_box(self);
+                    //   // This may trigger line wrapping if box doesn't fit
+                    //
+                    // STEP 3: For inline boxes with children, recursively add children
+                    //   // for child in self.children {
+                    //   //     match child.display.outer {
+                    //   //         Inline => ifc.add_inline_box(child),
+                    //   //         Block => {
+                    //   //             // Breaks the line, starts block formatting
+                    //   //             ifc.break_line();
+                    //   //             child.layout_block(...);
+                    //   //             ifc.new_line_after_block();
+                    //   //         }
+                    //   //     }
+                    //   // }
+                    //
+                    // STEP 4: Calculate inline box dimensions from font metrics
+                    //   // self.dimensions.content.width = text_width;
+                    //   // self.dimensions.content.height = line_height;
+                    //
+                    // TEMPORARY: Fall back to block layout until inline is implemented.
+                    // This causes inline elements to stack vertically instead of horizontally.
+                    self.layout_block(containing_block, viewport, font_metrics);
+                }
+                OuterDisplayType::RunIn => {
+                    // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
+                    todo!("Run-in layout not yet implemented")
+                }
+            }
         }
 
-        match self.display.outer {
-            OuterDisplayType::Block => self.layout_block(containing_block, viewport, font_metrics),
-            OuterDisplayType::Inline => {
-                // TODO: Implement proper inline layout with line box construction
-                // [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
-                //
-                // Proper inline layout requires:
-                //
-                // STEP 1: Create or get parent's InlineFormattingContext
-                //   // let ifc = parent.get_or_create_ifc();
-                //
-                // STEP 2: Add this inline box to the line
-                //   // ifc.add_inline_box(self);
-                //   // This may trigger line wrapping if box doesn't fit
-                //
-                // STEP 3: For inline boxes with children, recursively add children
-                //   // for child in self.children {
-                //   //     match child.display.outer {
-                //   //         Inline => ifc.add_inline_box(child),
-                //   //         Block => {
-                //   //             // Breaks the line, starts block formatting
-                //   //             ifc.break_line();
-                //   //             child.layout_block(...);
-                //   //             ifc.new_line_after_block();
-                //   //         }
-                //   //     }
-                //   // }
-                //
-                // STEP 4: Calculate inline box dimensions from font metrics
-                //   // self.dimensions.content.width = text_width;
-                //   // self.dimensions.content.height = line_height;
-                //
-                // TEMPORARY: Fall back to block layout until inline is implemented.
-                // This causes inline elements to stack vertically instead of horizontally.
-                self.layout_block(containing_block, viewport, font_metrics);
-            }
-            OuterDisplayType::RunIn => {
-                // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
-                todo!("Run-in layout not yet implemented")
-            }
+        // [§ 9.4.3 Relative positioning](https://www.w3.org/TR/CSS2/visuren.html#relative-positioning)
+        //
+        // "Once a box has been laid out according to the normal flow, it may be
+        // shifted relative to its normal position."
+        //
+        // Applied after all normal-flow layout is complete, so the offset
+        // does not affect sibling or child positioning.
+        if self.position_type == PositionType::Relative {
+            PositionedLayout::layout_relative(&mut self.dimensions, &self.offsets);
         }
     }
 
@@ -1872,6 +1945,8 @@ impl LayoutBox {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: None,
+            position_type: PositionType::Static,
+            offsets: BoxOffsets::default(),
         }
     }
 

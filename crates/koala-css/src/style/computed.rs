@@ -187,6 +187,46 @@ pub struct ComputedStyle {
     /// Initial: auto
     pub flex_basis: Option<AutoLength>,
 
+    // ===== Positioning properties =====
+    /// [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+    ///
+    /// "The 'position' and 'float' properties determine which of the CSS 2
+    /// positioning algorithms is used to calculate the position of a box."
+    ///
+    /// Values: static | relative | absolute | fixed | sticky
+    /// Initial: static
+    /// Inherited: no
+    pub position: Option<String>,
+
+    /// [§ 9.3.2 'top'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+    ///
+    /// "The 'top' property specifies how far the top margin edge of the
+    /// box is offset below the top edge of the box's containing block."
+    ///
+    /// Values: `<length>` | `<percentage>` | auto
+    /// Initial: auto
+    /// Inherited: no
+    pub top: Option<AutoLength>,
+
+    /// [§ 9.3.2 'right'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+    ///
+    /// "The 'right' property specifies how far the right margin edge of
+    /// the box is offset to the left of the right edge of the box's
+    /// containing block."
+    pub right: Option<AutoLength>,
+
+    /// [§ 9.3.2 'bottom'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+    ///
+    /// "The 'bottom' property specifies how far the bottom margin edge of
+    /// the box is offset above the bottom edge of the box's containing block."
+    pub bottom: Option<AutoLength>,
+
+    /// [§ 9.3.2 'left'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+    ///
+    /// "The 'left' property specifies how far the left margin edge of the
+    /// box is offset to the right of the left edge of the box's containing block."
+    pub left: Option<AutoLength>,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Source order tracking for cascade resolution of logical property groups
     // ─────────────────────────────────────────────────────────────────────────
@@ -529,6 +569,45 @@ impl ComputedStyle {
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.flex_basis = Some(self.resolve_auto_length(auto_len));
+                }
+            }
+            // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+            //
+            // "Values: static | relative | absolute | fixed"
+            // [CSS Positioned Layout Module Level 3 § 3](https://www.w3.org/TR/css-position-3/#position-property)
+            // adds "sticky"
+            "position" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(
+                        lower.as_str(),
+                        "static" | "relative" | "absolute" | "fixed" | "sticky"
+                    ) {
+                        self.position = Some(lower);
+                    }
+                }
+            }
+            // [§ 9.3.2 Box offsets: 'top', 'right', 'bottom', 'left'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+            //
+            // "Values: <length> | <percentage> | auto | inherit"
+            "top" => {
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.top = Some(self.resolve_auto_length(al));
+                }
+            }
+            "right" => {
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.right = Some(self.resolve_auto_length(al));
+                }
+            }
+            "bottom" => {
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.bottom = Some(self.resolve_auto_length(al));
+                }
+            }
+            "left" => {
+                if let Some(al) = parse_auto_length_value(&decl.value) {
+                    self.left = Some(self.resolve_auto_length(al));
                 }
             }
             unknown => {

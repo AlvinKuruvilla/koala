@@ -301,6 +301,16 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         flex_shrink: None,
         flex_basis: None,
 
+        // [§ 9.3.1 position](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+        // "Inherited: no"
+        position: None,
+        // [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+        // "Inherited: no"
+        top: None,
+        right: None,
+        bottom: None,
+        left: None,
+
         // Source order tracking for cascade resolution (not inherited, per-element)
         margin_top_source_order: None,
         margin_right_source_order: None,

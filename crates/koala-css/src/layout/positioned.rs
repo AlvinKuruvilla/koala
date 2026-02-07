@@ -85,7 +85,7 @@ pub enum PositionType {
 /// auto
 ///   For non-replaced elements, the effect of this value depends on which
 ///   of related properties have the value 'auto' as well."
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BoxOffsets {
     /// "The 'top' property specifies how far the top margin edge of the
     /// box is offset below the top edge of the box's containing block."
@@ -120,28 +120,60 @@ impl PositionedLayout {
     ///
     /// "For relatively positioned elements, 'left' and 'right' move the box(es)
     /// horizontally, without changing their size."
-    ///
-    /// TODO: Implement relative positioning:
-    ///
-    /// STEP 1: Layout the box in normal flow (already done before this is called)
-    ///
-    /// STEP 2: Apply horizontal offset
-    ///   // [§ 9.4.3](https://www.w3.org/TR/CSS2/visuren.html#relative-positioning)
-    ///   // "If both 'left' and 'right' are 'auto', the used values are both 0."
-    ///   // "If 'left' is 'auto', its used value is minus the value of 'right'."
-    ///   // "If 'right' is 'auto', its used value is minus the value of 'left'."
-    ///   // "If neither is 'auto', the position is over-constrained, and one
-    ///   //  must be ignored. If 'direction' is 'ltr', 'right' is ignored."
-    ///   `// box.dimensions.content.x += offset_x;`
-    ///
-    /// STEP 3: Apply vertical offset
-    ///   // "If both 'top' and 'bottom' are 'auto', the used values are both 0."
-    ///   // "If 'top' is 'auto', its used value is minus the value of 'bottom'."
-    ///   // "If 'bottom' is 'auto', its used value is minus the value of 'top'."
-    ///   // "If neither is 'auto', 'bottom' is ignored."
-    ///   `// box.dimensions.content.y += offset_y;`
-    pub fn layout_relative(_box_dims: &mut BoxDimensions, _offsets: &BoxOffsets) {
-        todo!("Relative positioning: offset box from normal-flow position")
+    pub fn layout_relative(box_dims: &mut BoxDimensions, offsets: &BoxOffsets) {
+        // STEP 1: Layout the box in normal flow (already done before this is called)
+
+        // STEP 2: Apply horizontal offset
+        // [§ 9.4.3](https://www.w3.org/TR/CSS2/visuren.html#relative-positioning)
+        //
+        // "If both 'left' and 'right' are 'auto', the used values are both 0
+        //  (i.e., the boxes stay in their original position)."
+        //
+        // "If 'left' is 'auto', its used value is minus the value of 'right'
+        //  (i.e., the box is moved to the left by the value of 'right')."
+        //
+        // "If 'right' is 'auto', its used value is minus the value of 'left'
+        //  (i.e., the box is moved to the right by the value of 'left')."
+        //
+        // "If neither 'left' nor 'right' is 'auto', the position is
+        //  over-constrained, and one of them has to be ignored. If the
+        //  'direction' property of the containing block is 'ltr', the value
+        //  of 'left' wins and 'right' becomes -'left'. If 'direction' of the
+        //  containing block is 'rtl', 'right' wins and 'left' is ignored."
+        let offset_x = match (offsets.left, offsets.right) {
+            // Both auto: no offset
+            (None, None) => 0.0,
+            // left specified, right auto: move right by left
+            (Some(left), None) => left,
+            // left auto, right specified: move left by right
+            (None, Some(right)) => -right,
+            // Both specified (over-constrained): left wins for LTR
+            // NOTE: We assume LTR direction. When 'direction' property is
+            // implemented, this should check the containing block's direction.
+            (Some(left), Some(_right)) => left,
+        };
+        box_dims.content.x += offset_x;
+
+        // STEP 3: Apply vertical offset
+        // [§ 9.4.3](https://www.w3.org/TR/CSS2/visuren.html#relative-positioning)
+        //
+        // "If both are 'auto', their used values are both 0."
+        //
+        // "If one of them is 'auto', it becomes the negative of the other."
+        //
+        // "If neither is 'auto', 'bottom' is ignored (i.e., the used value
+        //  of 'bottom' will be minus the value of 'top')."
+        let offset_y = match (offsets.top, offsets.bottom) {
+            // Both auto: no offset
+            (None, None) => 0.0,
+            // top specified, bottom auto: move down by top
+            (Some(top), None) => top,
+            // top auto, bottom specified: move up by bottom
+            (None, Some(bottom)) => -bottom,
+            // Both specified (over-constrained): top wins
+            (Some(top), Some(_bottom)) => top,
+        };
+        box_dims.content.y += offset_y;
     }
 
     /// [§ 10.3.7 Absolutely positioned, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
