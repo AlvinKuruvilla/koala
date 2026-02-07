@@ -463,13 +463,13 @@ fn print_computed_styles(doc: &LoadedDocument) {
         if let Some(AutoLength::Length(ref len)) = style.margin_top {
             let px = len.to_px();
             if px != 0.0 {
-                props.push(format_style_prop("margin-top", &format!("{}px", px)));
+                props.push(format_style_prop("margin-top", &format!("{px}px")));
             }
         }
         if let Some(AutoLength::Length(ref len)) = style.margin_bottom {
             let px = len.to_px();
             if px != 0.0 {
-                props.push(format_style_prop("margin-bottom", &format!("{}px", px)));
+                props.push(format_style_prop("margin-bottom", &format!("{px}px")));
             }
         }
         if let Some(ref d) = style.display {

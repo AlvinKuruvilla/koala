@@ -177,7 +177,7 @@ fn print_document(doc: &LoadedDocument) {
     if !doc.parse_issues.is_empty() {
         println!("\n=== Parse Issues ===");
         for issue in &doc.parse_issues {
-            println!("  - {}", issue);
+            println!("  - {issue}");
         }
     }
 }
@@ -188,8 +188,7 @@ fn print_layout(doc: &LoadedDocument) {
     let viewport_height = 720.0;
 
     println!(
-        "=== Layout Tree (viewport: {}x{}) ===\n",
-        viewport_width, viewport_height
+        "=== Layout Tree (viewport: {viewport_width}x{viewport_height}) ===\n"
     );
 
     if let Some(ref layout_tree) = doc.layout_tree {
@@ -221,12 +220,11 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
             } else if doc
                 .dom
                 .get(*node_id)
-                .map(|n| matches!(n.node_type, NodeType::Document))
-                .unwrap_or(false)
+                .is_some_and(|n| matches!(n.node_type, NodeType::Document))
             {
-                format!("Document ({:?})", node_id)
+                format!("Document ({node_id:?})")
             } else {
-                format!("{:?}", node_id)
+                format!("{node_id:?}")
             }
         }
         koala_css::BoxType::AnonymousBlock => "AnonymousBlock".to_string(),
@@ -277,7 +275,7 @@ fn run_gui(initial_url: Option<String>) -> anyhow::Result<()> {
     println!("[Koala GUI] Starting browser...");
 
     if let Some(ref url) = initial_url {
-        println!("[Koala GUI] Will open: {}", url);
+        println!("[Koala GUI] Will open: {url}");
     }
 
     let options = eframe::NativeOptions {
@@ -368,7 +366,7 @@ struct BrowserApp {
     image_textures: RefCell<HashMap<String, egui::TextureHandle>>,
 }
 
-/// Parsed page state - wraps LoadedDocument with GUI-specific fields
+/// Parsed page state - wraps `LoadedDocument` with GUI-specific fields
 struct PageState {
     /// The loaded document from koala-browser
     doc: LoadedDocument,
@@ -392,7 +390,7 @@ impl BrowserApp {
 
         let theme = Theme::Dark;
         theme.apply(ctx);
-        println!("[Koala GUI] Browser initialized with {:?} theme", theme);
+        println!("[Koala GUI] Browser initialized with {theme:?} theme");
 
         Self {
             url_input: initial_url.clone().unwrap_or_default(),
@@ -415,7 +413,7 @@ impl BrowserApp {
         self.theme = theme;
         self.palette = theme.palette();
         theme.apply(ctx);
-        println!("[Koala GUI] Theme changed to {:?}", theme);
+        println!("[Koala GUI] Theme changed to {theme:?}");
     }
 
     /// Navigate to a URL/path
@@ -425,8 +423,8 @@ impl BrowserApp {
         self.css_warnings_logged.borrow_mut().clear();
         self.image_textures.borrow_mut().clear();
 
-        println!("[Koala GUI] Navigating to: {}", path);
-        self.status_message = format!("Loading {}...", path);
+        println!("[Koala GUI] Navigating to: {path}");
+        self.status_message = format!("Loading {path}...");
 
         match self.load_page(path) {
             Ok(page) => {
@@ -442,7 +440,7 @@ impl BrowserApp {
                         page.doc.parse_issues.len()
                     );
                     for issue in &page.doc.parse_issues {
-                        println!("[Koala GUI]     ! {}", issue);
+                        println!("[Koala GUI]     ! {issue}");
                     }
                 }
 
@@ -455,11 +453,11 @@ impl BrowserApp {
 
                 self.url_input = path.to_string();
                 self.page = Some(page);
-                self.status_message = format!("Loaded: {}", path);
+                self.status_message = format!("Loaded: {path}");
             }
             Err(e) => {
-                println!("[Koala GUI] ERROR loading page: {}", e);
-                self.status_message = format!("Error: {}", e);
+                println!("[Koala GUI] ERROR loading page: {e}");
+                self.status_message = format!("Error: {e}");
                 self.page = None;
             }
         }
@@ -467,7 +465,7 @@ impl BrowserApp {
 
     /// Load and parse a page from a file path or URL
     ///
-    /// Uses koala_browser::load_document for the actual loading/parsing.
+    /// Uses `koala_browser::load_document` for the actual loading/parsing.
     fn load_page(&self, path: &str) -> Result<PageState, String> {
         let doc = load_document(path).map_err(|e| e.to_string())?;
 
@@ -495,11 +493,11 @@ impl BrowserApp {
         if self.history_index > 1 {
             self.history_index -= 1;
             let path = self.history[self.history_index - 1].clone();
-            println!("[Koala GUI] Going back to: {}", path);
+            println!("[Koala GUI] Going back to: {path}");
             self.url_input = path.clone();
             if let Ok(page) = self.load_page(&path) {
                 self.page = Some(page);
-                self.status_message = format!("Loaded: {}", path);
+                self.status_message = format!("Loaded: {path}");
             }
         }
     }
@@ -508,11 +506,11 @@ impl BrowserApp {
         if self.history_index < self.history.len() {
             self.history_index += 1;
             let path = self.history[self.history_index - 1].clone();
-            println!("[Koala GUI] Going forward to: {}", path);
+            println!("[Koala GUI] Going forward to: {path}");
             self.url_input = path.clone();
             if let Ok(page) = self.load_page(&path) {
                 self.page = Some(page);
-                self.status_message = format!("Loaded: {}", path);
+                self.status_message = format!("Loaded: {path}");
             }
         }
     }
@@ -520,7 +518,7 @@ impl BrowserApp {
     fn refresh(&mut self) {
         if let Some(page) = &self.page {
             let path = page.doc.source_path.clone();
-            println!("[Koala GUI] Refreshing: {}", path);
+            println!("[Koala GUI] Refreshing: {path}");
             self.navigate(&path);
         }
     }
@@ -532,11 +530,11 @@ impl BrowserApp {
         println!("[Koala GUI] Returned to home");
     }
 
-    fn can_go_back(&self) -> bool {
+    const fn can_go_back(&self) -> bool {
         self.history_index > 1
     }
 
-    fn can_go_forward(&self) -> bool {
+    const fn can_go_forward(&self) -> bool {
         self.history_index < self.history.len()
     }
 }
@@ -836,8 +834,8 @@ impl eframe::App for BrowserApp {
                     // Recompute layout if viewport changed (mutable borrow scope)
                     {
                         let page = self.page.as_mut().unwrap();
-                        if page.last_layout_viewport != Some(viewport_size) {
-                            if let Some(ref mut root) = page.doc.layout_tree {
+                        if page.last_layout_viewport != Some(viewport_size)
+                            && let Some(ref mut root) = page.doc.layout_tree {
                                 // [§ 9.1.2 Containing blocks](https://www.w3.org/TR/CSS2/visuren.html#containing-block)
                                 //
                                 // "The containing block in which the root element lives is a
@@ -862,7 +860,6 @@ impl eframe::App for BrowserApp {
                                     viewport_size.0 as u32, viewport_size.1 as u32
                                 );
                             }
-                        }
                     }
 
                     // Now borrow immutably for rendering
@@ -1088,8 +1085,8 @@ impl BrowserApp {
         //
         // "The initial value of 'background-clip' is 'border-box', meaning
         // the background is painted within the border box."
-        if let Some(s) = style {
-            if let Some(ref bg) = s.background_color {
+        if let Some(s) = style
+            && let Some(ref bg) = s.background_color {
                 let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
                 // Paint at the border box (content + padding + border)
                 let border_rect = egui::Rect::from_min_size(
@@ -1112,16 +1109,15 @@ impl BrowserApp {
                 );
                 let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
             }
-        }
 
         // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the replaced content of replaced inline-level elements"
         //
         // If this is a replaced element (e.g., <img>), paint the image.
-        if layout_box.is_replaced {
-            if let Some(ref src) = layout_box.replaced_src {
-                if let Some(page_ref) = &self.page {
-                    if let Some(loaded_img) = page_ref.doc.images.get(src) {
+        if layout_box.is_replaced
+            && let Some(ref src) = layout_box.replaced_src
+                && let Some(page_ref) = &self.page
+                    && let Some(loaded_img) = page_ref.doc.images.get(src) {
                         let mut textures = self.image_textures.borrow_mut();
                         let texture = textures.entry(src.clone()).or_insert_with(|| {
                             let color_image = egui::ColorImage::from_rgba_unmultiplied(
@@ -1146,14 +1142,11 @@ impl BrowserApp {
                             egui::Color32::WHITE,
                         );
                     }
-                }
-            }
-        }
 
         // Determine text formatting from style
         let font_size = style
             .and_then(|s| s.font_size.as_ref())
-            .map(|fs| fs.to_px())
+            .map(koala_css::LengthValue::to_px)
             .unwrap_or_else(|| match tag.as_deref() {
                 Some("h1") => 32.0,
                 Some("h2") => 24.0,
@@ -1166,8 +1159,7 @@ impl BrowserApp {
 
         let text_color = style
             .and_then(|s| s.color.as_ref())
-            .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
-            .unwrap_or(ui.visuals().text_color());
+            .map_or(ui.visuals().text_color(), |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
 
         // Render text content.
         //
@@ -1223,8 +1215,8 @@ impl BrowserApp {
 
             let mut text_y = content_rect.min.y;
             for &child_id in page.doc.dom.children(id) {
-                if let Some(child_node) = page.doc.dom.get(child_id) {
-                    if let NodeType::Text(text) = &child_node.node_type {
+                if let Some(child_node) = page.doc.dom.get(child_id)
+                    && let NodeType::Text(text) = &child_node.node_type {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
                             // Paint text at the computed position
@@ -1239,7 +1231,6 @@ impl BrowserApp {
                             text_y += galley.rect.height() + 4.0; // Line spacing
                         }
                     }
-                }
             }
         }
 
@@ -1278,15 +1269,14 @@ impl BrowserApp {
                 // Warn about CSS properties we parse but don't render
                 if let Some(s) = style {
                     // background-color only supported on body (via canvas_background)
-                    if tag != "body" {
-                        if let Some(bg) = &s.background_color {
+                    if tag != "body"
+                        && let Some(bg) = &s.background_color {
                             self.warn_unsupported_css(
                                 "background-color",
                                 &tag,
                                 &bg.to_hex_string(),
                             );
                         }
-                    }
 
                     // font-family is parsed but not applied
                     if let Some(ff) = &s.font_family {
@@ -1319,7 +1309,7 @@ impl BrowserApp {
                 );
                 let font_size = style
                     .and_then(|s| s.font_size.as_ref())
-                    .map(|fs| fs.to_px())
+                    .map(koala_css::LengthValue::to_px)
                     .unwrap_or_else(|| {
                         // User-agent default sizes when no CSS specified
                         // [§ 15.3.1 HTML headings](https://html.spec.whatwg.org/#sections-and-headings)
@@ -1336,8 +1326,7 @@ impl BrowserApp {
 
                 let text_color = style
                     .and_then(|s| s.color.as_ref())
-                    .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
-                    .unwrap_or(ui.visuals().text_color());
+                    .map_or(ui.visuals().text_color(), |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
 
                 let is_block = matches!(
                     tag.as_str(),
@@ -1412,8 +1401,7 @@ impl BrowserApp {
         let mut logged = self.css_warnings_logged.borrow_mut();
         if !logged.contains(&key) {
             println!(
-                "[Koala CSS] Ignoring {}: {} on <{}> (not yet implemented)",
-                property, value, tag
+                "[Koala CSS] Ignoring {property}: {value} on <{tag}> (not yet implemented)"
             );
             let _ = logged.insert(key);
         }
@@ -1438,15 +1426,15 @@ impl BrowserApp {
 
         match &node.node_type {
             NodeType::Document => {
-                let _ = ui.monospace(format!("{}#document", indent));
+                let _ = ui.monospace(format!("{indent}#document"));
             }
             NodeType::Element(data) => {
                 let mut label = format!("{}<{}", indent, data.tag_name);
                 if let Some(id_attr) = data.attrs.get("id") {
-                    label.push_str(&format!(" id=\"{}\"", id_attr));
+                    label.push_str(&format!(" id=\"{id_attr}\""));
                 }
                 if let Some(class) = data.attrs.get("class") {
-                    label.push_str(&format!(" class=\"{}\"", class));
+                    label.push_str(&format!(" class=\"{class}\""));
                 }
                 label.push('>');
 
@@ -1469,7 +1457,7 @@ impl BrowserApp {
                 if !preview.is_empty() {
                     let _ = ui.colored_label(
                         self.palette.text_secondary,
-                        format!("{}\"{}\"", indent, preview),
+                        format!("{indent}\"{preview}\""),
                     );
                 }
             }
@@ -1481,7 +1469,7 @@ impl BrowserApp {
                 };
                 let _ = ui.colored_label(
                     self.palette.text_tertiary,
-                    format!("{}<!-- {} -->", indent, preview),
+                    format!("{indent}<!-- {preview} -->"),
                 );
             }
         }
@@ -1500,7 +1488,7 @@ impl BrowserApp {
         ui.add_space(8.0);
 
         for (i, token) in page.doc.tokens.iter().enumerate() {
-            let _ = ui.monospace(format!("{:4}: {:?}", i, token));
+            let _ = ui.monospace(format!("{i:4}: {token:?}"));
         }
     }
 
@@ -1542,8 +1530,8 @@ impl BrowserApp {
         ui.add_space(8.0);
 
         for (node_id, style) in &page.doc.styles {
-            if let Some(node) = page.doc.dom.get(*node_id) {
-                if let NodeType::Element(data) = &node.node_type {
+            if let Some(node) = page.doc.dom.get(*node_id)
+                && let NodeType::Element(data) = &node.node_type {
                     let _ =
                         ui.collapsing(format!("<{}> (node {})", data.tag_name, node_id.0), |ui| {
                             if let Some(ref color) = style.color {
@@ -1572,7 +1560,6 @@ impl BrowserApp {
                             }
                         });
                 }
-            }
         }
     }
 

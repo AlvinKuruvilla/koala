@@ -17,7 +17,7 @@ pub enum Theme {
 
 impl Theme {
     /// Return the opposite theme.
-    pub fn toggle(self) -> Self {
+    pub const fn toggle(self) -> Self {
         match self {
             Self::Light => Self::Dark,
             Self::Dark => Self::Light,
@@ -28,7 +28,7 @@ impl Theme {
     ///
     /// When in Light mode the icon shows a moon (switch to dark),
     /// when in Dark mode the icon shows a sun (switch to light).
-    pub fn icon(self) -> &'static str {
+    pub const fn icon(self) -> &'static str {
         match self {
             Self::Light => "\u{1f319}",       // 🌙
             Self::Dark => "\u{2600}\u{fe0f}", // ☀️
