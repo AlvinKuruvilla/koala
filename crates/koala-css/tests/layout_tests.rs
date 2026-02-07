@@ -1338,3 +1338,174 @@ fn test_absolute_no_positioned_ancestor_uses_viewport() {
         abs_child.dimensions.content.y
     );
 }
+
+// ---------------------------------------------------------------------------
+// box-sizing: border-box tests
+//
+// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+//
+// "The box-sizing property defines whether the width and height (and
+// respective min/max properties) on an element include padding and
+// borders or not."
+// ---------------------------------------------------------------------------
+
+/// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+///
+/// With `box-sizing: border-box`, `width: 200px` and `padding: 20px` means
+/// the content width is 200 - 20 - 20 = 160px.
+#[test]
+fn test_border_box_width_includes_padding() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { width: 200px; padding: 20px; box-sizing: border-box; }\
+         body { margin: 0; }\
+         </style></head>\
+         <body><div>Hello</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    assert!(
+        (div.dimensions.content.width - 160.0).abs() < 0.1,
+        "border-box width 200 with padding 20 should give content width 160, got {:.1}",
+        div.dimensions.content.width
+    );
+    assert!(
+        (div.dimensions.padding.left - 20.0).abs() < 0.1,
+        "padding-left should be 20, got {:.1}",
+        div.dimensions.padding.left
+    );
+    assert!(
+        (div.dimensions.padding.right - 20.0).abs() < 0.1,
+        "padding-right should be 20, got {:.1}",
+        div.dimensions.padding.right
+    );
+}
+
+/// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+///
+/// With `box-sizing: border-box`, `width: 200px` and `border: 5px solid`
+/// means content width is 200 - 5 - 5 = 190px.
+#[test]
+fn test_border_box_width_includes_border() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { width: 200px; border: 5px solid black; box-sizing: border-box; }\
+         body { margin: 0; }\
+         </style></head>\
+         <body><div>Hello</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    assert!(
+        (div.dimensions.content.width - 190.0).abs() < 0.1,
+        "border-box width 200 with border 5 should give content width 190, got {:.1}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+///
+/// With `box-sizing: border-box`, `margin: auto` centering should center
+/// based on the border-box (200px) total, not the content width.
+#[test]
+fn test_border_box_auto_margins_center() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { width: 200px; padding: 20px; margin: 0 auto; box-sizing: border-box; }\
+         body { margin: 0; }\
+         </style></head>\
+         <body><div>Hello</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    // Viewport is 800px. border-box is 200px. Remaining = 600px.
+    // Auto margins should each be 300px.
+    assert!(
+        (div.dimensions.margin.left - 300.0).abs() < 0.1,
+        "margin-left should be 300, got {:.1}",
+        div.dimensions.margin.left
+    );
+    assert!(
+        (div.dimensions.margin.right - 300.0).abs() < 0.1,
+        "margin-right should be 300, got {:.1}",
+        div.dimensions.margin.right
+    );
+}
+
+/// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+///
+/// With `box-sizing: border-box`, `height: 100px` and `padding: 10px`
+/// means content height is 100 - 10 - 10 = 80px.
+#[test]
+fn test_border_box_height() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { height: 100px; padding: 10px; box-sizing: border-box; }\
+         body { margin: 0; }\
+         </style></head>\
+         <body><div>Hello</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    assert!(
+        (div.dimensions.content.height - 80.0).abs() < 0.1,
+        "border-box height 100 with padding 10 should give content height 80, got {:.1}",
+        div.dimensions.content.height
+    );
+}
+
+/// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+///
+/// Default behavior (content-box): `width: 200px` and `padding: 20px`
+/// means content width is 200px and the total box is 240px.
+#[test]
+fn test_content_box_default() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { width: 200px; padding: 20px; }\
+         body { margin: 0; }\
+         </style></head>\
+         <body><div>Hello</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    assert!(
+        (div.dimensions.content.width - 200.0).abs() < 0.1,
+        "content-box width should be 200, got {:.1}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+///
+/// With `box-sizing: border-box`, `max-width: 200px` and `padding: 20px`
+/// means the border-box is capped at 200px (content = 160px).
+#[test]
+fn test_border_box_max_width() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { width: 400px; max-width: 200px; padding: 20px; box-sizing: border-box; }\
+         body { margin: 0; }\
+         </style></head>\
+         <body><div>Hello</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    assert!(
+        (div.dimensions.content.width - 160.0).abs() < 0.1,
+        "border-box max-width 200 with padding 20 should give content width 160, got {:.1}",
+        div.dimensions.content.width
+    );
+}

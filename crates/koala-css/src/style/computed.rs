@@ -269,6 +269,19 @@ pub struct ComputedStyle {
     // These fields track which declaration (by source_order) set each physical margin,
     // allowing proper cascade resolution when both logical and physical properties
     // target the same computed value.
+    /// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+    ///
+    /// "The box-sizing property defines whether the width and height (and
+    /// respective min/max properties) on an element include padding and
+    /// borders or not."
+    ///
+    /// "Inherited: no"
+    /// "Initial: content-box"
+    ///
+    /// None = not set (initial = content-box).
+    /// Some(true) = border-box, Some(false) = content-box.
+    pub box_sizing_border_box: Option<bool>,
+
     /// Source order of the declaration that set `margin_top` (for cascade resolution)
     #[serde(skip)]
     pub margin_top_source_order: Option<u32>,
@@ -680,6 +693,18 @@ impl ComputedStyle {
             "left" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
                     self.left = Some(self.resolve_auto_length(al));
+                }
+            }
+            // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+            //
+            // "Values: content-box | border-box"
+            "box-sizing" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    match ident.to_ascii_lowercase().as_str() {
+                        "border-box" => self.box_sizing_border_box = Some(true),
+                        "content-box" => self.box_sizing_border_box = Some(false),
+                        _ => {}
+                    }
                 }
             }
             unknown => {

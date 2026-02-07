@@ -141,7 +141,7 @@ pub fn layout_flex(
         //   A. If flex-basis is a definite length, use it.
         //   B. If flex-basis is auto and the item has a definite width, use that.
         //   C. Otherwise, use max-content size via measure_content_size().
-        let base_size = child.flex_basis.as_ref().map_or_else(
+        let mut base_size = child.flex_basis.as_ref().map_or_else(
             || flex_base_from_width_or_content(child, viewport, font_metrics),
             |fb| {
                 let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport);
@@ -153,6 +153,22 @@ pub fn layout_flex(
                 }
             },
         );
+
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // When box-sizing is border-box, the flex base size (from flex-basis
+        // or width) includes padding and border. Convert to content-box so
+        // the flex algorithm operates on content sizes.
+        //
+        // Note: The outer_main already accounts for margin+border+padding
+        // around the content box. The base_size should be content-only.
+        if child.box_sizing_border_box {
+            base_size -= resolved_padding.left
+                + resolved_padding.right
+                + resolved_border.left
+                + resolved_border.right;
+            base_size = base_size.max(0.0);
+        }
 
         // [§ 9.2 step 3E](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
         //
@@ -224,8 +240,21 @@ pub fn layout_flex(
         // [§ 9.7](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
         //
         // "Set each item's used main size to its target main size."
+        //
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // If the child uses border-box, add padding+border back to the
+        // content-box target_size so that calculate_block_width() correctly
+        // converts it back. For content-box children, use as-is.
+        let width_for_layout = if child.box_sizing_border_box {
+            let rp = child.padding.resolve(viewport);
+            let rb = child.border_width.resolve(viewport);
+            item.target_size + rp.left + rp.right + rb.left + rb.right
+        } else {
+            item.target_size
+        };
         child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
-            f64::from(item.target_size),
+            f64::from(width_for_layout),
         )));
 
         let child_containing = Rect {
@@ -306,6 +335,8 @@ fn flex_base_from_width_or_content(
     if let Some(ref w) = child.width {
         let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport);
         if !resolved.is_auto() {
+            // Note: The caller handles border-box conversion after this
+            // returns, so we return the raw CSS value here.
             return resolved.to_px_or(0.0);
         }
     }

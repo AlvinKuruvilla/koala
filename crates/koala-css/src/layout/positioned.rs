@@ -271,7 +271,17 @@ impl PositionedLayout {
                 br,
             );
 
-        layout_box.dimensions.content.width = used_width;
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // When box-sizing is border-box and width is not auto, the constraint
+        // solver treated the CSS width value as the border-box width. The
+        // used_width returned includes padding+border. Convert to content width.
+        if layout_box.box_sizing_border_box && !width_auto {
+            layout_box.dimensions.content.width =
+                (used_width - pl - pr - bl - br).max(0.0);
+        } else {
+            layout_box.dimensions.content.width = used_width;
+        }
         layout_box.dimensions.margin.left = used_ml;
         layout_box.dimensions.margin.right = used_mr;
 
@@ -386,7 +396,16 @@ impl PositionedLayout {
                     bb,
                 );
 
-            layout_box.dimensions.content.height = used_height;
+            // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+            //
+            // When box-sizing is border-box and height is explicit, the
+            // solver returned border-box height. Convert to content height.
+            if layout_box.box_sizing_border_box && !height_auto {
+                layout_box.dimensions.content.height =
+                    (used_height - pt - pb - bt - bb).max(0.0);
+            } else {
+                layout_box.dimensions.content.height = used_height;
+            }
             layout_box.dimensions.margin.top = used_mt;
             layout_box.dimensions.margin.bottom = used_mb;
             layout_box.dimensions.content.y =
@@ -404,7 +423,12 @@ impl PositionedLayout {
             // Restore the explicit height — child layout may have
             // overwritten it (e.g., layout_inline_children sets content
             // height from line boxes).
-            layout_box.dimensions.content.height = used_height;
+            if layout_box.box_sizing_border_box && !height_auto {
+                layout_box.dimensions.content.height =
+                    (used_height - pt - pb - bt - bb).max(0.0);
+            } else {
+                layout_box.dimensions.content.height = used_height;
+            }
         }
 
         // STEP 5: Lay out any absolutely positioned children of this box.

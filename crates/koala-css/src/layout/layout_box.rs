@@ -454,6 +454,15 @@ pub struct LayoutBox {
     /// a value other than 'static'. Positioned elements generate positioned
     /// boxes, laid out according to four properties: top, right, bottom, left."
     pub offsets: BoxOffsets,
+
+    /// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+    ///
+    /// "The box-sizing property defines whether the width and height (and
+    /// respective min/max properties) on an element include padding and
+    /// borders or not."
+    ///
+    /// true = border-box, false = content-box (default).
+    pub box_sizing_border_box: bool,
 }
 
 impl LayoutBox {
@@ -694,6 +703,7 @@ impl LayoutBox {
                     flex_basis: None,
                     position_type: PositionType::Static,
                     offsets: BoxOffsets::default(),
+                    box_sizing_border_box: false,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -871,6 +881,15 @@ impl LayoutBox {
                     }),
                 };
 
+                // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+                //
+                // "The box-sizing property defines whether the width and height
+                // (and respective min/max properties) on an element include
+                // padding and borders or not."
+                // Initial: content-box (false)
+                let box_sizing_border_box =
+                    style.is_some_and(|s| s.box_sizing_border_box.unwrap_or(false));
+
                 // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
                 //
                 // Detect replaced elements (e.g., <img>) and record their
@@ -922,6 +941,7 @@ impl LayoutBox {
                     flex_basis,
                     position_type,
                     offsets,
+                    box_sizing_border_box,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -981,6 +1001,7 @@ impl LayoutBox {
                     flex_basis: None,
                     position_type: PositionType::Static,
                     offsets: BoxOffsets::default(),
+                    box_sizing_border_box: false,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -1372,9 +1393,23 @@ impl LayoutBox {
         let mut margin_right = resolved_margin.right;
 
         // Resolve width: None means 'auto'
-        let width = self.width.as_ref().map_or(AutoOr::Auto, |al| {
+        let mut width = self.width.as_ref().map_or(AutoOr::Auto, |al| {
             UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport)
         });
+
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // "If box-sizing is border-box, the specified width includes padding
+        // and border. Convert to content-box width for the constraint equation."
+        //
+        // content_width = border_box_width - padding_left - padding_right
+        //               - border_left - border_right
+        if self.box_sizing_border_box && !width.is_auto() {
+            let border_box_width = width.to_px_or(0.0);
+            let content_width =
+                border_box_width - padding_left - padding_right - border_left - border_right;
+            width = AutoOr::Length(content_width.max(0.0));
+        }
 
         // STEP 3: Handle over-constrained case
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -1796,11 +1831,27 @@ impl LayoutBox {
             //
             // Resolve the computed value to a used value using the viewport.
             #[allow(clippy::cast_possible_truncation)]
-            {
-                self.dimensions.content.height = l
-                    .to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
-                    as f32;
+            let mut h = l
+                .to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
+                as f32;
+
+            // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+            //
+            // "If box-sizing is border-box, the specified height includes
+            // padding and border. Convert to content-box height."
+            //
+            // Note: padding and border dimensions are already stored on
+            // self.dimensions by calculate_block_position() which runs
+            // before this method.
+            if self.box_sizing_border_box {
+                h -= self.dimensions.padding.top
+                    + self.dimensions.padding.bottom
+                    + self.dimensions.border.top
+                    + self.dimensions.border.bottom;
+                h = h.max(0.0);
             }
+
+            self.dimensions.content.height = h;
             return;
         }
 
@@ -1959,6 +2010,21 @@ impl LayoutBox {
         let vw = f64::from(viewport.width);
         let vh = f64::from(viewport.height);
 
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // When box-sizing is border-box, min-width/max-width include padding
+        // and border. Convert to content-box for comparison with the content
+        // width, but pass the original border-box value to calculate_block_width()
+        // which handles the conversion internally.
+        let box_overhead = if self.box_sizing_border_box {
+            self.dimensions.padding.left
+                + self.dimensions.padding.right
+                + self.dimensions.border.left
+                + self.dimensions.border.right
+        } else {
+            0.0
+        };
+
         // STEP 1: Apply max-width constraint.
         // [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
         //
@@ -1967,7 +2033,8 @@ impl LayoutBox {
         // 'max-width' as the computed value for 'width'."
         if let Some(ref max_w) = self.max_width {
             let max_px = max_w.to_px_with_viewport(vw, vh) as f32;
-            if self.dimensions.content.width > max_px {
+            let max_content = (max_px - box_overhead).max(0.0);
+            if self.dimensions.content.width > max_content {
                 let saved = self.width.take();
                 self.width = Some(AutoLength::Length(LengthValue::Px(f64::from(max_px))));
                 self.calculate_block_width(containing_block, viewport);
@@ -1983,7 +2050,8 @@ impl LayoutBox {
         // the computed value for 'width'."
         if let Some(ref min_w) = self.min_width {
             let min_px = min_w.to_px_with_viewport(vw, vh) as f32;
-            if self.dimensions.content.width < min_px {
+            let min_content = (min_px - box_overhead).max(0.0);
+            if self.dimensions.content.width < min_content {
                 let saved = self.width.take();
                 self.width = Some(AutoLength::Length(LengthValue::Px(f64::from(min_px))));
                 self.calculate_block_width(containing_block, viewport);
@@ -2045,6 +2113,19 @@ impl LayoutBox {
         let vw = f64::from(viewport.width);
         let vh = f64::from(viewport.height);
 
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // When box-sizing is border-box, min-height/max-height include
+        // padding and border. Convert to content-box for comparison.
+        let box_overhead = if self.box_sizing_border_box {
+            self.dimensions.padding.top
+                + self.dimensions.padding.bottom
+                + self.dimensions.border.top
+                + self.dimensions.border.bottom
+        } else {
+            0.0
+        };
+
         // STEP 1: Apply max-height constraint.
         // [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
         //
@@ -2053,8 +2134,9 @@ impl LayoutBox {
         // 'max-height' as the computed value for 'height'."
         if let Some(ref max_h) = self.max_height {
             let max_px = max_h.to_px_with_viewport(vw, vh) as f32;
-            if self.dimensions.content.height > max_px {
-                self.dimensions.content.height = max_px;
+            let max_content = (max_px - box_overhead).max(0.0);
+            if self.dimensions.content.height > max_content {
+                self.dimensions.content.height = max_content;
             }
         }
 
@@ -2066,8 +2148,9 @@ impl LayoutBox {
         // 'min-height' as the computed value for 'height'."
         if let Some(ref min_h) = self.min_height {
             let min_px = min_h.to_px_with_viewport(vw, vh) as f32;
-            if self.dimensions.content.height < min_px {
-                self.dimensions.content.height = min_px;
+            let min_content = (min_px - box_overhead).max(0.0);
+            if self.dimensions.content.height < min_content {
+                self.dimensions.content.height = min_content;
             }
         }
     }
@@ -2198,6 +2281,7 @@ impl LayoutBox {
             flex_basis: None,
             position_type: PositionType::Static,
             offsets: BoxOffsets::default(),
+            box_sizing_border_box: false,
         }
     }
 
@@ -2339,9 +2423,21 @@ impl LayoutBox {
                 300.0
             }
         } else {
-            self.width.as_ref().map_or(300.0, |al| {
+            let mut w = self.width.as_ref().map_or(300.0, |al| {
                 UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(300.0)
-            })
+            });
+            // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+            //
+            // "If box-sizing is border-box, the explicit width includes
+            // padding and border. Convert to content width."
+            if self.box_sizing_border_box {
+                w -= self.dimensions.padding.left
+                    + self.dimensions.padding.right
+                    + self.dimensions.border.left
+                    + self.dimensions.border.right;
+                w = w.max(0.0);
+            }
+            w
         };
 
         // STEP 4: Resolve height.
@@ -2370,9 +2466,21 @@ impl LayoutBox {
                 |ih| ih,
             )
         } else {
-            self.height.as_ref().map_or(150.0, |al| {
+            let mut h = self.height.as_ref().map_or(150.0, |al| {
                 UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(150.0)
-            })
+            });
+            // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+            //
+            // "If box-sizing is border-box, the explicit height includes
+            // padding and border. Convert to content height."
+            if self.box_sizing_border_box {
+                h -= self.dimensions.padding.top
+                    + self.dimensions.padding.bottom
+                    + self.dimensions.border.top
+                    + self.dimensions.border.bottom;
+                h = h.max(0.0);
+            }
+            h
         };
 
         self.dimensions.content.width = used_width;

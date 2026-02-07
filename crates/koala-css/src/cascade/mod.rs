@@ -319,6 +319,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         bottom: None,
         left: None,
 
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        // "Inherited: no"
+        box_sizing_border_box: None,
+
         // Source order tracking for cascade resolution (not inherited, per-element)
         margin_top_source_order: None,
         margin_right_source_order: None,
