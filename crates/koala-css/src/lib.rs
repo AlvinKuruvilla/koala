@@ -66,7 +66,7 @@ pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
 pub use layout::{
     ApproximateFontMetrics, BoxDimensions, BoxType, EdgeSizes, FontMetrics, FontStyle, LayoutBox,
-    Rect,
+    PositionType, Rect,
 };
 pub use paint::{DisplayCommand, DisplayList, Painter};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};

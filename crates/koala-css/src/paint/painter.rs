@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use koala_dom::NodeId;
 
 use crate::layout::inline::{FontStyle, FragmentContent};
+use crate::layout::positioned::PositionType;
 use crate::style::ComputedStyle;
 use crate::{BoxType, ColorValue, LayoutBox};
 
@@ -199,11 +200,31 @@ impl<'a> Painter<'a> {
         // [CSS 2.1 Appendix E.2 Step 4](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the in-flow, non-inline-level, non-positioned descendants"
         //
-        // Paint children in tree order. For boxes with line_boxes, the
-        // inline children's text is already painted above from fragments,
-        // but we still recurse for backgrounds/borders of child elements.
+        // Paint children in two passes:
+        //   1. Normal-flow and relatively positioned children (tree order)
+        //   2. Absolutely/fixed positioned children (on top)
+        //
+        // [CSS 2.1 Appendix E.2 Step 8](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+        // "All positioned descendants with 'z-index: auto' or 'z-index: 0',
+        // in tree order."
+        //
+        // v1: We don't implement z-index, so absolute children always
+        // paint on top of normal-flow children.
         for child in &layout_box.children {
-            self.paint_box(child, display_list, effective_style);
+            if !matches!(
+                child.position_type,
+                PositionType::Absolute | PositionType::Fixed
+            ) {
+                self.paint_box(child, display_list, effective_style);
+            }
+        }
+        for child in &layout_box.children {
+            if matches!(
+                child.position_type,
+                PositionType::Absolute | PositionType::Fixed
+            ) {
+                self.paint_box(child, display_list, effective_style);
+            }
         }
     }
 

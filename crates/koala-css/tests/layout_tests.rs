@@ -843,3 +843,252 @@ fn test_relative_position_overconstrained_vertical() {
         moved_div.dimensions.content.y
     );
 }
+
+// ---------------------------------------------------------------------------
+// Absolute positioning tests
+//
+// [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+//
+// "In the absolute positioning model, a box is removed from the normal
+// flow entirely and assigned a position with respect to a containing block."
+// ---------------------------------------------------------------------------
+
+/// [§ 10.3.7 / § 10.6.4](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
+///
+/// An absolutely positioned element with explicit top, left, width, height
+/// should be placed at the specified position relative to the positioned
+/// parent's padding box.
+#[test]
+fn test_absolute_explicit_position() {
+    let root = layout_html(
+        "<html><head><style>\
+         .container { position: relative; width: 400px; height: 300px; margin: 0; padding: 0; }\
+         .abs { position: absolute; top: 10px; left: 20px; width: 100px; height: 50px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='container'><div class='abs'>Abs</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+    let abs_child = &container.children[0];
+
+    // The abs child should be positioned relative to container's padding box.
+    let container_padding_x = container.dimensions.content.x - container.dimensions.padding.left;
+    let container_padding_y = container.dimensions.content.y - container.dimensions.padding.top;
+
+    // content.x = container_padding_x + left(20) + margin(0) + border(0) + padding(0)
+    assert!(
+        (abs_child.dimensions.content.x - (container_padding_x + 20.0)).abs() < 1.0,
+        "abs child x should be container_padding.x + 20, got x={:.1} (expected {:.1})",
+        abs_child.dimensions.content.x,
+        container_padding_x + 20.0
+    );
+
+    // content.y = container_padding_y + top(10) + margin(0) + border(0) + padding(0)
+    assert!(
+        (abs_child.dimensions.content.y - (container_padding_y + 10.0)).abs() < 1.0,
+        "abs child y should be container_padding.y + 10, got y={:.1} (expected {:.1})",
+        abs_child.dimensions.content.y,
+        container_padding_y + 10.0
+    );
+
+    assert!(
+        (abs_child.dimensions.content.width - 100.0).abs() < 1.0,
+        "abs child width should be 100, got {:.1}",
+        abs_child.dimensions.content.width
+    );
+
+    assert!(
+        (abs_child.dimensions.content.height - 50.0).abs() < 1.0,
+        "abs child height should be 50, got {:.1}",
+        abs_child.dimensions.content.height
+    );
+}
+
+/// [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+///
+/// "In the absolute positioning model, a box is removed from the normal
+/// flow entirely." — siblings should lay out as if the absolute child
+/// doesn't exist.
+#[test]
+fn test_absolute_removed_from_flow() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .container { position: relative; width: 400px; }\
+         .abs { position: absolute; top: 0; left: 0; width: 100px; height: 100px; }\
+         .normal { width: 400px; height: 50px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='container'>\
+         <div class='abs'>Absolute</div>\
+         <div class='normal'>Normal</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    // Find the normal-flow child (not absolute).
+    let normal_child = container
+        .children
+        .iter()
+        .find(|c| c.position_type == koala_css::PositionType::Static)
+        .expect("should have a static child");
+
+    // The normal child should be at the top of the container's content area,
+    // as if the absolute child doesn't exist.
+    assert!(
+        (normal_child.dimensions.content.y - container.dimensions.content.y).abs() < 1.0,
+        "normal child should be at container top: child.y={:.1}, container.y={:.1}",
+        normal_child.dimensions.content.y,
+        container.dimensions.content.y
+    );
+}
+
+/// [§ 10.3.7](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
+///
+/// With left and right specified and width auto: width is computed from
+/// the constraint equation:
+///   width = cb_width - left - right - margin - border - padding
+#[test]
+fn test_absolute_left_right_computed_width() {
+    let root = layout_html(
+        "<html><head><style>\
+         .container { position: relative; width: 400px; height: 200px; margin: 0; padding: 0; }\
+         .abs { position: absolute; left: 50px; right: 50px; top: 0; height: 40px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='container'><div class='abs'>Stretched</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+    let abs_child = &container.children[0];
+
+    // width = 400 - 50 - 50 - 0 (margins) - 0 (borders) - 0 (padding) = 300
+    assert!(
+        (abs_child.dimensions.content.width - 300.0).abs() < 1.0,
+        "abs child width should be 300 (400 - 50 - 50), got {:.1}",
+        abs_child.dimensions.content.width
+    );
+}
+
+/// [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
+///
+/// Auto height of the parent should only include in-flow children,
+/// not absolute children.
+#[test]
+fn test_auto_height_ignores_absolute_children() {
+    let root = layout_html(
+        "<html><head><style>\
+         div { margin: 0; padding: 0; }\
+         .container { position: relative; width: 400px; }\
+         .abs { position: absolute; top: 0; left: 0; width: 100px; height: 500px; }\
+         .normal { width: 400px; height: 50px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='container'>\
+         <div class='abs'>Tall absolute</div>\
+         <div class='normal'>Normal</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+
+    // Container's auto height should come from the normal child (50px),
+    // NOT the absolute child (500px).
+    assert!(
+        container.dimensions.content.height < 100.0,
+        "container auto height should be ~50 (from normal child), not 500; got {:.1}",
+        container.dimensions.content.height
+    );
+
+    assert!(
+        (container.dimensions.content.height - 50.0).abs() < 1.0,
+        "container auto height should be 50, got {:.1}",
+        container.dimensions.content.height
+    );
+}
+
+/// [§ 10.3.7](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
+///
+/// Over-constrained horizontal: when left, width, and right are all
+/// specified and no margins are auto, 'right' is ignored (LTR).
+#[test]
+fn test_absolute_overconstrained_horizontal() {
+    let root = layout_html(
+        "<html><head><style>\
+         .container { position: relative; width: 400px; height: 200px; margin: 0; padding: 0; }\
+         .abs { position: absolute; left: 10px; right: 10px; width: 200px; top: 0; height: 40px; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='container'><div class='abs'>Over</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+    let abs_child = &container.children[0];
+
+    // Width should be the specified 200px.
+    assert!(
+        (abs_child.dimensions.content.width - 200.0).abs() < 1.0,
+        "abs child width should be 200, got {:.1}",
+        abs_child.dimensions.content.width
+    );
+
+    // Left should be honored (10px).
+    let container_padding_x = container.dimensions.content.x - container.dimensions.padding.left;
+    assert!(
+        (abs_child.dimensions.content.x - (container_padding_x + 10.0)).abs() < 1.0,
+        "abs child should respect left: 10px, got x={:.1}",
+        abs_child.dimensions.content.x
+    );
+}
+
+/// [§ 10.3.7](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
+///
+/// "If both 'margin-left' and 'margin-right' are 'auto', solve the equation
+/// under the extra constraint that the two margins get equal values..."
+/// This centers the element horizontally.
+#[test]
+fn test_absolute_auto_margins_centering() {
+    let root = layout_html(
+        "<html><head><style>\
+         .container { position: relative; width: 400px; height: 200px; margin: 0; padding: 0; }\
+         .abs { position: absolute; left: 0; right: 0; width: 200px; top: 0; height: 40px; \
+                margin-left: auto; margin-right: auto; }\
+         </style></head>\
+         <body style='margin: 0; padding: 0;'>\
+         <div class='container'><div class='abs'>Centered</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[0];
+    let abs_child = &container.children[0];
+
+    // With left:0, right:0, width:200, margin:auto on both sides:
+    // remaining = 400 - 0 - 200 - 0 = 200
+    // each margin = 100
+    assert!(
+        (abs_child.dimensions.margin.left - 100.0).abs() < 1.0,
+        "margin-left should be 100 for centering, got {:.1}",
+        abs_child.dimensions.margin.left
+    );
+    assert!(
+        (abs_child.dimensions.margin.right - 100.0).abs() < 1.0,
+        "margin-right should be 100 for centering, got {:.1}",
+        abs_child.dimensions.margin.right
+    );
+
+    // The content box should be centered.
+    let container_padding_x = container.dimensions.content.x - container.dimensions.padding.left;
+    let expected_x = container_padding_x + 0.0 + 100.0; // left + margin-left
+    assert!(
+        (abs_child.dimensions.content.x - expected_x).abs() < 1.0,
+        "abs child should be centered at x={expected_x:.1}, got {:.1}",
+        abs_child.dimensions.content.x
+    );
+}

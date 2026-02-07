@@ -17,6 +17,7 @@ use crate::style::AutoLength;
 use super::box_model::Rect;
 use super::inline::FontMetrics;
 use super::layout_box::LayoutBox;
+use super::positioned::PositionType;
 use super::values::UnresolvedAutoEdgeSizes;
 
 /// Per-item data collected during flex layout.
@@ -98,6 +99,17 @@ pub fn layout_flex(
 
     for i in 0..child_count {
         let child = &container.children[i];
+
+        // [§ 4.1 Absolutely-Positioned Flex Children](https://www.w3.org/TR/css-flexbox-1/#abspos-items)
+        //
+        // "An absolutely-positioned child of a flex container does not
+        // participate in flex layout."
+        if matches!(
+            child.position_type,
+            PositionType::Absolute | PositionType::Fixed
+        ) {
+            continue;
+        }
 
         // Resolve the child's margin/border/padding to compute its outer
         // contribution on the main axis.
@@ -242,14 +254,30 @@ pub fn layout_flex(
                 l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height)) as f32;
         }
     } else {
-        // Auto height: max of children's margin-box heights.
+        // Auto height: max of in-flow children's margin-box heights.
+        // Absolute/fixed children do not contribute to the container's
+        // auto height.
         let max_height = container
             .children
             .iter()
+            .filter(|c| {
+                !matches!(
+                    c.position_type,
+                    PositionType::Absolute | PositionType::Fixed
+                )
+            })
             .map(|c| c.dimensions.margin_box().height)
             .fold(0.0_f32, f32::max);
         container.dimensions.content.height = max_height;
     }
+
+    // STEP 8: Layout absolutely positioned children.
+    // [§ 4.1 Absolutely-Positioned Flex Children](https://www.w3.org/TR/css-flexbox-1/#abspos-items)
+    //
+    // "An absolutely-positioned child of a flex container does not
+    // participate in flex layout." They are positioned after flex
+    // layout completes.
+    container.layout_absolute_children(viewport, font_metrics);
 }
 
 /// Determine flex base size from width property or content measurement.

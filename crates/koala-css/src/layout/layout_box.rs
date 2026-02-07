@@ -72,6 +72,17 @@ fn layout_inline_content(
     content_rect: Rect,
 ) {
     for child in children.iter_mut() {
+        // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+        //
+        // Absolute/fixed children are out of flow and do not participate
+        // in inline formatting.
+        if matches!(
+            child.position_type,
+            PositionType::Absolute | PositionType::Fixed
+        ) {
+            continue;
+        }
+
         match &child.box_type {
             BoxType::AnonymousInline(text) => {
                 // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -764,14 +775,31 @@ impl LayoutBox {
                 // Initial: static
                 let position_type = style
                     .and_then(|s| s.position.as_deref())
-                    .map(|p| match p {
+                    .map_or(PositionType::Static, |p| match p {
                         "relative" => PositionType::Relative,
                         "absolute" => PositionType::Absolute,
                         "fixed" => PositionType::Fixed,
                         "sticky" => PositionType::Sticky,
                         _ => PositionType::Static,
-                    })
-                    .unwrap_or(PositionType::Static);
+                    });
+
+                // [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
+                //
+                // "If 'position' has the value 'absolute' or 'fixed', the box
+                // is absolutely positioned, 'float' is set to 'none', and display
+                // is set according to the table below. The position of the box
+                // will be determined by the 'top', 'right', 'bottom' and 'left'
+                // properties and the box's containing block."
+                //
+                // The table maps inline → block (and inline-* → block-*).
+                let display =
+                    if matches!(position_type, PositionType::Absolute | PositionType::Fixed)
+                        && display.outer == OuterDisplayType::Inline
+                    {
+                        DisplayValue::block()
+                    } else {
+                        display
+                    };
 
                 // [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
                 //
@@ -1197,6 +1225,18 @@ impl LayoutBox {
         // its last in-flow child, if the child's bottom margin does not
         // collapse with the element's bottom margin"
         self.calculate_block_height(viewport, font_metrics);
+
+        // STEP 6: Layout absolutely positioned children.
+        // [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+        //
+        // "In the absolute positioning model, a box is removed from the
+        // normal flow entirely and assigned a position with respect to a
+        // containing block."
+        //
+        // Absolute children are positioned relative to this box's padding
+        // box (if this box is positioned), or passed through to the next
+        // positioned ancestor.
+        self.layout_absolute_children(viewport, font_metrics);
     }
 
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -1433,7 +1473,7 @@ impl LayoutBox {
     ///
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
-    fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub(crate) fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the other,
@@ -1489,8 +1529,27 @@ impl LayoutBox {
         let parent_margin_top = self.dimensions.margin.top;
         let child_count = self.children.len();
 
+        // Track whether we've seen the first in-flow child for parent-child
+        // top margin collapsing purposes.
+        let mut first_inflow = true;
+
         for i in 0..child_count {
             let child = &mut self.children[i];
+
+            // [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+            //
+            // "In the absolute positioning model, a box is removed from the
+            // normal flow entirely."
+            //
+            // Absolute and fixed children do not participate in normal flow:
+            // they are skipped during block layout and positioned later in
+            // layout_absolute_children().
+            if matches!(
+                child.position_type,
+                PositionType::Absolute | PositionType::Fixed
+            ) {
+                continue;
+            }
 
             // STEP 3a: Parent-first-child top margin collapsing.
             //
@@ -1503,11 +1562,12 @@ impl LayoutBox {
             // margin-top so that calculate_block_position() (which adds
             // child_mt) places the child flush at the parent's content top.
             // The parent's effective margin becomes the collapsed value.
-            if i == 0 && no_top_separator && child.display.outer == OuterDisplayType::Block {
+            if first_inflow && no_top_separator && child.display.outer == OuterDisplayType::Block {
                 let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
                 current_y -= child_mt;
                 self.collapsed_margin_top = Some(collapse_two_margins(parent_margin_top, child_mt));
             }
+            first_inflow = false;
 
             // STEP 3b: Collapse margins between adjacent siblings.
             //
@@ -1600,9 +1660,16 @@ impl LayoutBox {
         // that has clearance."
         let no_bottom_separator =
             self.dimensions.border.bottom == 0.0 && self.dimensions.padding.bottom == 0.0;
+        // Find the last in-flow child (skip absolute/fixed).
+        let last_inflow = self.children.iter().rev().find(|c| {
+            !matches!(
+                c.position_type,
+                PositionType::Absolute | PositionType::Fixed
+            )
+        });
         if no_bottom_separator
             && self.height.is_none()
-            && let Some(last) = self.children.last()
+            && let Some(last) = last_inflow
             && last.display.outer == OuterDisplayType::Block
         {
             let parent_margin_bottom = self.dimensions.margin.bottom;
@@ -1618,7 +1685,7 @@ impl LayoutBox {
     ///
     /// "If 'height' is 'auto', the height depends on whether the element has
     /// any block-level children and whether it has padding or borders."
-    fn calculate_block_height(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub(crate) fn calculate_block_height(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
         // STEP 1: Check if height is explicitly specified.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
@@ -1708,7 +1775,19 @@ impl LayoutBox {
         // Compute height from the last child's actual position rather than
         // summing margin_box heights. This correctly accounts for collapsed
         // margins between siblings (which reduce the effective spacing).
-        if let Some(last) = self.children.last() {
+        // Use the last in-flow child (skip absolute/fixed) for auto height.
+        // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+        //
+        // "In the absolute positioning model, a box is removed from the
+        // normal flow entirely." — absolute children do not contribute
+        // to the parent's auto height.
+        let last_inflow = self.children.iter().rev().find(|c| {
+            !matches!(
+                c.position_type,
+                PositionType::Absolute | PositionType::Fixed
+            )
+        });
+        if let Some(last) = last_inflow {
             let last_mb = last.dimensions.margin_box();
             let mut height = (last_mb.y + last_mb.height) - self.dimensions.content.y;
 
@@ -1863,14 +1942,22 @@ impl LayoutBox {
         // logic handles the result correctly.
         self.flatten_block_in_inline();
 
-        // STEP 1: Check if children are mixed (both block and inline)
+        // STEP 1: Check if in-flow children are mixed (both block and inline).
+        // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+        //
+        // Absolute/fixed children are out of flow and do not participate
+        // in the inline/block content classification.
+        let is_inflow =
+            |c: &Self| !matches!(c.position_type, PositionType::Absolute | PositionType::Fixed);
         let has_block_children = self
             .children
             .iter()
+            .filter(|c| is_inflow(c))
             .any(|c| c.display.outer == OuterDisplayType::Block);
         let has_inline_children = self
             .children
             .iter()
+            .filter(|c| is_inflow(c))
             .any(|c| c.display.outer == OuterDisplayType::Inline);
 
         if !(has_block_children && has_inline_children) {
@@ -1964,7 +2051,7 @@ impl LayoutBox {
     ///
     /// "The height of the line box is determined by the rules given in the
     /// section on line height calculations."
-    fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub(crate) fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
         // STEP 1: Create an InlineLayout context.
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
@@ -2254,6 +2341,67 @@ impl LayoutBox {
         todo!("Calculate shrink-to-fit width per CSS 2.1 § 10.3.5")
     }
 
+    /// [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+    ///
+    /// "In the absolute positioning model, a box is removed from the normal
+    /// flow entirely and assigned a position with respect to a containing
+    /// block."
+    ///
+    /// [§ 10.1 Definition of containing block](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
+    ///
+    /// "If the element has 'position: absolute', the containing block is
+    /// established by the nearest ancestor with a 'position' of 'absolute',
+    /// 'relative', or 'fixed', in the following way:
+    ///   ... the containing block is formed by the padding edge of the
+    ///   ancestor."
+    ///
+    /// v1 simplification: Uses the parent's padding box as the containing
+    /// block. Full spec requires walking up to find the nearest positioned
+    /// ancestor.
+    pub(crate) fn layout_absolute_children(
+        &mut self,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+    ) {
+        // Collect indices of absolute/fixed children to avoid borrow issues.
+        let abs_indices: Vec<usize> = self
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                matches!(
+                    c.position_type,
+                    PositionType::Absolute | PositionType::Fixed
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if abs_indices.is_empty() {
+            return;
+        }
+
+        // The containing block for absolute children is this box's padding box.
+        let padding_box = self.dimensions.padding_box();
+
+        for idx in abs_indices {
+            let child = &mut self.children[idx];
+
+            // [§ 9.3.1 Fixed positioning](https://www.w3.org/TR/CSS2/visuren.html#fixed-positioning)
+            //
+            // "Fixed positioning is a subcategory of absolute positioning.
+            // The only difference is that for a fixed positioned box, the
+            // containing block is established by the viewport."
+            let cb = if child.position_type == PositionType::Fixed {
+                viewport
+            } else {
+                padding_box
+            };
+
+            PositionedLayout::layout_absolute(child, cb, viewport, font_metrics);
+        }
+    }
+
     /// [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
     ///
     /// Determine whether this box's children need anonymous box wrapping.
@@ -2293,6 +2441,17 @@ impl LayoutBox {
     pub fn all_children_inline(&self) -> bool {
         self.children
             .iter()
+            // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+            //
+            // Absolute/fixed children are out of flow — they do not affect
+            // whether the parent establishes an inline or block formatting
+            // context for its in-flow children.
+            .filter(|c| {
+                !matches!(
+                    c.position_type,
+                    PositionType::Absolute | PositionType::Fixed
+                )
+            })
             .all(|c| c.display.outer == OuterDisplayType::Inline)
     }
 
