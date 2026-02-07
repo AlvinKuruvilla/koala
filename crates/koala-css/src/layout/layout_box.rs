@@ -4,14 +4,24 @@
 
 use std::collections::HashMap;
 
+#[cfg(feature = "layout-trace")]
+use std::cell::Cell;
+
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::{AutoLength, ColorValue, ComputedStyle, DisplayValue, OuterDisplayType};
+use crate::style::{
+    AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, OuterDisplayType,
+};
 
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
 use super::inline::{FontMetrics, FontStyle, InlineLayout, LineBox, TextAlign};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
+
+#[cfg(feature = "layout-trace")]
+thread_local! {
+    static LAYOUT_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 
 /// [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
 ///
@@ -59,7 +69,7 @@ fn layout_inline_content(
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
 ) {
-    for child in children {
+    for child in children.iter_mut() {
         match &child.box_type {
             BoxType::AnonymousInline(text) => {
                 // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -363,6 +373,39 @@ pub struct LayoutBox {
     /// "If 'height' has a computed value of 'auto', and the element has an
     /// intrinsic height, then that intrinsic height is the used value of 'height'."
     pub intrinsic_height: Option<f32>,
+
+    // ===== Flexbox fields =====
+
+    /// [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+    ///
+    /// "The flex-direction property specifies how flex items are placed in
+    /// the flex container."
+    /// Initial: "row"
+    pub flex_direction: String,
+
+    /// [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+    ///
+    /// "The justify-content property aligns flex items along the main axis."
+    /// Initial: "flex-start"
+    pub justify_content: String,
+
+    /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
+    ///
+    /// "The flex-grow property sets the flex grow factor."
+    /// Initial: 0
+    pub flex_grow: f32,
+
+    /// [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
+    ///
+    /// "The flex-shrink property sets the flex shrink factor."
+    /// Initial: 1
+    pub flex_shrink: f32,
+
+    /// [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
+    ///
+    /// "The flex-basis property sets the flex basis."
+    /// None = auto
+    pub flex_basis: Option<AutoLength>,
 }
 
 impl LayoutBox {
@@ -435,6 +478,95 @@ impl LayoutBox {
             && !self.has_bottom_border_or_padding()
     }
 
+    /// Maximum recursion depth for `measure_content_size()`.
+    ///
+    /// This prevents stack overflow on deeply nested DOM trees. When the
+    /// flex layout path calls `measure_content_size()`, it adds recursive
+    /// depth on top of the existing `layout()` recursion. Real pages like
+    /// Google's homepage can have DOM trees hundreds of levels deep, so
+    /// capping measurement depth keeps the total stack usage bounded.
+    const MAX_MEASURE_DEPTH: usize = 64;
+
+    /// Compute intrinsic max-content width without performing full layout.
+    ///
+    /// [§ 9.9.1 Flex Item Intrinsic Size Contributions](https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions)
+    ///
+    /// This is a READ-ONLY measurement — it does NOT modify positions or
+    /// store layout results. It only computes the natural content width.
+    ///
+    /// Recursion safety: depth-limited to [`Self::MAX_MEASURE_DEPTH`].
+    /// Never calls `layout()`; `layout()` never calls this.
+    pub fn measure_content_size(&self, viewport: Rect, font_metrics: &dyn FontMetrics) -> f32 {
+        self.measure_content_size_inner(viewport, font_metrics, 0)
+    }
+
+    fn measure_content_size_inner(
+        &self,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+        depth: usize,
+    ) -> f32 {
+        // Case 1: Text nodes — measure text width on a single line (max-content).
+        if let BoxType::AnonymousInline(ref text) = self.box_type {
+            return font_metrics.text_width(text, self.font_size);
+        }
+
+        // Case 2: Replaced elements — use intrinsic width or fallback.
+        if self.is_replaced {
+            return self.intrinsic_width.unwrap_or(300.0);
+        }
+
+        // Case 3: Explicit width — resolve and return.
+        if let Some(ref w) = self.width {
+            let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport);
+            if !resolved.is_auto() {
+                return resolved.to_px_or(0.0);
+            }
+        }
+
+        // Depth guard: stop recursing into children beyond the limit.
+        // Items at excessive depth are treated as zero-width; the flex
+        // algorithm will distribute remaining space via flex-grow.
+        if depth >= Self::MAX_MEASURE_DEPTH {
+            return 0.0;
+        }
+
+        // Case 4: Auto width — sum up children's content sizes.
+        //
+        // Resolve padding and border on the main axis so we account for
+        // them in the intrinsic size.
+        let resolved_padding = self.padding.resolve(viewport);
+        let resolved_border = self.border_width.resolve(viewport);
+        let extra = resolved_padding.left
+            + resolved_padding.right
+            + resolved_border.left
+            + resolved_border.right;
+
+        if self.children.is_empty() {
+            return extra;
+        }
+
+        // If all children are inline, max-content = sum of text widths
+        // (no line breaking).
+        if self.all_children_inline() {
+            let inline_sum: f32 = self
+                .children
+                .iter()
+                .map(|c| c.measure_content_size_inner(viewport, font_metrics, depth + 1))
+                .sum();
+            return inline_sum + extra;
+        }
+
+        // If children are block-level, max-content = max of children's
+        // content sizes.
+        let block_max = self
+            .children
+            .iter()
+            .map(|c| c.measure_content_size_inner(viewport, font_metrics, depth + 1))
+            .fold(0.0_f32, f32::max);
+        block_max + extra
+    }
+
     /// [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
     ///
     /// "The display property, determines the type of box or boxes that
@@ -493,6 +625,11 @@ impl LayoutBox {
                     replaced_src: None,
                     intrinsic_width: None,
                     intrinsic_height: None,
+                    flex_direction: "row".to_string(),
+                    justify_content: "flex-start".to_string(),
+                    flex_grow: 0.0,
+                    flex_shrink: 1.0,
+                    flex_basis: None,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -588,6 +725,21 @@ impl LayoutBox {
                     .map(FontStyle::from_css)
                     .unwrap_or_default();
 
+                // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+                let flex_direction = style
+                    .and_then(|s| s.flex_direction.clone())
+                    .unwrap_or_else(|| "row".to_string());
+                // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+                let justify_content = style
+                    .and_then(|s| s.justify_content.clone())
+                    .unwrap_or_else(|| "flex-start".to_string());
+                // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
+                let flex_grow = style.and_then(|s| s.flex_grow).unwrap_or(0.0);
+                // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
+                let flex_shrink = style.and_then(|s| s.flex_shrink).unwrap_or(1.0);
+                // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
+                let flex_basis = style.and_then(|s| s.flex_basis.clone());
+
                 // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
                 //
                 // Detect replaced elements (e.g., <img>) and record their
@@ -628,6 +780,11 @@ impl LayoutBox {
                     replaced_src,
                     intrinsic_width,
                     intrinsic_height,
+                    flex_direction,
+                    justify_content,
+                    flex_grow,
+                    flex_shrink,
+                    flex_basis,
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -676,6 +833,11 @@ impl LayoutBox {
                     replaced_src: None,
                     intrinsic_width: None,
                     intrinsic_height: None,
+                    flex_direction: "row".to_string(),
+                    justify_content: "flex-start".to_string(),
+                    flex_grow: 0.0,
+                    flex_shrink: 1.0,
+                    flex_basis: None,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -788,6 +950,27 @@ impl LayoutBox {
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
     ) {
+        #[cfg(feature = "layout-trace")]
+        let _depth = {
+            let depth = LAYOUT_DEPTH.with(|d| {
+                let current = d.get();
+                d.set(current + 1);
+                current
+            });
+            let stack_marker: u8 = 0;
+            let stack_addr = &stack_marker as *const u8 as usize;
+            eprintln!("[LAYOUT DEPTH] depth={depth} box={:?} display={:?}/{:?} children={} stack_addr=0x{stack_addr:x}",
+                self.box_type, self.display.outer, self.display.inner, self.children.len());
+            // Guard struct decrements depth counter on all return paths.
+            struct DepthGuard;
+            impl Drop for DepthGuard {
+                fn drop(&mut self) {
+                    LAYOUT_DEPTH.with(|d| d.set(d.get() - 1));
+                }
+            }
+            DepthGuard
+        };
+
         // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
         //
         // "A replaced element is an element whose content is outside the scope
@@ -797,6 +980,14 @@ impl LayoutBox {
         // normal block/inline layout dispatch.
         if self.is_replaced {
             self.layout_replaced(containing_block, viewport);
+            return;
+        }
+
+        // [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
+        //
+        // Check inner display type — flex containers use their own algorithm.
+        if self.display.inner == InnerDisplayType::Flex {
+            super::flex::layout_flex(self, containing_block, viewport, font_metrics);
             return;
         }
 
@@ -878,7 +1069,11 @@ impl LayoutBox {
         // "When an inline box contains an in-flow block-level box, the inline
         // box... is broken around the block-level box... The line boxes before
         // the break and after the break are enclosed in anonymous block boxes."
+        #[cfg(feature = "layout-trace")]
+        eprintln!("[BLOCK STEP3] generating anon boxes for {:?}, {} children before", self.box_type, self.children.len());
         self.generate_anonymous_boxes();
+        #[cfg(feature = "layout-trace")]
+        eprintln!("[BLOCK STEP3] after anon boxes: {} children, all_inline={}", self.children.len(), self.all_children_inline());
 
         // STEP 4: Layout children.
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -887,8 +1082,12 @@ impl LayoutBox {
         // If all children are inline-level, establish an inline formatting
         // context. Otherwise, use block formatting context.
         if self.all_children_inline() && !self.children.is_empty() {
+            #[cfg(feature = "layout-trace")]
+            eprintln!("[BLOCK STEP4] layout_inline_children for {:?}", self.box_type);
             self.layout_inline_children(viewport, font_metrics);
         } else {
+            #[cfg(feature = "layout-trace")]
+            eprintln!("[BLOCK STEP4] layout_block_children for {:?}, {} children", self.box_type, self.children.len());
             self.layout_block_children(viewport, font_metrics);
         }
 
@@ -909,7 +1108,7 @@ impl LayoutBox {
     /// [§ 10.3.3 Block-level, non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
     ///
     /// Calculate the width of a block-level box.
-    fn calculate_block_width(&mut self, containing_block: Rect, viewport: Rect) {
+    pub(crate) fn calculate_block_width(&mut self, containing_block: Rect, viewport: Rect) {
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
         //
         // "The following constraints must hold among the used values of the
@@ -1064,7 +1263,7 @@ impl LayoutBox {
     ///
     /// "Each box's left outer edge touches the left edge of the containing block
     /// (for right-to-left formatting, right edges touch)."
-    fn calculate_block_position(&mut self, containing_block: Rect, viewport: Rect) {
+    pub(crate) fn calculate_block_position(&mut self, containing_block: Rect, viewport: Rect) {
         // [§ 8.1 Box dimensions](https://www.w3.org/TR/CSS2/box.html#box-dimensions)
         //
         // The position we store is the content box position. The content box
@@ -1624,6 +1823,11 @@ impl LayoutBox {
             replaced_src: None,
             intrinsic_width: None,
             intrinsic_height: None,
+            flex_direction: "row".to_string(),
+            justify_content: "flex-start".to_string(),
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: None,
         }
     }
 

@@ -626,6 +626,16 @@ impl InlineLayout {
     pub fn finish_line(&mut self) {
         // Don't create empty line boxes.
         if self.current_line_fragments.is_empty() {
+            // Even though we skip creating a LineBox, reset horizontal
+            // position so the next content starts at the line's leading edge.
+            //
+            // Without this, begin_inline_box() advances from
+            // prior inline-box edges persist across the "line break" and
+            // cause infinite recursion in add_text()'s wrap-to-new-line
+            // path: current_x stays non-zero → text doesn't fit →
+            // finish_line() is a no-op → recurse with same state.
+            self.current_x = 0.0;
+            self.current_line_max_height = 0.0;
             return;
         }
 

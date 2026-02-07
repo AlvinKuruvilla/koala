@@ -24,6 +24,7 @@
 //! - [`table`] - Table layout algorithm
 
 pub mod box_model;
+pub mod flex;
 pub mod float;
 pub mod formatting_context;
 pub mod inline;
