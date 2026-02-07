@@ -2,7 +2,7 @@
 //!
 //! [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
 
-use super::tokenizer::{HTMLTokenizer, TokenizerState};
+use super::core::{HTMLTokenizer, TokenizerState};
 
 impl HTMLTokenizer {
     /// [§ 13.2.5.72 Character reference state](https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state)
@@ -11,9 +11,11 @@ impl HTMLTokenizer {
     pub(super) fn is_consumed_as_part_of_attribute(&self) -> bool {
         matches!(
             self.return_state,
-            Some(TokenizerState::AttributeValueDoubleQuoted)
-                | Some(TokenizerState::AttributeValueSingleQuoted)
-                | Some(TokenizerState::AttributeValueUnquoted)
+            Some(
+                TokenizerState::AttributeValueDoubleQuoted
+                    | TokenizerState::AttributeValueSingleQuoted
+                    | TokenizerState::AttributeValueUnquoted
+            )
         )
     }
 

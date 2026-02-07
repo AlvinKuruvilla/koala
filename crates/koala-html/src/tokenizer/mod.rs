@@ -12,7 +12,7 @@ pub mod named_character_references;
 /// Token types produced by the tokenizer.
 pub mod token;
 /// HTML tokenizer state machine implementation.
-pub mod tokenizer;
+pub mod core;
 
+pub use core::HTMLTokenizer;
 pub use token::{Attribute, Token};
-pub use tokenizer::HTMLTokenizer;

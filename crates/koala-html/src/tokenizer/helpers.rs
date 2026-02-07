@@ -12,7 +12,7 @@
 use koala_common::warning::warn_once;
 
 use super::token::Token;
-use super::tokenizer::{HTMLTokenizer, TokenizerState};
+use super::core::{HTMLTokenizer, TokenizerState};
 
 // =============================================================================
 // State Transition Helpers

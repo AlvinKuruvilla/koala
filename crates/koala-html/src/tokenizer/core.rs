@@ -1012,7 +1012,7 @@ impl HTMLTokenizer {
             }
             // "U+002F SOLIDUS (/), U+003E GREATER-THAN SIGN (>), EOF -
             // Reconsume in the after attribute name state."
-            Some('/') | Some('>') | None => {
+            Some('/' | '>') | None => {
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
             // "U+003D EQUALS SIGN (=) - This is an unexpected-equals-sign-before-attribute-name
@@ -1048,7 +1048,7 @@ impl HTMLTokenizer {
                 self.check_duplicate_attribute();
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
-            Some('/') | Some('>') => {
+            Some('/' | '>') => {
                 self.check_duplicate_attribute();
                 self.reconsume_in(TokenizerState::AfterAttributeName);
             }
@@ -1079,7 +1079,7 @@ impl HTMLTokenizer {
             // "U+0022 QUOTATION MARK (\"), U+0027 APOSTROPHE ('), U+003C LESS-THAN SIGN (<) -
             // This is an unexpected-character-in-attribute-name parse error. Treat it as per the
             // 'anything else' entry below."
-            Some('"') | Some('\'') | Some('<') => {
+            Some('"' | '\'' | '<') => {
                 self.log_parse_error();
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_name(self.current_input_character.unwrap());
@@ -1265,7 +1265,7 @@ impl HTMLTokenizer {
             // U+003D EQUALS SIGN (=), U+0060 GRAVE ACCENT (`) - This is an
             // unexpected-character-in-unquoted-attribute-value parse error. Treat it as per the
             // 'anything else' entry below."
-            Some('"') | Some('\'') | Some('<') | Some('=') | Some('`') => {
+            Some('"' | '\'' | '<' | '=' | '`') => {
                 self.log_parse_error();
                 if let Some(ref mut token) = self.current_token {
                     token.append_to_current_attribute_value(self.current_input_character.unwrap());
@@ -1889,19 +1889,15 @@ impl HTMLTokenizer {
             match self.state {
                 TokenizerState::Data => {
                     self.handle_data_state();
-                    continue;
                 }
                 TokenizerState::RCDATA => {
                     self.handle_rcdata_state();
-                    continue;
                 }
                 TokenizerState::RAWTEXT => {
                     self.handle_rawtext_state();
-                    continue;
                 }
                 TokenizerState::ScriptData => {
                     self.handle_script_data_state();
-                    continue;
                 }
                 TokenizerState::PLAINTEXT => {
                     // [§ 13.2.5.5 PLAINTEXT state](https://html.spec.whatwg.org/multipage/parsing.html#plaintext-state)
@@ -1921,23 +1917,18 @@ impl HTMLTokenizer {
                 }
                 TokenizerState::TagOpen => {
                     self.handle_tag_open_state();
-                    continue;
                 }
                 TokenizerState::EndTagOpen => {
                     self.handle_end_tag_open_state();
-                    continue;
                 }
                 TokenizerState::TagName => {
                     self.handle_tag_name_state();
-                    continue;
                 }
                 TokenizerState::RCDATALessThanSign => {
                     self.handle_rcdata_less_than_sign_state();
-                    continue;
                 }
                 TokenizerState::RCDATAEndTagOpen => {
                     self.handle_rcdata_end_tag_open_state();
-                    continue;
                 }
                 TokenizerState::RCDATAEndTagName => {
                     self.handle_rcdata_end_tag_name_state();

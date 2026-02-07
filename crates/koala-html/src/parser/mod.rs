@@ -4,6 +4,6 @@
 pub mod foreign_content;
 
 /// HTML parser implementation.
-pub mod parser;
+pub mod core;
 
-pub use parser::{print_tree, HTMLParser, InsertionMode, ParseIssue};
+pub use core::{print_tree, HTMLParser, InsertionMode, ParseIssue};
