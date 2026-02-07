@@ -46,18 +46,32 @@ fn test_default_display_none() {
 /// Helper: parse HTML via koala-browser, build and compute layout, return the
 /// root layout box with dimensions filled in.
 fn layout_html(html: &str) -> LayoutBox {
+    layout_html_with_viewport(html, 800.0, 600.0)
+}
+
+/// Helper: parse HTML with a custom viewport width/height.
+fn layout_html_with_viewport(html: &str, vw: f32, vh: f32) -> LayoutBox {
     use koala_css::cascade::compute_styles;
-    use koala_css::Stylesheet;
+    use koala_css::{CSSParser, CSSTokenizer, Stylesheet};
     use std::collections::HashMap;
     let mut tokenizer = koala_html::HTMLTokenizer::new(html.to_string());
     tokenizer.run();
     let parser = koala_html::HTMLParser::new(tokenizer.into_tokens());
     let (dom, _) = parser.run_with_issues();
 
-    // Use UA stylesheet + empty author stylesheet
+    // Extract <style> content from the HTML and parse as author stylesheet.
+    let css_text = koala_css::extract_style_content(&dom);
+    let author = if css_text.is_empty() {
+        Stylesheet { rules: vec![] }
+    } else {
+        let mut css_tok = CSSTokenizer::new(css_text);
+        css_tok.run();
+        let mut css_parser = CSSParser::new(css_tok.into_tokens());
+        css_parser.parse_stylesheet()
+    };
+
     let ua = koala_css::ua_stylesheet::ua_stylesheet();
-    let empty = Stylesheet { rules: vec![] };
-    let styles = compute_styles(&dom, ua, &empty);
+    let styles = compute_styles(&dom, ua, &author);
 
     let image_dims = HashMap::new();
     let mut layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims)
@@ -66,8 +80,8 @@ fn layout_html(html: &str) -> LayoutBox {
     let viewport = Rect {
         x: 0.0,
         y: 0.0,
-        width: 800.0,
-        height: 600.0,
+        width: vw,
+        height: vh,
     };
     layout_tree.layout(viewport, viewport, &ApproximateFontMetrics);
 
@@ -288,5 +302,346 @@ fn test_parent_child_bottom_margin_collapsing() {
         "body content height ({:.1}) should be less than full margin-box height ({:.1})",
         body.dimensions.content.height,
         height_with_margin
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Flexbox layout tests
+//
+// [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
+// ---------------------------------------------------------------------------
+
+/// [§ 9 Flex Layout](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
+///
+/// Two children in a `display: flex` container are laid out side-by-side
+/// (same y, different x) rather than stacked vertically.
+#[test]
+fn test_flex_row_basic() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; }\
+         .item { width: 100px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div><div class='item'>B</div></div></body></html>",
+    );
+
+    // Document > html > body > div.flex
+    let body = box_at_depth(&root, 2);
+    let flex_container = &body.children[0];
+    assert!(
+        flex_container.children.len() >= 2,
+        "flex container should have at least 2 children, got {}",
+        flex_container.children.len()
+    );
+
+    let item_a = &flex_container.children[0];
+    let item_b = &flex_container.children[1];
+
+    // Items should be side-by-side: same y, different x.
+    assert!(
+        (item_a.dimensions.content.y - item_b.dimensions.content.y).abs() < 1.0,
+        "flex items should have same y: A.y={:.1}, B.y={:.1}",
+        item_a.dimensions.content.y,
+        item_b.dimensions.content.y
+    );
+    assert!(
+        item_b.dimensions.content.x > item_a.dimensions.content.x,
+        "item B should be to the right of item A: A.x={:.1}, B.x={:.1}",
+        item_a.dimensions.content.x,
+        item_b.dimensions.content.x
+    );
+}
+
+/// [§ 9.7 Resolving Flexible Lengths](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
+///
+/// Container width 300px, two items with flex-grow 1 and 2.
+/// First item gets ~100px, second gets ~200px.
+#[test]
+fn test_flex_grow_distribution() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 300px; }\
+         .a { flex-grow: 1; }\
+         .b { flex-grow: 2; }\
+         </style></head>\
+         <body><div class='flex'><div class='a'>A</div><div class='b'>B</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    let item_a = &flex.children[0];
+    let item_b = &flex.children[1];
+
+    // With no initial base size (text content only), all free space is
+    // distributed by flex-grow ratio (1:2), so item_b should be about
+    // twice as wide as item_a.
+    let ratio = item_b.dimensions.content.width / item_a.dimensions.content.width;
+    assert!(
+        (ratio - 2.0).abs() < 0.5,
+        "item B should be ~2x item A width: A={:.1}, B={:.1}, ratio={:.2}",
+        item_a.dimensions.content.width,
+        item_b.dimensions.content.width,
+        ratio
+    );
+
+    // Both should roughly sum to the container width (300px).
+    let total = item_a.dimensions.margin_box().width + item_b.dimensions.margin_box().width;
+    assert!(
+        (total - 300.0).abs() < 5.0,
+        "total flex item widths should be ~300px, got {total:.1}"
+    );
+}
+
+/// [§ 9.7 Resolving Flexible Lengths](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
+///
+/// Container 200px, two items each with flex-basis 150px and default
+/// flex-shrink 1. Both should shrink equally to fit.
+#[test]
+fn test_flex_shrink() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 200px; }\
+         .item { flex-basis: 150px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div><div class='item'>B</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    let item_a = &flex.children[0];
+    let item_b = &flex.children[1];
+
+    // Both items have equal flex-shrink (1) and equal base size (150px).
+    // Total 300px > 200px available, so each should shrink to 100px.
+    assert!(
+        (item_a.dimensions.content.width - 100.0).abs() < 5.0,
+        "item A should shrink to ~100px, got {:.1}",
+        item_a.dimensions.content.width
+    );
+    assert!(
+        (item_b.dimensions.content.width - 100.0).abs() < 5.0,
+        "item B should shrink to ~100px, got {:.1}",
+        item_b.dimensions.content.width
+    );
+}
+
+/// [§ 4 Flex Items](https://www.w3.org/TR/css-flexbox-1/#flex-items)
+///
+/// "Margins of adjacent flex items do not collapse."
+/// Adjacent flex items with margin: 10px each should have a 20px gap (10+10),
+/// not collapsed to 10px.
+#[test]
+fn test_flex_no_margin_collapse() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; }\
+         .item { width: 100px; margin: 10px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div><div class='item'>B</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    let item_a = &flex.children[0];
+    let item_b = &flex.children[1];
+
+    // Gap between A's right margin edge and B's left margin edge should be
+    // A.margin_right + B.margin_left = 10 + 10 = 20, NOT collapsed to 10.
+    let a_right_edge = item_a.dimensions.margin_box().x + item_a.dimensions.margin_box().width;
+    let b_left_edge = item_b.dimensions.margin_box().x;
+    let gap = b_left_edge - a_right_edge;
+
+    assert!(
+        gap.abs() < 1.0,
+        "flex items should abut (margin boxes should be adjacent), gap={gap:.1}"
+    );
+
+    // The actual space between content boxes should be sum of margins.
+    let content_gap = item_b.dimensions.content.x
+        - (item_a.dimensions.content.x + item_a.dimensions.content.width);
+    let expected_gap = item_a.dimensions.margin.right
+        + item_a.dimensions.border.right
+        + item_a.dimensions.padding.right
+        + item_b.dimensions.margin.left
+        + item_b.dimensions.border.left
+        + item_b.dimensions.padding.left;
+    assert!(
+        (content_gap - expected_gap).abs() < 1.0,
+        "content gap should be {expected_gap:.1} (no collapsing), got {content_gap:.1}"
+    );
+}
+
+/// [§ 8.2 justify-content: center](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+///
+/// Items narrower than container are offset from the left when centered.
+#[test]
+fn test_flex_justify_center() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; justify-content: center; }\
+         .item { width: 50px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div><div class='item'>B</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    let item_a = &flex.children[0];
+    let item_b = &flex.children[1];
+
+    // Free space = 400 - 100 = 300. Center offset = 150.
+    // item_a's margin-box x should be container.content.x + 150.
+    let expected_offset = (400.0 - 100.0) / 2.0; // 150
+    let actual_offset = item_a.dimensions.margin_box().x - flex.dimensions.content.x;
+    assert!(
+        (actual_offset - expected_offset).abs() < 5.0,
+        "center offset should be ~{expected_offset:.1}, got {actual_offset:.1}"
+    );
+
+    // B should be right after A.
+    let a_right = item_a.dimensions.margin_box().x + item_a.dimensions.margin_box().width;
+    assert!(
+        (item_b.dimensions.margin_box().x - a_right).abs() < 1.0,
+        "item B should be immediately after item A"
+    );
+}
+
+/// [§ 8.2 justify-content: space-between](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+///
+/// 3 items: first at left edge, last at right edge, middle centered.
+#[test]
+fn test_flex_justify_space_between() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 300px; justify-content: space-between; }\
+         .item { width: 50px; }\
+         </style></head>\
+         <body><div class='flex'>\
+         <div class='item'>A</div><div class='item'>B</div><div class='item'>C</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    assert_eq!(flex.children.len(), 3);
+
+    let item_a = &flex.children[0];
+    let item_c = &flex.children[2];
+
+    // First item at left edge.
+    let left_offset = item_a.dimensions.margin_box().x - flex.dimensions.content.x;
+    assert!(
+        left_offset.abs() < 1.0,
+        "first item should be at left edge, offset={left_offset:.1}"
+    );
+
+    // Last item at right edge.
+    let right_edge =
+        item_c.dimensions.margin_box().x + item_c.dimensions.margin_box().width;
+    let container_right = flex.dimensions.content.x + flex.dimensions.content.width;
+    assert!(
+        (right_edge - container_right).abs() < 2.0,
+        "last item should be at right edge: item_right={right_edge:.1}, container_right={container_right:.1}"
+    );
+}
+
+/// [§ 9.9 Cross Size Determination](https://www.w3.org/TR/css-flexbox-1/#algo-cross-container)
+///
+/// Container with no explicit height gets the height of the tallest child.
+#[test]
+fn test_flex_container_auto_height() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; }\
+         .short { width: 100px; height: 50px; }\
+         .tall { width: 100px; height: 120px; }\
+         </style></head>\
+         <body><div class='flex'>\
+         <div class='short'>A</div><div class='tall'>B</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+
+    // Container height should be the tallest child's margin-box height.
+    let tallest = flex
+        .children
+        .iter()
+        .map(|c| c.dimensions.margin_box().height)
+        .fold(0.0_f32, f32::max);
+
+    assert!(
+        (flex.dimensions.content.height - tallest).abs() < 1.0,
+        "flex container auto height should be ~{tallest:.1}, got {:.1}",
+        flex.dimensions.content.height
+    );
+}
+
+/// [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
+///
+/// "If the specified flex-basis is not auto, the flex base size is the
+/// computed value of the flex-basis property."
+///
+/// flex-basis: 100px should override width: 50px.
+#[test]
+fn test_flex_explicit_basis() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; }\
+         .item { width: 50px; flex-basis: 100px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    let item = &flex.children[0];
+
+    // flex-basis overrides width for the flex base size.
+    // With no flex-grow, the item keeps its base size of 100px.
+    assert!(
+        (item.dimensions.content.width - 100.0).abs() < 5.0,
+        "item width should be ~100px (from flex-basis), got {:.1}",
+        item.dimensions.content.width
+    );
+}
+
+/// [§ 9.2 step 3](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
+///
+/// Items with text content and no explicit width get width from
+/// content-based measurement (measure_content_size).
+#[test]
+fn test_flex_content_based_sizing() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 800px; }\
+         </style></head>\
+         <body><div class='flex'><div>Short</div><div>A much longer piece of text</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex = &body.children[0];
+    assert!(flex.children.len() >= 2);
+
+    let short_item = &flex.children[0];
+    let long_item = &flex.children[1];
+
+    // The longer text item should be wider than the shorter one.
+    assert!(
+        long_item.dimensions.content.width > short_item.dimensions.content.width,
+        "longer text item should be wider: short={:.1}, long={:.1}",
+        short_item.dimensions.content.width,
+        long_item.dimensions.content.width
+    );
+
+    // Both should have non-zero width.
+    assert!(
+        short_item.dimensions.content.width > 0.0,
+        "short item should have non-zero width"
+    );
+    assert!(
+        long_item.dimensions.content.width > 0.0,
+        "long item should have non-zero width"
     );
 }
