@@ -1614,6 +1614,17 @@ impl ComputedStyle {
                 }
                 self.grid_row_end = Some(end.unwrap_or(GridLine::Auto));
             }
+            // [§ 4 Font Shorthand](https://www.w3.org/TR/css-fonts-4/#font-prop)
+            //
+            // "font = [ [ <'font-style'> || <'font-weight'> ]? <'font-size'>
+            //           [ / <'line-height'> ]? <'font-family'># ]
+            //        | caption | icon | menu | message-box | small-caption | status-bar"
+            //
+            // "All subproperties of the font shorthand are first reset to their
+            // initial values, including those not explicitly set."
+            "font" => {
+                self.parse_font_shorthand(values);
+            }
             unknown => {
                 warn_once("CSS", &format!("unknown property '{unknown}'"));
             }
@@ -1932,6 +1943,193 @@ impl ComputedStyle {
         if let Some(color) = parse_color_value(values) {
             self.background_color = Some(color);
         }
+    }
+
+    /// [§ 4 Font Shorthand](https://www.w3.org/TR/css-fonts-4/#font-prop)
+    ///
+    /// Parse the `font` shorthand property.
+    ///
+    /// ```text
+    /// font = [ [ <'font-style'> || <'font-weight'> ]? <'font-size'>
+    ///           [ / <'line-height'> ]? <'font-family'># ]
+    ///        | caption | icon | menu | message-box | small-caption | status-bar
+    /// ```
+    ///
+    /// "All subproperties of the font shorthand are first reset to their
+    /// initial values, including those not explicitly set."
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn parse_font_shorthand(&mut self, values: &[ComponentValue]) {
+        // STEP 1: Filter whitespace tokens.
+        let tokens: Vec<&ComponentValue> = values
+            .iter()
+            .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+            .collect();
+
+        if tokens.is_empty() {
+            return;
+        }
+
+        // STEP 2: Check for system font keywords.
+        // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
+        // "caption | icon | menu | message-box | small-caption | status-bar"
+        // These set all font sub-properties to system-specific values.
+        // We ignore them for now (the property just doesn't apply).
+        if tokens.len() == 1 {
+            if let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[0] {
+                let lower = ident.to_ascii_lowercase();
+                if matches!(
+                    lower.as_str(),
+                    "caption"
+                        | "icon"
+                        | "menu"
+                        | "message-box"
+                        | "small-caption"
+                        | "status-bar"
+                ) {
+                    return;
+                }
+            }
+        }
+
+        // STEP 3: Walk tokens left-to-right, consuming optional font-style
+        // and font-weight before the required font-size.
+        //
+        // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
+        // "font-style and font-weight must precede font-size"
+        // "font-style and font-weight are optional"
+        let mut i = 0;
+        let mut parsed_style = None;
+        let mut parsed_weight = None;
+
+        // Try to consume up to 2 optional tokens (font-style and/or font-weight)
+        // before the required font-size. They can appear in any order.
+        while i < tokens.len() {
+            if let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[i] {
+                let lower = ident.to_ascii_lowercase();
+                // Check if this is a font-style keyword
+                if parsed_style.is_none()
+                    && matches!(lower.as_str(), "italic" | "oblique")
+                {
+                    parsed_style = Some(match lower.as_str() {
+                        "italic" => FontStyle::Italic,
+                        "oblique" => FontStyle::Oblique,
+                        _ => unreachable!(),
+                    });
+                    i += 1;
+                    continue;
+                }
+                // Check if this is a font-weight keyword
+                if parsed_weight.is_none()
+                    && matches!(lower.as_str(), "bold" | "bolder" | "lighter")
+                {
+                    parsed_weight = Some(match lower.as_str() {
+                        "bold" => 700,
+                        "bolder" => 700,
+                        "lighter" => 300,
+                        _ => unreachable!(),
+                    });
+                    i += 1;
+                    continue;
+                }
+                // "normal" is ambiguous — it can be font-style OR font-weight.
+                // It's also the initial value for both, so consuming it and
+                // leaving the field at its reset value is correct.
+                if lower == "normal" && (parsed_style.is_none() || parsed_weight.is_none()) {
+                    i += 1;
+                    continue;
+                }
+            }
+            // Check if this is a numeric font-weight (100–900)
+            if parsed_weight.is_none() {
+                if let ComponentValue::Token(CSSToken::Number { value, .. }) = tokens[i] {
+                    let w = *value as u16;
+                    if (1..=1000).contains(&w) {
+                        parsed_weight = Some(w);
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+            // Not a font-style or font-weight — must be font-size
+            break;
+        }
+
+        // STEP 4: Next token must be font-size (required).
+        // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
+        // "font-size is a required value"
+        if i >= tokens.len() {
+            return;
+        }
+        let font_size = parse_single_length(tokens[i]);
+        if font_size.is_none() {
+            return; // Invalid font-size — entire shorthand is invalid
+        }
+        i += 1;
+
+        // STEP 5: If next token is '/', consume line-height.
+        // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
+        // "The optional '/' and 'line-height' can be used to set the
+        // line height"
+        let mut parsed_line_height = None;
+        if i < tokens.len() {
+            if let ComponentValue::Token(CSSToken::Delim('/')) = tokens[i] {
+                i += 1;
+                if i < tokens.len() {
+                    // line-height can be a number, length, or "normal"
+                    match tokens[i] {
+                        ComponentValue::Token(CSSToken::Number { value, .. }) => {
+                            parsed_line_height = Some(*value);
+                            i += 1;
+                        }
+                        ComponentValue::Token(CSSToken::Dimension { value, unit, .. })
+                            if unit.eq_ignore_ascii_case("px") =>
+                        {
+                            parsed_line_height = Some(*value / 16.0);
+                            i += 1;
+                        }
+                        ComponentValue::Token(CSSToken::Ident(ident))
+                            if ident.eq_ignore_ascii_case("normal") =>
+                        {
+                            // "normal" line-height — leave as None (initial value)
+                            i += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // STEP 6: Everything remaining is font-family (required).
+        // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
+        // "font-family is a required value"
+        let remaining = &tokens[i..];
+        let mut family = None;
+        for tok in remaining {
+            if let ComponentValue::Token(CSSToken::Ident(name) | CSSToken::String(name)) = tok {
+                family = Some(name.clone());
+                break;
+            }
+        }
+        if family.is_none() {
+            return; // Missing required font-family
+        }
+
+        // STEP 7: Apply values.
+        // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
+        // "All subproperties of the font shorthand are first reset to their
+        // initial values"
+        //
+        // Reset all font sub-properties to initial values, then apply
+        // what was parsed.
+        self.font_style = Some(parsed_style.unwrap_or(FontStyle::Normal));
+        self.font_weight = Some(parsed_weight.unwrap_or(400));
+        self.font_size = Some(self.resolve_length(font_size.unwrap()));
+        if let Some(lh) = parsed_line_height {
+            self.line_height = Some(lh);
+        } else {
+            self.line_height = None; // Reset to initial ("normal")
+        }
+        self.font_family = family;
     }
 
     /// Resolve relative length units (em) to absolute units (px).
