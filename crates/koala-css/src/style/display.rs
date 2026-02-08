@@ -114,6 +114,32 @@ impl DisplayValue {
         }
     }
 
+    /// `display: table` - block outer, table inner
+    ///
+    /// [§ 17.2 The CSS table model](https://www.w3.org/TR/CSS2/tables.html#table-display)
+    ///
+    /// "Specifies that an element defines a block-level table."
+    #[must_use]
+    pub const fn table() -> Self {
+        Self {
+            outer: OuterDisplayType::Block,
+            inner: InnerDisplayType::Table,
+        }
+    }
+
+    /// `display: inline-table` - inline outer, table inner
+    ///
+    /// [§ 17.2 The CSS table model](https://www.w3.org/TR/CSS2/tables.html#table-display)
+    ///
+    /// "Specifies that an element defines an inline-level table."
+    #[must_use]
+    pub const fn inline_table() -> Self {
+        Self {
+            outer: OuterDisplayType::Inline,
+            inner: InnerDisplayType::Table,
+        }
+    }
+
     /// `display: list-item` - list-item outer, flow inner
     ///
     /// [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
@@ -160,6 +186,27 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
                 // [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
                 // "list-item: The element generates a ::marker pseudo-element."
                 "list-item" => return Some(DisplayValue::list_item()),
+
+                // [§ 17.2 The CSS table model](https://www.w3.org/TR/CSS2/tables.html#table-display)
+                //
+                // "table: Specifies that an element defines a block-level table."
+                "table" => return Some(DisplayValue::table()),
+
+                // "inline-table: Specifies that an element defines an inline-level table."
+                "inline-table" => return Some(DisplayValue::inline_table()),
+
+                // Table internal display values.
+                // [§ 17.2](https://www.w3.org/TR/CSS2/tables.html#table-display)
+                //
+                // These are "internal" table display types that don't have a
+                // simple outer/inner decomposition. They require proper table
+                // layout (§ 17) to be meaningful. For now, map them to block/flow
+                // so they participate in layout without triggering warnings.
+                // TODO: Implement proper table layout for these internal types.
+                "table-row-group" | "table-header-group" | "table-footer-group" | "table-row"
+                | "table-column-group" | "table-column" | "table-cell" | "table-caption" => {
+                    return Some(DisplayValue::block());
+                }
 
                 // "none" is handled separately by is_display_none
                 "none" => return None,
