@@ -301,6 +301,23 @@ impl HTMLTokenizer {
         // STEP 5: "Reconsume in the script data state"
         self.reconsume_in(TokenizerState::ScriptData);
     }
+
+    /// [§ 13.2.5.25 Script data escaped end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-name-state)
+    ///
+    /// "Anything else":
+    /// "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS character
+    /// token, and a character token for each of the characters in the temporary
+    /// buffer... Reconsume in the script data escaped state."
+    pub(super) fn emit_escaped_end_tag_name_anything_else(&mut self) {
+        self.emit_character_token('<');
+        self.emit_character_token('/');
+        let buffer = self.temporary_buffer.clone();
+        for c in buffer.chars() {
+            self.emit_character_token(c);
+        }
+        self.current_token = None;
+        self.reconsume_in(TokenizerState::ScriptDataEscaped);
+    }
 }
 
 // =============================================================================

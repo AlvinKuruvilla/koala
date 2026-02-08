@@ -477,7 +477,9 @@ impl HTMLTokenizer {
             // "Switch to the script data escape start state. Emit a U+003C LESS-THAN SIGN character token
             // and a U+0021 EXCLAMATION MARK character token."
             Some('!') => {
-                todo!("implement: switch to ScriptDataEscapeStart, emit '<' and '!'");
+                self.switch_to(TokenizerState::ScriptDataEscapeStart);
+                self.emit_character_token('<');
+                self.emit_character_token('!');
             }
             // "Anything else"
             // "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the script data state."
@@ -1970,332 +1972,521 @@ impl HTMLTokenizer {
                     // [§ 13.2.5.18 Script data escape start state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escape-start-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Switch to the script data escape start dash state. Emit a U+002D
-                    //    HYPHEN-MINUS character token."
-                    //
-                    // "Anything else"
-                    //   "Reconsume in the script data state."
-                    todo!("Script data escape start state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Switch to the script data escape start dash state. Emit a U+002D
+                        //    HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapeStartDash);
+                            self.emit_character_token('-');
+                        }
+                        // "Anything else"
+                        //   "Reconsume in the script data state."
+                        _ => {
+                            self.reconsume_in(TokenizerState::ScriptData);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscapeStartDash => {
                     // [§ 13.2.5.19 Script data escape start dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escape-start-dash-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Switch to the script data escaped dash dash state. Emit a U+002D
-                    //    HYPHEN-MINUS character token."
-                    //
-                    // "Anything else"
-                    //   "Reconsume in the script data state."
-                    todo!("Script data escape start dash state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Switch to the script data escaped dash dash state. Emit a U+002D
+                        //    HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapedDashDash);
+                            self.emit_character_token('-');
+                        }
+                        // "Anything else"
+                        //   "Reconsume in the script data state."
+                        _ => {
+                            self.reconsume_in(TokenizerState::ScriptData);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscaped => {
                     // [§ 13.2.5.20 Script data escaped state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Switch to the script data escaped dash state. Emit a U+002D
-                    //    HYPHEN-MINUS character token."
-                    //
-                    // "U+003C LESS-THAN SIGN (<)"
-                    //   "Switch to the script data escaped less-than sign state."
-                    //
-                    // "U+0000 NULL"
-                    //   "This is an unexpected-null-character parse error. Emit a U+FFFD
-                    //    REPLACEMENT CHARACTER character token."
-                    //
-                    // "EOF"
-                    //   "This is an eof-in-script-html-comment-like-text parse error.
-                    //    Emit an end-of-file token."
-                    //
-                    // "Anything else"
-                    //   "Emit the current input character as a character token."
-                    todo!("Script data escaped state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Switch to the script data escaped dash state. Emit a U+002D
+                        //    HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapedDash);
+                            self.emit_character_token('-');
+                        }
+                        // "U+003C LESS-THAN SIGN (<)"
+                        //   "Switch to the script data escaped less-than sign state."
+                        Some('<') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapedLessThanSign);
+                        }
+                        // "U+0000 NULL"
+                        //   "This is an unexpected-null-character parse error. Emit a U+FFFD
+                        //    REPLACEMENT CHARACTER character token."
+                        Some('\0') => {
+                            self.emit_character_token('\u{FFFD}');
+                        }
+                        // "EOF"
+                        //   "This is an eof-in-script-html-comment-like-text parse error.
+                        //    Emit an end-of-file token."
+                        None => {
+                            self.emit_eof_token();
+                        }
+                        // "Anything else"
+                        //   "Emit the current input character as a character token."
+                        Some(c) => {
+                            self.emit_character_token(c);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscapedDash => {
                     // [§ 13.2.5.21 Script data escaped dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-dash-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Switch to the script data escaped dash dash state. Emit a U+002D
-                    //    HYPHEN-MINUS character token."
-                    //
-                    // "U+003C LESS-THAN SIGN (<)"
-                    //   "Switch to the script data escaped less-than sign state."
-                    //
-                    // "U+0000 NULL"
-                    //   "This is an unexpected-null-character parse error. Switch to the
-                    //    script data escaped state. Emit a U+FFFD REPLACEMENT CHARACTER
-                    //    character token."
-                    //
-                    // "EOF"
-                    //   "This is an eof-in-script-html-comment-like-text parse error.
-                    //    Emit an end-of-file token."
-                    //
-                    // "Anything else"
-                    //   "Switch to the script data escaped state. Emit the current input
-                    //    character as a character token."
-                    todo!("Script data escaped dash state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Switch to the script data escaped dash dash state. Emit a U+002D
+                        //    HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapedDashDash);
+                            self.emit_character_token('-');
+                        }
+                        // "U+003C LESS-THAN SIGN (<)"
+                        //   "Switch to the script data escaped less-than sign state."
+                        Some('<') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapedLessThanSign);
+                        }
+                        // "U+0000 NULL"
+                        //   "This is an unexpected-null-character parse error. Switch to the
+                        //    script data escaped state. Emit a U+FFFD REPLACEMENT CHARACTER
+                        //    character token."
+                        Some('\0') => {
+                            self.switch_to(TokenizerState::ScriptDataEscaped);
+                            self.emit_character_token('\u{FFFD}');
+                        }
+                        // "EOF"
+                        //   "This is an eof-in-script-html-comment-like-text parse error.
+                        //    Emit an end-of-file token."
+                        None => {
+                            self.emit_eof_token();
+                        }
+                        // "Anything else"
+                        //   "Switch to the script data escaped state. Emit the current input
+                        //    character as a character token."
+                        Some(c) => {
+                            self.switch_to(TokenizerState::ScriptDataEscaped);
+                            self.emit_character_token(c);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscapedDashDash => {
                     // [§ 13.2.5.22 Script data escaped dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-dash-dash-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Emit a U+002D HYPHEN-MINUS character token."
-                    //
-                    // "U+003C LESS-THAN SIGN (<)"
-                    //   "Switch to the script data escaped less-than sign state."
-                    //
-                    // "U+003E GREATER-THAN SIGN (>)"
-                    //   "Switch to the script data state. Emit a U+003E GREATER-THAN SIGN
-                    //    character token."
-                    //
-                    // "U+0000 NULL"
-                    //   "This is an unexpected-null-character parse error. Switch to the
-                    //    script data escaped state. Emit a U+FFFD REPLACEMENT CHARACTER
-                    //    character token."
-                    //
-                    // "EOF"
-                    //   "This is an eof-in-script-html-comment-like-text parse error.
-                    //    Emit an end-of-file token."
-                    //
-                    // "Anything else"
-                    //   "Switch to the script data escaped state. Emit the current input
-                    //    character as a character token."
-                    todo!("Script data escaped dash dash state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Emit a U+002D HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.emit_character_token('-');
+                        }
+                        // "U+003C LESS-THAN SIGN (<)"
+                        //   "Switch to the script data escaped less-than sign state."
+                        Some('<') => {
+                            self.switch_to(TokenizerState::ScriptDataEscapedLessThanSign);
+                        }
+                        // "U+003E GREATER-THAN SIGN (>)"
+                        //   "Switch to the script data state. Emit a U+003E GREATER-THAN SIGN
+                        //    character token."
+                        Some('>') => {
+                            self.switch_to(TokenizerState::ScriptData);
+                            self.emit_character_token('>');
+                        }
+                        // "U+0000 NULL"
+                        //   "This is an unexpected-null-character parse error. Switch to the
+                        //    script data escaped state. Emit a U+FFFD REPLACEMENT CHARACTER
+                        //    character token."
+                        Some('\0') => {
+                            self.switch_to(TokenizerState::ScriptDataEscaped);
+                            self.emit_character_token('\u{FFFD}');
+                        }
+                        // "EOF"
+                        //   "This is an eof-in-script-html-comment-like-text parse error.
+                        //    Emit an end-of-file token."
+                        None => {
+                            self.emit_eof_token();
+                        }
+                        // "Anything else"
+                        //   "Switch to the script data escaped state. Emit the current input
+                        //    character as a character token."
+                        Some(c) => {
+                            self.switch_to(TokenizerState::ScriptDataEscaped);
+                            self.emit_character_token(c);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscapedLessThanSign => {
                     // [§ 13.2.5.23 Script data escaped less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-less-than-sign-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002F SOLIDUS (/)"
-                    //   "Set the temporary buffer to the empty string. Switch to the
-                    //    script data escaped end tag open state."
-                    //
-                    // "ASCII alpha"
-                    //   "Set the temporary buffer to the empty string. Emit a U+003C
-                    //    LESS-THAN SIGN character token. Reconsume in the script data
-                    //    double escape start state."
-                    //
-                    // "Anything else"
-                    //   "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the
-                    //    script data escaped state."
-                    todo!("Script data escaped less-than sign state")
+                    match self.current_input_character {
+                        // "U+002F SOLIDUS (/)"
+                        //   "Set the temporary buffer to the empty string. Switch to the
+                        //    script data escaped end tag open state."
+                        Some('/') => {
+                            self.temporary_buffer.clear();
+                            self.switch_to(TokenizerState::ScriptDataEscapedEndTagOpen);
+                        }
+                        // "ASCII alpha"
+                        //   "Set the temporary buffer to the empty string. Emit a U+003C
+                        //    LESS-THAN SIGN character token. Reconsume in the script data
+                        //    double escape start state."
+                        Some(c) if c.is_ascii_alphabetic() => {
+                            self.temporary_buffer.clear();
+                            self.emit_character_token('<');
+                            self.reconsume_in(TokenizerState::ScriptDataDoubleEscapeStart);
+                        }
+                        // "Anything else"
+                        //   "Emit a U+003C LESS-THAN SIGN character token. Reconsume in the
+                        //    script data escaped state."
+                        _ => {
+                            self.emit_character_token('<');
+                            self.reconsume_in(TokenizerState::ScriptDataEscaped);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscapedEndTagOpen => {
                     // [§ 13.2.5.24 Script data escaped end tag open state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-open-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "ASCII alpha"
-                    //   "Create a new end tag token, set its tag name to the empty string.
-                    //    Reconsume in the script data escaped end tag name state."
-                    //
-                    // "Anything else"
-                    //   "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS
-                    //    character token. Reconsume in the script data escaped state."
-                    todo!("Script data escaped end tag open state")
+                    match self.current_input_character {
+                        // "ASCII alpha"
+                        //   "Create a new end tag token, set its tag name to the empty string.
+                        //    Reconsume in the script data escaped end tag name state."
+                        Some(c) if c.is_ascii_alphabetic() => {
+                            self.current_token = Some(Token::new_end_tag());
+                            self.reconsume_in(TokenizerState::ScriptDataEscapedEndTagName);
+                        }
+                        // "Anything else"
+                        //   "Emit a U+003C LESS-THAN SIGN character token and a U+002F SOLIDUS
+                        //    character token. Reconsume in the script data escaped state."
+                        _ => {
+                            self.emit_character_token('<');
+                            self.emit_character_token('/');
+                            self.reconsume_in(TokenizerState::ScriptDataEscaped);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataEscapedEndTagName => {
                     // [§ 13.2.5.25 Script data escaped end tag name state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-escaped-end-tag-name-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+0009 CHARACTER TABULATION (tab)"
-                    // "U+000A LINE FEED (LF)"
-                    // "U+000C FORM FEED (FF)"
-                    // "U+0020 SPACE"
-                    //   "If the current end tag token is an appropriate end tag token,
-                    //    then switch to the before attribute name state. Otherwise,
-                    //    treat it as per the 'anything else' entry below."
-                    //
-                    // "U+002F SOLIDUS (/)"
-                    //   "If the current end tag token is an appropriate end tag token,
-                    //    then switch to the self-closing start tag state. Otherwise,
-                    //    treat it as per the 'anything else' entry below."
-                    //
-                    // "U+003E GREATER-THAN SIGN (>)"
-                    //   "If the current end tag token is an appropriate end tag token,
-                    //    then switch to the data state and emit the current tag token.
-                    //    Otherwise, treat it as per the 'anything else' entry below."
-                    //
-                    // "ASCII upper alpha"
-                    //   "Append the lowercase version of the current input character to
-                    //    the current tag token's tag name. Append the current input
-                    //    character to the temporary buffer."
-                    //
-                    // "ASCII lower alpha"
-                    //   "Append the current input character to the current tag token's
-                    //    tag name. Append the current input character to the temporary
-                    //    buffer."
-                    //
-                    // "Anything else"
-                    //   "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS
-                    //    character token, and a character token for each of the characters
-                    //    in the temporary buffer (in the order they were added to the
-                    //    buffer). Reconsume in the script data escaped state."
-                    todo!("Script data escaped end tag name state")
+                    match self.current_input_character {
+                        // "U+0009 CHARACTER TABULATION (tab)"
+                        // "U+000A LINE FEED (LF)"
+                        // "U+000C FORM FEED (FF)"
+                        // "U+0020 SPACE"
+                        //   "If the current end tag token is an appropriate end tag token,
+                        //    then switch to the before attribute name state. Otherwise,
+                        //    treat it as per the 'anything else' entry below."
+                        Some(c) if Self::is_whitespace_char(c) => {
+                            if self.is_appropriate_end_tag_token() {
+                                self.switch_to(TokenizerState::BeforeAttributeName);
+                            } else {
+                                self.emit_escaped_end_tag_name_anything_else();
+                            }
+                        }
+                        // "U+002F SOLIDUS (/)"
+                        //   "If the current end tag token is an appropriate end tag token,
+                        //    then switch to the self-closing start tag state. Otherwise,
+                        //    treat it as per the 'anything else' entry below."
+                        Some('/') => {
+                            if self.is_appropriate_end_tag_token() {
+                                self.switch_to(TokenizerState::SelfClosingStartTag);
+                            } else {
+                                self.emit_escaped_end_tag_name_anything_else();
+                            }
+                        }
+                        // "U+003E GREATER-THAN SIGN (>)"
+                        //   "If the current end tag token is an appropriate end tag token,
+                        //    then switch to the data state and emit the current tag token.
+                        //    Otherwise, treat it as per the 'anything else' entry below."
+                        Some('>') => {
+                            if self.is_appropriate_end_tag_token() {
+                                self.switch_to(TokenizerState::Data);
+                                self.emit_token();
+                            } else {
+                                self.emit_escaped_end_tag_name_anything_else();
+                            }
+                        }
+                        // "ASCII upper alpha"
+                        //   "Append the lowercase version of the current input character to
+                        //    the current tag token's tag name. Append the current input
+                        //    character to the temporary buffer."
+                        Some(c) if c.is_ascii_uppercase() => {
+                            if let Some(ref mut token) = self.current_token {
+                                token.append_to_tag_name(c.to_ascii_lowercase());
+                            }
+                            self.temporary_buffer.push(c);
+                        }
+                        // "ASCII lower alpha"
+                        //   "Append the current input character to the current tag token's
+                        //    tag name. Append the current input character to the temporary
+                        //    buffer."
+                        Some(c) if c.is_ascii_lowercase() => {
+                            if let Some(ref mut token) = self.current_token {
+                                token.append_to_tag_name(c);
+                            }
+                            self.temporary_buffer.push(c);
+                        }
+                        // "Anything else"
+                        //   "Emit a U+003C LESS-THAN SIGN character token, a U+002F SOLIDUS
+                        //    character token, and a character token for each of the characters
+                        //    in the temporary buffer (in the order they were added to the
+                        //    buffer). Reconsume in the script data escaped state."
+                        _ => {
+                            self.emit_escaped_end_tag_name_anything_else();
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataDoubleEscapeStart => {
                     // [§ 13.2.5.26 Script data double escape start state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escape-start-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+0009 CHARACTER TABULATION (tab)"
-                    // "U+000A LINE FEED (LF)"
-                    // "U+000C FORM FEED (FF)"
-                    // "U+0020 SPACE"
-                    // "U+002F SOLIDUS (/)"
-                    // "U+003E GREATER-THAN SIGN (>)"
-                    //   "If the temporary buffer is the string 'script', then switch to the
-                    //    script data double escaped state. Otherwise, switch to the script
-                    //    data escaped state. Emit the current input character as a character
-                    //    token."
-                    //
-                    // "ASCII upper alpha"
-                    //   "Append the lowercase version of the current input character to the
-                    //    temporary buffer. Emit the current input character as a character
-                    //    token."
-                    //
-                    // "ASCII lower alpha"
-                    //   "Append the current input character to the temporary buffer. Emit
-                    //    the current input character as a character token."
-                    //
-                    // "Anything else"
-                    //   "Reconsume in the script data escaped state."
-                    todo!("Script data double escape start state")
+                    match self.current_input_character {
+                        // "U+0009 CHARACTER TABULATION (tab)"
+                        // "U+000A LINE FEED (LF)"
+                        // "U+000C FORM FEED (FF)"
+                        // "U+0020 SPACE"
+                        // "U+002F SOLIDUS (/)"
+                        // "U+003E GREATER-THAN SIGN (>)"
+                        //   "If the temporary buffer is the string 'script', then switch to the
+                        //    script data double escaped state. Otherwise, switch to the script
+                        //    data escaped state. Emit the current input character as a character
+                        //    token."
+                        Some(c) if Self::is_whitespace_char(c) || c == '/' || c == '>' => {
+                            if self.temporary_buffer == "script" {
+                                self.switch_to(TokenizerState::ScriptDataDoubleEscaped);
+                            } else {
+                                self.switch_to(TokenizerState::ScriptDataEscaped);
+                            }
+                            self.emit_character_token(c);
+                        }
+                        // "ASCII upper alpha"
+                        //   "Append the lowercase version of the current input character to the
+                        //    temporary buffer. Emit the current input character as a character
+                        //    token."
+                        Some(c) if c.is_ascii_uppercase() => {
+                            self.temporary_buffer.push(c.to_ascii_lowercase());
+                            self.emit_character_token(c);
+                        }
+                        // "ASCII lower alpha"
+                        //   "Append the current input character to the temporary buffer. Emit
+                        //    the current input character as a character token."
+                        Some(c) if c.is_ascii_lowercase() => {
+                            self.temporary_buffer.push(c);
+                            self.emit_character_token(c);
+                        }
+                        // "Anything else"
+                        //   "Reconsume in the script data escaped state."
+                        _ => {
+                            self.reconsume_in(TokenizerState::ScriptDataEscaped);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataDoubleEscaped => {
                     // [§ 13.2.5.27 Script data double escaped state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Switch to the script data double escaped dash state. Emit a U+002D
-                    //    HYPHEN-MINUS character token."
-                    //
-                    // "U+003C LESS-THAN SIGN (<)"
-                    //   "Switch to the script data double escaped less-than sign state. Emit
-                    //    a U+003C LESS-THAN SIGN character token."
-                    //
-                    // "U+0000 NULL"
-                    //   "This is an unexpected-null-character parse error. Emit a U+FFFD
-                    //    REPLACEMENT CHARACTER character token."
-                    //
-                    // "EOF"
-                    //   "This is an eof-in-script-html-comment-like-text parse error.
-                    //    Emit an end-of-file token."
-                    //
-                    // "Anything else"
-                    //   "Emit the current input character as a character token."
-                    todo!("Script data double escaped state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Switch to the script data double escaped dash state. Emit a U+002D
+                        //    HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscapedDash);
+                            self.emit_character_token('-');
+                        }
+                        // "U+003C LESS-THAN SIGN (<)"
+                        //   "Switch to the script data double escaped less-than sign state. Emit
+                        //    a U+003C LESS-THAN SIGN character token."
+                        Some('<') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscapedLessThanSign);
+                            self.emit_character_token('<');
+                        }
+                        // "U+0000 NULL"
+                        //   "This is an unexpected-null-character parse error. Emit a U+FFFD
+                        //    REPLACEMENT CHARACTER character token."
+                        Some('\0') => {
+                            self.emit_character_token('\u{FFFD}');
+                        }
+                        // "EOF"
+                        //   "This is an eof-in-script-html-comment-like-text parse error.
+                        //    Emit an end-of-file token."
+                        None => {
+                            self.emit_eof_token();
+                        }
+                        // "Anything else"
+                        //   "Emit the current input character as a character token."
+                        Some(c) => {
+                            self.emit_character_token(c);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataDoubleEscapedDash => {
                     // [§ 13.2.5.28 Script data double escaped dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-dash-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Switch to the script data double escaped dash dash state. Emit a
-                    //    U+002D HYPHEN-MINUS character token."
-                    //
-                    // "U+003C LESS-THAN SIGN (<)"
-                    //   "Switch to the script data double escaped less-than sign state. Emit
-                    //    a U+003C LESS-THAN SIGN character token."
-                    //
-                    // "U+0000 NULL"
-                    //   "This is an unexpected-null-character parse error. Switch to the
-                    //    script data double escaped state. Emit a U+FFFD REPLACEMENT
-                    //    CHARACTER character token."
-                    //
-                    // "EOF"
-                    //   "This is an eof-in-script-html-comment-like-text parse error.
-                    //    Emit an end-of-file token."
-                    //
-                    // "Anything else"
-                    //   "Switch to the script data double escaped state. Emit the current
-                    //    input character as a character token."
-                    todo!("Script data double escaped dash state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Switch to the script data double escaped dash dash state. Emit a
+                        //    U+002D HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscapedDashDash);
+                            self.emit_character_token('-');
+                        }
+                        // "U+003C LESS-THAN SIGN (<)"
+                        //   "Switch to the script data double escaped less-than sign state. Emit
+                        //    a U+003C LESS-THAN SIGN character token."
+                        Some('<') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscapedLessThanSign);
+                            self.emit_character_token('<');
+                        }
+                        // "U+0000 NULL"
+                        //   "This is an unexpected-null-character parse error. Switch to the
+                        //    script data double escaped state. Emit a U+FFFD REPLACEMENT
+                        //    CHARACTER character token."
+                        Some('\0') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscaped);
+                            self.emit_character_token('\u{FFFD}');
+                        }
+                        // "EOF"
+                        //   "This is an eof-in-script-html-comment-like-text parse error.
+                        //    Emit an end-of-file token."
+                        None => {
+                            self.emit_eof_token();
+                        }
+                        // "Anything else"
+                        //   "Switch to the script data double escaped state. Emit the current
+                        //    input character as a character token."
+                        Some(c) => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscaped);
+                            self.emit_character_token(c);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataDoubleEscapedDashDash => {
                     // [§ 13.2.5.29 Script data double escaped dash dash state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-dash-dash-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002D HYPHEN-MINUS (-)"
-                    //   "Emit a U+002D HYPHEN-MINUS character token."
-                    //
-                    // "U+003C LESS-THAN SIGN (<)"
-                    //   "Switch to the script data double escaped less-than sign state. Emit
-                    //    a U+003C LESS-THAN SIGN character token."
-                    //
-                    // "U+003E GREATER-THAN SIGN (>)"
-                    //   "Switch to the script data state. Emit a U+003E GREATER-THAN SIGN
-                    //    character token."
-                    //
-                    // "U+0000 NULL"
-                    //   "This is an unexpected-null-character parse error. Switch to the
-                    //    script data double escaped state. Emit a U+FFFD REPLACEMENT
-                    //    CHARACTER character token."
-                    //
-                    // "EOF"
-                    //   "This is an eof-in-script-html-comment-like-text parse error.
-                    //    Emit an end-of-file token."
-                    //
-                    // "Anything else"
-                    //   "Switch to the script data double escaped state. Emit the current
-                    //    input character as a character token."
-                    todo!("Script data double escaped dash dash state")
+                    match self.current_input_character {
+                        // "U+002D HYPHEN-MINUS (-)"
+                        //   "Emit a U+002D HYPHEN-MINUS character token."
+                        Some('-') => {
+                            self.emit_character_token('-');
+                        }
+                        // "U+003C LESS-THAN SIGN (<)"
+                        //   "Switch to the script data double escaped less-than sign state. Emit
+                        //    a U+003C LESS-THAN SIGN character token."
+                        Some('<') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscapedLessThanSign);
+                            self.emit_character_token('<');
+                        }
+                        // "U+003E GREATER-THAN SIGN (>)"
+                        //   "Switch to the script data state. Emit a U+003E GREATER-THAN SIGN
+                        //    character token."
+                        Some('>') => {
+                            self.switch_to(TokenizerState::ScriptData);
+                            self.emit_character_token('>');
+                        }
+                        // "U+0000 NULL"
+                        //   "This is an unexpected-null-character parse error. Switch to the
+                        //    script data double escaped state. Emit a U+FFFD REPLACEMENT
+                        //    CHARACTER character token."
+                        Some('\0') => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscaped);
+                            self.emit_character_token('\u{FFFD}');
+                        }
+                        // "EOF"
+                        //   "This is an eof-in-script-html-comment-like-text parse error.
+                        //    Emit an end-of-file token."
+                        None => {
+                            self.emit_eof_token();
+                        }
+                        // "Anything else"
+                        //   "Switch to the script data double escaped state. Emit the current
+                        //    input character as a character token."
+                        Some(c) => {
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscaped);
+                            self.emit_character_token(c);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataDoubleEscapedLessThanSign => {
                     // [§ 13.2.5.30 Script data double escaped less-than sign state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escaped-less-than-sign-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+002F SOLIDUS (/)"
-                    //   "Set the temporary buffer to the empty string. Switch to the script
-                    //    data double escape end state. Emit a U+002F SOLIDUS character token."
-                    //
-                    // "Anything else"
-                    //   "Reconsume in the script data double escaped state."
-                    todo!("Script data double escaped less-than sign state")
+                    match self.current_input_character {
+                        // "U+002F SOLIDUS (/)"
+                        //   "Set the temporary buffer to the empty string. Switch to the script
+                        //    data double escape end state. Emit a U+002F SOLIDUS character token."
+                        Some('/') => {
+                            self.temporary_buffer.clear();
+                            self.switch_to(TokenizerState::ScriptDataDoubleEscapeEnd);
+                            self.emit_character_token('/');
+                        }
+                        // "Anything else"
+                        //   "Reconsume in the script data double escaped state."
+                        _ => {
+                            self.reconsume_in(TokenizerState::ScriptDataDoubleEscaped);
+                        }
+                    }
                 }
                 TokenizerState::ScriptDataDoubleEscapeEnd => {
                     // [§ 13.2.5.31 Script data double escape end state](https://html.spec.whatwg.org/multipage/parsing.html#script-data-double-escape-end-state)
                     //
                     // "Consume the next input character:"
-                    //
-                    // "U+0009 CHARACTER TABULATION (tab)"
-                    // "U+000A LINE FEED (LF)"
-                    // "U+000C FORM FEED (FF)"
-                    // "U+0020 SPACE"
-                    // "U+002F SOLIDUS (/)"
-                    // "U+003E GREATER-THAN SIGN (>)"
-                    //   "If the temporary buffer is the string 'script', then switch to the
-                    //    script data escaped state. Otherwise, switch to the script data
-                    //    double escaped state. Emit the current input character as a
-                    //    character token."
-                    //
-                    // "ASCII upper alpha"
-                    //   "Append the lowercase version of the current input character to the
-                    //    temporary buffer. Emit the current input character as a character
-                    //    token."
-                    //
-                    // "ASCII lower alpha"
-                    //   "Append the current input character to the temporary buffer. Emit
-                    //    the current input character as a character token."
-                    //
-                    // "Anything else"
-                    //   "Reconsume in the script data double escaped state."
-                    todo!("Script data double escape end state")
+                    match self.current_input_character {
+                        // "U+0009 CHARACTER TABULATION (tab)"
+                        // "U+000A LINE FEED (LF)"
+                        // "U+000C FORM FEED (FF)"
+                        // "U+0020 SPACE"
+                        // "U+002F SOLIDUS (/)"
+                        // "U+003E GREATER-THAN SIGN (>)"
+                        //   "If the temporary buffer is the string 'script', then switch to the
+                        //    script data escaped state. Otherwise, switch to the script data
+                        //    double escaped state. Emit the current input character as a
+                        //    character token."
+                        Some(c) if Self::is_whitespace_char(c) || c == '/' || c == '>' => {
+                            if self.temporary_buffer == "script" {
+                                self.switch_to(TokenizerState::ScriptDataEscaped);
+                            } else {
+                                self.switch_to(TokenizerState::ScriptDataDoubleEscaped);
+                            }
+                            self.emit_character_token(c);
+                        }
+                        // "ASCII upper alpha"
+                        //   "Append the lowercase version of the current input character to the
+                        //    temporary buffer. Emit the current input character as a character
+                        //    token."
+                        Some(c) if c.is_ascii_uppercase() => {
+                            self.temporary_buffer.push(c.to_ascii_lowercase());
+                            self.emit_character_token(c);
+                        }
+                        // "ASCII lower alpha"
+                        //   "Append the current input character to the temporary buffer. Emit
+                        //    the current input character as a character token."
+                        Some(c) if c.is_ascii_lowercase() => {
+                            self.temporary_buffer.push(c);
+                            self.emit_character_token(c);
+                        }
+                        // "Anything else"
+                        //   "Reconsume in the script data double escaped state."
+                        _ => {
+                            self.reconsume_in(TokenizerState::ScriptDataDoubleEscaped);
+                        }
+                    }
                 }
                 TokenizerState::BeforeAttributeName => {
                     self.handle_before_attribute_name_state();
