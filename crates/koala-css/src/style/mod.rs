@@ -7,7 +7,7 @@
 //! - [CSS Writing Modes Level 4](https://www.w3.org/TR/css-writing-modes-4/)
 //! - [CSS Logical Properties Level 1](https://drafts.csswg.org/css-logical-1/)
 
-mod computed;
+pub mod computed;
 mod display;
 mod values;
 mod writing_mode;

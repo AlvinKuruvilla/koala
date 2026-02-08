@@ -13,6 +13,7 @@
 //! order, inline-flex, stretch re-layout, flex shorthand.
 
 use crate::style::AutoLength;
+use crate::style::computed::JustifyContent;
 
 use super::box_model::Rect;
 use super::inline::FontMetrics;
@@ -202,13 +203,13 @@ pub fn layout_flex(
     resolve_flexible_lengths(&mut items, available_main);
 
     // STEP 5 (spec step 12): Compute justify-content offsets.
-    let justify_keyword = container.justify_content.as_str();
     let total_target: f32 = items
         .iter()
         .map(|item| item.target_size + item.outer_main)
         .sum();
     let free_space = (available_main - total_target).max(0.0);
-    let (initial_offset, gap) = compute_justify_offsets(justify_keyword, free_space, items.len());
+    let (initial_offset, gap) =
+        compute_justify_offsets(container.justify_content, free_space, items.len());
 
     // STEP 6 (spec step 7): Layout each child ONCE with resolved main size.
     //
@@ -529,22 +530,26 @@ fn resolve_flexible_lengths(items: &mut [FlexItem], available_main: f32) {
 /// [§ 8.2 Axis Alignment: the justify-content property](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
 ///
 /// Returns `(initial_offset, gap_between_items)`.
-fn compute_justify_offsets(keyword: &str, free_space: f32, item_count: usize) -> (f32, f32) {
+fn compute_justify_offsets(
+    keyword: JustifyContent,
+    free_space: f32,
+    item_count: usize,
+) -> (f32, f32) {
     if item_count == 0 {
         return (0.0, 0.0);
     }
 
     match keyword {
         // "Flex items are packed toward the end of the line."
-        "flex-end" => (free_space, 0.0),
+        JustifyContent::FlexEnd => (free_space, 0.0),
 
         // "Flex items are packed toward the center of the line."
-        "center" => (free_space / 2.0, 0.0),
+        JustifyContent::Center => (free_space / 2.0, 0.0),
 
         // "Flex items are evenly distributed in the line. If the leftover
         // free-space is negative or there is only a single flex item on the
         // line, this value is identical to flex-start."
-        "space-between" => {
+        JustifyContent::SpaceBetween => {
             if item_count <= 1 || free_space <= 0.0 {
                 (0.0, 0.0)
             } else {
@@ -556,7 +561,7 @@ fn compute_justify_offsets(keyword: &str, free_space: f32, item_count: usize) ->
 
         // "Flex items are evenly distributed in the line, with half-size
         // spaces on either end."
-        "space-around" => {
+        JustifyContent::SpaceAround => {
             if free_space <= 0.0 {
                 (0.0, 0.0)
             } else {
@@ -567,7 +572,6 @@ fn compute_justify_offsets(keyword: &str, free_space: f32, item_count: usize) ->
         }
 
         // "Flex items are packed toward the start of the line."
-        // Default: flex-start
-        _ => (0.0, 0.0),
+        JustifyContent::FlexStart => (0.0, 0.0),
     }
 }

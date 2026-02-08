@@ -267,7 +267,7 @@ pub enum VerticalAlign {
 ///
 /// "The initial value is 'left' if 'direction' is 'ltr', and 'right' if
 /// 'direction' is 'rtl'."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub enum TextAlign {
     /// "Inline-level content is aligned to the left line edge."
     #[default]
@@ -287,7 +287,7 @@ pub enum TextAlign {
 /// "normal — Selects a face that is classified as a normal face."
 /// "italic — Selects a font that is labeled as an italic face."
 /// "oblique — Selects a font that is labeled as an oblique face."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub enum FontStyle {
     /// "Selects a face that is classified as a normal face."
     #[default]
@@ -296,18 +296,6 @@ pub enum FontStyle {
     Italic,
     /// "Selects a font that is labeled as an oblique face."
     Oblique,
-}
-
-impl FontStyle {
-    /// Parse a CSS font-style keyword string.
-    #[must_use]
-    pub fn from_css(s: &str) -> Self {
-        match s {
-            "italic" => Self::Italic,
-            "oblique" => Self::Oblique,
-            _ => Self::Normal,
-        }
-    }
 }
 
 /// Inline formatting context that manages line box construction.

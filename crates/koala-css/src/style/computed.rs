@@ -5,11 +5,111 @@
 
 use serde::Serialize;
 
+use crate::layout::float::{ClearSide, FloatSide};
+use crate::layout::inline::{FontStyle, TextAlign};
+use crate::layout::positioned::PositionType;
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
-use crate::layout::positioned::PositionType;
 use crate::{AutoLength, BorderValue, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
+
+/// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+///
+/// "This property specifies whether content of a block container element
+/// is clipped when it overflows the element's box."
+///
+/// Values: visible | hidden | scroll | auto
+/// Initial: visible
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Overflow {
+    /// "The content is not clipped."
+    Visible,
+    /// "The content is clipped and no scrolling mechanism should be provided."
+    Hidden,
+    /// "The content is clipped and a scrolling mechanism should be provided."
+    Scroll,
+    /// "The behavior is UA-dependent, but should provide a scrolling mechanism
+    /// for overflowing boxes."
+    Auto,
+}
+
+/// [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+///
+/// "The flex-direction property specifies how flex items are placed in
+/// the flex container, by setting the direction of the flex container's
+/// main axis."
+///
+/// Values: row | row-reverse | column | column-reverse
+/// Initial: row
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum FlexDirection {
+    /// "The flex container's main axis has the same orientation as the
+    /// inline axis of the current writing mode."
+    #[default]
+    Row,
+    /// "Same as row, except the main-start and main-end directions are swapped."
+    RowReverse,
+    /// "The flex container's main axis has the same orientation as the
+    /// block axis of the current writing mode."
+    Column,
+    /// "Same as column, except the main-start and main-end directions are swapped."
+    ColumnReverse,
+}
+
+/// [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+///
+/// "The justify-content property aligns flex items along the main axis
+/// of the current line of the flex container."
+///
+/// Values: flex-start | flex-end | center | space-between | space-around
+/// Initial: flex-start
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum JustifyContent {
+    /// "Flex items are packed toward the start of the line."
+    #[default]
+    FlexStart,
+    /// "Flex items are packed toward the end of the line."
+    FlexEnd,
+    /// "Flex items are packed toward the center of the line."
+    Center,
+    /// "Flex items are evenly distributed in the line."
+    SpaceBetween,
+    /// "Flex items are evenly distributed in the line, with half-size
+    /// spaces on either end."
+    SpaceAround,
+}
+
+/// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
+///
+/// "The list-style-type property specifies a counter style or string for
+/// the element's marker."
+///
+/// Values: disc | circle | square | decimal | lower-alpha | upper-alpha |
+///         lower-roman | upper-roman | none
+/// Initial: disc
+/// Inherited: yes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum ListStyleType {
+    /// Filled circle bullet.
+    #[default]
+    Disc,
+    /// Open circle bullet.
+    Circle,
+    /// Filled square bullet.
+    Square,
+    /// Decimal numbers (1, 2, 3, ...).
+    Decimal,
+    /// Lowercase alphabetic (a, b, c, ...).
+    LowerAlpha,
+    /// Uppercase alphabetic (A, B, C, ...).
+    UpperAlpha,
+    /// Lowercase Roman numerals (i, ii, iii, ...).
+    LowerRoman,
+    /// Uppercase Roman numerals (I, II, III, ...).
+    UpperRoman,
+    /// No marker.
+    None,
+}
 
 use super::display::{DisplayValue, is_display_none, parse_display_value};
 use super::values::{
@@ -69,7 +169,7 @@ pub struct ComputedStyle {
     /// "This property allows italic or oblique faces to be selected."
     /// Values: normal | italic | oblique
     /// Inherited: yes
-    pub font_style: Option<String>,
+    pub font_style: Option<FontStyle>,
     /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
 
@@ -78,9 +178,7 @@ pub struct ComputedStyle {
     /// "This property describes how inline-level content of a block
     /// container is aligned."
     ///
-    /// Stored as a lowercase keyword string. Converted to `TextAlign`
-    /// enum during layout tree construction.
-    pub text_align: Option<String>,
+    pub text_align: Option<TextAlign>,
 
     /// [§ 3.2 'background-color'](https://www.w3.org/TR/css-backgrounds-3/#background-color)
     pub background_color: Option<ColorValue>,
@@ -180,7 +278,7 @@ pub struct ComputedStyle {
     ///
     /// Values: row | row-reverse | column | column-reverse
     /// Initial: row
-    pub flex_direction: Option<String>,
+    pub flex_direction: Option<FlexDirection>,
 
     /// [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
     ///
@@ -189,7 +287,7 @@ pub struct ComputedStyle {
     ///
     /// Values: flex-start | flex-end | center | space-between | space-around
     /// Initial: flex-start
-    pub justify_content: Option<String>,
+    pub justify_content: Option<JustifyContent>,
 
     /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
     ///
@@ -264,7 +362,7 @@ pub struct ComputedStyle {
     /// Values: left | right | none
     /// Initial: none
     /// Inherited: no
-    pub float: Option<String>,
+    pub float: Option<FloatSide>,
 
     /// [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
     ///
@@ -274,7 +372,7 @@ pub struct ComputedStyle {
     /// Values: left | right | both | none
     /// Initial: none
     /// Inherited: no
-    pub clear: Option<String>,
+    pub clear: Option<ClearSide>,
 
     /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
     ///
@@ -285,7 +383,7 @@ pub struct ComputedStyle {
     ///         lower-roman | upper-roman | none
     /// Initial: disc
     /// Inherited: yes
-    pub list_style_type: Option<String>,
+    pub list_style_type: Option<ListStyleType>,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Source order tracking for cascade resolution of logical property groups
@@ -309,7 +407,7 @@ pub struct ComputedStyle {
     /// Values: visible | hidden | scroll | auto
     /// Initial: visible
     /// Inherited: no
-    pub overflow: Option<String>,
+    pub overflow: Option<Overflow>,
 
     /// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
     ///
@@ -400,9 +498,11 @@ impl ComputedStyle {
             // Values: normal | italic | oblique
             "font-style" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(lower.as_str(), "normal" | "italic" | "oblique") {
-                        self.font_style = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "normal" => self.font_style = Some(FontStyle::Normal),
+                        "italic" => self.font_style = Some(FontStyle::Italic),
+                        "oblique" => self.font_style = Some(FontStyle::Oblique),
+                        _ => {}
                     }
                 }
             }
@@ -411,9 +511,12 @@ impl ComputedStyle {
             // "Value: left | right | center | justify | inherit"
             "text-align" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(lower.as_str(), "left" | "right" | "center" | "justify") {
-                        self.text_align = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "left" => self.text_align = Some(TextAlign::Left),
+                        "right" => self.text_align = Some(TextAlign::Right),
+                        "center" => self.text_align = Some(TextAlign::Center),
+                        "justify" => self.text_align = Some(TextAlign::Justify),
+                        _ => {}
                     }
                 }
             }
@@ -741,12 +844,14 @@ impl ComputedStyle {
             // "Values: row | row-reverse | column | column-reverse"
             "flex-direction" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(
-                        lower.as_str(),
-                        "row" | "row-reverse" | "column" | "column-reverse"
-                    ) {
-                        self.flex_direction = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "row" => self.flex_direction = Some(FlexDirection::Row),
+                        "row-reverse" => self.flex_direction = Some(FlexDirection::RowReverse),
+                        "column" => self.flex_direction = Some(FlexDirection::Column),
+                        "column-reverse" => {
+                            self.flex_direction = Some(FlexDirection::ColumnReverse)
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -755,12 +860,15 @@ impl ComputedStyle {
             // "Values: flex-start | flex-end | center | space-between | space-around"
             "justify-content" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(
-                        lower.as_str(),
-                        "flex-start" | "flex-end" | "center" | "space-between" | "space-around"
-                    ) {
-                        self.justify_content = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "flex-start" => self.justify_content = Some(JustifyContent::FlexStart),
+                        "flex-end" => self.justify_content = Some(JustifyContent::FlexEnd),
+                        "center" => self.justify_content = Some(JustifyContent::Center),
+                        "space-between" => {
+                            self.justify_content = Some(JustifyContent::SpaceBetween)
+                        }
+                        "space-around" => self.justify_content = Some(JustifyContent::SpaceAround),
+                        _ => {}
                     }
                 }
             }
@@ -809,9 +917,11 @@ impl ComputedStyle {
             // "Values: left | right | none | inherit"
             "float" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(lower.as_str(), "left" | "right" | "none") {
-                        self.float = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "left" => self.float = Some(FloatSide::Left),
+                        "right" => self.float = Some(FloatSide::Right),
+                        "none" => self.float = None,
+                        _ => {}
                     }
                 }
             }
@@ -820,9 +930,12 @@ impl ComputedStyle {
             // "Values: left | right | both | none | inherit"
             "clear" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(lower.as_str(), "left" | "right" | "both" | "none") {
-                        self.clear = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "left" => self.clear = Some(ClearSide::Left),
+                        "right" => self.clear = Some(ClearSide::Right),
+                        "both" => self.clear = Some(ClearSide::Both),
+                        "none" => self.clear = None,
+                        _ => {}
                     }
                 }
             }
@@ -874,20 +987,17 @@ impl ComputedStyle {
             //         lower-roman | upper-roman | none
             "list-style-type" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(
-                        lower.as_str(),
-                        "disc"
-                            | "circle"
-                            | "square"
-                            | "decimal"
-                            | "lower-alpha"
-                            | "upper-alpha"
-                            | "lower-roman"
-                            | "upper-roman"
-                            | "none"
-                    ) {
-                        self.list_style_type = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "disc" => self.list_style_type = Some(ListStyleType::Disc),
+                        "circle" => self.list_style_type = Some(ListStyleType::Circle),
+                        "square" => self.list_style_type = Some(ListStyleType::Square),
+                        "decimal" => self.list_style_type = Some(ListStyleType::Decimal),
+                        "lower-alpha" => self.list_style_type = Some(ListStyleType::LowerAlpha),
+                        "upper-alpha" => self.list_style_type = Some(ListStyleType::UpperAlpha),
+                        "lower-roman" => self.list_style_type = Some(ListStyleType::LowerRoman),
+                        "upper-roman" => self.list_style_type = Some(ListStyleType::UpperRoman),
+                        "none" => self.list_style_type = Some(ListStyleType::None),
+                        _ => {}
                     }
                 }
             }
@@ -896,9 +1006,12 @@ impl ComputedStyle {
             // "Values: visible | hidden | scroll | auto"
             "overflow" | "overflow-x" | "overflow-y" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(lower.as_str(), "visible" | "hidden" | "scroll" | "auto") {
-                        self.overflow = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "visible" => self.overflow = Some(Overflow::Visible),
+                        "hidden" => self.overflow = Some(Overflow::Hidden),
+                        "scroll" => self.overflow = Some(Overflow::Scroll),
+                        "auto" => self.overflow = Some(Overflow::Auto),
+                        _ => {}
                     }
                 }
             }
@@ -1162,10 +1275,7 @@ impl ComputedStyle {
     ///
     /// Shorthand following the same 1-4 value expansion as margin/padding.
     fn apply_border_style_shorthand(&mut self, values: &[ComponentValue]) {
-        let styles: Vec<String> = values
-            .iter()
-            .filter_map(Self::parse_border_style)
-            .collect();
+        let styles: Vec<String> = values.iter().filter_map(Self::parse_border_style).collect();
 
         match styles.len() {
             1 => {

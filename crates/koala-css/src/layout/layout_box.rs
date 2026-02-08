@@ -9,6 +9,7 @@ use std::cell::Cell;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
+use crate::style::computed::{FlexDirection, JustifyContent, ListStyleType};
 use crate::style::{
     AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
     OuterDisplayType,
@@ -483,14 +484,14 @@ pub struct LayoutBox {
     ///
     /// "The flex-direction property specifies how flex items are placed in
     /// the flex container."
-    /// Initial: "row"
-    pub flex_direction: String,
+    /// Initial: row
+    pub flex_direction: FlexDirection,
 
     /// [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
     ///
     /// "The justify-content property aligns flex items along the main axis."
-    /// Initial: "flex-start"
-    pub justify_content: String,
+    /// Initial: flex-start
+    pub justify_content: JustifyContent,
 
     /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
     ///
@@ -555,8 +556,8 @@ pub struct LayoutBox {
     /// "The list-style-type property specifies a counter style or string for
     /// the element's marker."
     ///
-    /// Resolved from `ComputedStyle`. None means use default ("disc").
-    pub list_style_type: Option<String>,
+    /// Resolved from `ComputedStyle`. None means use default (disc).
+    pub list_style_type: Option<ListStyleType>,
 
     /// Generated marker text for `display: list-item` boxes.
     ///
@@ -639,10 +640,7 @@ impl LayoutBox {
                 if let Some(pdata) = tree.as_element(pid)
                     && pdata.tag_name.eq_ignore_ascii_case("ol")
                 {
-                    return pdata
-                        .attrs
-                        .get("start")
-                        .and_then(|s| s.parse::<i32>().ok());
+                    return pdata.attrs.get("start").and_then(|s| s.parse::<i32>().ok());
                 }
                 None
             })
@@ -669,29 +667,29 @@ impl LayoutBox {
     /// Generate the marker string for a given list-style-type and ordinal.
     ///
     /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
-    fn generate_marker_string(list_style_type: &str, ordinal: i32) -> String {
+    fn generate_marker_string(list_style_type: ListStyleType, ordinal: i32) -> String {
         match list_style_type {
-            "circle" => "\u{25CB} ".to_string(),
-            "square" => "\u{25A0} ".to_string(),
-            "decimal" => format!("{ordinal}. "),
-            "lower-alpha" => {
+            ListStyleType::Circle => "\u{25CB} ".to_string(),
+            ListStyleType::Square => "\u{25A0} ".to_string(),
+            ListStyleType::Decimal => format!("{ordinal}. "),
+            ListStyleType::LowerAlpha => {
                 let ch = Self::ordinal_to_alpha(ordinal, b'a');
                 format!("{ch}. ")
             }
-            "upper-alpha" => {
+            ListStyleType::UpperAlpha => {
                 let ch = Self::ordinal_to_alpha(ordinal, b'A');
                 format!("{ch}. ")
             }
-            "lower-roman" => {
+            ListStyleType::LowerRoman => {
                 let roman = Self::ordinal_to_roman(ordinal, false);
                 format!("{roman}. ")
             }
-            "upper-roman" => {
+            ListStyleType::UpperRoman => {
                 let roman = Self::ordinal_to_roman(ordinal, true);
                 format!("{roman}. ")
             }
-            // "disc" and unrecognized types default to bullet
-            _ => "\u{2022} ".to_string(),
+            // Disc is the default; None should not reach here (filtered earlier)
+            ListStyleType::Disc | ListStyleType::None => "\u{2022} ".to_string(),
         }
     }
 
@@ -927,8 +925,8 @@ impl LayoutBox {
                     replaced_src: None,
                     intrinsic_width: None,
                     intrinsic_height: None,
-                    flex_direction: "row".to_string(),
-                    justify_content: "flex-start".to_string(),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::FlexStart,
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
@@ -1009,15 +1007,7 @@ impl LayoutBox {
                 // container is aligned."
                 // "Initial value: a nameless value that acts as 'left' if
                 // 'direction' is 'ltr', 'right' if 'direction' is 'rtl'."
-                let text_align = style
-                    .and_then(|s| s.text_align.as_deref())
-                    .map(|ta| match ta {
-                        "right" => TextAlign::Right,
-                        "center" => TextAlign::Center,
-                        "justify" => TextAlign::Justify,
-                        _ => TextAlign::Left,
-                    })
-                    .unwrap_or_default();
+                let text_align = style.and_then(|s| s.text_align).unwrap_or_default();
 
                 // [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
                 //
@@ -1029,19 +1019,12 @@ impl LayoutBox {
                 //
                 // "The 'font-style' property allows italic or oblique faces to
                 // be selected."
-                let font_style = style
-                    .and_then(|s| s.font_style.as_deref())
-                    .map(FontStyle::from_css)
-                    .unwrap_or_default();
+                let font_style = style.and_then(|s| s.font_style).unwrap_or_default();
 
                 // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
-                let flex_direction = style
-                    .and_then(|s| s.flex_direction.clone())
-                    .unwrap_or_else(|| "row".to_string());
+                let flex_direction = style.and_then(|s| s.flex_direction).unwrap_or_default();
                 // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
-                let justify_content = style
-                    .and_then(|s| s.justify_content.clone())
-                    .unwrap_or_else(|| "flex-start".to_string());
+                let justify_content = style.and_then(|s| s.justify_content).unwrap_or_default();
                 // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
                 let flex_grow = style.and_then(|s| s.flex_grow).unwrap_or(0.0);
                 // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
@@ -1067,14 +1050,7 @@ impl LayoutBox {
                 // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
                 //
                 // Extract float and clear from computed style.
-                let clear_side = style
-                    .and_then(|s| s.clear.as_deref())
-                    .and_then(|c| match c {
-                        "left" => Some(ClearSide::Left),
-                        "right" => Some(ClearSide::Right),
-                        "both" => Some(ClearSide::Both),
-                        _ => None,
-                    });
+                let clear_side = style.and_then(|s| s.clear);
 
                 // [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
                 //
@@ -1100,13 +1076,7 @@ impl LayoutBox {
                         (d, None)
                     } else {
                         // Rule 3: extract float, blockify if floated
-                        let fs = style
-                            .and_then(|s| s.float.as_deref())
-                            .and_then(|f| match f {
-                                "left" => Some(FloatSide::Left),
-                                "right" => Some(FloatSide::Right),
-                                _ => None,
-                            });
+                        let fs = style.and_then(|s| s.float);
                         if fs.is_some() && display.outer == OuterDisplayType::Inline {
                             (DisplayValue::block(), fs)
                         } else {
@@ -1128,14 +1098,18 @@ impl LayoutBox {
                         AutoLength::Auto => None,
                         AutoLength::Length(l) => Some(l.to_px() as f32),
                     }),
-                    right: style.and_then(|s| s.right.as_ref()).and_then(|al| match al {
-                        AutoLength::Auto => None,
-                        AutoLength::Length(l) => Some(l.to_px() as f32),
-                    }),
-                    bottom: style.and_then(|s| s.bottom.as_ref()).and_then(|al| match al {
-                        AutoLength::Auto => None,
-                        AutoLength::Length(l) => Some(l.to_px() as f32),
-                    }),
+                    right: style
+                        .and_then(|s| s.right.as_ref())
+                        .and_then(|al| match al {
+                            AutoLength::Auto => None,
+                            AutoLength::Length(l) => Some(l.to_px() as f32),
+                        }),
+                    bottom: style
+                        .and_then(|s| s.bottom.as_ref())
+                        .and_then(|al| match al {
+                            AutoLength::Auto => None,
+                            AutoLength::Length(l) => Some(l.to_px() as f32),
+                        }),
                     left: style.and_then(|s| s.left.as_ref()).and_then(|al| match al {
                         AutoLength::Auto => None,
                         AutoLength::Length(l) => Some(l.to_px() as f32),
@@ -1174,15 +1148,15 @@ impl LayoutBox {
                 // "The list-style-type property specifies a counter style or string
                 // for the element's marker."
                 // Inherited: yes. Initial: disc.
-                let list_style_type = style.and_then(|s| s.list_style_type.clone());
+                let list_style_type = style.and_then(|s| s.list_style_type);
 
                 // [§ 3 Markers](https://www.w3.org/TR/css-lists-3/#markers)
                 //
                 // For `display: list-item`, generate marker text based on the
                 // resolved list-style-type and the ordinal position among siblings.
                 let marker_text = if display.outer == OuterDisplayType::ListItem {
-                    let lst = list_style_type.as_deref().unwrap_or("disc");
-                    if lst == "none" {
+                    let lst = list_style_type.unwrap_or_default();
+                    if lst == ListStyleType::None {
                         None
                     } else {
                         // Determine ordinal position by counting preceding <li> siblings
@@ -1284,8 +1258,8 @@ impl LayoutBox {
                     replaced_src: None,
                     intrinsic_width: None,
                     intrinsic_height: None,
-                    flex_direction: "row".to_string(),
-                    justify_content: "flex-start".to_string(),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::FlexStart,
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
@@ -1949,7 +1923,13 @@ impl LayoutBox {
     ///
     /// "In a block formatting context, boxes are laid out one after the other,
     /// vertically, beginning at the top of a containing block."
-    pub(crate) fn layout_block_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect, float_ctx: &mut FloatContext) {
+    pub(crate) fn layout_block_children(
+        &mut self,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
+        float_ctx: &mut FloatContext,
+    ) {
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
         //
         // "In a block formatting context, boxes are laid out one after the other,
@@ -2071,12 +2051,8 @@ impl LayoutBox {
 
                 // Place the float using its margin box dimensions.
                 let child_mb = child.dimensions.margin_box();
-                let placed = float_ctx.place_float(
-                    float_side,
-                    child_mb.width,
-                    child_mb.height,
-                    current_y,
-                );
+                let placed =
+                    float_ctx.place_float(float_side, child_mb.width, child_mb.height, current_y);
 
                 // Relocate the child from its temporary position to the
                 // placed position. The shift is the difference between
@@ -2104,7 +2080,13 @@ impl LayoutBox {
             // margin-top so that calculate_block_position() (which adds
             // child_mt) places the child flush at the parent's content top.
             // The parent's effective margin becomes the collapsed value.
-            if first_inflow && no_top_separator && matches!(child.display.outer, OuterDisplayType::Block | OuterDisplayType::ListItem) {
+            if first_inflow
+                && no_top_separator
+                && matches!(
+                    child.display.outer,
+                    OuterDisplayType::Block | OuterDisplayType::ListItem
+                )
+            {
                 let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
                 current_y -= child_mt;
                 self.collapsed_margin_top = Some(collapse_two_margins(parent_margin_top, child_mt));
@@ -2212,7 +2194,10 @@ impl LayoutBox {
         if no_bottom_separator
             && self.height.is_none()
             && let Some(last) = last_inflow
-            && matches!(last.display.outer, OuterDisplayType::Block | OuterDisplayType::ListItem)
+            && matches!(
+                last.display.outer,
+                OuterDisplayType::Block | OuterDisplayType::ListItem
+            )
         {
             let parent_margin_bottom = self.dimensions.margin.bottom;
             let last_child_mb = last.effective_margin_bottom();
@@ -2227,7 +2212,11 @@ impl LayoutBox {
     ///
     /// "If 'height' is 'auto', the height depends on whether the element has
     /// any block-level children and whether it has padding or borders."
-    pub(crate) fn calculate_block_height(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics) {
+    pub(crate) fn calculate_block_height(
+        &mut self,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+    ) {
         // STEP 1: Check if height is explicitly specified.
         // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
@@ -2240,9 +2229,8 @@ impl LayoutBox {
             //
             // Resolve the computed value to a used value using the viewport.
             #[allow(clippy::cast_possible_truncation)]
-            let mut h = l
-                .to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
-                as f32;
+            let mut h =
+                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height)) as f32;
 
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
             //
@@ -2604,14 +2592,17 @@ impl LayoutBox {
         // Floated children are out of flow — like absolute/fixed, they do not
         // participate in the inline/block content classification.
         let is_inflow = |c: &Self| {
-            !matches!(c.position_type, PositionType::Absolute | PositionType::Fixed)
-                && c.float_side.is_none()
+            !matches!(
+                c.position_type,
+                PositionType::Absolute | PositionType::Fixed
+            ) && c.float_side.is_none()
         };
-        let has_block_children = self
-            .children
-            .iter()
-            .filter(|c| is_inflow(c))
-            .any(|c| matches!(c.display.outer, OuterDisplayType::Block | OuterDisplayType::ListItem));
+        let has_block_children = self.children.iter().filter(|c| is_inflow(c)).any(|c| {
+            matches!(
+                c.display.outer,
+                OuterDisplayType::Block | OuterDisplayType::ListItem
+            )
+        });
         let has_inline_children = self
             .children
             .iter()
@@ -2634,7 +2625,10 @@ impl LayoutBox {
         let mut inline_run: Vec<Self> = Vec::new();
 
         for child in std::mem::take(&mut self.children) {
-            if matches!(child.display.outer, OuterDisplayType::Block | OuterDisplayType::ListItem) {
+            if matches!(
+                child.display.outer,
+                OuterDisplayType::Block | OuterDisplayType::ListItem
+            ) {
                 // Flush any accumulated inline run into an anonymous block.
                 if !inline_run.is_empty() {
                     new_children.push(Self::wrap_in_anonymous_block(inline_run));
@@ -2689,8 +2683,8 @@ impl LayoutBox {
             replaced_src: None,
             intrinsic_width: None,
             intrinsic_height: None,
-            flex_direction: "row".to_string(),
-            justify_content: "flex-start".to_string(),
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::FlexStart,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: None,
@@ -2718,7 +2712,13 @@ impl LayoutBox {
     ///
     /// "The height of the line box is determined by the rules given in the
     /// section on line height calculations."
-    pub(crate) fn layout_inline_children(&mut self, viewport: Rect, font_metrics: &dyn FontMetrics, abs_cb: Rect, float_ctx: &mut FloatContext) {
+    pub(crate) fn layout_inline_children(
+        &mut self,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
+        float_ctx: &mut FloatContext,
+    ) {
         // STEP 1: Create an InlineLayout context.
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
@@ -2764,12 +2764,7 @@ impl LayoutBox {
 
             // Place the float using its margin box dimensions.
             let child_mb = child.dimensions.margin_box();
-            let placed = float_ctx.place_float(
-                float_side,
-                child_mb.width,
-                child_mb.height,
-                0.0,
-            );
+            let placed = float_ctx.place_float(float_side, child_mb.width, child_mb.height, 0.0);
 
             // Relocate from temporary position to placed position.
             let dx = placed.x - child_mb.x;
@@ -2799,11 +2794,8 @@ impl LayoutBox {
             self.dimensions.content.width
         };
 
-        let mut inline_layout = InlineLayout::new(
-            effective_width,
-            self.dimensions.content.y,
-            self.text_align,
-        );
+        let mut inline_layout =
+            InlineLayout::new(effective_width, self.dimensions.content.y, self.text_align);
         inline_layout.left_offset = left_offset;
 
         // STEP 2: Recursively add all inline content to the inline layout.
@@ -3230,7 +3222,9 @@ impl LayoutBox {
         //
         // "Then the shrink-to-fit width is:
         //   min(max(preferred minimum width, available width), preferred width)"
-        preferred_min_width.max(available_width).min(preferred_width)
+        preferred_min_width
+            .max(available_width)
+            .min(preferred_width)
     }
 
     /// [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
@@ -3399,8 +3393,11 @@ impl LayoutBox {
     /// Used to detect the case where an inline box contains a block-level
     /// descendant, which requires splitting the inline box per the spec.
     fn has_block_descendant(&self) -> bool {
-        self.children
-            .iter()
-            .any(|c| matches!(c.display.outer, OuterDisplayType::Block | OuterDisplayType::ListItem) || c.has_block_descendant())
+        self.children.iter().any(|c| {
+            matches!(
+                c.display.outer,
+                OuterDisplayType::Block | OuterDisplayType::ListItem
+            ) || c.has_block_descendant()
+        })
     }
 }

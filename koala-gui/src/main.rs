@@ -855,7 +855,12 @@ impl eframe::App for BrowserApp {
                             // of the initial containing block."
                             let viewport = initial_containing_block;
                             let font_metrics = self.font_provider.metrics();
-                            root.layout(initial_containing_block, viewport, &*font_metrics, viewport);
+                            root.layout(
+                                initial_containing_block,
+                                viewport,
+                                &*font_metrics,
+                                viewport,
+                            );
                             page.last_layout_viewport = Some(viewport_size);
                             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                             {
@@ -1118,8 +1123,7 @@ impl BrowserApp {
         // "When overflow is not 'visible', content is clipped to the padding edge."
         let old_clip = if style.is_some_and(|s| {
             s.overflow
-                .as_deref()
-                .is_some_and(|o| o != "visible")
+                .is_some_and(|o| o != koala_css::style::computed::Overflow::Visible)
         }) {
             let padding_rect = egui::Rect::from_min_size(
                 egui::pos2(
@@ -1225,8 +1229,8 @@ impl BrowserApp {
             // Select font family from computed style for the fallback path.
             let is_bold = style.and_then(|s| s.font_weight).unwrap_or(400) >= 700;
             let is_italic = style
-                .and_then(|s| s.font_style.as_deref())
-                .is_some_and(|s| s == "italic" || s == "oblique");
+                .and_then(|s| s.font_style)
+                .is_some_and(|s| s != koala_css::FontStyle::Normal);
             let fallback_family = match (is_bold, is_italic) {
                 (true, true) => egui::FontFamily::Name("inter-bold-italic".into()),
                 (true, false) => egui::FontFamily::Name("inter-bold".into()),

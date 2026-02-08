@@ -74,6 +74,7 @@ pub use selector::{
     AttributeSelector, ParsedSelector, PseudoClass, SimpleSelector, Specificity, parse_selector,
 };
 pub use style::ComputedStyle;
+pub use style::computed::{FlexDirection, JustifyContent, ListStyleType, Overflow};
 pub use style::{
     AutoLength, BorderValue, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue, InnerDisplayType,
     LengthValue, OuterDisplayType,

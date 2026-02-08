@@ -23,7 +23,7 @@ use super::box_model::Rect;
 ///
 /// none
 ///   The box is not floated."
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum FloatSide {
     /// "The element generates a block box that is floated to the left."
     Left,
@@ -52,7 +52,7 @@ pub enum FloatSide {
 ///
 /// none
 ///   No constraint on the box's position with respect to floats."
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ClearSide {
     /// "Requires the top border edge be below any left-floating boxes."
     Left,
@@ -318,9 +318,7 @@ impl FloatContext {
         for f in &self.right_floats {
             let f_top = f.margin_box.y;
             let f_bottom = f_top + f.margin_box.height;
-            if f_top < band_bottom && f_bottom > band_top
-                && f.margin_box.x < right_edge
-            {
+            if f_top < band_bottom && f_bottom > band_top && f.margin_box.x < right_edge {
                 right_edge = f.margin_box.x;
             }
         }

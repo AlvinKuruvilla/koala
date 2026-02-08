@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use koala_dom::NodeId;
 
-use crate::layout::inline::{FontStyle, FragmentContent};
+use crate::layout::inline::FragmentContent;
 use crate::layout::positioned::PositionType;
 use crate::style::ComputedStyle;
 use crate::{BoxType, ColorValue, LayoutBox};
@@ -131,8 +131,7 @@ impl<'a> Painter<'a> {
         // "When overflow is not 'visible', content is clipped to the padding edge."
         let needs_clip = style.is_some_and(|s| {
             s.overflow
-                .as_deref()
-                .is_some_and(|o| o != "visible")
+                .is_some_and(|o| o != crate::style::computed::Overflow::Visible)
         });
         if needs_clip {
             display_list.push(DisplayCommand::PushClip {
@@ -198,8 +197,7 @@ impl<'a> Painter<'a> {
             let font_weight = effective_style.and_then(|s| s.font_weight).unwrap_or(400);
 
             let font_style = effective_style
-                .and_then(|s| s.font_style.as_deref())
-                .map(FontStyle::from_css)
+                .and_then(|s| s.font_style)
                 .unwrap_or_default();
 
             display_list.push(DisplayCommand::DrawText {
