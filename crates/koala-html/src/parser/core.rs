@@ -270,7 +270,6 @@ impl HTMLParser {
             InsertionMode::BeforeHead => self.handle_before_head_mode(token),
             InsertionMode::InHead => self.handle_in_head_mode(token),
             InsertionMode::InHeadNoscript => {
-                // TODO: [§ 13.2.6.4.5](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inheadnoscript)
                 self.handle_in_head_noscript_mode(token);
             }
             InsertionMode::AfterHead => self.handle_after_head_mode(token),
@@ -297,7 +296,7 @@ impl HTMLParser {
             //   [§ 13.2.6.4.10](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext)
             //   - Accumulate character tokens
             //   - On other token: flush characters (foster parent if non-whitespace)
-            InsertionMode::InTableText => todo!("InTableText mode - see STEP 2 above"),
+            InsertionMode::InTableText => self.handle_in_table_text_mode(token),
 
             // STEP 3: InCaption mode - handles content inside <caption>
             //   [§ 13.2.6.4.11](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incaption)
@@ -3458,6 +3457,60 @@ impl HTMLParser {
         self.handle_in_body_mode(token);
         // "Disable foster parenting."
         self.foster_parenting = false;
+    }
+    /// [§ 13.2.6.4.10 The "in table text" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext)
+    fn handle_in_table_text_mode(&mut self, token: &Token) {
+        match token {
+            // "A character token that is U+0000 NULL"
+            // "Parse error. Ignore the token."
+            Token::Character { data: '\0' } => {}
+
+            // "Any other character token"
+            // "Append the character token to the pending table character tokens list."
+            Token::Character { data } => {
+                self.pending_table_character_tokens
+                    .push(Token::Character { data: *data });
+            }
+
+            // "Anything else"
+            _ => {
+                if !self.pending_table_character_tokens.is_empty() {
+                    // Drain the pending list before calling &mut self methods.
+                    let pending = std::mem::take(&mut self.pending_table_character_tokens);
+
+                    let all_whitespace = pending.iter().all(
+                        |t| matches!(t, Token::Character { data } if Self::is_whitespace(*data)),
+                    );
+
+                    if all_whitespace {
+                        // "If the pending table character tokens list consists
+                        //  entirely of space characters, insert the characters."
+                        for tok in &pending {
+                            if let Token::Character { data } = tok {
+                                self.insert_character(*data);
+                            }
+                        }
+                    } else {
+                        // "Otherwise, this is a parse error. Enable foster
+                        //  parenting, process the pending table character tokens
+                        //  using the rules for the "in body" insertion mode, and
+                        //  disable foster parenting."
+                        self.foster_parenting = true;
+                        for tok in &pending {
+                            self.handle_in_body_mode(tok);
+                        }
+                        self.foster_parenting = false;
+                    }
+                }
+
+                // "Switch the insertion mode to the original insertion mode and
+                //  reprocess the token."
+                if let Some(original_mode) = self.original_insertion_mode.take() {
+                    self.insertion_mode = original_mode;
+                }
+                self.reprocess_token(token);
+            }
+        }
     }
 
     /// [§ 13.2.6.4.19 The "after body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterbody)
