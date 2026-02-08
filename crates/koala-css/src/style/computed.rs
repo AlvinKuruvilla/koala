@@ -3,12 +3,15 @@
 //! [§ 4.4 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
 //! "The computed value is the result of resolving the specified value..."
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use crate::layout::float::{ClearSide, FloatSide};
 use crate::layout::inline::{FontStyle, TextAlign};
 use crate::layout::positioned::PositionType;
 use crate::parser::{ComponentValue, Declaration};
+use crate::style::substitute::{contains_var, substitute_var};
 use crate::tokenizer::CSSToken;
 use crate::{AutoLength, BorderValue, BoxShadow, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
@@ -724,6 +727,14 @@ pub struct ComputedStyle {
     /// Inherited: no
     pub box_shadow: Option<Vec<BoxShadow>>,
 
+    /// [§ 2 Custom Properties](https://www.w3.org/TR/css-variables-1/#defining-variables)
+    ///
+    /// "A custom property is any property whose name starts with two dashes."
+    /// Custom properties are inherited by default (§ 2: "Inherited: yes").
+    /// Values are stored as resolved component values (`var()` already substituted).
+    #[serde(skip)]
+    pub custom_properties: HashMap<String, Vec<ComponentValue>>,
+
     /// Source order of the declaration that set `margin_top` (for cascade resolution)
     #[serde(skip)]
     pub margin_top_source_order: Option<u32>,
@@ -741,15 +752,47 @@ pub struct ComputedStyle {
 impl ComputedStyle {
     /// Apply a CSS declaration to update this computed style.
     pub fn apply_declaration(&mut self, decl: &Declaration) {
+        // [§ 2 Custom Properties](https://www.w3.org/TR/css-variables-1/#defining-variables)
+        //
+        // "A custom property is any property whose name starts with two dashes."
+        // Custom property names are case-sensitive (§ 2) — do NOT lowercase.
+        // Store raw component values; var() resolution happens after all
+        // declarations are applied (see resolve_custom_properties).
+        if decl.name.starts_with("--") {
+            let _ = self
+                .custom_properties
+                .insert(decl.name.clone(), decl.value.clone());
+            return;
+        }
+
+        // [§ 3](https://www.w3.org/TR/css-variables-1/#using-variables)
+        //
+        // "If a property contains one or more var() functions, and those functions
+        // are syntactically valid, the entire property's grammar must be assumed
+        // to be valid at parse time. It is only syntax-checked at computed-value
+        // time, after var() functions have been substituted."
+        let resolved_values: Vec<ComponentValue>;
+        let values: &[ComponentValue] = if contains_var(&decl.value) {
+            match substitute_var(&decl.value, &self.custom_properties, 0) {
+                Some(v) => {
+                    resolved_values = v;
+                    &resolved_values
+                }
+                None => return, // Invalid at computed-value time
+            }
+        } else {
+            &decl.value
+        };
+
         match decl.name.to_ascii_lowercase().as_str() {
             // [§ 2 The display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
             //
             // "The display property defines an element's display type..."
             "display" => {
-                if let Some(display) = parse_display_value(&decl.value) {
+                if let Some(display) = parse_display_value(values) {
                     self.display = Some(display);
                     self.display_none = false;
-                } else if is_display_none(&decl.value) {
+                } else if is_display_none(values) {
                     // [§ 2.6 display: none](https://www.w3.org/TR/css-display-3/#valdef-display-none)
                     // "The element and its descendants generate no boxes or text runs."
                     self.display = None;
@@ -764,33 +807,33 @@ impl ComputedStyle {
             // Values: horizontal-tb | vertical-rl | vertical-lr
             // Initial: horizontal-tb
             "writing-mode" => {
-                if let Some(wm) = parse_writing_mode(&decl.value) {
+                if let Some(wm) = parse_writing_mode(values) {
                     self.writing_mode = wm;
                 }
             }
             "color" => {
-                if let Some(color) = parse_color_value(&decl.value) {
+                if let Some(color) = parse_color_value(values) {
                     self.color = Some(color);
                 }
             }
             "background-color" => {
-                if let Some(color) = parse_color_value(&decl.value) {
+                if let Some(color) = parse_color_value(values) {
                     self.background_color = Some(color);
                 }
             }
             "font-family" => {
-                if let Some(family) = parse_font_family(&decl.value) {
+                if let Some(family) = parse_font_family(values) {
                     self.font_family = Some(family);
                 }
             }
             "line-height" => {
-                if let Some(lh) = parse_line_height(&decl.value) {
+                if let Some(lh) = parse_line_height(values) {
                     self.line_height = Some(lh);
                 }
             }
             // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
             "font-weight" => {
-                if let Some(weight) = parse_font_weight(&decl.value) {
+                if let Some(weight) = parse_font_weight(values) {
                     self.font_weight = Some(weight);
                 }
             }
@@ -799,7 +842,7 @@ impl ComputedStyle {
             // "This property allows italic or oblique faces to be selected."
             // Values: normal | italic | oblique
             "font-style" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "normal" => self.font_style = Some(FontStyle::Normal),
                         "italic" => self.font_style = Some(FontStyle::Italic),
@@ -812,7 +855,7 @@ impl ComputedStyle {
             //
             // "Value: left | right | center | justify | inherit"
             "text-align" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "left" => self.text_align = Some(TextAlign::Left),
                         "right" => self.text_align = Some(TextAlign::Right),
@@ -824,7 +867,7 @@ impl ComputedStyle {
             }
             // [§ 9.2 Shorthand properties](https://www.w3.org/TR/css-cascade-4/#shorthand)
             "margin" => {
-                self.apply_margin_shorthand(&decl.value);
+                self.apply_margin_shorthand(values);
             }
             // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
             //
@@ -836,7 +879,7 @@ impl ComputedStyle {
             // Physical and logical properties compete in the cascade. We track
             // source_order to determine which declaration wins.
             "margin-top" => {
-                if let Some(al) = parse_auto_length_value(&decl.value)
+                if let Some(al) = parse_auto_length_value(values)
                     && self.should_update_margin(PhysicalSide::Top, decl.source_order)
                 {
                     self.margin_top = Some(self.resolve_auto_length(al));
@@ -844,7 +887,7 @@ impl ComputedStyle {
                 }
             }
             "margin-right" => {
-                if let Some(al) = parse_auto_length_value(&decl.value)
+                if let Some(al) = parse_auto_length_value(values)
                     && self.should_update_margin(PhysicalSide::Right, decl.source_order)
                 {
                     self.margin_right = Some(self.resolve_auto_length(al));
@@ -852,7 +895,7 @@ impl ComputedStyle {
                 }
             }
             "margin-bottom" => {
-                if let Some(al) = parse_auto_length_value(&decl.value)
+                if let Some(al) = parse_auto_length_value(values)
                     && self.should_update_margin(PhysicalSide::Bottom, decl.source_order)
                 {
                     self.margin_bottom = Some(self.resolve_auto_length(al));
@@ -860,7 +903,7 @@ impl ComputedStyle {
                 }
             }
             "margin-left" => {
-                if let Some(al) = parse_auto_length_value(&decl.value)
+                if let Some(al) = parse_auto_length_value(values)
                     && self.should_update_margin(PhysicalSide::Left, decl.source_order)
                 {
                     self.margin_left = Some(self.resolve_auto_length(al));
@@ -879,7 +922,7 @@ impl ComputedStyle {
                 // STEP 1: Parse the value.
                 //   [§ 4.2](https://drafts.csswg.org/css-logical-1/#margin-properties)
                 //   "Value: <'margin-top'>"
-                if let Some(al) = parse_auto_length_value(&decl.value) {
+                if let Some(al) = parse_auto_length_value(values) {
                     // STEP 2: Map to the physical side based on writing-mode.
                     let physical_side = self.writing_mode.block_start_physical();
 
@@ -895,7 +938,7 @@ impl ComputedStyle {
             }
             // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
             "margin-block-end" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
+                if let Some(al) = parse_auto_length_value(values) {
                     let physical_side = self.writing_mode.block_end_physical();
 
                     if self.should_update_margin(physical_side, decl.source_order) {
@@ -906,30 +949,30 @@ impl ComputedStyle {
             }
 
             "padding" => {
-                self.apply_padding_shorthand(&decl.value);
+                self.apply_padding_shorthand(values);
             }
             "padding-top" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.padding_top = Some(self.resolve_length(len));
                 }
             }
             "padding-right" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.padding_right = Some(self.resolve_length(len));
                 }
             }
             "padding-bottom" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.padding_bottom = Some(self.resolve_length(len));
                 }
             }
             "padding-left" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.padding_left = Some(self.resolve_length(len));
                 }
             }
             "border" => {
-                self.apply_border_shorthand(&decl.value);
+                self.apply_border_shorthand(values);
             }
             // [§ 4.4 border-top](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             //
@@ -939,25 +982,25 @@ impl ComputedStyle {
             // Syntax: <line-width> || <line-style> || <color>
             // (values can appear in any order)
             "border-top" => {
-                if let Some(border) = self.parse_border_side(&decl.value) {
+                if let Some(border) = self.parse_border_side(values) {
                     self.border_top = Some(border);
                 }
             }
             // [§ 4.4 border-right](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             "border-right" => {
-                if let Some(border) = self.parse_border_side(&decl.value) {
+                if let Some(border) = self.parse_border_side(values) {
                     self.border_right = Some(border);
                 }
             }
             // [§ 4.4 border-bottom](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             "border-bottom" => {
-                if let Some(border) = self.parse_border_side(&decl.value) {
+                if let Some(border) = self.parse_border_side(values) {
                     self.border_bottom = Some(border);
                 }
             }
             // [§ 4.4 border-left](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             "border-left" => {
-                if let Some(border) = self.parse_border_side(&decl.value) {
+                if let Some(border) = self.parse_border_side(values) {
                     self.border_left = Some(border);
                 }
             }
@@ -967,22 +1010,22 @@ impl ComputedStyle {
             // specified by the border-top, border-right, border-bottom,
             // and border-left properties respectively."
             "border-top-color" => {
-                if let Some(color) = parse_color_value(&decl.value) {
+                if let Some(color) = parse_color_value(values) {
                     self.ensure_border_top().color = color;
                 }
             }
             "border-right-color" => {
-                if let Some(color) = parse_color_value(&decl.value) {
+                if let Some(color) = parse_color_value(values) {
                     self.ensure_border_right().color = color;
                 }
             }
             "border-bottom-color" => {
-                if let Some(color) = parse_color_value(&decl.value) {
+                if let Some(color) = parse_color_value(values) {
                     self.ensure_border_bottom().color = color;
                 }
             }
             "border-left-color" => {
-                if let Some(color) = parse_color_value(&decl.value) {
+                if let Some(color) = parse_color_value(values) {
                     self.ensure_border_left().color = color;
                 }
             }
@@ -991,22 +1034,22 @@ impl ComputedStyle {
             // "These properties set the thickness of the border."
             // "<line-width> = <length [0,∞]> | thin | medium | thick"
             "border-top-width" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.ensure_border_top().width = self.resolve_length(len);
                 }
             }
             "border-right-width" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.ensure_border_right().width = self.resolve_length(len);
                 }
             }
             "border-bottom-width" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.ensure_border_bottom().width = self.resolve_length(len);
                 }
             }
             "border-left-width" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.ensure_border_left().width = self.resolve_length(len);
                 }
             }
@@ -1016,28 +1059,28 @@ impl ComputedStyle {
             // "<line-style> = none | hidden | dotted | dashed | solid | double |
             //                 groove | ridge | inset | outset"
             "border-top-style" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_top().style = s;
                 }
             }
             "border-right-style" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_right().style = s;
                 }
             }
             "border-bottom-style" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_bottom().style = s;
                 }
             }
             "border-left-style" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_left().style = s;
@@ -1049,7 +1092,7 @@ impl ComputedStyle {
             // 'border-top-color', 'border-right-color', 'border-bottom-color',
             // and 'border-left-color'."
             "border-color" => {
-                self.apply_border_color_shorthand(&decl.value);
+                self.apply_border_color_shorthand(values);
             }
             // [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
             //
@@ -1057,7 +1100,7 @@ impl ComputedStyle {
             // 'border-top-width', 'border-right-width', 'border-bottom-width',
             // and 'border-left-width'."
             "border-width" => {
-                self.apply_border_width_shorthand(&decl.value);
+                self.apply_border_width_shorthand(values);
             }
             // [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
             //
@@ -1065,13 +1108,13 @@ impl ComputedStyle {
             // 'border-top-style', 'border-right-style', 'border-bottom-style',
             // and 'border-left-style'."
             "border-style" => {
-                self.apply_border_style_shorthand(&decl.value);
+                self.apply_border_style_shorthand(values);
             }
             "background" => {
-                self.apply_background_shorthand(&decl.value);
+                self.apply_background_shorthand(values);
             }
             "font-size" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.font_size = Some(self.resolve_length(len));
                 }
             }
@@ -1080,7 +1123,7 @@ impl ComputedStyle {
             // "This property specifies the content width of boxes."
             // "Value: `<length>` | `<percentage>` | auto | inherit"
             "width" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.width = Some(self.resolve_auto_length(auto_len));
@@ -1091,7 +1134,7 @@ impl ComputedStyle {
             // "This property specifies the content height of boxes."
             // "Value: `<length>` | `<percentage>` | auto | inherit"
             "height" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.height = Some(self.resolve_auto_length(auto_len));
@@ -1102,7 +1145,7 @@ impl ComputedStyle {
             // "Value: <length> | <percentage> | inherit"
             // Initial: 0
             "min-width" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.min_width = Some(self.resolve_length(len));
                 }
             }
@@ -1111,11 +1154,11 @@ impl ComputedStyle {
             // "Value: <length> | <percentage> | none | inherit"
             // Initial: none
             "max-width" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first()
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first()
                     && ident.eq_ignore_ascii_case("none")
                 {
                     self.max_width = None;
-                } else if let Some(len) = parse_length_value(&decl.value) {
+                } else if let Some(len) = parse_length_value(values) {
                     self.max_width = Some(self.resolve_length(len));
                 }
             }
@@ -1124,7 +1167,7 @@ impl ComputedStyle {
             // "Value: <length> | <percentage> | inherit"
             // Initial: 0
             "min-height" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.min_height = Some(self.resolve_length(len));
                 }
             }
@@ -1133,11 +1176,11 @@ impl ComputedStyle {
             // "Value: <length> | <percentage> | none | inherit"
             // Initial: none
             "max-height" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first()
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first()
                     && ident.eq_ignore_ascii_case("none")
                 {
                     self.max_height = None;
-                } else if let Some(len) = parse_length_value(&decl.value) {
+                } else if let Some(len) = parse_length_value(values) {
                     self.max_height = Some(self.resolve_length(len));
                 }
             }
@@ -1145,7 +1188,7 @@ impl ComputedStyle {
             //
             // "Values: row | row-reverse | column | column-reverse"
             "flex-direction" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "row" => self.flex_direction = Some(FlexDirection::Row),
                         "row-reverse" => self.flex_direction = Some(FlexDirection::RowReverse),
@@ -1161,7 +1204,7 @@ impl ComputedStyle {
             //
             // "Values: flex-start | flex-end | center | space-between | space-around"
             "justify-content" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "flex-start" => self.justify_content = Some(JustifyContent::FlexStart),
                         "flex-end" => self.justify_content = Some(JustifyContent::FlexEnd),
@@ -1178,7 +1221,7 @@ impl ComputedStyle {
             //
             // "Values: flex-start | flex-end | center | baseline | stretch"
             "align-items" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "flex-start" | "start" => self.align_items = Some(AlignItems::FlexStart),
                         "flex-end" | "end" => self.align_items = Some(AlignItems::FlexEnd),
@@ -1193,7 +1236,7 @@ impl ComputedStyle {
             //
             // "Values: auto | flex-start | flex-end | center | baseline | stretch"
             "align-self" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "auto" => self.align_self = Some(AlignSelf::Auto),
                         "flex-start" | "start" => self.align_self = Some(AlignSelf::FlexStart),
@@ -1212,7 +1255,7 @@ impl ComputedStyle {
             #[allow(clippy::cast_possible_truncation)]
             "flex-grow" => {
                 if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
-                    decl.value.first()
+                    values.first()
                 {
                     let val = *value as f32;
                     if val >= 0.0 {
@@ -1227,7 +1270,7 @@ impl ComputedStyle {
             #[allow(clippy::cast_possible_truncation)]
             "flex-shrink" => {
                 if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
-                    decl.value.first()
+                    values.first()
                 {
                     let val = *value as f32;
                     if val >= 0.0 {
@@ -1239,7 +1282,7 @@ impl ComputedStyle {
             //
             // "Values: auto | <length>"
             "flex-basis" => {
-                if let Some(first) = decl.value.first()
+                if let Some(first) = values.first()
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.flex_basis = Some(self.resolve_auto_length(auto_len));
@@ -1258,13 +1301,13 @@ impl ComputedStyle {
             //   flex: <number> → flex: <number> 1 0 (note: basis is 0, not auto!)
             #[allow(clippy::cast_possible_truncation)]
             "flex" => {
-                self.parse_flex_shorthand(&decl.value);
+                self.parse_flex_shorthand(values);
             }
             // [§ 5.2 'flex-wrap'](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
             //
             // "Values: nowrap | wrap | wrap-reverse"
             "flex-wrap" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "nowrap" => self.flex_wrap = Some(FlexWrap::Nowrap),
                         "wrap" => self.flex_wrap = Some(FlexWrap::Wrap),
@@ -1277,7 +1320,7 @@ impl ComputedStyle {
             //
             // "Value: <'flex-direction'> || <'flex-wrap'>"
             "flex-flow" => {
-                for cv in &decl.value {
+                for cv in values {
                     if let ComponentValue::Token(CSSToken::Ident(ident)) = cv {
                         match ident.to_ascii_lowercase().as_str() {
                             "row" => self.flex_direction = Some(FlexDirection::Row),
@@ -1298,7 +1341,7 @@ impl ComputedStyle {
             //
             // "Values: left | right | none | inherit"
             "float" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "left" => self.float = Some(FloatSide::Left),
                         "right" => self.float = Some(FloatSide::Right),
@@ -1311,7 +1354,7 @@ impl ComputedStyle {
             //
             // "Values: left | right | both | none | inherit"
             "clear" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "left" => self.clear = Some(ClearSide::Left),
                         "right" => self.clear = Some(ClearSide::Right),
@@ -1327,7 +1370,7 @@ impl ComputedStyle {
             // [CSS Positioned Layout Module Level 3 § 3](https://www.w3.org/TR/css-position-3/#position-property)
             // adds "sticky"
             "position" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "static" => self.position = Some(PositionType::Static),
                         "relative" => self.position = Some(PositionType::Relative),
@@ -1342,22 +1385,22 @@ impl ComputedStyle {
             //
             // "Values: <length> | <percentage> | auto | inherit"
             "top" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
+                if let Some(al) = parse_auto_length_value(values) {
                     self.top = Some(self.resolve_auto_length(al));
                 }
             }
             "right" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
+                if let Some(al) = parse_auto_length_value(values) {
                     self.right = Some(self.resolve_auto_length(al));
                 }
             }
             "bottom" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
+                if let Some(al) = parse_auto_length_value(values) {
                     self.bottom = Some(self.resolve_auto_length(al));
                 }
             }
             "left" => {
-                if let Some(al) = parse_auto_length_value(&decl.value) {
+                if let Some(al) = parse_auto_length_value(values) {
                     self.left = Some(self.resolve_auto_length(al));
                 }
             }
@@ -1368,7 +1411,7 @@ impl ComputedStyle {
             // Values: disc | circle | square | decimal | lower-alpha | upper-alpha |
             //         lower-roman | upper-roman | none
             "list-style-type" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "disc" => self.list_style_type = Some(ListStyleType::Disc),
                         "circle" => self.list_style_type = Some(ListStyleType::Circle),
@@ -1387,7 +1430,7 @@ impl ComputedStyle {
             //
             // "Values: visible | hidden | scroll | auto"
             "overflow" | "overflow-x" | "overflow-y" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "visible" => self.overflow = Some(Overflow::Visible),
                         "hidden" => self.overflow = Some(Overflow::Hidden),
@@ -1401,7 +1444,7 @@ impl ComputedStyle {
             //
             // "Values: content-box | border-box"
             "box-sizing" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "border-box" => self.box_sizing_border_box = Some(true),
                         "content-box" => self.box_sizing_border_box = Some(false),
@@ -1414,7 +1457,7 @@ impl ComputedStyle {
             // "This property declares how white space inside the element is handled."
             // Values: normal | pre | nowrap | pre-wrap | pre-line
             "white-space" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "normal" => self.white_space = Some(WhiteSpace::Normal),
                         "pre" => self.white_space = Some(WhiteSpace::Pre),
@@ -1429,7 +1472,7 @@ impl ComputedStyle {
             //
             // "Values: visible | hidden | collapse"
             "visibility" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "visible" => self.visibility = Some(Visibility::Visible),
                         "hidden" => self.visibility = Some(Visibility::Hidden),
@@ -1445,7 +1488,7 @@ impl ComputedStyle {
             #[allow(clippy::cast_possible_truncation)]
             "opacity" => {
                 if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
-                    decl.value.first()
+                    values.first()
                 {
                     self.opacity = Some((*value as f32).clamp(0.0, 1.0));
                 }
@@ -1456,12 +1499,12 @@ impl ComputedStyle {
             // Values: none | <shadow>#
             "box-shadow" => {
                 // "none" keyword clears shadows
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first()
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first()
                     && ident.eq_ignore_ascii_case("none")
                 {
                     self.box_shadow = None;
                 } else {
-                    self.box_shadow = self.parse_box_shadow(&decl.value);
+                    self.box_shadow = self.parse_box_shadow(values);
                 }
             }
 
@@ -1472,13 +1515,13 @@ impl ComputedStyle {
             // "These properties specify, as a space-separated track list, the line
             // names and track sizing functions of the grid."
             "grid-template-columns" => {
-                if let Some(tl) = self.parse_track_list(&decl.value) {
+                if let Some(tl) = self.parse_track_list(values) {
                     self.grid_template_columns = Some(tl);
                 }
             }
             // [§ 7.2 'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
             "grid-template-rows" => {
-                if let Some(tl) = self.parse_track_list(&decl.value) {
+                if let Some(tl) = self.parse_track_list(values) {
                     self.grid_template_rows = Some(tl);
                 }
             }
@@ -1486,7 +1529,7 @@ impl ComputedStyle {
             //
             // "Values: row | column | row dense | column dense"
             "grid-auto-flow" => {
-                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
                         "row" => self.grid_auto_flow = Some(GridAutoFlow::Row),
                         "column" => self.grid_auto_flow = Some(GridAutoFlow::Column),
@@ -1496,13 +1539,13 @@ impl ComputedStyle {
             }
             // [§ 10.1 'row-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
             "row-gap" | "grid-row-gap" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.row_gap = Some(self.resolve_length(len));
                 }
             }
             // [§ 10.1 'column-gap'](https://www.w3.org/TR/css-align-3/#column-gap)
             "column-gap" | "grid-column-gap" => {
-                if let Some(len) = parse_length_value(&decl.value) {
+                if let Some(len) = parse_length_value(values) {
                     self.column_gap = Some(self.resolve_length(len));
                 }
             }
@@ -1513,7 +1556,7 @@ impl ComputedStyle {
             // "Value: <'row-gap'> <'column-gap'>?"
             "gap" | "grid-gap" => {
                 let lengths: Vec<LengthValue> =
-                    decl.value.iter().filter_map(parse_single_length).collect();
+                    values.iter().filter_map(parse_single_length).collect();
                 match lengths.len() {
                     1 => {
                         let resolved = self.resolve_length(lengths[0]);
@@ -1529,25 +1572,25 @@ impl ComputedStyle {
             }
             // [§ 8.3 'grid-column-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-column-start" => {
-                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_column_start = Some(gl);
                 }
             }
             // [§ 8.3 'grid-column-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-column-end" => {
-                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_column_end = Some(gl);
                 }
             }
             // [§ 8.3 'grid-row-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-row-start" => {
-                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_row_start = Some(gl);
                 }
             }
             // [§ 8.3 'grid-row-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-row-end" => {
-                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_row_end = Some(gl);
                 }
             }
@@ -1555,7 +1598,7 @@ impl ComputedStyle {
             //
             // "Value: <grid-line> [ / <grid-line> ]?"
             "grid-column" => {
-                let (start, end) = Self::parse_grid_line_shorthand(&decl.value);
+                let (start, end) = Self::parse_grid_line_shorthand(values);
                 if let Some(s) = start {
                     self.grid_column_start = Some(s);
                 }
@@ -1565,7 +1608,7 @@ impl ComputedStyle {
             //
             // "Value: <grid-line> [ / <grid-line> ]?"
             "grid-row" => {
-                let (start, end) = Self::parse_grid_line_shorthand(&decl.value);
+                let (start, end) = Self::parse_grid_line_shorthand(values);
                 if let Some(s) = start {
                     self.grid_row_start = Some(s);
                 }
@@ -1573,6 +1616,33 @@ impl ComputedStyle {
             }
             unknown => {
                 warn_once("CSS", &format!("unknown property '{unknown}'"));
+            }
+        }
+    }
+
+    /// [§ 2.3 Resolving Dependency Cycles](https://www.w3.org/TR/css-variables-1/#cycles)
+    ///
+    /// "Custom properties resolve any var() functions in their values at
+    /// computed-value time, which occurs before the value is inherited."
+    ///
+    /// Resolve all `var()` references within custom property values.
+    /// Must be called after all declarations are applied and before
+    /// children inherit.
+    pub fn resolve_custom_properties(&mut self) {
+        let keys: Vec<String> = self.custom_properties.keys().cloned().collect();
+        for key in keys {
+            let raw_value = self.custom_properties[&key].clone();
+            if contains_var(&raw_value) {
+                match substitute_var(&raw_value, &self.custom_properties, 0) {
+                    Some(resolved) => {
+                        let _ = self.custom_properties.insert(key, resolved);
+                    }
+                    None => {
+                        // [§ 2.3] "all the custom properties in the cycle
+                        // are invalid at computed-value time"
+                        let _ = self.custom_properties.remove(&key);
+                    }
+                }
             }
         }
     }

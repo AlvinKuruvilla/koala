@@ -9,6 +9,7 @@
 
 pub mod computed;
 mod display;
+pub mod substitute;
 mod values;
 mod writing_mode;
 

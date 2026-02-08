@@ -3368,3 +3368,89 @@ fn test_box_shadow_not_inherited() {
         child.box_shadow
     );
 }
+
+// ---------------------------------------------------------------------------
+// CSS Custom Properties (Variables) layout tests
+//
+// [CSS Custom Properties for Cascading Variables Module Level 1]
+// (https://www.w3.org/TR/css-variables-1/)
+// ---------------------------------------------------------------------------
+
+/// [§ 3](https://www.w3.org/TR/css-variables-1/#using-variables)
+///
+/// var() in a shorthand property (margin) should substitute and parse correctly.
+#[test]
+fn test_var_in_margin_shorthand() {
+    let root = layout_html(
+        "<style>:root { --s: 20px; } div { margin: var(--s); }</style>\
+         <div>Margin test</div>",
+    );
+
+    // Document > html > body > div
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    let m = div.dimensions.margin;
+    assert!(
+        (m.top - 20.0).abs() < 0.1,
+        "margin-top should be 20px from var(), got {}",
+        m.top
+    );
+    assert!(
+        (m.right - 20.0).abs() < 0.1,
+        "margin-right should be 20px from var(), got {}",
+        m.right
+    );
+    assert!(
+        (m.bottom - 20.0).abs() < 0.1,
+        "margin-bottom should be 20px from var(), got {}",
+        m.bottom
+    );
+    assert!(
+        (m.left - 20.0).abs() < 0.1,
+        "margin-left should be 20px from var(), got {}",
+        m.left
+    );
+}
+
+/// [§ 3](https://www.w3.org/TR/css-variables-1/#using-variables)
+///
+/// var() in width property should work.
+#[test]
+fn test_var_in_width() {
+    let root = layout_html(
+        "<style>:root { --w: 200px; } div { width: var(--w); }</style>\
+         <div>Width test</div>",
+    );
+
+    // Document > html > body > div
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    assert!(
+        (div.dimensions.content.width - 200.0).abs() < 0.1,
+        "div width should be 200px from var(), got {}",
+        div.dimensions.content.width
+    );
+}
+
+/// [§ 3](https://www.w3.org/TR/css-variables-1/#using-variables)
+///
+/// var() fallback should work in layout properties.
+#[test]
+fn test_var_fallback_in_padding() {
+    let root = layout_html(
+        "<style>div { padding: var(--undefined, 10px); }</style>\
+         <div>Padding test</div>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+
+    let p = div.dimensions.padding;
+    assert!(
+        (p.top - 10.0).abs() < 0.1,
+        "padding-top should be 10px from fallback, got {}",
+        p.top
+    );
+}

@@ -214,6 +214,12 @@ fn compute_node_styles(
                 }
             }
 
+            // [§ 2.3](https://www.w3.org/TR/css-variables-1/#cycles)
+            //
+            // "Custom properties resolve any var() functions in their values
+            // at computed-value time, which occurs before the value is inherited."
+            computed.resolve_custom_properties();
+
             // Store the computed style
             let _ = styles.insert(id, computed.clone());
 
@@ -276,6 +282,12 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // [§ 3.1 list-style-type](https://www.w3.org/TR/css-lists-3/#list-style-type)
         // "Inherited: yes"
         list_style_type: parent.list_style_type.clone(),
+
+        // [§ 2 Custom Properties](https://www.w3.org/TR/css-variables-1/#defining-variables)
+        // "Inherited: yes"
+        // Values are already resolved (var() substituted) from the parent's
+        // computed-value-time resolution.
+        custom_properties: parent.custom_properties.clone(),
 
         // Non-inherited properties start as None
         //

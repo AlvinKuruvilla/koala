@@ -841,3 +841,173 @@ fn test_border_color_shorthand() {
         assert_eq!(b.color.b, 0xef);
     }
 }
+
+// ---------------------------------------------------------------------------
+// CSS Custom Properties (Variables) tests
+//
+// [CSS Custom Properties for Cascading Variables Module Level 1]
+// (https://www.w3.org/TR/css-variables-1/)
+// ---------------------------------------------------------------------------
+
+/// [§ 2](https://www.w3.org/TR/css-variables-1/#defining-variables)
+///
+/// Basic custom property definition and var() substitution for color.
+#[test]
+fn test_custom_property_basic_color() {
+    let css = ":root { --main-color: #ff0000; } p { color: var(--main-color); }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element("html", None, &[]));
+    tree.append_child(NodeId::ROOT, html_id);
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    tree.append_child(html_id, body_id);
+    let p_id = tree.alloc(make_element("p", None, &[]));
+    tree.append_child(body_id, p_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let p_style = styles.get(&p_id).unwrap();
+    let color = p_style.color.as_ref().expect("color should be set via var()");
+    assert_eq!(color.r, 0xff, "red channel should be 0xff");
+    assert_eq!(color.g, 0x00, "green channel should be 0x00");
+    assert_eq!(color.b, 0x00, "blue channel should be 0x00");
+}
+
+/// [§ 3](https://www.w3.org/TR/css-variables-1/#using-variables)
+///
+/// "If the var() function has a fallback value as its second argument,
+/// replace the var() function by the fallback value."
+#[test]
+fn test_custom_property_fallback() {
+    let css = "p { color: var(--undefined, #00ff00); }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element("html", None, &[]));
+    tree.append_child(NodeId::ROOT, html_id);
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    tree.append_child(html_id, body_id);
+    let p_id = tree.alloc(make_element("p", None, &[]));
+    tree.append_child(body_id, p_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let p_style = styles.get(&p_id).unwrap();
+    let color = p_style
+        .color
+        .as_ref()
+        .expect("color should be set via fallback");
+    assert_eq!(color.r, 0x00);
+    assert_eq!(color.g, 0xff);
+    assert_eq!(color.b, 0x00);
+}
+
+/// [§ 2](https://www.w3.org/TR/css-variables-1/#defining-variables)
+///
+/// "Inherited: yes" — Custom properties are inherited by descendants.
+#[test]
+fn test_custom_property_inherited() {
+    let css = ":root { --bg: #cccccc; } div { background-color: var(--bg); }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element("html", None, &[]));
+    tree.append_child(NodeId::ROOT, html_id);
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    tree.append_child(html_id, body_id);
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(body_id, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let div_style = styles.get(&div_id).unwrap();
+    let bg = div_style
+        .background_color
+        .as_ref()
+        .expect("background-color should be set via inherited var()");
+    assert_eq!(bg.r, 0xcc);
+    assert_eq!(bg.g, 0xcc);
+    assert_eq!(bg.b, 0xcc);
+}
+
+/// [§ 2](https://www.w3.org/TR/css-variables-1/#defining-variables)
+///
+/// "Custom property names are not ASCII case-insensitive."
+/// --Foo and --foo are different properties.
+#[test]
+fn test_custom_property_case_sensitive() {
+    let css = ":root { --Foo: #ff0000; --foo: #0000ff; } p { color: var(--Foo); }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element("html", None, &[]));
+    tree.append_child(NodeId::ROOT, html_id);
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    tree.append_child(html_id, body_id);
+    let p_id = tree.alloc(make_element("p", None, &[]));
+    tree.append_child(body_id, p_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let p_style = styles.get(&p_id).unwrap();
+    let color = p_style.color.as_ref().expect("color should be set");
+    // --Foo is #ff0000, not --foo (#0000ff)
+    assert_eq!(color.r, 0xff);
+    assert_eq!(color.g, 0x00);
+    assert_eq!(color.b, 0x00);
+}
+
+/// [§ 2.3](https://www.w3.org/TR/css-variables-1/#cycles)
+///
+/// Custom properties can reference other custom properties.
+/// Resolution happens at computed-value time.
+#[test]
+fn test_custom_property_references_another() {
+    let css = ":root { --base: #aabbcc; --alias: var(--base); } p { color: var(--alias); }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element("html", None, &[]));
+    tree.append_child(NodeId::ROOT, html_id);
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    tree.append_child(html_id, body_id);
+    let p_id = tree.alloc(make_element("p", None, &[]));
+    tree.append_child(body_id, p_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let p_style = styles.get(&p_id).unwrap();
+    let color = p_style.color.as_ref().expect("color should be resolved");
+    assert_eq!(color.r, 0xaa);
+    assert_eq!(color.g, 0xbb);
+    assert_eq!(color.b, 0xcc);
+}
+
+/// [§ 2](https://www.w3.org/TR/css-variables-1/#defining-variables)
+///
+/// A descendant can override a custom property for its subtree.
+#[test]
+fn test_custom_property_override_in_descendant() {
+    let css = ":root { --c: #ff0000; } .child { --c: #0000ff; } p { color: var(--c); }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element("html", None, &[]));
+    tree.append_child(NodeId::ROOT, html_id);
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    tree.append_child(html_id, body_id);
+    let div_id = tree.alloc(make_element("div", None, &["child"]));
+    tree.append_child(body_id, div_id);
+    let p_id = tree.alloc(make_element("p", None, &[]));
+    tree.append_child(div_id, p_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+
+    let p_style = styles.get(&p_id).unwrap();
+    let color = p_style.color.as_ref().expect("color should be set");
+    // p inherits --c from .child which overrides :root's --c
+    assert_eq!(color.r, 0x00);
+    assert_eq!(color.g, 0x00);
+    assert_eq!(color.b, 0xff);
+}
