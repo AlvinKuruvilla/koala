@@ -410,6 +410,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: no"
         box_shadow: None,
 
+        // [§ 5 border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+        // "Inherited: no"
+        border_radius: None,
+
         // Source order tracking for cascade resolution (not inherited, per-element)
         margin_top_source_order: None,
         margin_right_source_order: None,

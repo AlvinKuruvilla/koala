@@ -13,7 +13,7 @@ use crate::layout::positioned::PositionType;
 use crate::parser::{ComponentValue, Declaration};
 use crate::style::substitute::{contains_var, substitute_var};
 use crate::tokenizer::CSSToken;
-use crate::{AutoLength, BorderValue, BoxShadow, ColorValue, LengthValue};
+use crate::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
 
 /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
@@ -734,6 +734,16 @@ pub struct ComputedStyle {
     /// Initial: none
     /// Inherited: no
     pub box_shadow: Option<Vec<BoxShadow>>,
+
+    /// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+    ///
+    /// "The two length or percentage values of the 'border-*-radius' properties
+    /// define the radii of a quarter ellipse that defines the shape of the corner
+    /// of the outer border edge."
+    ///
+    /// Initial value: 0 (no rounding)
+    /// Inherited: no
+    pub border_radius: Option<BorderRadius>,
 
     /// [§ 2 Custom Properties](https://www.w3.org/TR/css-variables-1/#defining-variables)
     ///
@@ -1544,6 +1554,52 @@ impl ComputedStyle {
                 }
             }
 
+            // [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+            //
+            // "The 'border-radius' shorthand sets all four 'border-*-radius'
+            // longhand properties."
+            //
+            // Shorthand accepts 1–4 values (same expansion pattern as margin/padding):
+            //   1 value: all four corners
+            //   2 values: top-left/bottom-right, top-right/bottom-left
+            //   3 values: top-left, top-right/bottom-left, bottom-right
+            //   4 values: top-left, top-right, bottom-right, bottom-left
+            "border-radius" => {
+                self.apply_border_radius_shorthand(values);
+            }
+            // [§ 5.1 'border-top-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-left-radius)
+            "border-top-left-radius" => {
+                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                    let resolved = self.resolve_length(len).to_px() as f32;
+                    let br = self.border_radius.get_or_insert_with(BorderRadius::default);
+                    br.top_left = resolved;
+                }
+            }
+            // [§ 5.2 'border-top-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-right-radius)
+            "border-top-right-radius" => {
+                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                    let resolved = self.resolve_length(len).to_px() as f32;
+                    let br = self.border_radius.get_or_insert_with(BorderRadius::default);
+                    br.top_right = resolved;
+                }
+            }
+            // [§ 5.3 'border-bottom-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-right-radius)
+            "border-bottom-right-radius" => {
+                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                    let resolved = self.resolve_length(len).to_px() as f32;
+                    let br = self.border_radius.get_or_insert_with(BorderRadius::default);
+                    br.bottom_right = resolved;
+                }
+            }
+            // [§ 5.4 'border-bottom-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-left-radius)
+            "border-bottom-left-radius" => {
+                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                    let resolved = self.resolve_length(len).to_px() as f32;
+                    let br = self.border_radius.get_or_insert_with(BorderRadius::default);
+                    br.bottom_left = resolved;
+                }
+            }
+
             // ===== Grid layout properties =====
 
             // [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
@@ -1786,6 +1842,61 @@ impl ComputedStyle {
             }
             _ => {}
         }
+    }
+
+    /// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+    ///
+    /// "If values are given before and after the slash, then the values before
+    /// the slash set the horizontal radius and the values after the slash set
+    /// the vertical radius. If there is no slash, then the values set both
+    /// radii equally."
+    ///
+    /// Shorthand accepts 1–4 values (same expansion pattern as margin/padding):
+    ///   1 value: all four corners
+    ///   2 values: top-left/bottom-right, top-right/bottom-left
+    ///   3 values: top-left, top-right/bottom-left, bottom-right
+    ///   4 values: top-left, top-right, bottom-right, bottom-left
+    #[allow(clippy::cast_possible_truncation)]
+    fn apply_border_radius_shorthand(&mut self, values: &[ComponentValue]) {
+        let lengths: Vec<f32> = values
+            .iter()
+            .filter_map(parse_single_length)
+            .map(|l| self.resolve_length(l).to_px() as f32)
+            .collect();
+
+        let br = match lengths.len() {
+            // 1 value: all four corners
+            1 => BorderRadius {
+                top_left: lengths[0],
+                top_right: lengths[0],
+                bottom_right: lengths[0],
+                bottom_left: lengths[0],
+            },
+            // 2 values: top-left & bottom-right = first, top-right & bottom-left = second
+            2 => BorderRadius {
+                top_left: lengths[0],
+                top_right: lengths[1],
+                bottom_right: lengths[0],
+                bottom_left: lengths[1],
+            },
+            // 3 values: top-left = first, top-right & bottom-left = second, bottom-right = third
+            3 => BorderRadius {
+                top_left: lengths[0],
+                top_right: lengths[1],
+                bottom_right: lengths[2],
+                bottom_left: lengths[1],
+            },
+            // 4 values: top-left, top-right, bottom-right, bottom-left
+            4 => BorderRadius {
+                top_left: lengths[0],
+                top_right: lengths[1],
+                bottom_right: lengths[2],
+                bottom_left: lengths[3],
+            },
+            _ => return,
+        };
+
+        self.border_radius = Some(br);
     }
 
     /// [§ 3.1 border shorthand](https://www.w3.org/TR/css-backgrounds-3/#the-border-shorthands)

@@ -1132,10 +1132,24 @@ impl BrowserApp {
                         let alpha_frac = 1.0 - (layer as f32 / layers as f32);
                         let layer_color = shadow_color.linear_multiply(alpha_frac);
                         let layer_rect = shadow_rect.expand(expand);
-                        let _ = ui.painter().rect_filled(layer_rect, 0.0, layer_color);
+                        let sbr = &layout_box.border_radius;
+                        let srounding = egui::Rounding {
+                            nw: sbr.top_left,
+                            ne: sbr.top_right,
+                            sw: sbr.bottom_left,
+                            se: sbr.bottom_right,
+                        };
+                        let _ = ui.painter().rect_filled(layer_rect, srounding, layer_color);
                     }
                 } else {
-                    let _ = ui.painter().rect_filled(shadow_rect, 0.0, shadow_color);
+                    let sbr = &layout_box.border_radius;
+                    let srounding = egui::Rounding {
+                        nw: sbr.top_left,
+                        ne: sbr.top_right,
+                        sw: sbr.bottom_left,
+                        se: sbr.bottom_right,
+                    };
+                    let _ = ui.painter().rect_filled(shadow_rect, srounding, shadow_color);
                 }
             }
         }
@@ -1149,7 +1163,14 @@ impl BrowserApp {
             && let Some(ref bg) = s.background_color
         {
             let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
-            let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
+            let br = &layout_box.border_radius;
+            let rounding = egui::Rounding {
+                nw: br.top_left,
+                ne: br.top_right,
+                sw: br.bottom_left,
+                se: br.bottom_right,
+            };
+            let _ = ui.painter().rect_filled(border_rect, rounding, bg_color);
         }
 
         // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)

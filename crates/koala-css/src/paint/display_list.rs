@@ -7,6 +7,7 @@
 
 use crate::ColorValue;
 use crate::layout::inline::{FontStyle, TextDecorationLine};
+use crate::style::BorderRadius;
 
 /// A single drawing command.
 ///
@@ -58,6 +59,10 @@ pub enum DisplayCommand {
         height: f32,
         /// Fill color.
         color: ColorValue,
+        /// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+        ///
+        /// Corner radii for rounded rectangles. Default (all zeros) = sharp corners.
+        border_radius: BorderRadius,
     },
 
     /// Draw an image (replaced element content) at a position.

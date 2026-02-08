@@ -12,6 +12,7 @@ use koala_dom::NodeId;
 use crate::layout::inline::FragmentContent;
 use crate::layout::positioned::PositionType;
 use crate::style::ComputedStyle;
+use crate::style::BorderRadius;
 use crate::{BoxType, LayoutBox};
 
 use super::{DisplayCommand, DisplayList};
@@ -152,6 +153,7 @@ impl<'a> Painter<'a> {
                     width: border_box_width,
                     height: border_box_height,
                     color: bg.clone(),
+                    border_radius: layout_box.border_radius,
                 });
             }
 
@@ -326,6 +328,7 @@ impl<'a> Painter<'a> {
                 width: padding_width + left_width + right_width,
                 height: top_width,
                 color: border.color.clone(),
+                border_radius: BorderRadius::default(),
             });
         }
 
@@ -339,6 +342,7 @@ impl<'a> Painter<'a> {
                 width: padding_width + left_width + right_width,
                 height: bottom_width,
                 color: border.color.clone(),
+                border_radius: BorderRadius::default(),
             });
         }
 
@@ -352,6 +356,7 @@ impl<'a> Painter<'a> {
                 width: left_width,
                 height: padding_height,
                 color: border.color.clone(),
+                border_radius: BorderRadius::default(),
             });
         }
 
@@ -365,6 +370,7 @@ impl<'a> Painter<'a> {
                 width: right_width,
                 height: padding_height,
                 color: border.color.clone(),
+                border_radius: BorderRadius::default(),
             });
         }
     }

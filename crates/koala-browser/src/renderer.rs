@@ -19,7 +19,7 @@ use anyhow::Result;
 use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use koala_css::layout::inline::TextDecorationLine;
-use koala_css::{ColorValue, DisplayCommand, DisplayList, FontStyle};
+use koala_css::{BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -211,8 +211,9 @@ impl Renderer {
                 width,
                 height,
                 color,
+                border_radius,
             } => {
-                self.fill_rect(*x, *y, *width, *height, color);
+                self.fill_rect(*x, *y, *width, *height, color, border_radius);
             }
             DisplayCommand::DrawImage {
                 x,
@@ -269,31 +270,104 @@ impl Renderer {
             .all(|&(cx, cy, cw, ch)| fx >= cx && fx < cx + cw && fy >= cy && fy < cy + ch)
     }
 
-    /// Fill a rectangle with the given color.
+    /// Fill a rectangle with the given color, optionally with rounded corners.
+    ///
+    /// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+    ///
+    /// For each pixel near a corner with a non-zero radius, we check if the
+    /// pixel falls inside the quarter-circle arc. Pixels outside the arc are
+    /// skipped, producing rounded corners.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_possible_wrap
     )]
-    fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: &ColorValue) {
+    fn fill_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: &ColorValue,
+        border_radius: &BorderRadius,
+    ) {
         let rgba = Rgba([color.r, color.g, color.b, color.a]);
-        let x = x as i32;
-        let y = y as i32;
-        let width = width as u32;
-        let height = height as u32;
+        let xi = x as i32;
+        let yi = y as i32;
+        let w = width as u32;
+        let h = height as u32;
 
-        for dy in 0..height {
-            for dx in 0..width {
-                let px = x + dx as i32;
-                let py = y + dy as i32;
-                if px >= 0
-                    && py >= 0
-                    && (px as u32) < self.width
-                    && (py as u32) < self.height
-                    && self.is_visible(px, py)
+        let has_radius = border_radius.top_left > 0.0
+            || border_radius.top_right > 0.0
+            || border_radius.bottom_left > 0.0
+            || border_radius.bottom_right > 0.0;
+
+        for dy in 0..h {
+            for dx in 0..w {
+                let px = xi + dx as i32;
+                let py = yi + dy as i32;
+                if px < 0
+                    || py < 0
+                    || (px as u32) >= self.width
+                    || (py as u32) >= self.height
+                    || !self.is_visible(px, py)
                 {
-                    self.buffer.put_pixel(px as u32, py as u32, rgba);
+                    continue;
                 }
+
+                // Check if pixel is inside rounded corners
+                if has_radius {
+                    let fx = dx as f32;
+                    let fy = dy as f32;
+                    let fw = width;
+                    let fh = height;
+
+                    // Top-left corner
+                    let r = border_radius.top_left;
+                    if r > 0.0 && fx < r && fy < r {
+                        let cx = r;
+                        let cy = r;
+                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        if dist_sq > r * r {
+                            continue;
+                        }
+                    }
+
+                    // Top-right corner
+                    let r = border_radius.top_right;
+                    if r > 0.0 && fx >= fw - r && fy < r {
+                        let cx = fw - r;
+                        let cy = r;
+                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        if dist_sq > r * r {
+                            continue;
+                        }
+                    }
+
+                    // Bottom-left corner
+                    let r = border_radius.bottom_left;
+                    if r > 0.0 && fx < r && fy >= fh - r {
+                        let cx = r;
+                        let cy = fh - r;
+                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        if dist_sq > r * r {
+                            continue;
+                        }
+                    }
+
+                    // Bottom-right corner
+                    let r = border_radius.bottom_right;
+                    if r > 0.0 && fx >= fw - r && fy >= fh - r {
+                        let cx = fw - r;
+                        let cy = fh - r;
+                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        if dist_sq > r * r {
+                            continue;
+                        }
+                    }
+                }
+
+                self.buffer.put_pixel(px as u32, py as u32, rgba);
             }
         }
     }
@@ -463,17 +537,17 @@ impl Renderer {
             if text_decoration.underline {
                 // Underline: just below the baseline.
                 let line_y = y + font_size * 0.9;
-                self.fill_rect(x, line_y, total_advance, line_thickness, color);
+                self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
             if text_decoration.line_through {
                 // Line-through: through the middle of the text.
                 let line_y = y + font_size * 0.55;
-                self.fill_rect(x, line_y, total_advance, line_thickness, color);
+                self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
             if text_decoration.overline {
                 // Overline: at the top of the text.
                 let line_y = y + font_size * 0.1;
-                self.fill_rect(x, line_y, total_advance, line_thickness, color);
+                self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
         }
     }

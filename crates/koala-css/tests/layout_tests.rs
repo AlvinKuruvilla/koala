@@ -3371,6 +3371,105 @@ fn test_box_shadow_not_inherited() {
 }
 
 // ---------------------------------------------------------------------------
+// CSS border-radius layout tests
+// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+// ---------------------------------------------------------------------------
+
+/// `border-radius: 10px` sets all 4 corners to 10.0.
+#[test]
+fn test_border_radius_single_value() {
+    let root = layout_html(
+        "<style>div { border-radius: 10px; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    let br = div.border_radius;
+    assert!((br.top_left - 10.0).abs() < 0.01, "top_left={}", br.top_left);
+    assert!((br.top_right - 10.0).abs() < 0.01, "top_right={}", br.top_right);
+    assert!((br.bottom_right - 10.0).abs() < 0.01, "bottom_right={}", br.bottom_right);
+    assert!((br.bottom_left - 10.0).abs() < 0.01, "bottom_left={}", br.bottom_left);
+}
+
+/// `border-radius: 10px 20px` sets top-left/bottom-right=10, top-right/bottom-left=20.
+#[test]
+fn test_border_radius_two_values() {
+    let root = layout_html(
+        "<style>div { border-radius: 10px 20px; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    let br = div.border_radius;
+    assert!((br.top_left - 10.0).abs() < 0.01, "top_left={}", br.top_left);
+    assert!((br.top_right - 20.0).abs() < 0.01, "top_right={}", br.top_right);
+    assert!((br.bottom_right - 10.0).abs() < 0.01, "bottom_right={}", br.bottom_right);
+    assert!((br.bottom_left - 20.0).abs() < 0.01, "bottom_left={}", br.bottom_left);
+}
+
+/// `border-radius: 1px 2px 3px 4px` sets each corner individually.
+#[test]
+fn test_border_radius_four_values() {
+    let root = layout_html(
+        "<style>div { border-radius: 1px 2px 3px 4px; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    let br = div.border_radius;
+    assert!((br.top_left - 1.0).abs() < 0.01, "top_left={}", br.top_left);
+    assert!((br.top_right - 2.0).abs() < 0.01, "top_right={}", br.top_right);
+    assert!((br.bottom_right - 3.0).abs() < 0.01, "bottom_right={}", br.bottom_right);
+    assert!((br.bottom_left - 4.0).abs() < 0.01, "bottom_left={}", br.bottom_left);
+}
+
+/// `border-top-left-radius: 5px` sets only that corner.
+#[test]
+fn test_border_radius_individual_corner() {
+    let root = layout_html(
+        "<style>div { border-top-left-radius: 5px; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    let br = div.border_radius;
+    assert!((br.top_left - 5.0).abs() < 0.01, "top_left={}", br.top_left);
+    assert!((br.top_right).abs() < 0.01, "top_right should be 0, got {}", br.top_right);
+    assert!((br.bottom_right).abs() < 0.01, "bottom_right should be 0, got {}", br.bottom_right);
+    assert!((br.bottom_left).abs() < 0.01, "bottom_left should be 0, got {}", br.bottom_left);
+}
+
+/// border-radius is NOT inherited — child should not inherit parent's radius.
+#[test]
+fn test_border_radius_not_inherited() {
+    let root = layout_html(
+        "<style>.parent { border-radius: 20px; }</style>\
+         <div class='parent'><div class='child'>Child</div></div>",
+    );
+    let parent = &box_at_depth(&root, 2).children[0];
+    assert!((parent.border_radius.top_left - 20.0).abs() < 0.01);
+
+    let child = &parent.children[0];
+    let br = child.border_radius;
+    assert!(
+        br.top_left.abs() < 0.01
+            && br.top_right.abs() < 0.01
+            && br.bottom_right.abs() < 0.01
+            && br.bottom_left.abs() < 0.01,
+        "child should NOT inherit parent's border-radius, got {:?}",
+        br
+    );
+}
+
+/// Element without border-radius has all zeros.
+#[test]
+fn test_border_radius_default_zero() {
+    let root = layout_html("<div>No radius</div>");
+    let div = &box_at_depth(&root, 2).children[0];
+    let br = div.border_radius;
+    assert!(
+        br.top_left.abs() < 0.01
+            && br.top_right.abs() < 0.01
+            && br.bottom_right.abs() < 0.01
+            && br.bottom_left.abs() < 0.01,
+        "default border-radius should be 0, got {:?}",
+        br
+    );
+}
+
+// ---------------------------------------------------------------------------
 // CSS Custom Properties (Variables) layout tests
 //
 // [CSS Custom Properties for Cascading Variables Module Level 1]

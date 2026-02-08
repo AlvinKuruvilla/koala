@@ -14,8 +14,8 @@ use crate::style::computed::{
     ListStyleType, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
-    AutoLength, BoxShadow, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
-    OuterDisplayType,
+    AutoLength, BorderRadius, BoxShadow, ColorValue, ComputedStyle, DisplayValue,
+    InnerDisplayType, LengthValue, OuterDisplayType,
 };
 
 use super::box_model::{BoxDimensions, Rect};
@@ -640,6 +640,14 @@ pub struct LayoutBox {
     /// Empty vec means no shadows (equivalent to `none`).
     pub box_shadow: Vec<BoxShadow>,
 
+    /// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+    ///
+    /// "The two length or percentage values of the 'border-*-radius' properties
+    /// define the radii of a quarter ellipse that defines the shape of the corner
+    /// of the outer border edge."
+    /// Default: all zeros (no rounding).
+    pub border_radius: BorderRadius,
+
     // ===== List marker fields =====
     /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
     ///
@@ -1058,6 +1066,7 @@ impl LayoutBox {
                     visibility: Visibility::default(),
                     opacity: 1.0,
                     box_shadow: Vec::new(),
+                    border_radius: BorderRadius::default(),
                     list_style_type: None,
                     marker_text: None,
                     tag_name: None,
@@ -1177,6 +1186,11 @@ impl LayoutBox {
                 // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
                 let box_shadow = style
                     .and_then(|s| s.box_shadow.clone())
+                    .unwrap_or_default();
+
+                // [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+                let border_radius = style
+                    .and_then(|s| s.border_radius)
                     .unwrap_or_default();
 
                 // [§ 7.2 'grid-template-columns'/'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
@@ -1410,6 +1424,7 @@ impl LayoutBox {
                     visibility,
                     opacity,
                     box_shadow,
+                    border_radius,
                     list_style_type,
                     marker_text,
                     tag_name: Some(tag.clone()),
@@ -1493,6 +1508,7 @@ impl LayoutBox {
                     visibility: Visibility::default(),
                     opacity: 1.0,
                     box_shadow: Vec::new(),
+                    border_radius: BorderRadius::default(),
                     list_style_type: None,
                     marker_text: None,
                     tag_name: None,
@@ -2994,6 +3010,7 @@ impl LayoutBox {
             visibility: Visibility::default(),
             opacity: 1.0,
             box_shadow: Vec::new(),
+            border_radius: BorderRadius::default(),
             list_style_type: None,
             marker_text: None,
             tag_name: None,

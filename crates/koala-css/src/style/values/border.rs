@@ -33,6 +33,29 @@ pub struct BoxShadow {
     pub inset: bool,
 }
 
+/// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+///
+/// "The two length or percentage values of the 'border-*-radius' properties
+/// define the radii of a quarter ellipse that defines the shape of the corner
+/// of the outer border edge."
+///
+/// This implementation supports circular corners only (single radius per corner).
+/// Elliptical radii (horizontal / vertical) are not yet supported.
+///
+/// Initial value: 0 (no rounding)
+/// Inherited: no
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+pub struct BorderRadius {
+    /// [§ 5.1 'border-top-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-left-radius)
+    pub top_left: f32,
+    /// [§ 5.2 'border-top-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-right-radius)
+    pub top_right: f32,
+    /// [§ 5.3 'border-bottom-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-right-radius)
+    pub bottom_right: f32,
+    /// [§ 5.4 'border-bottom-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-left-radius)
+    pub bottom_left: f32,
+}
+
 /// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
 ///
 /// Border value representing width, style, and color.
