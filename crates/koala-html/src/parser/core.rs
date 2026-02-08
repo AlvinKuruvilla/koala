@@ -152,6 +152,23 @@ pub struct HTMLParser {
 
     /// If true, panic on unhandled tokens or unexpected states.
     strict_mode: bool,
+
+    /// [§ 13.2.6.1 Foster parenting](https://html.spec.whatwg.org/multipage/parsing.html#foster-parent)
+    ///
+    /// "If the foster parenting flag is set and the adjusted insertion location
+    /// is inside a table, tbody, tfoot, thead, or tr element..."
+    foster_parenting: bool,
+
+    /// [§ 13.2.6.4.10 The "in table text" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext)
+    ///
+    /// "The pending table character tokens list"
+    pending_table_character_tokens: Vec<Token>,
+
+    /// [§ 13.2.4.4 The element pointers](https://html.spec.whatwg.org/multipage/parsing.html#form-element-pointer)
+    ///
+    /// "The form element pointer points to the last form element that was opened
+    /// and whose end tag has not yet been seen."
+    form_element_pointer: Option<NodeId>,
 }
 
 impl HTMLParser {
@@ -171,6 +188,9 @@ impl HTMLParser {
             stopped: false,
             issues: Vec::new(),
             strict_mode: false,
+            foster_parenting: false,
+            pending_table_character_tokens: Vec::new(),
+            form_element_pointer: None,
         }
     }
 
@@ -208,7 +228,8 @@ impl HTMLParser {
     /// # Panics
     ///
     /// Panics if the parser encounters an unimplemented insertion mode
-    /// (e.g., `InTable`, `InTemplate`, `InFrameset`).
+    /// (e.g., `InTableText`, `InTableBody`, `InRow`, `InCell`,
+    /// `InTemplate`, `InFrameset`).
     #[must_use]
     pub fn run(mut self) -> DomTree {
         while !self.stopped && self.token_index < self.tokens.len() {
@@ -224,7 +245,8 @@ impl HTMLParser {
     /// # Panics
     ///
     /// Panics if the parser encounters an unimplemented insertion mode
-    /// (e.g., `InTable`, `InTemplate`, `InFrameset`).
+    /// (e.g., `InTableText`, `InTableBody`, `InRow`, `InCell`,
+    /// `InTemplate`, `InFrameset`).
     #[must_use]
     pub fn run_with_issues(mut self) -> (DomTree, Vec<ParseIssue>) {
         while !self.stopped && self.token_index < self.tokens.len() {
@@ -263,15 +285,13 @@ impl HTMLParser {
             // - Pending table character tokens
             // - Multiple nested table elements (table, tbody, tr, td, th, caption, colgroup)
             //
-            // TODO: Implement table parsing in this order:
-            //
-            // STEP 1: InTable mode - handles <table>, <caption>, <colgroup>, <tbody>, <tr>
+            // STEP 1: InTable mode (IMPLEMENTED)
             //   [§ 13.2.6.4.9](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable)
-            //   - "A start tag whose tag name is 'caption'" -> push, switch to InCaption
-            //   - "A start tag whose tag name is 'colgroup'" -> switch to InColumnGroup
-            //   - "A start tag whose tag name is one of: 'tbody', 'tfoot', 'thead'" -> switch to InTableBody
-            //   - Foster parenting for misplaced content
-            InsertionMode::InTable => todo!("InTable mode - see STEP 1 above"),
+            //   - Handles <caption>, <colgroup>, <col>, <tbody>/<tfoot>/<thead>,
+            //     <td>/<th>/<tr>, <table>, </table>, <style>/<script>/<template>,
+            //     </template>, <input type=hidden>, <form>, EOF
+            //   - Foster parenting for misplaced content ("anything else")
+            InsertionMode::InTable => self.handle_in_table_mode(token),
 
             // STEP 2: InTableText mode - accumulates character tokens in table context
             //   [§ 13.2.6.4.10](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext)
@@ -363,15 +383,70 @@ impl HTMLParser {
         self.stack_of_open_elements.last().copied()
     }
 
-    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#creating-and-inserting-nodes)
+    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#foster-parent)
     ///
-    /// "The adjusted insertion location is the current node, if the stack
-    /// of open elements is not empty."
+    /// "If the foster parenting flag is set and the adjusted insertion location
+    /// is inside a table, tbody, tfoot, thead, or tr element..."
     ///
-    /// NOTE: This is a simplified version. The full algorithm handles
-    /// foster parenting for table elements.
-    fn insertion_location(&self) -> NodeId {
-        self.current_node().unwrap_or(NodeId::ROOT)
+    /// Returns `(parent_id, Option<before_id>)`. When `before_id` is `Some`,
+    /// the caller must use `insert_before` instead of `append_child`.
+    fn foster_parent_location(&self) -> (NodeId, Option<NodeId>) {
+        // STEP 1: "Let last table be the last table element in the stack of
+        //          open elements, if any."
+        let last_table_pos = self
+            .stack_of_open_elements
+            .iter()
+            .rposition(|&id| self.get_tag_name(id) == Some("table"));
+
+        if let Some(table_pos) = last_table_pos {
+            let table_id = self.stack_of_open_elements[table_pos];
+
+            // STEP 2: "If last table has a parent node, then let adjusted
+            //          insertion location be before last table in its parent
+            //          node."
+            if let Some(parent_id) = self.tree.parent(table_id) {
+                (parent_id, Some(table_id))
+            } else {
+                // "Otherwise, let adjusted insertion location be inside the
+                //  element immediately above last table in the stack of open
+                //  elements."
+                let above_table = self.stack_of_open_elements[table_pos - 1];
+                (above_table, None)
+            }
+        } else {
+            // STEP 3: "If there is no last table element in the stack of open
+            //          elements, then the adjusted insertion location is inside
+            //          the first element in the stack of open elements (the html
+            //          element)."
+            let first = self
+                .stack_of_open_elements
+                .first()
+                .copied()
+                .unwrap_or(NodeId::ROOT);
+            (first, None)
+        }
+    }
+
+    /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#appropriate-place-for-inserting-a-node)
+    ///
+    /// "The appropriate place for inserting a node."
+    ///
+    /// When foster parenting is active and the current node is a table-related
+    /// element, delegates to `foster_parent_location()`. Otherwise returns the
+    /// current node with no insert-before target.
+    fn adjusted_insertion_location(&self) -> (NodeId, Option<NodeId>) {
+        let target = self.current_node().unwrap_or(NodeId::ROOT);
+
+        // "If foster parenting is enabled and the target is a table, tbody,
+        //  tfoot, thead, or tr element..."
+        if self.foster_parenting
+            && let Some(tag) = self.get_tag_name(target)
+            && matches!(tag, "table" | "tbody" | "tfoot" | "thead" | "tr")
+        {
+            return self.foster_parent_location();
+        }
+
+        (target, None)
     }
 
     /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#creating-and-inserting-nodes)
@@ -426,12 +501,30 @@ impl HTMLParser {
     fn insert_character(&mut self, c: char) {
         // STEP 1: "Let the adjusted insertion location be the appropriate place
         //         for inserting a node."
-        let parent_id = self.insertion_location();
+        let (parent_id, before_id) = self.adjusted_insertion_location();
 
         // STEP 2: "If there is a Text node immediately before the adjusted
         //         insertion location, then append data to that Text node's data."
-        if let Some(&last_child_id) = self.tree.children(parent_id).last()
-            && let Some(arena_node) = self.tree.get_mut(last_child_id)
+        //
+        // When foster parenting with insert-before, check the sibling before
+        // the reference node. Otherwise check the last child of the parent.
+        let adjacent_text_id = if let Some(ref_id) = before_id {
+            // Find the node just before the reference in the parent's children.
+            let children = self.tree.children(parent_id);
+            let ref_pos = children.iter().position(|&id| id == ref_id);
+            ref_pos.and_then(|pos| {
+                if pos > 0 {
+                    Some(children[pos - 1])
+                } else {
+                    None
+                }
+            })
+        } else {
+            self.tree.children(parent_id).last().copied()
+        };
+
+        if let Some(text_node_id) = adjacent_text_id
+            && let Some(arena_node) = self.tree.get_mut(text_node_id)
             && let NodeType::Text(ref mut text_data) = arena_node.node_type
         {
             text_data.push(c);
@@ -443,7 +536,11 @@ impl HTMLParser {
         //         which the adjusted insertion location finds itself, and
         //         insert the newly created node at the adjusted insertion location."
         let text_id = self.create_text_node(String::from(c));
-        self.append_child(parent_id, text_id);
+        if let Some(ref_id) = before_id {
+            self.tree.insert_before(parent_id, text_id, ref_id);
+        } else {
+            self.append_child(parent_id, text_id);
+        }
     }
 
     /// [§ 13.2.6.1 Insert a comment](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-comment)
@@ -454,11 +551,15 @@ impl HTMLParser {
     fn insert_comment(&mut self, data: &str) {
         // STEP 1: "Let the adjusted insertion location be the appropriate place
         //         for inserting a node."
-        let parent_id = self.insertion_location();
+        let (parent_id, before_id) = self.adjusted_insertion_location();
         // STEP 2: "Create a Comment node..."
         let comment_id = self.create_comment_node(data.to_string());
         // STEP 3: "Insert the newly created node at the adjusted insertion location."
-        self.append_child(parent_id, comment_id);
+        if let Some(ref_id) = before_id {
+            self.tree.insert_before(parent_id, comment_id, ref_id);
+        } else {
+            self.append_child(parent_id, comment_id);
+        }
     }
 
     /// [§ 13.2.6.1 Insert a comment](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-comment)
@@ -489,11 +590,15 @@ impl HTMLParser {
 
             // STEP 2: "Let the adjusted insertion location be the appropriate
             //         place for inserting a node."
-            let parent_id = self.insertion_location();
+            let (parent_id, before_id) = self.adjusted_insertion_location();
 
             // STEP 3: "Append the new element to the node at the adjusted
             //         insertion location."
-            self.append_child(parent_id, element_id);
+            if let Some(ref_id) = before_id {
+                self.tree.insert_before(parent_id, element_id, ref_id);
+            } else {
+                self.append_child(parent_id, element_id);
+            }
 
             // STEP 4: "Push the element onto the stack of open elements."
             self.stack_of_open_elements.push(element_id);
@@ -624,6 +729,142 @@ impl HTMLParser {
             "ol", "ul",
         ];
         self.has_element_in_specific_scope(tag_name, LIST_ITEM_SCOPE)
+    }
+
+    /// [§ 13.2.4.2](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-table-scope)
+    ///
+    /// "has an element in table scope" — scope markers: html, table, template.
+    fn has_element_in_table_scope(&self, tag_name: &str) -> bool {
+        const TABLE_SCOPE: &[&str] = &["html", "table", "template"];
+        self.has_element_in_specific_scope(tag_name, TABLE_SCOPE)
+    }
+
+    /// [§ 13.2.6.4.9 Clear the stack back to a table context](https://html.spec.whatwg.org/multipage/parsing.html#clear-the-stack-back-to-a-table-context)
+    ///
+    /// "When the steps above require the UA to clear the stack back to a table
+    /// context, it means that the UA must, while the current node is not a
+    /// table, template, or html element, pop elements from the stack of open
+    /// elements."
+    fn clear_stack_back_to_table_context(&mut self) {
+        while let Some(&current) = self.stack_of_open_elements.last() {
+            if let Some(tag) = self.get_tag_name(current)
+                && matches!(tag, "table" | "template" | "html")
+            {
+                break;
+            }
+            let _ = self.stack_of_open_elements.pop();
+        }
+    }
+
+    /// [§ 13.2.4.1 Reset the insertion mode appropriately](https://html.spec.whatwg.org/multipage/parsing.html#reset-the-insertion-mode-appropriately)
+    ///
+    /// "When the steps below require the UA to reset the insertion mode
+    /// appropriately, the UA must follow these steps:"
+    fn reset_insertion_mode_appropriately(&mut self) {
+        // STEP 1: "Let last be false."
+        let mut last = false;
+
+        // STEP 2: "Let node be the last node in the stack of open elements."
+        let mut node_index = self.stack_of_open_elements.len();
+
+        loop {
+            if node_index == 0 {
+                break;
+            }
+            node_index -= 1;
+
+            let node_id = self.stack_of_open_elements[node_index];
+
+            // STEP 3: "If node is the first node in the stack of open elements,
+            //          then set last to true..."
+            if node_index == 0 {
+                last = true;
+                // NOTE: Fragment case would set node to context element here.
+            }
+
+            let Some(tag) = self.get_tag_name(node_id) else {
+                continue;
+            };
+
+            match tag {
+                // "If node is a td or th element and last is false, then switch
+                //  the insertion mode to "in cell" and return."
+                "td" | "th" if !last => {
+                    self.insertion_mode = InsertionMode::InCell;
+                    return;
+                }
+                // "If node is a tr element, then switch the insertion mode to
+                //  "in row" and return."
+                "tr" => {
+                    self.insertion_mode = InsertionMode::InRow;
+                    return;
+                }
+                // "If node is a tbody, thead, or tfoot element, then switch the
+                //  insertion mode to "in table body" and return."
+                "tbody" | "thead" | "tfoot" => {
+                    self.insertion_mode = InsertionMode::InTableBody;
+                    return;
+                }
+                // "If node is a caption element, then switch the insertion mode
+                //  to "in caption" and return."
+                "caption" => {
+                    self.insertion_mode = InsertionMode::InCaption;
+                    return;
+                }
+                // "If node is a colgroup element, then switch the insertion mode
+                //  to "in column group" and return."
+                "colgroup" => {
+                    self.insertion_mode = InsertionMode::InColumnGroup;
+                    return;
+                }
+                // "If node is a table element, then switch the insertion mode to
+                //  "in table" and return."
+                "table" => {
+                    self.insertion_mode = InsertionMode::InTable;
+                    return;
+                }
+                // "If node is a template element, then switch the insertion mode
+                //  to "in template" and return."
+                // NOTE: InTemplate is not yet implemented.
+                "template" => {
+                    self.insertion_mode = InsertionMode::InTemplate;
+                    return;
+                }
+                // "If node is a head element and last is false, then switch the
+                //  insertion mode to "in head" and return."
+                "head" if !last => {
+                    self.insertion_mode = InsertionMode::InHead;
+                    return;
+                }
+                // "If node is a body element, then switch the insertion mode to
+                //  "in body" and return."
+                "body" => {
+                    self.insertion_mode = InsertionMode::InBody;
+                    return;
+                }
+                // "If node is an html element, then:
+                //  If the head element pointer is null, switch to "before head".
+                //  Otherwise, switch to "after head". Return."
+                "html" => {
+                    if self.head_element_pointer.is_none() {
+                        self.insertion_mode = InsertionMode::BeforeHead;
+                    } else {
+                        self.insertion_mode = InsertionMode::AfterHead;
+                    }
+                    return;
+                }
+                _ => {}
+            }
+
+            // "If last is true, then switch the insertion mode to "in body" and return."
+            if last {
+                self.insertion_mode = InsertionMode::InBody;
+                return;
+            }
+
+            // "Let node now be the node before node in the stack of open elements."
+            // (handled by loop decrement)
+        }
     }
 
     /// [§ 13.2.6.2 Generate implied end tags](https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags)
@@ -1546,7 +1787,7 @@ impl HTMLParser {
     fn handle_before_head_anything_else(&mut self, token: &Token) {
         // STEP 1: "Insert an HTML element for a 'head' start tag token with no attributes."
         let head_idx = self.create_element("head", &[]);
-        let parent_idx = self.insertion_location();
+        let parent_idx = self.current_node().unwrap_or(NodeId::ROOT);
         self.append_child(parent_idx, head_idx);
         self.stack_of_open_elements.push(head_idx);
 
@@ -1911,7 +2152,7 @@ impl HTMLParser {
         // We manually create the body element and insert it, since we don't
         // have a real "body" start tag token.
         let body_idx = self.create_element("body", &[]);
-        let parent_idx = self.insertion_location();
+        let parent_idx = self.current_node().unwrap_or(NodeId::ROOT);
         self.append_child(parent_idx, body_idx);
         self.stack_of_open_elements.push(body_idx);
 
@@ -2458,81 +2699,11 @@ impl HTMLParser {
             // "Insert an HTML element for the token."
             // "Set the frameset-ok flag to "not ok"."
             // "Switch the insertion mode to "in table"."
-            //
-            // TODO: Implement proper table parsing with InTable mode and foster parenting:
-            //
-            // [§ 13.2.6.1 Foster parenting](https://html.spec.whatwg.org/multipage/parsing.html#foster-parent)
-            //
-            // Foster parenting handles content that appears inside <table> but outside
-            // proper table structure (e.g., text directly in <table>). Such content
-            // must be "foster parented" - inserted before the table instead.
-            //
-            // fn get_foster_parent(&self) -> (NodeId, InsertPosition) {
-            //     // STEP 1: Let last table be the last table element in stack of open elements
-            //     // STEP 2: If there is a last table:
-            //     //   - If last table has a parent, foster parent is parent, insert before table
-            //     //   - Otherwise, foster parent is element immediately above table in stack
-            //     // STEP 3: If there is no last table, foster parent is first element in stack (html)
-            // }
-            //
-            // // When inserting in InTable mode and current node is not table-compatible:
-            // fn insert_foster_parented(&mut self, node: NodeId) {
-            //     let (parent, position) = self.get_foster_parent();
-            //     // Insert node at position instead of as child of current node
-            // }
-            //
-            // Also requires implementing insertion modes:
-            // - InTable: handles table, caption, colgroup, col, tbody, thead, tfoot, tr
-            // - InTableBody: handles tbody, thead, tfoot, tr content
-            // - InRow: handles tr, td, th content
-            // - InCell: handles td, th content
-            //
-            // NOTE: Current simplified implementation just inserts table elements normally.
-            // This means invalid content like <table>text</table> won't be foster parented.
             Token::StartTag { name, .. } if name == "table" => {
+                // TODO: Check quirks mode flag before closing p.
                 self.close_element_if_in_scope("p");
                 let _ = self.insert_html_element(token);
-            }
-
-            // Table-related start tags: tr, td, th, tbody, thead, tfoot, caption, colgroup, col
-            // Per spec these should only appear in InTable/InTableBody/InRow modes, but
-            // for simplified parsing we just insert them as elements.
-            Token::StartTag { name, .. }
-                if matches!(
-                    name.as_str(),
-                    "tr" | "td"
-                        | "th"
-                        | "tbody"
-                        | "thead"
-                        | "tfoot"
-                        | "caption"
-                        | "colgroup"
-                        | "col"
-                ) =>
-            {
-                let _ = self.insert_html_element(token);
-                // col and colgroup are void-like in tables
-                if matches!(name.as_str(), "col") {
-                    let _ = self.stack_of_open_elements.pop();
-                }
-            }
-
-            // Table-related end tags
-            Token::EndTag { name, .. }
-                if matches!(
-                    name.as_str(),
-                    "table"
-                        | "tr"
-                        | "td"
-                        | "th"
-                        | "tbody"
-                        | "thead"
-                        | "tfoot"
-                        | "caption"
-                        | "colgroup"
-                ) =>
-            {
-                self.pop_until_tag(name);
+                self.insertion_mode = InsertionMode::InTable;
             }
 
             // "A start tag whose tag name is one of: "area", "br", "embed", "img", "keygen", "wbr""
@@ -3037,6 +3208,256 @@ impl HTMLParser {
                 self.any_other_end_tag(name);
             }
         }
+    }
+
+    /// [§ 13.2.6.4.9 The "in table" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable)
+    ///
+    /// "When the user agent is to apply the rules for the "in table" insertion
+    /// mode, the user agent must handle the token as follows:"
+    fn handle_in_table_mode(&mut self, token: &Token) {
+        match token {
+            // "A character token, if the current node is table, tbody, tfoot, thead, or tr
+            //  element:"
+            // "Let the pending table character tokens be an empty list of tokens."
+            // "Let the original insertion mode be the current insertion mode."
+            // "Switch the insertion mode to "in table text" and reprocess the token."
+            Token::Character { .. } => {
+                if let Some(current) = self.current_node()
+                    && let Some(tag) = self.get_tag_name(current)
+                    && matches!(tag, "table" | "tbody" | "tfoot" | "thead" | "tr")
+                {
+                    self.pending_table_character_tokens.clear();
+                    self.original_insertion_mode = Some(self.insertion_mode);
+                    self.insertion_mode = InsertionMode::InTableText;
+                    self.reprocess_token(token);
+                } else {
+                    // "Anything else" — foster parent via InBody
+                    self.handle_in_table_anything_else(token);
+                }
+            }
+
+            // "A comment token"
+            // "Insert a comment."
+            Token::Comment { data } => {
+                self.insert_comment(data);
+            }
+
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
+
+            // "A start tag whose tag name is "caption""
+            // "Clear the stack back to a table context."
+            // "Insert a marker at the end of the list of active formatting elements."
+            // "Insert an HTML element for the token, then switch the insertion mode
+            //  to "in caption"."
+            Token::StartTag { name, .. } if name == "caption" => {
+                self.clear_stack_back_to_table_context();
+                self.active_formatting_elements
+                    .push(ActiveFormattingElement::Marker);
+                let _ = self.insert_html_element(token);
+                self.insertion_mode = InsertionMode::InCaption;
+            }
+
+            // "A start tag whose tag name is "colgroup""
+            // "Clear the stack back to a table context."
+            // "Insert an HTML element for the token, then switch the insertion mode
+            //  to "in column group"."
+            Token::StartTag { name, .. } if name == "colgroup" => {
+                self.clear_stack_back_to_table_context();
+                let _ = self.insert_html_element(token);
+                self.insertion_mode = InsertionMode::InColumnGroup;
+            }
+
+            // "A start tag whose tag name is "col""
+            // "Clear the stack back to a table context."
+            // "Insert an HTML element for a "colgroup" start tag token with no attributes,
+            //  then switch the insertion mode to "in column group"."
+            // "Reprocess the current token."
+            Token::StartTag { name, .. } if name == "col" => {
+                self.clear_stack_back_to_table_context();
+                let fake_colgroup = Token::StartTag {
+                    name: "colgroup".to_string(),
+                    self_closing: false,
+                    attributes: Vec::new(),
+                };
+                let _ = self.insert_html_element(&fake_colgroup);
+                self.insertion_mode = InsertionMode::InColumnGroup;
+                self.reprocess_token(token);
+            }
+
+            // "A start tag whose tag name is one of: "tbody", "tfoot", "thead""
+            // "Clear the stack back to a table context."
+            // "Insert an HTML element for the token, then switch the insertion mode
+            //  to "in table body"."
+            Token::StartTag { name, .. }
+                if matches!(name.as_str(), "tbody" | "tfoot" | "thead") =>
+            {
+                self.clear_stack_back_to_table_context();
+                let _ = self.insert_html_element(token);
+                self.insertion_mode = InsertionMode::InTableBody;
+            }
+
+            // "A start tag whose tag name is one of: "td", "th", "tr""
+            // "Clear the stack back to a table context."
+            // "Insert an HTML element for a "tbody" start tag token with no attributes,
+            //  then switch the insertion mode to "in table body"."
+            // "Reprocess the current token."
+            Token::StartTag { name, .. } if matches!(name.as_str(), "td" | "th" | "tr") => {
+                self.clear_stack_back_to_table_context();
+                let fake_tbody = Token::StartTag {
+                    name: "tbody".to_string(),
+                    self_closing: false,
+                    attributes: Vec::new(),
+                };
+                let _ = self.insert_html_element(&fake_tbody);
+                self.insertion_mode = InsertionMode::InTableBody;
+                self.reprocess_token(token);
+            }
+
+            // "A start tag whose tag name is "table""
+            // "Parse error."
+            // "If the stack of open elements does not have a table element in
+            //  table scope, ignore the token."
+            // "Otherwise:"
+            //   "Pop elements from the stack of open elements until a table element
+            //    has been popped from the stack."
+            //   "Reset the insertion mode appropriately."
+            //   "Reprocess the token."
+            Token::StartTag { name, .. } if name == "table" => {
+                if self.has_element_in_table_scope("table") {
+                    self.pop_until_tag("table");
+                    self.reset_insertion_mode_appropriately();
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore (no table in scope)
+            }
+
+            // "An end tag whose tag name is "table""
+            // "If the stack of open elements does not have a table element in
+            //  table scope, this is a parse error; ignore the token."
+            // "Otherwise:"
+            //   "Pop elements from the stack of open elements until a table element
+            //    has been popped from the stack."
+            //   "Reset the insertion mode appropriately."
+            Token::EndTag { name, .. } if name == "table" => {
+                if self.has_element_in_table_scope("table") {
+                    self.pop_until_tag("table");
+                    self.reset_insertion_mode_appropriately();
+                } else {
+                    // Parse error. Ignore the token.
+                }
+            }
+
+            // "An end tag whose tag name is one of: "body", "caption", "col",
+            //  "colgroup", "html", "tbody", "td", "tfoot", "th", "thead", "tr""
+            // "Parse error. Ignore the token."
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "body"
+                        | "caption"
+                        | "col"
+                        | "colgroup"
+                        | "html"
+                        | "tbody"
+                        | "td"
+                        | "tfoot"
+                        | "th"
+                        | "thead"
+                        | "tr"
+                ) =>
+            {
+                // Parse error. Ignore the token.
+            }
+
+            // "A start tag whose tag name is one of: "style", "script", "template""
+            // "An end tag whose tag name is "template""
+            // "Process the token using the rules for the "in head" insertion mode."
+            Token::StartTag { name, .. }
+                if matches!(name.as_str(), "style" | "script" | "template") =>
+            {
+                self.handle_in_head_mode(token);
+            }
+            Token::EndTag { name, .. } if name == "template" => {
+                self.handle_in_head_mode(token);
+            }
+
+            // "A start tag whose tag name is "input""
+            // "If the token does not have an attribute with the name "type",
+            //  or if it does, but that attribute's value is not an ASCII
+            //  case-insensitive match for the string "hidden", then: act as
+            //  described in the "anything else" entry below."
+            // "Otherwise:"
+            //   "Parse error."
+            //   "Insert an HTML element for the token."
+            //   "Pop that input element off the stack of open elements."
+            //   "Acknowledge the token's self-closing flag, if it is set."
+            Token::StartTag {
+                name, attributes, ..
+            } if name == "input" => {
+                let is_hidden = attributes.iter().any(|attr| {
+                    attr.name.eq_ignore_ascii_case("type")
+                        && attr.value.eq_ignore_ascii_case("hidden")
+                });
+                if is_hidden {
+                    // Parse error. Insert element and pop immediately.
+                    let _ = self.insert_html_element(token);
+                    let _ = self.stack_of_open_elements.pop();
+                } else {
+                    // Not hidden — treat as "anything else" (foster parent)
+                    self.handle_in_table_anything_else(token);
+                }
+            }
+
+            // "A start tag whose tag name is "form""
+            // "Parse error."
+            // "If there is a template element on the stack of open elements,
+            //  or if the form element pointer is not null, ignore the token."
+            // "Otherwise:"
+            //   "Insert an HTML element for the token, and set the form element
+            //    pointer to point to the element created."
+            //   "Pop that form element off the stack of open elements."
+            Token::StartTag { name, .. } if name == "form" => {
+                let has_template = self
+                    .stack_of_open_elements
+                    .iter()
+                    .any(|&id| self.get_tag_name(id) == Some("template"));
+                if has_template || self.form_element_pointer.is_some() {
+                    // Parse error. Ignore the token.
+                } else {
+                    let form_id = self.insert_html_element(token);
+                    self.form_element_pointer = Some(form_id);
+                    let _ = self.stack_of_open_elements.pop();
+                }
+            }
+
+            // "An end-of-file token"
+            // "Process the token using the rules for the "in body" insertion mode."
+            Token::EndOfFile => {
+                self.handle_in_body_mode(token);
+            }
+
+            // "Anything else"
+            _ => {
+                self.handle_in_table_anything_else(token);
+            }
+        }
+    }
+
+    /// [§ 13.2.6.4.9 The "in table" insertion mode - Anything else](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable)
+    ///
+    /// "Anything else":
+    /// "Parse error. Enable foster parenting, process the token using the rules
+    /// for the "in body" insertion mode, and then disable foster parenting."
+    fn handle_in_table_anything_else(&mut self, token: &Token) {
+        // "Parse error."
+        // "Enable foster parenting."
+        self.foster_parenting = true;
+        // "Process the token using the rules for the "in body" insertion mode."
+        self.handle_in_body_mode(token);
+        // "Disable foster parenting."
+        self.foster_parenting = false;
     }
 
     /// [§ 13.2.6.4.19 The "after body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-afterbody)
