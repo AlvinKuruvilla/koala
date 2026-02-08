@@ -74,7 +74,10 @@ pub use selector::{
     AttributeSelector, ParsedSelector, PseudoClass, SimpleSelector, Specificity, parse_selector,
 };
 pub use style::ComputedStyle;
-pub use style::computed::{AlignItems, AlignSelf, FlexDirection, JustifyContent, ListStyleType, Overflow};
+pub use style::computed::{
+    AlignItems, AlignSelf, FlexDirection, GridAutoFlow, GridLine, JustifyContent, ListStyleType,
+    Overflow, TrackList, TrackSize,
+};
 pub use style::{
     AutoLength, BorderValue, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue, InnerDisplayType,
     LengthValue, OuterDisplayType,

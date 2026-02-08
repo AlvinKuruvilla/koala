@@ -26,6 +26,7 @@
 pub mod box_model;
 pub mod flex;
 pub mod float;
+pub mod grid;
 pub mod formatting_context;
 pub mod inline;
 pub mod layout_box;

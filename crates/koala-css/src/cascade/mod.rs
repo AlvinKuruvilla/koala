@@ -335,6 +335,21 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         flex_shrink: None,
         flex_basis: None,
 
+        // [§ 7.2 grid-template-columns/rows](https://www.w3.org/TR/css-grid-1/#track-sizing)
+        // [§ 7.6 grid-auto-flow](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+        // [§ 10.1 row-gap / column-gap](https://www.w3.org/TR/css-align-3/#row-gap)
+        // [§ 8.3 grid-column/row-start/end](https://www.w3.org/TR/css-grid-1/#line-placement)
+        // "Inherited: no"
+        grid_template_columns: None,
+        grid_template_rows: None,
+        grid_auto_flow: None,
+        row_gap: None,
+        column_gap: None,
+        grid_column_start: None,
+        grid_column_end: None,
+        grid_row_start: None,
+        grid_row_end: None,
+
         // [§ 9.5 float](https://www.w3.org/TR/CSS2/visuren.html#floats)
         // "Inherited: no"
         float: None,

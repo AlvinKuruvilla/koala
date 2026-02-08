@@ -2464,3 +2464,400 @@ fn test_input_checkbox_intrinsic_size() {
         "checkbox height should be ~13px, got {h:.1}"
     );
 }
+
+// ===========================================================================
+// CSS Grid Layout tests
+//
+// [§ 12 Grid Sizing](https://www.w3.org/TR/css-grid-1/#layout-algorithm)
+// ===========================================================================
+
+/// `display: grid` produces a grid container with the correct display value.
+#[test]
+fn test_grid_container_recognized() {
+    let root = layout_html(
+        "<html><head><style>\
+         .grid { display: grid; width: 300px; }\
+         </style></head>\
+         <body><div class='grid'><div>A</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    assert_eq!(
+        grid.display.inner,
+        InnerDisplayType::Grid,
+        "should be InnerDisplayType::Grid"
+    );
+}
+
+/// Grid template columns and gap values are extracted to LayoutBox.
+#[test]
+fn test_grid_properties_parsed() {
+    let root = layout_html(
+        "<html><head><style>\
+         .grid { display: grid; grid-template-columns: 100px 200px; gap: 10px; width: 310px; }\
+         </style></head>\
+         <body><div class='grid'><div>A</div><div>B</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+
+    assert_eq!(grid.grid_template_columns.sizes.len(), 2);
+    assert_eq!(grid.column_gap, 10.0);
+    assert_eq!(grid.row_gap, 10.0);
+}
+
+/// 4 items in a 2-column fixed grid: 2 rows, correct positions.
+#[test]
+fn test_grid_2x2_fixed_columns() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 150px 150px; width: 300px; }\
+         .item { height: 50px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+            <div class='item'>C</div>\
+            <div class='item'>D</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    assert!(
+        grid.children.len() >= 4,
+        "grid should have 4 children, got {}",
+        grid.children.len()
+    );
+
+    let a = &grid.children[0];
+    let b = &grid.children[1];
+    let c = &grid.children[2];
+    let d = &grid.children[3];
+
+    // A at (col 0, row 0), B at (col 1, row 0)
+    assert!(
+        (a.dimensions.content.width - 150.0).abs() < 1.0,
+        "A width should be 150px, got {:.1}",
+        a.dimensions.content.width
+    );
+    assert!(
+        (b.dimensions.content.x - a.dimensions.content.x - 150.0).abs() < 1.0,
+        "B should be 150px right of A: A.x={:.1}, B.x={:.1}",
+        a.dimensions.content.x,
+        b.dimensions.content.x
+    );
+
+    // C at (col 0, row 1), D at (col 1, row 1)
+    assert!(
+        (c.dimensions.content.y - a.dimensions.content.y - 50.0).abs() < 1.0,
+        "C should be one row below A: A.y={:.1}, C.y={:.1}",
+        a.dimensions.content.y,
+        c.dimensions.content.y
+    );
+    assert!(
+        (d.dimensions.content.x - c.dimensions.content.x - 150.0).abs() < 1.0,
+        "D should be 150px right of C"
+    );
+}
+
+/// fr units distribute available space proportionally.
+#[test]
+fn test_grid_fr_units() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 1fr 2fr; width: 300px; }\
+         .item { height: 40px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    let a = &grid.children[0];
+    let b = &grid.children[1];
+
+    // 1fr + 2fr = 3fr total, 300px available
+    // A = 100px, B = 200px
+    assert!(
+        (a.dimensions.content.width - 100.0).abs() < 2.0,
+        "A should be ~100px wide, got {:.1}",
+        a.dimensions.content.width
+    );
+    assert!(
+        (b.dimensions.content.width - 200.0).abs() < 2.0,
+        "B should be ~200px wide, got {:.1}",
+        b.dimensions.content.width
+    );
+}
+
+/// Mixed fixed and fr units.
+#[test]
+fn test_grid_mixed_fixed_fr() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 100px 1fr; width: 400px; }\
+         .item { height: 40px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    let a = &grid.children[0];
+    let b = &grid.children[1];
+
+    // A = 100px fixed, B = remaining 300px
+    assert!(
+        (a.dimensions.content.width - 100.0).abs() < 2.0,
+        "A should be ~100px, got {:.1}",
+        a.dimensions.content.width
+    );
+    assert!(
+        (b.dimensions.content.width - 300.0).abs() < 2.0,
+        "B should be ~300px, got {:.1}",
+        b.dimensions.content.width
+    );
+}
+
+/// gap property creates spacing between grid items.
+#[test]
+fn test_grid_gap() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 100px 100px; gap: 20px; width: 220px; }\
+         .item { height: 40px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+            <div class='item'>C</div>\
+            <div class='item'>D</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    let a = &grid.children[0];
+    let b = &grid.children[1];
+    let c = &grid.children[2];
+
+    // Column gap: B.x = A.x + 100 + 20
+    let expected_b_x = a.dimensions.content.x + 100.0 + 20.0;
+    assert!(
+        (b.dimensions.content.x - expected_b_x).abs() < 2.0,
+        "B should have 20px column gap from A: expected x={expected_b_x:.1}, got {:.1}",
+        b.dimensions.content.x
+    );
+
+    // Row gap: C.y = A.y + 40 + 20
+    let expected_c_y = a.dimensions.content.y + 40.0 + 20.0;
+    assert!(
+        (c.dimensions.content.y - expected_c_y).abs() < 2.0,
+        "C should have 20px row gap from A: expected y={expected_c_y:.1}, got {:.1}",
+        c.dimensions.content.y
+    );
+}
+
+/// 3 items in a 2-column grid auto-place into 2 rows.
+#[test]
+fn test_grid_auto_placement() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 100px 100px; width: 200px; }\
+         .item { height: 30px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+            <div class='item'>C</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    let a = &grid.children[0];
+    let b = &grid.children[1];
+    let c = &grid.children[2];
+
+    // A and B on row 0, C on row 1
+    assert!(
+        (a.dimensions.content.y - b.dimensions.content.y).abs() < 1.0,
+        "A and B should be on same row"
+    );
+    assert!(
+        c.dimensions.content.y > a.dimensions.content.y + 20.0,
+        "C should be on a lower row than A: C.y={:.1}, A.y={:.1}",
+        c.dimensions.content.y,
+        a.dimensions.content.y
+    );
+    // C should be in column 0
+    assert!(
+        (c.dimensions.content.x - a.dimensions.content.x).abs() < 1.0,
+        "C should be in column 0 like A"
+    );
+}
+
+/// Explicit placement via grid-column and grid-row.
+#[test]
+fn test_grid_explicit_placement() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 100px 100px 100px; width: 300px; }\
+         .item { height: 40px; }\
+         .placed { grid-column: 3; grid-row: 2; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+            <div class='item placed'>C</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+
+    // Find item C (the one with explicit placement)
+    let c = &grid.children[2];
+
+    // C should be at column 3 (0-based index 2), row 2 (0-based index 1)
+    let expected_x = grid.dimensions.content.x + 200.0; // col 2 * 100px
+    let expected_y = grid.dimensions.content.y + 40.0; // row 1 * 40px
+    assert!(
+        (c.dimensions.content.x - expected_x).abs() < 2.0,
+        "C should be at column 3: expected x={expected_x:.1}, got {:.1}",
+        c.dimensions.content.x
+    );
+    assert!(
+        (c.dimensions.content.y - expected_y).abs() < 2.0,
+        "C should be at row 2: expected y={expected_y:.1}, got {:.1}",
+        c.dimensions.content.y
+    );
+}
+
+/// grid-column: 1 / 3 spans two columns.
+#[test]
+fn test_grid_span() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 100px 100px; width: 200px; }\
+         .span { grid-column: 1 / 3; height: 40px; }\
+         .item { height: 40px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='span'>A</div>\
+            <div class='item'>B</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    let a = &grid.children[0];
+
+    // A spans columns 1-3 (0-based 0-2), so its width should be 200px
+    assert!(
+        (a.dimensions.content.width - 200.0).abs() < 2.0,
+        "A should span full width (200px), got {:.1}",
+        a.dimensions.content.width
+    );
+}
+
+/// repeat(3, 100px) expands to 3 columns of 100px.
+#[test]
+fn test_grid_repeat_function() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: repeat(3, 100px); width: 300px; }\
+         .item { height: 30px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+            <div class='item'>C</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+
+    // Should have 3 columns
+    assert_eq!(
+        grid.grid_template_columns.sizes.len(),
+        3,
+        "repeat(3, 100px) should produce 3 track sizes"
+    );
+
+    // All items on the same row
+    let a = &grid.children[0];
+    let b = &grid.children[1];
+    let c = &grid.children[2];
+
+    assert!(
+        (a.dimensions.content.y - b.dimensions.content.y).abs() < 1.0,
+        "A and B should be on same row"
+    );
+    assert!(
+        (b.dimensions.content.y - c.dimensions.content.y).abs() < 1.0,
+        "B and C should be on same row"
+    );
+
+    // Each 100px wide
+    assert!(
+        (a.dimensions.content.width - 100.0).abs() < 2.0,
+        "Each item should be 100px wide, got {:.1}",
+        a.dimensions.content.width
+    );
+}
+
+/// Auto rows size to content height.
+#[test]
+fn test_grid_auto_rows() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .grid { display: grid; grid-template-columns: 200px; width: 200px; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div>Short</div>\
+            <div>Also short</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+
+    // Container height should be the sum of content heights
+    assert!(
+        grid.dimensions.content.height > 0.0,
+        "grid container height should be positive, got {:.1}",
+        grid.dimensions.content.height
+    );
+
+    // Second item should be below the first
+    if grid.children.len() >= 2 {
+        let a = &grid.children[0];
+        let b = &grid.children[1];
+        assert!(
+            b.dimensions.content.y > a.dimensions.content.y,
+            "second item should be below first: a.y={:.1}, b.y={:.1}",
+            a.dimensions.content.y,
+            b.dimensions.content.y
+        );
+    }
+}

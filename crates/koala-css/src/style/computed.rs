@@ -137,6 +137,67 @@ pub enum AlignSelf {
     Stretch,
 }
 
+/// [§ 7.2 Explicit Track Sizing](https://www.w3.org/TR/css-grid-1/#track-sizing)
+///
+/// "A track sizing function can be specified as a length, a percentage of the
+/// grid container's size, a measurement of the contents occupying the column
+/// or row, or a fraction of the free space in the grid."
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum TrackSize {
+    /// A fixed length in resolved px.
+    Fixed(f32),
+    /// [§ 7.8.3 Flexible Lengths: the fr unit](https://www.w3.org/TR/css-grid-1/#fr-unit)
+    ///
+    /// "A flexible length or `<flex>` is a dimension with the fr unit, which
+    /// represents a fraction of the leftover space in the grid container."
+    Fr(f32),
+    /// [§ 7.2.1](https://www.w3.org/TR/css-grid-1/#auto-tracks)
+    ///
+    /// "As a maximum, identical to max-content. As a minimum, represents the
+    /// largest minimum size (as specified by min-width/min-height) of the grid
+    /// items occupying the grid track."
+    Auto,
+}
+
+/// [§ 7.2 Explicit Track Sizing](https://www.w3.org/TR/css-grid-1/#track-sizing)
+///
+/// A list of track sizes defining either the column or row template.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct TrackList {
+    /// The individual track sizing functions in order.
+    pub sizes: Vec<TrackSize>,
+}
+
+/// [§ 8.3 Line-based Placement](https://www.w3.org/TR/css-grid-1/#line-placement)
+///
+/// "Grid items can be placed by specifying a grid line by its numeric index
+/// or by its name."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum GridLine {
+    /// "Contributes nothing to the grid item's placement."
+    Auto,
+    /// "Refers to the Nth grid line."
+    /// 1-based; negative values count from the end.
+    Line(i32),
+    /// "Contributes a grid span to the grid item's placement."
+    Span(u32),
+}
+
+/// [§ 7.6 Automatic Placement](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+///
+/// "Grid items that aren't explicitly placed are automatically placed into
+/// an unoccupied space in the grid container."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum GridAutoFlow {
+    /// "The auto-placement algorithm places items by filling each row in
+    /// turn, adding new rows as necessary."
+    #[default]
+    Row,
+    /// "The auto-placement algorithm places items by filling each column in
+    /// turn, adding new columns as necessary."
+    Column,
+}
+
 /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
 ///
 /// "The list-style-type property specifies a counter style or string for
@@ -389,6 +450,51 @@ pub struct ComputedStyle {
     /// Values: auto | `<length>`
     /// Initial: auto
     pub flex_basis: Option<AutoLength>,
+
+    // ===== Grid layout properties =====
+
+    /// [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+    ///
+    /// "These properties specify, as a space-separated track list, the line
+    /// names and track sizing functions of the grid."
+    /// Inherited: no
+    pub grid_template_columns: Option<TrackList>,
+
+    /// [§ 7.2 'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+    /// Inherited: no
+    pub grid_template_rows: Option<TrackList>,
+
+    /// [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+    ///
+    /// "Controls how the auto-placement algorithm works."
+    /// Values: row | column
+    /// Initial: row
+    /// Inherited: no
+    pub grid_auto_flow: Option<GridAutoFlow>,
+
+    /// [§ 10.1 'row-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
+    /// Inherited: no
+    pub row_gap: Option<LengthValue>,
+
+    /// [§ 10.1 'column-gap'](https://www.w3.org/TR/css-align-3/#column-gap)
+    /// Inherited: no
+    pub column_gap: Option<LengthValue>,
+
+    /// [§ 8.3 'grid-column-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    /// Inherited: no
+    pub grid_column_start: Option<GridLine>,
+
+    /// [§ 8.3 'grid-column-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    /// Inherited: no
+    pub grid_column_end: Option<GridLine>,
+
+    /// [§ 8.3 'grid-row-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    /// Inherited: no
+    pub grid_row_start: Option<GridLine>,
+
+    /// [§ 8.3 'grid-row-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    /// Inherited: no
+    pub grid_row_end: Option<GridLine>,
 
     // ===== Positioning properties =====
     /// [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
@@ -1134,6 +1240,112 @@ impl ComputedStyle {
                     }
                 }
             }
+            // ===== Grid layout properties =====
+
+            // [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+            //
+            // "These properties specify, as a space-separated track list, the line
+            // names and track sizing functions of the grid."
+            "grid-template-columns" => {
+                if let Some(tl) = self.parse_track_list(&decl.value) {
+                    self.grid_template_columns = Some(tl);
+                }
+            }
+            // [§ 7.2 'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+            "grid-template-rows" => {
+                if let Some(tl) = self.parse_track_list(&decl.value) {
+                    self.grid_template_rows = Some(tl);
+                }
+            }
+            // [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+            //
+            // "Values: row | column | row dense | column dense"
+            "grid-auto-flow" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    match ident.to_ascii_lowercase().as_str() {
+                        "row" => self.grid_auto_flow = Some(GridAutoFlow::Row),
+                        "column" => self.grid_auto_flow = Some(GridAutoFlow::Column),
+                        _ => {}
+                    }
+                }
+            }
+            // [§ 10.1 'row-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
+            "row-gap" | "grid-row-gap" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.row_gap = Some(self.resolve_length(len));
+                }
+            }
+            // [§ 10.1 'column-gap'](https://www.w3.org/TR/css-align-3/#column-gap)
+            "column-gap" | "grid-column-gap" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.column_gap = Some(self.resolve_length(len));
+                }
+            }
+            // [§ 10.1 'gap'](https://www.w3.org/TR/css-align-3/#gap-shorthand)
+            //
+            // "The gap property, and its grid-gap alias, set the row-gap and
+            // column-gap properties in one declaration."
+            // "Value: <'row-gap'> <'column-gap'>?"
+            "gap" | "grid-gap" => {
+                let lengths: Vec<LengthValue> =
+                    decl.value.iter().filter_map(parse_single_length).collect();
+                match lengths.len() {
+                    1 => {
+                        let resolved = self.resolve_length(lengths[0]);
+                        self.row_gap = Some(resolved);
+                        self.column_gap = Some(resolved);
+                    }
+                    2 => {
+                        self.row_gap = Some(self.resolve_length(lengths[0]));
+                        self.column_gap = Some(self.resolve_length(lengths[1]));
+                    }
+                    _ => {}
+                }
+            }
+            // [§ 8.3 'grid-column-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
+            "grid-column-start" => {
+                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                    self.grid_column_start = Some(gl);
+                }
+            }
+            // [§ 8.3 'grid-column-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
+            "grid-column-end" => {
+                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                    self.grid_column_end = Some(gl);
+                }
+            }
+            // [§ 8.3 'grid-row-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
+            "grid-row-start" => {
+                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                    self.grid_row_start = Some(gl);
+                }
+            }
+            // [§ 8.3 'grid-row-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
+            "grid-row-end" => {
+                if let Some(gl) = Self::parse_grid_line(&decl.value) {
+                    self.grid_row_end = Some(gl);
+                }
+            }
+            // [§ 8.4 'grid-column' shorthand](https://www.w3.org/TR/css-grid-1/#propdef-grid-column)
+            //
+            // "Value: <grid-line> [ / <grid-line> ]?"
+            "grid-column" => {
+                let (start, end) = Self::parse_grid_line_shorthand(&decl.value);
+                if let Some(s) = start {
+                    self.grid_column_start = Some(s);
+                }
+                self.grid_column_end = Some(end.unwrap_or(GridLine::Auto));
+            }
+            // [§ 8.4 'grid-row' shorthand](https://www.w3.org/TR/css-grid-1/#propdef-grid-row)
+            //
+            // "Value: <grid-line> [ / <grid-line> ]?"
+            "grid-row" => {
+                let (start, end) = Self::parse_grid_line_shorthand(&decl.value);
+                if let Some(s) = start {
+                    self.grid_row_start = Some(s);
+                }
+                self.grid_row_end = Some(end.unwrap_or(GridLine::Auto));
+            }
             unknown => {
                 warn_once("CSS", &format!("unknown property '{unknown}'"));
             }
@@ -1570,6 +1782,204 @@ impl ComputedStyle {
             .then_some(lower)
         } else {
             None
+        }
+    }
+
+    // ===== Grid parsing helpers =====
+
+    /// [§ 7.2 Explicit Track Sizing](https://www.w3.org/TR/css-grid-1/#track-sizing)
+    ///
+    /// Parse a track list from `grid-template-columns` / `grid-template-rows`.
+    ///
+    /// Supported syntax:
+    /// - `<length>` (px, em)
+    /// - `<flex>` (fr unit)
+    /// - `auto`
+    /// - `repeat(<integer>, <track-list>)`
+    #[allow(clippy::cast_possible_truncation)]
+    fn parse_track_list(&self, values: &[ComponentValue]) -> Option<TrackList> {
+        let mut sizes = Vec::new();
+
+        for v in values {
+            match v {
+                // "100px", "1fr", "2em"
+                ComponentValue::Token(CSSToken::Dimension { value, unit, .. }) => {
+                    if unit.eq_ignore_ascii_case("fr") {
+                        sizes.push(TrackSize::Fr(*value as f32));
+                    } else if unit.eq_ignore_ascii_case("px") {
+                        sizes.push(TrackSize::Fixed(*value as f32));
+                    } else if unit.eq_ignore_ascii_case("em") {
+                        // Resolve em to px
+                        let base = self
+                            .font_size
+                            .as_ref()
+                            .map_or(DEFAULT_FONT_SIZE_PX, LengthValue::to_px);
+                        sizes.push(TrackSize::Fixed((*value * base) as f32));
+                    }
+                }
+                // "auto"
+                ComponentValue::Token(CSSToken::Ident(ident))
+                    if ident.eq_ignore_ascii_case("auto") =>
+                {
+                    sizes.push(TrackSize::Auto);
+                }
+                // "repeat(3, 100px)"
+                ComponentValue::Function { name, value } => {
+                    if name.eq_ignore_ascii_case("repeat") {
+                        if let Some(expanded) = self.parse_repeat_function(value) {
+                            sizes.extend(expanded);
+                        }
+                    }
+                }
+                // Skip whitespace
+                ComponentValue::Token(CSSToken::Whitespace) => {}
+                _ => {}
+            }
+        }
+
+        if sizes.is_empty() {
+            None
+        } else {
+            Some(TrackList { sizes })
+        }
+    }
+
+    /// [§ 7.5 repeat()](https://www.w3.org/TR/css-grid-1/#funcdef-repeat)
+    ///
+    /// "The repeat() notation represents a repeated fragment of the track
+    /// list, allowing a large number of columns or rows that exhibit a
+    /// recurring pattern to be written in a more compact form."
+    ///
+    /// MVP: `repeat(<positive-integer>, <track-size>+)`
+    #[allow(clippy::cast_possible_truncation)]
+    fn parse_repeat_function(&self, args: &[ComponentValue]) -> Option<Vec<TrackSize>> {
+        // STEP 1: Find the integer count (first Number token).
+        let mut count: Option<u32> = None;
+        let mut found_comma = false;
+        let mut track_sizes = Vec::new();
+
+        for arg in args {
+            match arg {
+                // The repeat count
+                ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })
+                    if count.is_none() && *n > 0 =>
+                {
+                    count = Some(*n as u32);
+                }
+                // Comma separator between count and track sizes
+                ComponentValue::Token(CSSToken::Comma) => {
+                    found_comma = true;
+                }
+                // Track sizes after the comma
+                ComponentValue::Token(CSSToken::Dimension { value, unit, .. }) if found_comma => {
+                    if unit.eq_ignore_ascii_case("fr") {
+                        track_sizes.push(TrackSize::Fr(*value as f32));
+                    } else if unit.eq_ignore_ascii_case("px") {
+                        track_sizes.push(TrackSize::Fixed(*value as f32));
+                    } else if unit.eq_ignore_ascii_case("em") {
+                        let base = self
+                            .font_size
+                            .as_ref()
+                            .map_or(DEFAULT_FONT_SIZE_PX, LengthValue::to_px);
+                        track_sizes.push(TrackSize::Fixed((*value * base) as f32));
+                    }
+                }
+                ComponentValue::Token(CSSToken::Ident(ident))
+                    if found_comma && ident.eq_ignore_ascii_case("auto") =>
+                {
+                    track_sizes.push(TrackSize::Auto);
+                }
+                ComponentValue::Token(CSSToken::Whitespace) => {}
+                _ => {}
+            }
+        }
+
+        let count = count?;
+        if track_sizes.is_empty() {
+            return None;
+        }
+
+        // STEP 2: Expand the repetition.
+        let mut result = Vec::with_capacity(count as usize * track_sizes.len());
+        for _ in 0..count {
+            result.extend_from_slice(&track_sizes);
+        }
+        Some(result)
+    }
+
+    /// [§ 8.3 Line-based Placement](https://www.w3.org/TR/css-grid-1/#line-placement)
+    ///
+    /// Parse a `<grid-line>` value.
+    ///
+    /// Syntax: `auto | <integer> | span && <integer>`
+    fn parse_grid_line(values: &[ComponentValue]) -> Option<GridLine> {
+        // Filter out whitespace
+        let tokens: Vec<&ComponentValue> = values
+            .iter()
+            .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+            .collect();
+
+        if tokens.is_empty() {
+            return None;
+        }
+
+        // "auto"
+        if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = tokens.first() {
+            let lower = ident.to_ascii_lowercase();
+            if lower == "auto" {
+                return Some(GridLine::Auto);
+            }
+            // "span <integer>"
+            if lower == "span" {
+                if let Some(ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })) =
+                    tokens.get(1)
+                {
+                    if *n > 0 {
+                        return Some(GridLine::Span(*n as u32));
+                    }
+                }
+                return None;
+            }
+        }
+
+        // <integer> (line number)
+        if let Some(ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })) =
+            tokens.first()
+        {
+            if *n != 0 {
+                #[allow(clippy::cast_possible_truncation)]
+                return Some(GridLine::Line(*n as i32));
+            }
+        }
+
+        None
+    }
+
+    /// [§ 8.4 Placement Shorthands](https://www.w3.org/TR/css-grid-1/#placement-shorthands)
+    ///
+    /// Parse `grid-column` / `grid-row` shorthand.
+    /// "Value: `<grid-line>` [ / `<grid-line>` ]?"
+    ///
+    /// Split on `/` delimiter, parse each half as a `GridLine`.
+    fn parse_grid_line_shorthand(
+        values: &[ComponentValue],
+    ) -> (Option<GridLine>, Option<GridLine>) {
+        // Find the `/` delimiter position
+        let slash_pos = values
+            .iter()
+            .position(|v| matches!(v, ComponentValue::Token(CSSToken::Delim('/'))));
+
+        match slash_pos {
+            Some(pos) => {
+                let start = Self::parse_grid_line(&values[..pos]);
+                let end = Self::parse_grid_line(&values[pos + 1..]);
+                (start, end)
+            }
+            None => {
+                // No `/` — start only, end defaults to Auto
+                let start = Self::parse_grid_line(values);
+                (start, None)
+            }
         }
     }
 }

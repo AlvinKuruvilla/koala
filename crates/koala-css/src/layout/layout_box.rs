@@ -9,7 +9,10 @@ use std::cell::Cell;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::computed::{AlignItems, AlignSelf, FlexDirection, JustifyContent, ListStyleType};
+use crate::style::computed::{
+    AlignItems, AlignSelf, FlexDirection, GridAutoFlow, GridLine, JustifyContent, ListStyleType,
+    TrackList,
+};
 use crate::style::{
     AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
     OuterDisplayType,
@@ -525,6 +528,37 @@ pub struct LayoutBox {
     /// None = auto
     pub flex_basis: Option<AutoLength>,
 
+    // ===== Grid layout fields =====
+
+    /// [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+    pub grid_template_columns: TrackList,
+
+    /// [§ 7.2 'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+    pub grid_template_rows: TrackList,
+
+    /// [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+    pub grid_auto_flow: GridAutoFlow,
+
+    /// [§ 10.1 'row-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
+    /// Resolved to px.
+    pub row_gap: f32,
+
+    /// [§ 10.1 'column-gap'](https://www.w3.org/TR/css-align-3/#column-gap)
+    /// Resolved to px.
+    pub column_gap: f32,
+
+    /// [§ 8.3 'grid-column-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    pub grid_column_start: GridLine,
+
+    /// [§ 8.3 'grid-column-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    pub grid_column_end: GridLine,
+
+    /// [§ 8.3 'grid-row-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    pub grid_row_start: GridLine,
+
+    /// [§ 8.3 'grid-row-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
+    pub grid_row_end: GridLine,
+
     // ===== Positioning fields =====
     /// [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
     ///
@@ -946,6 +980,15 @@ impl LayoutBox {
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
+                    grid_template_columns: TrackList::default(),
+                    grid_template_rows: TrackList::default(),
+                    grid_auto_flow: GridAutoFlow::default(),
+                    row_gap: 0.0,
+                    column_gap: 0.0,
+                    grid_column_start: GridLine::Auto,
+                    grid_column_end: GridLine::Auto,
+                    grid_row_start: GridLine::Auto,
+                    grid_row_end: GridLine::Auto,
                     position_type: PositionType::Static,
                     offsets: BoxOffsets::default(),
                     box_sizing_border_box: false,
@@ -1051,6 +1094,38 @@ impl LayoutBox {
                 let flex_shrink = style.and_then(|s| s.flex_shrink).unwrap_or(1.0);
                 // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
                 let flex_basis = style.and_then(|s| s.flex_basis);
+
+                // [§ 7.2 'grid-template-columns'/'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+                let grid_template_columns = style
+                    .and_then(|s| s.grid_template_columns.clone())
+                    .unwrap_or_default();
+                let grid_template_rows = style
+                    .and_then(|s| s.grid_template_rows.clone())
+                    .unwrap_or_default();
+                // [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+                let grid_auto_flow = style.and_then(|s| s.grid_auto_flow).unwrap_or_default();
+                // [§ 10.1 'row-gap' / 'column-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
+                #[allow(clippy::cast_possible_truncation)]
+                let row_gap = style
+                    .and_then(|s| s.row_gap)
+                    .map_or(0.0, |l| l.to_px() as f32);
+                #[allow(clippy::cast_possible_truncation)]
+                let column_gap = style
+                    .and_then(|s| s.column_gap)
+                    .map_or(0.0, |l| l.to_px() as f32);
+                // [§ 8.3 Grid line placement](https://www.w3.org/TR/css-grid-1/#line-placement)
+                let grid_column_start = style
+                    .and_then(|s| s.grid_column_start)
+                    .unwrap_or(GridLine::Auto);
+                let grid_column_end = style
+                    .and_then(|s| s.grid_column_end)
+                    .unwrap_or(GridLine::Auto);
+                let grid_row_start = style
+                    .and_then(|s| s.grid_row_start)
+                    .unwrap_or(GridLine::Auto);
+                let grid_row_end = style
+                    .and_then(|s| s.grid_row_end)
+                    .unwrap_or(GridLine::Auto);
 
                 // [§ 10.4 min-width / max-width](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
                 // [§ 10.7 min-height / max-height](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
@@ -1231,6 +1306,15 @@ impl LayoutBox {
                     flex_grow,
                     flex_shrink,
                     flex_basis,
+                    grid_template_columns,
+                    grid_template_rows,
+                    grid_auto_flow,
+                    row_gap,
+                    column_gap,
+                    grid_column_start,
+                    grid_column_end,
+                    grid_row_start,
+                    grid_row_end,
                     position_type,
                     offsets,
                     box_sizing_border_box,
@@ -1297,6 +1381,15 @@ impl LayoutBox {
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
+                    grid_template_columns: TrackList::default(),
+                    grid_template_rows: TrackList::default(),
+                    grid_auto_flow: GridAutoFlow::default(),
+                    row_gap: 0.0,
+                    column_gap: 0.0,
+                    grid_column_start: GridLine::Auto,
+                    grid_column_end: GridLine::Auto,
+                    grid_row_start: GridLine::Auto,
+                    grid_row_end: GridLine::Auto,
                     position_type: PositionType::Static,
                     offsets: BoxOffsets::default(),
                     box_sizing_border_box: false,
@@ -1462,6 +1555,11 @@ impl LayoutBox {
             //
             // Check inner display type — flex containers use their own algorithm.
             super::flex::layout_flex(self, containing_block, viewport, font_metrics, abs_cb);
+        } else if self.display.inner == InnerDisplayType::Grid {
+            // [§ 12 Grid Sizing](https://www.w3.org/TR/css-grid-1/#layout-algorithm)
+            //
+            // Check inner display type — grid containers use their own algorithm.
+            super::grid::layout_grid(self, containing_block, viewport, font_metrics, abs_cb);
         } else {
             match self.display.outer {
                 OuterDisplayType::Block | OuterDisplayType::ListItem => {
@@ -2724,6 +2822,15 @@ impl LayoutBox {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: None,
+            grid_template_columns: TrackList::default(),
+            grid_template_rows: TrackList::default(),
+            grid_auto_flow: GridAutoFlow::default(),
+            row_gap: 0.0,
+            column_gap: 0.0,
+            grid_column_start: GridLine::Auto,
+            grid_column_end: GridLine::Auto,
+            grid_row_start: GridLine::Auto,
+            grid_row_end: GridLine::Auto,
             position_type: PositionType::Static,
             offsets: BoxOffsets::default(),
             box_sizing_border_box: false,
