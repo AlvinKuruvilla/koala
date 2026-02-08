@@ -128,6 +128,16 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
         return Some(DisplayValue::list_item());
     }
 
+    // [§ 15.5.12 The input element](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control)
+    // [§ 15.5.13 The button element](https://html.spec.whatwg.org/multipage/rendering.html#the-button-element)
+    // [§ 15.5.14 The textarea element](https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element)
+    // [§ 15.5.15 The select element](https://html.spec.whatwg.org/multipage/rendering.html#the-select-element)
+    //
+    // Form controls are inline-block by default.
+    if matches!(tag_name, "input" | "button" | "textarea" | "select") {
+        return Some(DisplayValue::inline_block());
+    }
+
     // Inline elements (default)
     // a, abbr, acronym, b, bdi, bdo, big, br, cite, code, data, del, dfn,
     // em, font, i, img, ins, kbd, label, mark, nobr, q, ruby, s, samp,

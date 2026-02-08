@@ -2346,3 +2346,121 @@ fn test_flex_align_items_stretch() {
         item.dimensions.content.height
     );
 }
+
+// ---------------------------------------------------------------------------
+// Form element rendering tests
+//
+// [§ 15.5.12–15.5.15 Form controls](https://html.spec.whatwg.org/multipage/rendering.html)
+// ---------------------------------------------------------------------------
+
+/// Verify <input> gets inline-block display and replaced-element intrinsic
+/// dimensions (~173px wide, ~20px tall for text inputs).
+#[test]
+fn test_input_inline_block_display() {
+    let root = layout_html("<body><input type='text'></body>");
+
+    // The input should be inside an anonymous block wrapper (since body is
+    // block and input is inline-block, it gets wrapped in an anonymous block
+    // that establishes an inline formatting context).
+    // Navigate to the input's layout box by finding the replaced element.
+    fn find_replaced(b: &LayoutBox) -> Option<&LayoutBox> {
+        if b.is_replaced {
+            return Some(b);
+        }
+        for child in &b.children {
+            if let Some(found) = find_replaced(child) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let input = find_replaced(&root).expect("should find a replaced <input> element");
+
+    assert_eq!(
+        input.display.outer,
+        OuterDisplayType::Inline,
+        "input outer display should be Inline (inline-block)"
+    );
+    assert_eq!(
+        input.display.inner,
+        InnerDisplayType::FlowRoot,
+        "input inner display should be FlowRoot (inline-block)"
+    );
+
+    // Content width should be the intrinsic 173px (text input default).
+    // Account for border (2px inset = 2px each side) and padding (1px 2px).
+    let content_w = input.dimensions.content.width;
+    assert!(
+        (content_w - 173.0).abs() < 1.0,
+        "input content width should be ~173px, got {content_w:.1}"
+    );
+}
+
+/// Verify <button> gets inline-block display with normal (non-replaced) layout.
+#[test]
+fn test_button_inline_block_display() {
+    let root = layout_html("<body><button>OK</button></body>");
+
+    // Find the button box by display type.
+    fn find_inline_block(b: &LayoutBox) -> Option<&LayoutBox> {
+        if b.display.outer == OuterDisplayType::Inline
+            && b.display.inner == InnerDisplayType::FlowRoot
+            && !b.is_replaced
+        {
+            return Some(b);
+        }
+        for child in &b.children {
+            if let Some(found) = find_inline_block(child) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let button = find_inline_block(&root).expect("should find an inline-block <button> element");
+
+    // Button should NOT be replaced — it has child content.
+    assert!(
+        !button.is_replaced,
+        "button should not be a replaced element"
+    );
+
+    // Button should have non-zero width from shrink-to-fit on its text content.
+    assert!(
+        button.dimensions.content.width > 0.0,
+        "button should have positive width from text content, got {:.1}",
+        button.dimensions.content.width
+    );
+}
+
+/// Verify <input type="checkbox"> gets small intrinsic dimensions (13x13).
+#[test]
+fn test_input_checkbox_intrinsic_size() {
+    let root = layout_html("<body><input type='checkbox'></body>");
+
+    fn find_replaced(b: &LayoutBox) -> Option<&LayoutBox> {
+        if b.is_replaced {
+            return Some(b);
+        }
+        for child in &b.children {
+            if let Some(found) = find_replaced(child) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let checkbox = find_replaced(&root).expect("should find a replaced <input type=checkbox>");
+
+    let w = checkbox.dimensions.content.width;
+    let h = checkbox.dimensions.content.height;
+    assert!(
+        (w - 13.0).abs() < 1.0,
+        "checkbox width should be ~13px, got {w:.1}"
+    );
+    assert!(
+        (h - 13.0).abs() < 1.0,
+        "checkbox height should be ~13px, got {h:.1}"
+    );
+}

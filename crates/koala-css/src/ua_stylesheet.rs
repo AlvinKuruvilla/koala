@@ -149,6 +149,17 @@ b, strong {
 em, i, cite, dfn, var {
     font-style: italic;
 }
+
+/* [§ 15.5.12–15.5.15 Form controls](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control) */
+input, textarea, select, button {
+    display: inline-block;
+    border: 2px inset;
+    padding: 1px 2px;
+}
+
+button {
+    padding: 1px 6px;
+}
 "#;
 
 /// Return the parsed UA stylesheet, parsing only once.

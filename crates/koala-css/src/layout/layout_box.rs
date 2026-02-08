@@ -1159,6 +1159,16 @@ impl LayoutBox {
                         dims.map(|(w, _)| *w),
                         dims.map(|(_, h)| *h),
                     )
+                } else if matches!(tag.as_str(), "input" | "textarea" | "select") {
+                    // [§ 15.5.12 The input element](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control)
+                    // [§ 15.5.14 The textarea element](https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element)
+                    // [§ 15.5.15 The select element](https://html.spec.whatwg.org/multipage/rendering.html#the-select-element)
+                    //
+                    // Form controls are replaced elements with intrinsic dimensions.
+                    // <button> is NOT replaced — it has child content and uses
+                    // normal inline-block shrink-to-fit layout.
+                    let (w, h) = form_control_intrinsic_size(&tag, &data.attrs);
+                    (true, None, Some(w), Some(h))
                 } else {
                     (false, None, None, None)
                 };
@@ -3425,5 +3435,30 @@ impl LayoutBox {
                 OuterDisplayType::Block | OuterDisplayType::ListItem
             ) || c.has_block_descendant()
         })
+    }
+}
+
+/// Returns intrinsic (width, height) for form control replaced elements.
+///
+/// [§ 15.5.12 The input element](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control)
+/// [§ 15.5.14 The textarea element](https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element)
+/// [§ 15.5.15 The select element](https://html.spec.whatwg.org/multipage/rendering.html#the-select-element)
+///
+/// Sizes approximate Chromium/Firefox defaults for common input types.
+fn form_control_intrinsic_size(tag: &str, attrs: &HashMap<String, String>) -> (f32, f32) {
+    match tag {
+        "input" => {
+            let input_type = attrs.get("type").map_or("text", |v| v.as_str());
+            match input_type {
+                "hidden" => (0.0, 0.0),
+                "checkbox" | "radio" => (13.0, 13.0),
+                "submit" | "reset" | "button" => (54.0, 20.0),
+                // text, password, email, search, url, tel, number, etc.
+                _ => (173.0, 20.0),
+            }
+        }
+        "textarea" => (173.0, 38.0),
+        "select" => (173.0, 20.0),
+        _ => (173.0, 20.0),
     }
 }
