@@ -127,6 +127,22 @@ impl<'a> Painter<'a> {
             );
         }
 
+        // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+        // "When overflow is not 'visible', content is clipped to the padding edge."
+        let needs_clip = style.is_some_and(|s| {
+            s.overflow
+                .as_deref()
+                .is_some_and(|o| o != "visible")
+        });
+        if needs_clip {
+            display_list.push(DisplayCommand::PushClip {
+                x: padding_x,
+                y: padding_y,
+                width: padding_width,
+                height: padding_height,
+            });
+        }
+
         // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the replaced content of replaced inline-level elements"
         //
@@ -225,6 +241,10 @@ impl<'a> Painter<'a> {
             ) {
                 self.paint_box(child, display_list, effective_style);
             }
+        }
+
+        if needs_clip {
+            display_list.push(DisplayCommand::PopClip);
         }
     }
 

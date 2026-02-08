@@ -300,6 +300,16 @@ pub struct ComputedStyle {
     // These fields track which declaration (by source_order) set each physical margin,
     // allowing proper cascade resolution when both logical and physical properties
     // target the same computed value.
+    /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    ///
+    /// "This property specifies whether content of a block container element
+    /// is clipped when it overflows the element's box."
+    ///
+    /// Values: visible | hidden | scroll | auto
+    /// Initial: visible
+    /// Inherited: no
+    pub overflow: Option<String>,
+
     /// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
     ///
     /// "The box-sizing property defines whether the width and height (and
@@ -770,6 +780,17 @@ impl ComputedStyle {
                             | "none"
                     ) {
                         self.list_style_type = Some(lower);
+                    }
+                }
+            }
+            // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+            //
+            // "Values: visible | hidden | scroll | auto"
+            "overflow" | "overflow-x" | "overflow-y" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(lower.as_str(), "visible" | "hidden" | "scroll" | "auto") {
+                        self.overflow = Some(lower);
                     }
                 }
             }

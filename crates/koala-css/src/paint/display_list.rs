@@ -73,6 +73,26 @@ pub enum DisplayCommand {
         /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
         font_style: FontStyle,
     },
+
+    /// Push a clip rectangle onto the clip stack.
+    ///
+    /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    ///
+    /// All subsequent drawing commands are clipped to the intersection of
+    /// all active clip rectangles. Used for `overflow: hidden`.
+    PushClip {
+        /// X coordinate of the clip rectangle.
+        x: f32,
+        /// Y coordinate of the clip rectangle.
+        y: f32,
+        /// Width of the clip rectangle.
+        width: f32,
+        /// Height of the clip rectangle.
+        height: f32,
+    },
+
+    /// Pop the most recent clip rectangle from the clip stack.
+    PopClip,
 }
 
 /// A list of drawing commands in painting order.

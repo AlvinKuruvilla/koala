@@ -2079,3 +2079,169 @@ fn test_ol_start_attribute() {
     assert_eq!(li1.marker_text.as_deref(), Some("5. "));
     assert_eq!(li2.marker_text.as_deref(), Some("6. "));
 }
+
+// ---------------------------------------------------------------------------
+// Overflow clipping tests
+//
+// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+//
+// "This property specifies whether content of a block container element
+// is clipped when it overflows the element's box."
+// ---------------------------------------------------------------------------
+
+/// Helper: parse HTML, build layout + styles, paint, and return the display list.
+fn paint_html(html: &str) -> koala_css::DisplayList {
+    use koala_css::cascade::compute_styles;
+    use koala_css::{CSSParser, CSSTokenizer, Painter, Stylesheet};
+    use std::collections::HashMap;
+
+    let mut tokenizer = koala_html::HTMLTokenizer::new(html.to_string());
+    tokenizer.run();
+    let parser = koala_html::HTMLParser::new(tokenizer.into_tokens());
+    let (dom, _) = parser.run_with_issues();
+
+    let css_text = koala_css::extract_style_content(&dom);
+    let author = if css_text.is_empty() {
+        Stylesheet { rules: vec![] }
+    } else {
+        let mut css_tok = CSSTokenizer::new(css_text);
+        css_tok.run();
+        let mut css_parser = CSSParser::new(css_tok.into_tokens());
+        css_parser.parse_stylesheet()
+    };
+
+    let ua = koala_css::ua_stylesheet::ua_stylesheet();
+    let styles = compute_styles(&dom, ua, &author);
+
+    let image_dims = HashMap::new();
+    let mut layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims)
+        .expect("should produce a layout tree");
+
+    let viewport = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 800.0,
+        height: 600.0,
+    };
+    layout_tree.layout(viewport, viewport, &ApproximateFontMetrics, viewport);
+
+    let painter = Painter::new(&styles);
+    painter.paint(&layout_tree)
+}
+
+#[test]
+fn test_overflow_hidden_emits_push_pop_clip() {
+    // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    //
+    // An element with `overflow: hidden` should emit PushClip before its
+    // content and PopClip after, with the clip rect matching its padding box.
+    use koala_css::DisplayCommand;
+
+    let display_list = paint_html(
+        "<style>div { overflow: hidden; width: 100px; height: 50px; }</style>\
+         <div>Hello world</div>",
+    );
+
+    let commands = display_list.commands();
+    let push_clips: Vec<_> = commands
+        .iter()
+        .filter(|c| matches!(c, DisplayCommand::PushClip { .. }))
+        .collect();
+    let pop_clips: Vec<_> = commands
+        .iter()
+        .filter(|c| matches!(c, DisplayCommand::PopClip))
+        .collect();
+
+    assert!(
+        !push_clips.is_empty(),
+        "overflow: hidden should produce at least one PushClip"
+    );
+    assert_eq!(
+        push_clips.len(),
+        pop_clips.len(),
+        "PushClip and PopClip should be balanced"
+    );
+
+    // Verify the PushClip dimensions match the div's width/height
+    if let DisplayCommand::PushClip { width, height, .. } = push_clips[0] {
+        assert!(
+            (*width - 100.0).abs() < 1.0,
+            "clip width should be ~100px, got {width}"
+        );
+        assert!(
+            (*height - 50.0).abs() < 1.0,
+            "clip height should be ~50px, got {height}"
+        );
+    }
+}
+
+#[test]
+fn test_default_overflow_visible_no_clip() {
+    // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    //
+    // "Initial: visible"
+    //
+    // Without overflow: hidden, no PushClip/PopClip should appear.
+    use koala_css::DisplayCommand;
+
+    let display_list = paint_html(
+        "<style>div { width: 100px; height: 50px; }</style>\
+         <div>Hello world</div>",
+    );
+
+    let commands = display_list.commands();
+    let has_clip = commands
+        .iter()
+        .any(|c| matches!(c, DisplayCommand::PushClip { .. } | DisplayCommand::PopClip));
+
+    assert!(
+        !has_clip,
+        "default overflow (visible) should not produce any clip commands"
+    );
+}
+
+#[test]
+fn test_nested_overflow_hidden() {
+    // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    //
+    // Two nested containers both with overflow: hidden should produce
+    // two PushClip/PopClip pairs in correct nesting order.
+    use koala_css::DisplayCommand;
+
+    let display_list = paint_html(
+        "<style>.clip { overflow: hidden; width: 200px; height: 100px; }</style>\
+         <div class=\"clip\"><div class=\"clip\">inner</div></div>",
+    );
+
+    let commands = display_list.commands();
+    let push_count = commands
+        .iter()
+        .filter(|c| matches!(c, DisplayCommand::PushClip { .. }))
+        .count();
+    let pop_count = commands
+        .iter()
+        .filter(|c| matches!(c, DisplayCommand::PopClip))
+        .count();
+
+    assert_eq!(push_count, 2, "nested overflow: hidden should produce 2 PushClip");
+    assert_eq!(pop_count, 2, "nested overflow: hidden should produce 2 PopClip");
+
+    // Verify nesting order: PushClip, PushClip, ..., PopClip, PopClip
+    let mut depth = 0i32;
+    let mut max_depth = 0i32;
+    for cmd in commands {
+        match cmd {
+            DisplayCommand::PushClip { .. } => {
+                depth += 1;
+                max_depth = max_depth.max(depth);
+            }
+            DisplayCommand::PopClip => {
+                depth -= 1;
+                assert!(depth >= 0, "PopClip without matching PushClip");
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(depth, 0, "clip stack should be balanced at end");
+    assert_eq!(max_depth, 2, "max clip depth should be 2 for nested overflow");
+}

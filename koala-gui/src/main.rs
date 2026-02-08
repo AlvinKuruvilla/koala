@@ -1114,6 +1114,30 @@ impl BrowserApp {
             let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
         }
 
+        // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+        // "When overflow is not 'visible', content is clipped to the padding edge."
+        let old_clip = if style.is_some_and(|s| {
+            s.overflow
+                .as_deref()
+                .is_some_and(|o| o != "visible")
+        }) {
+            let padding_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    origin.x + dims.content.x - dims.padding.left,
+                    origin.y + dims.content.y - dims.padding.top,
+                ),
+                egui::vec2(
+                    dims.content.width + dims.padding.left + dims.padding.right,
+                    dims.content.height + dims.padding.top + dims.padding.bottom,
+                ),
+            );
+            let prev = ui.clip_rect();
+            ui.set_clip_rect(prev.intersect(padding_rect));
+            Some(prev)
+        } else {
+            None
+        };
+
         // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the replaced content of replaced inline-level elements"
         //
@@ -1236,6 +1260,11 @@ impl BrowserApp {
         // Recursively render children from the layout tree
         for child in &layout_box.children {
             self.render_layout_box_absolute(ui, page, child, origin);
+        }
+
+        // Restore previous clip rect if we pushed one for overflow: hidden
+        if let Some(prev) = old_clip {
+            ui.set_clip_rect(prev);
         }
 
         // Note: We don't need to call allocate_space() because we're using

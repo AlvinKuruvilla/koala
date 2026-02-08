@@ -104,6 +104,12 @@ pub struct Renderer {
     font_bold_italic: Option<Font>,
     /// Loaded images keyed by src attribute. Used for `DrawImage` commands.
     images: HashMap<String, LoadedImage>,
+    /// Stack of active clip rectangles for overflow: hidden.
+    ///
+    /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    ///
+    /// Each entry is (x, y, width, height) in pixel coordinates.
+    clip_stack: Vec<(f32, f32, f32, f32)>,
 }
 
 impl Renderer {
@@ -137,6 +143,7 @@ impl Renderer {
             font_italic,
             font_bold_italic,
             images,
+            clip_stack: Vec::new(),
         }
     }
 
@@ -201,7 +208,29 @@ impl Renderer {
             } => {
                 self.draw_text(text, *x, *y, *font_size, color, *font_weight, *font_style);
             }
+            DisplayCommand::PushClip {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                self.clip_stack.push((*x, *y, *width, *height));
+            }
+            DisplayCommand::PopClip => {
+                let _ = self.clip_stack.pop();
+            }
         }
+    }
+
+    /// Check if a pixel is within all active clip rectangles.
+    ///
+    /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    fn is_visible(&self, px: i32, py: i32) -> bool {
+        let fx = px as f32;
+        let fy = py as f32;
+        self.clip_stack
+            .iter()
+            .all(|&(cx, cy, cw, ch)| fx >= cx && fx < cx + cw && fy >= cy && fy < cy + ch)
     }
 
     /// Fill a rectangle with the given color.
@@ -221,7 +250,12 @@ impl Renderer {
             for dx in 0..width {
                 let px = x + dx as i32;
                 let py = y + dy as i32;
-                if px >= 0 && py >= 0 && (px as u32) < self.width && (py as u32) < self.height {
+                if px >= 0
+                    && py >= 0
+                    && (px as u32) < self.width
+                    && (py as u32) < self.height
+                    && self.is_visible(px, py)
+                {
                     self.buffer.put_pixel(px as u32, py as u32, rgba);
                 }
             }
@@ -258,7 +292,12 @@ impl Renderer {
                 let px = dest_x + dx as i32;
                 let py = dest_y + dy as i32;
 
-                if px < 0 || py < 0 || (px as u32) >= self.width || (py as u32) >= self.height {
+                if px < 0
+                    || py < 0
+                    || (px as u32) >= self.width
+                    || (py as u32) >= self.height
+                    || !self.is_visible(px, py)
+                {
                     continue;
                 }
 
@@ -360,6 +399,7 @@ impl Renderer {
                             && py >= 0
                             && (px as u32) < self.width
                             && (py as u32) < self.height
+                            && self.is_visible(px, py)
                         {
                             // Alpha blend the glyph onto the background
                             let bg = self.buffer.get_pixel(px as u32, py as u32);

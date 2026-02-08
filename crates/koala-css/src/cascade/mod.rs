@@ -350,6 +350,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         bottom: None,
         left: None,
 
+        // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+        // "Inherited: no"
+        overflow: None,
+
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
         // "Inherited: no"
         box_sizing_border_box: None,
