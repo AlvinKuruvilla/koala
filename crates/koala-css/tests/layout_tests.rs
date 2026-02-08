@@ -2259,3 +2259,90 @@ fn test_nested_overflow_hidden() {
         "max clip depth should be 2 for nested overflow"
     );
 }
+
+/// [§ 8.3 'align-items: center'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+///
+/// A flex container with height 200px and align-items: center. A child
+/// with height 50px should be vertically centered at y_offset = 75px
+/// from the container's content top.
+#[test]
+fn test_flex_align_items_center() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; height: 200px; align-items: center; }\
+         .item { width: 100px; height: 50px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex_container = &body.children[0];
+    let item = &flex_container.children[0];
+
+    // Container content starts at container's content.y
+    let container_y = flex_container.dimensions.content.y;
+    let item_y = item.dimensions.content.y;
+
+    // Item should be centered: offset = (200 - 50) / 2 = 75
+    let expected_offset = 75.0;
+    assert!(
+        (item_y - container_y - expected_offset).abs() < 1.0,
+        "align-items: center should center child. Expected offset ~{expected_offset}, got {:.1}",
+        item_y - container_y
+    );
+}
+
+/// [§ 8.3 'align-items: flex-end'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+///
+/// A flex container with height 200px and align-items: flex-end. A child
+/// with height 50px should be aligned to the bottom of the container.
+#[test]
+fn test_flex_align_items_flex_end() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; height: 200px; align-items: flex-end; }\
+         .item { width: 100px; height: 50px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex_container = &body.children[0];
+    let item = &flex_container.children[0];
+
+    let container_y = flex_container.dimensions.content.y;
+    let item_y = item.dimensions.content.y;
+
+    // Item should be at bottom: offset = 200 - 50 = 150
+    let expected_offset = 150.0;
+    assert!(
+        (item_y - container_y - expected_offset).abs() < 1.0,
+        "align-items: flex-end should align child to bottom. Expected offset ~{expected_offset}, got {:.1}",
+        item_y - container_y
+    );
+}
+
+/// [§ 8.3 'align-items: stretch'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+///
+/// Default align-items (stretch). A child with no explicit height in a
+/// container with height 200px should be stretched to fill 200px.
+#[test]
+fn test_flex_align_items_stretch() {
+    let root = layout_html(
+        "<html><head><style>\
+         .flex { display: flex; width: 400px; height: 200px; }\
+         .item { width: 100px; }\
+         </style></head>\
+         <body><div class='flex'><div class='item'>A</div></div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex_container = &body.children[0];
+    let item = &flex_container.children[0];
+
+    assert!(
+        (item.dimensions.content.height - 200.0).abs() < 1.0,
+        "align-items: stretch (default) should stretch child to container height. Got {:.1}",
+        item.dimensions.content.height
+    );
+}

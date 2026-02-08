@@ -329,6 +329,8 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: no"
         flex_direction: None,
         justify_content: None,
+        align_items: None,
+        align_self: None,
         flex_grow: None,
         flex_shrink: None,
         flex_basis: None,

@@ -9,7 +9,7 @@ use std::cell::Cell;
 
 use koala_dom::{DomTree, NodeId, NodeType};
 
-use crate::style::computed::{FlexDirection, JustifyContent, ListStyleType};
+use crate::style::computed::{AlignItems, AlignSelf, FlexDirection, JustifyContent, ListStyleType};
 use crate::style::{
     AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
     OuterDisplayType,
@@ -493,6 +493,20 @@ pub struct LayoutBox {
     /// Initial: flex-start
     pub justify_content: JustifyContent,
 
+    /// [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+    ///
+    /// "The align-items property sets the default alignment for all of the
+    /// flex container's items."
+    /// Initial: stretch
+    pub align_items: AlignItems,
+
+    /// [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+    ///
+    /// "align-self allows this default alignment to be overridden for
+    /// individual flex items."
+    /// Initial: auto
+    pub align_self: AlignSelf,
+
     /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
     ///
     /// "The flex-grow property sets the flex grow factor."
@@ -927,6 +941,8 @@ impl LayoutBox {
                     intrinsic_height: None,
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Stretch,
+                    align_self: AlignSelf::Auto,
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
@@ -1025,6 +1041,10 @@ impl LayoutBox {
                 let flex_direction = style.and_then(|s| s.flex_direction).unwrap_or_default();
                 // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
                 let justify_content = style.and_then(|s| s.justify_content).unwrap_or_default();
+                // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+                let align_items = style.and_then(|s| s.align_items).unwrap_or_default();
+                // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+                let align_self = style.and_then(|s| s.align_self).unwrap_or_default();
                 // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
                 let flex_grow = style.and_then(|s| s.flex_grow).unwrap_or(0.0);
                 // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
@@ -1196,6 +1216,8 @@ impl LayoutBox {
                     intrinsic_height,
                     flex_direction,
                     justify_content,
+                    align_items,
+                    align_self,
                     flex_grow,
                     flex_shrink,
                     flex_basis,
@@ -1260,6 +1282,8 @@ impl LayoutBox {
                     intrinsic_height: None,
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Stretch,
+                    align_self: AlignSelf::Auto,
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
@@ -2685,6 +2709,8 @@ impl LayoutBox {
             intrinsic_height: None,
             flex_direction: FlexDirection::Row,
             justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Stretch,
+            align_self: AlignSelf::Auto,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: None,

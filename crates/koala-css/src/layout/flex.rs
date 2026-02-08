@@ -7,13 +7,14 @@
 //! - `flex-grow` / `flex-shrink` distribution (§ 9.7)
 //! - `flex-basis` (definite length or auto)
 //! - `justify-content` (5 keywords)
+//! - `align-items` / `align-self` cross-axis alignment (§ 8.3)
 //! - No margin collapsing between flex items
 //!
-//! Not yet implemented: column direction, flex-wrap, align-items/self/content,
-//! order, inline-flex, stretch re-layout, flex shorthand.
+//! Not yet implemented: column direction, flex-wrap, align-content,
+//! order, inline-flex, flex shorthand.
 
 use crate::style::AutoLength;
-use crate::style::computed::JustifyContent;
+use crate::style::computed::{AlignItems, AlignSelf, JustifyContent};
 
 use super::box_model::Rect;
 use super::inline::FontMetrics;
@@ -312,7 +313,81 @@ pub fn layout_flex(
         container.dimensions.content.height = max_height;
     }
 
-    // STEP 8: Layout absolutely positioned children.
+    // STEP 8 (spec § 9.6): Cross-axis alignment.
+    //
+    // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+    //
+    // "The align-items property sets the default alignment for all of the
+    // flex container's items, including anonymous flex items."
+    //
+    // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+    //
+    // "align-self allows this default alignment to be overridden for
+    // individual flex items."
+    let line_cross_size = container.dimensions.content.height;
+    let container_align_items = container.align_items;
+
+    for item in &items {
+        let child = &mut container.children[item.index];
+
+        // [§ 8.3](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+        //
+        // "If a flex item's align-self is auto, it computes to the value
+        // of align-items on its parent."
+        let alignment = match child.align_self {
+            AlignSelf::Auto => container_align_items,
+            AlignSelf::FlexStart => AlignItems::FlexStart,
+            AlignSelf::FlexEnd => AlignItems::FlexEnd,
+            AlignSelf::Center => AlignItems::Center,
+            AlignSelf::Baseline => AlignItems::Baseline,
+            AlignSelf::Stretch => AlignItems::Stretch,
+        };
+
+        let child_margin_box_height = child.dimensions.margin_box().height;
+
+        match alignment {
+            // "The cross-start margin edge of the flex item is placed flush
+            // with the cross-start edge of the line."
+            // This is the default position from layout — no adjustment needed.
+            AlignItems::FlexStart | AlignItems::Baseline => {}
+
+            // "The cross-end margin edge of the flex item is placed flush
+            // with the cross-end edge of the line."
+            AlignItems::FlexEnd => {
+                let offset = line_cross_size - child_margin_box_height;
+                child.dimensions.content.y += offset;
+            }
+
+            // "The flex item's margin box is centered in the cross axis
+            // within the line."
+            AlignItems::Center => {
+                let offset = (line_cross_size - child_margin_box_height) / 2.0;
+                child.dimensions.content.y += offset;
+            }
+
+            // "If the cross size property of the flex item computes to auto,
+            // and neither of the cross-axis margins are auto, the flex item
+            // is stretched."
+            AlignItems::Stretch => {
+                if child.height.is_none() {
+                    // Compute the stretched cross size: line cross size minus
+                    // the child's cross-axis margins, borders, and padding.
+                    let stretched_height = line_cross_size
+                        - child.dimensions.margin.top
+                        - child.dimensions.margin.bottom
+                        - child.dimensions.border.top
+                        - child.dimensions.border.bottom
+                        - child.dimensions.padding.top
+                        - child.dimensions.padding.bottom;
+                    if stretched_height > child.dimensions.content.height {
+                        child.dimensions.content.height = stretched_height;
+                    }
+                }
+            }
+        }
+    }
+
+    // STEP 9: Layout absolutely positioned children.
     // [§ 4.1 Absolutely-Positioned Flex Children](https://www.w3.org/TR/css-flexbox-1/#abspos-items)
     //
     // "An absolutely-positioned child of a flex container does not

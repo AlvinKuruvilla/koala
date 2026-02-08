@@ -79,6 +79,64 @@ pub enum JustifyContent {
     SpaceAround,
 }
 
+/// [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+///
+/// "The align-items property sets the default alignment for all of the
+/// flex container's items, including anonymous flex items."
+///
+/// Values: flex-start | flex-end | center | baseline | stretch
+/// Initial: stretch
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum AlignItems {
+    /// "The cross-start margin edge of the flex item is placed flush with
+    /// the cross-start edge of the line."
+    FlexStart,
+    /// "The cross-end margin edge of the flex item is placed flush with
+    /// the cross-end edge of the line."
+    FlexEnd,
+    /// "The flex item's margin box is centered in the cross axis within
+    /// the line."
+    Center,
+    /// "The flex item participates in baseline alignment."
+    Baseline,
+    /// "If the cross size property of the flex item computes to auto, and
+    /// neither of the cross-axis margins are auto, the flex item is
+    /// stretched."
+    #[default]
+    Stretch,
+}
+
+/// [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+///
+/// "Flex items can be aligned in the cross axis of the current line of
+/// the flex container, similar to justify-content but in the perpendicular
+/// direction. align-self sets the alignment for individual flex items."
+///
+/// Values: auto | flex-start | flex-end | center | baseline | stretch
+/// Initial: auto (inherits align-items from container)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum AlignSelf {
+    /// "Defers cross-axis alignment control to the value of align-items
+    /// on the parent box."
+    #[default]
+    Auto,
+    /// "The cross-start margin edge of the flex item is placed flush with
+    /// the cross-start edge of the line."
+    FlexStart,
+    /// "The cross-end margin edge of the flex item is placed flush with
+    /// the cross-end edge of the line."
+    FlexEnd,
+    /// "The flex item's margin box is centered in the cross axis within
+    /// the line."
+    Center,
+    /// "The flex item participates in baseline alignment."
+    Baseline,
+    /// "If the cross size property of the flex item computes to auto, and
+    /// neither of the cross-axis margins are auto, the flex item is
+    /// stretched."
+    Stretch,
+}
+
 /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
 ///
 /// "The list-style-type property specifies a counter style or string for
@@ -288,6 +346,24 @@ pub struct ComputedStyle {
     /// Values: flex-start | flex-end | center | space-between | space-around
     /// Initial: flex-start
     pub justify_content: Option<JustifyContent>,
+
+    /// [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+    ///
+    /// "The align-items property sets the default alignment for all of the
+    /// flex container's items."
+    ///
+    /// Values: flex-start | flex-end | center | baseline | stretch
+    /// Initial: stretch
+    pub align_items: Option<AlignItems>,
+
+    /// [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+    ///
+    /// "align-self allows this default alignment to be overridden for
+    /// individual flex items."
+    ///
+    /// Values: auto | flex-start | flex-end | center | baseline | stretch
+    /// Initial: auto
+    pub align_self: Option<AlignSelf>,
 
     /// [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
     ///
@@ -868,6 +944,37 @@ impl ComputedStyle {
                             self.justify_content = Some(JustifyContent::SpaceBetween)
                         }
                         "space-around" => self.justify_content = Some(JustifyContent::SpaceAround),
+                        _ => {}
+                    }
+                }
+            }
+            // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+            //
+            // "Values: flex-start | flex-end | center | baseline | stretch"
+            "align-items" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    match ident.to_ascii_lowercase().as_str() {
+                        "flex-start" | "start" => self.align_items = Some(AlignItems::FlexStart),
+                        "flex-end" | "end" => self.align_items = Some(AlignItems::FlexEnd),
+                        "center" => self.align_items = Some(AlignItems::Center),
+                        "baseline" => self.align_items = Some(AlignItems::Baseline),
+                        "stretch" => self.align_items = Some(AlignItems::Stretch),
+                        _ => {}
+                    }
+                }
+            }
+            // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+            //
+            // "Values: auto | flex-start | flex-end | center | baseline | stretch"
+            "align-self" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    match ident.to_ascii_lowercase().as_str() {
+                        "auto" => self.align_self = Some(AlignSelf::Auto),
+                        "flex-start" | "start" => self.align_self = Some(AlignSelf::FlexStart),
+                        "flex-end" | "end" => self.align_self = Some(AlignSelf::FlexEnd),
+                        "center" => self.align_self = Some(AlignSelf::Center),
+                        "baseline" => self.align_self = Some(AlignSelf::Baseline),
+                        "stretch" => self.align_self = Some(AlignSelf::Stretch),
                         _ => {}
                     }
                 }
