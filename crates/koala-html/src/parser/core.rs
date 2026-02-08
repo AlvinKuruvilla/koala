@@ -3188,16 +3188,9 @@ impl HTMLParser {
             // - Text-level semantics (ins, del, abbr, dfn, time, data, code, var, samp, kbd,
             //   mark, ruby, rt, rp, bdi, bdo, q, cite, sub, sup, small, etc.)
             // - Any other valid HTML element without special parsing rules
-            Token::StartTag { name, .. } => {
+            Token::StartTag { .. } => {
                 self.reconstruct_active_formatting_elements();
                 let _ = self.insert_html_element(token);
-                // Log unknown standard elements so we can add explicit handlers if needed
-                if !name.contains('-') {
-                    warn_once(
-                        "HTML Parser",
-                        &format!("using generic handler for <{name}>"),
-                    );
-                }
             }
 
             // [§ 13.2.6.4.7 "in body" - Any other end tag](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
