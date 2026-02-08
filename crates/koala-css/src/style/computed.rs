@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::layout::float::{ClearSide, FloatSide};
-use crate::layout::inline::{FontStyle, TextAlign};
+use crate::layout::inline::{FontStyle, TextAlign, TextDecorationLine};
 use crate::layout::positioned::PositionType;
 use crate::parser::{ComponentValue, Declaration};
 use crate::style::substitute::{contains_var, substitute_var};
@@ -362,6 +362,14 @@ pub struct ComputedStyle {
     /// Values: normal | italic | oblique
     /// Inherited: yes
     pub font_style: Option<FontStyle>,
+
+    /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+    ///
+    /// "Specifies what line decorations, if any, are added to the element."
+    /// Values: none | [ underline || overline || line-through ]
+    /// Inherited: no (but decorations propagate visually to inline descendants)
+    pub text_decoration_line: Option<TextDecorationLine>,
+
     /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
 
@@ -849,6 +857,34 @@ impl ComputedStyle {
                         "oblique" => self.font_style = Some(FontStyle::Oblique),
                         _ => {}
                     }
+                }
+            }
+            // [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+            //
+            // "Specifies what line decorations, if any, are added to the element."
+            // Values: none | [ underline || overline || line-through ]
+            //
+            // 'text-decoration' is a shorthand that, in its simplest form,
+            // sets text-decoration-line (style and color are later additions).
+            "text-decoration" | "text-decoration-line" => {
+                let mut result = TextDecorationLine::default();
+                let mut found_none = false;
+                for val in values {
+                    if let ComponentValue::Token(CSSToken::Ident(ident)) = val {
+                        match ident.to_ascii_lowercase().as_str() {
+                            "none" => found_none = true,
+                            "underline" => result.underline = true,
+                            "overline" => result.overline = true,
+                            "line-through" => result.line_through = true,
+                            // Ignore text-decoration-style / color tokens for now
+                            _ => {}
+                        }
+                    }
+                }
+                if found_none {
+                    self.text_decoration_line = Some(TextDecorationLine::default());
+                } else {
+                    self.text_decoration_line = Some(result);
                 }
             }
             // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)

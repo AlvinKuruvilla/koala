@@ -2,7 +2,8 @@
 
 use koala_css::layout::default_display_for_element;
 use koala_css::{
-    ApproximateFontMetrics, DisplayValue, InnerDisplayType, LayoutBox, OuterDisplayType, Rect,
+    ApproximateFontMetrics, DisplayValue, FragmentContent, InnerDisplayType, LayoutBox,
+    OuterDisplayType, Rect, TextRun,
 };
 
 #[test]
@@ -3452,5 +3453,249 @@ fn test_var_fallback_in_padding() {
         (p.top - 10.0).abs() < 0.1,
         "padding-top should be 10px from fallback, got {}",
         p.top
+    );
+}
+
+// ---------------------------------------------------------------------------
+// text-decoration tests
+//
+// [CSS Text Decoration Level 3 § 3](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+//
+// "`text-decoration-line`: `none | [ underline || overline || line-through ]`"
+// ---------------------------------------------------------------------------
+
+/// Helper: collect all `TextRun`s from a `LayoutBox` tree (depth-first).
+fn collect_text_runs(layout_box: &LayoutBox) -> Vec<&TextRun> {
+    let mut runs = Vec::new();
+    for line in &layout_box.line_boxes {
+        for fragment in &line.fragments {
+            if let FragmentContent::Text(ref text_run) = fragment.content {
+                runs.push(text_run);
+            }
+        }
+    }
+    for child in &layout_box.children {
+        runs.extend(collect_text_runs(child));
+    }
+    runs
+}
+
+/// [§ 15.3.8 Text-level semantics](https://html.spec.whatwg.org/multipage/rendering.html#text-level-semantics)
+///
+/// `<a>` elements should have `text-decoration: underline` via the UA stylesheet.
+#[test]
+fn test_text_decoration_ua_link_underline() {
+    let root = layout_html("<a href='#'>Link text</a>");
+    // Document > html > body — the <a> is inline inside body's anonymous inline content
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty(), "should have at least one text run");
+
+    let link_run = &runs[0];
+    assert!(
+        link_run.text_decoration.underline,
+        "UA stylesheet should give <a> underline decoration, got {:?}",
+        link_run.text_decoration
+    );
+    assert!(
+        !link_run.text_decoration.line_through,
+        "link should not have line-through"
+    );
+    assert!(
+        !link_run.text_decoration.overline,
+        "link should not have overline"
+    );
+}
+
+/// `text-decoration: underline` on an element should propagate to its text runs.
+#[test]
+fn test_text_decoration_underline() {
+    let root = layout_html(
+        "<style>span { text-decoration: underline; }</style>\
+         <p><span>Underlined</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty(), "should have text runs");
+
+    let run = &runs[0];
+    assert!(
+        run.text_decoration.underline,
+        "text-decoration: underline should set underline=true, got {:?}",
+        run.text_decoration
+    );
+}
+
+/// `text-decoration: line-through` should set the line_through flag.
+#[test]
+fn test_text_decoration_line_through() {
+    let root = layout_html(
+        "<style>.del { text-decoration: line-through; }</style>\
+         <p><span class='del'>Deleted</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty());
+
+    let run = &runs[0];
+    assert!(
+        run.text_decoration.line_through,
+        "text-decoration: line-through should set line_through=true, got {:?}",
+        run.text_decoration
+    );
+    assert!(
+        !run.text_decoration.underline,
+        "line-through should not set underline"
+    );
+}
+
+/// `text-decoration: overline` should set the overline flag.
+#[test]
+fn test_text_decoration_overline() {
+    let root = layout_html(
+        "<style>.over { text-decoration: overline; }</style>\
+         <p><span class='over'>Overlined</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty());
+
+    let run = &runs[0];
+    assert!(
+        run.text_decoration.overline,
+        "text-decoration: overline should set overline=true, got {:?}",
+        run.text_decoration
+    );
+    assert!(
+        !run.text_decoration.underline,
+        "overline should not set underline"
+    );
+    assert!(
+        !run.text_decoration.line_through,
+        "overline should not set line_through"
+    );
+}
+
+/// `text-decoration: none` should clear all decoration flags.
+#[test]
+fn test_text_decoration_none() {
+    let root = layout_html(
+        "<style>a { text-decoration: none; }</style>\
+         <a href='#'>No underline</a>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty());
+
+    let run = &runs[0];
+    assert!(
+        !run.text_decoration.underline,
+        "text-decoration: none should override UA underline, got {:?}",
+        run.text_decoration
+    );
+    assert!(!run.text_decoration.overline);
+    assert!(!run.text_decoration.line_through);
+}
+
+/// Combined values: `text-decoration: underline line-through`.
+///
+/// [§ 3.1](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+/// "Specifies what line decorations, if any, are added to the element."
+/// Values can be combined.
+#[test]
+fn test_text_decoration_combined() {
+    let root = layout_html(
+        "<style>.combo { text-decoration: underline line-through; }</style>\
+         <p><span class='combo'>Both</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty());
+
+    let run = &runs[0];
+    assert!(
+        run.text_decoration.underline,
+        "combined should have underline, got {:?}",
+        run.text_decoration
+    );
+    assert!(
+        run.text_decoration.line_through,
+        "combined should have line_through, got {:?}",
+        run.text_decoration
+    );
+    assert!(
+        !run.text_decoration.overline,
+        "combined should not have overline"
+    );
+}
+
+/// `text-decoration-line` longhand property should also work.
+#[test]
+fn test_text_decoration_line_longhand() {
+    let root = layout_html(
+        "<style>.x { text-decoration-line: overline underline; }</style>\
+         <p><span class='x'>Both lines</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty());
+
+    let run = &runs[0];
+    assert!(run.text_decoration.underline, "longhand should set underline");
+    assert!(run.text_decoration.overline, "longhand should set overline");
+    assert!(!run.text_decoration.line_through, "longhand should not set line_through");
+}
+
+/// `text-decoration` is NOT inherited — a child element without its own
+/// declaration should not inherit the parent's text-decoration.
+///
+/// [CSS Text Decoration Level 3 § 3.1](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+/// "Applies to: all elements" / "Inherited: no"
+#[test]
+fn test_text_decoration_not_inherited() {
+    let root = layout_html(
+        "<style>\
+           .parent { text-decoration: underline; }\
+         </style>\
+         <div class='parent'><div class='child'>Child text</div></div>",
+    );
+    let parent = &box_at_depth(&root, 2).children[0];
+    let child = &parent.children[0];
+
+    assert!(
+        parent.text_decoration.underline,
+        "parent should have underline, got {:?}",
+        parent.text_decoration
+    );
+    assert!(
+        !child.text_decoration.underline,
+        "child should NOT inherit text-decoration, got {:?}",
+        child.text_decoration
+    );
+}
+
+/// The LayoutBox.text_decoration field on the element directly should reflect
+/// the computed style.
+#[test]
+fn test_text_decoration_on_layout_box() {
+    let root = layout_html(
+        "<style>div { text-decoration: overline line-through; }</style>\
+         <div>Decorated</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+
+    assert!(
+        div.text_decoration.overline,
+        "LayoutBox should have overline, got {:?}",
+        div.text_decoration
+    );
+    assert!(
+        div.text_decoration.line_through,
+        "LayoutBox should have line_through, got {:?}",
+        div.text_decoration
+    );
+    assert!(
+        !div.text_decoration.underline,
+        "LayoutBox should not have underline"
     );
 }

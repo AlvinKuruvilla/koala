@@ -6,7 +6,7 @@
 //! drawing commands needed to render a page, in the correct z-order.
 
 use crate::ColorValue;
-use crate::layout::inline::FontStyle;
+use crate::layout::inline::{FontStyle, TextDecorationLine};
 
 /// A single drawing command.
 ///
@@ -101,6 +101,8 @@ pub enum DisplayCommand {
         font_weight: u16,
         /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
         font_style: FontStyle,
+        /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+        text_decoration: TextDecorationLine,
     },
 
     /// Push a clip rectangle onto the clip stack.

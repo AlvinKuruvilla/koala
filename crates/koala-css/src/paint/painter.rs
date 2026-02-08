@@ -234,6 +234,7 @@ impl<'a> Painter<'a> {
                                 color: text_run.color.clone(),
                                 font_weight: text_run.font_weight,
                                 font_style: text_run.font_style,
+                                text_decoration: text_run.text_decoration,
                             });
                         }
                     }

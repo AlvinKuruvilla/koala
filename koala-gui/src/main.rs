@@ -1255,6 +1255,39 @@ impl BrowserApp {
                             fragment.bounds.width.max(content_rect.width()),
                         );
                         ui.painter().galley(text_pos, galley, frag_color);
+
+                        // [§ 3 Text Decoration Lines](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+                        //
+                        // Draw text decoration lines after the text.
+                        let td = text_run.text_decoration;
+                        if td.underline || td.overline || td.line_through {
+                            let stroke =
+                                egui::Stroke::new(1.0, frag_color);
+                            let left_x = text_pos.x;
+                            let right_x = text_pos.x + fragment.bounds.width;
+
+                            if td.underline {
+                                let ly = text_pos.y + text_run.font_size * 0.9;
+                                let _ = ui.painter().line_segment(
+                                    [egui::pos2(left_x, ly), egui::pos2(right_x, ly)],
+                                    stroke,
+                                );
+                            }
+                            if td.line_through {
+                                let ly = text_pos.y + text_run.font_size * 0.55;
+                                let _ = ui.painter().line_segment(
+                                    [egui::pos2(left_x, ly), egui::pos2(right_x, ly)],
+                                    stroke,
+                                );
+                            }
+                            if td.overline {
+                                let ly = text_pos.y + text_run.font_size * 0.1;
+                                let _ = ui.painter().line_segment(
+                                    [egui::pos2(left_x, ly), egui::pos2(right_x, ly)],
+                                    stroke,
+                                );
+                            }
+                        }
                     }
                 }
             }

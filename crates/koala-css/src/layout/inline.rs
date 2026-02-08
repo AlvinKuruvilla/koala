@@ -177,6 +177,8 @@ pub struct TextRun {
     pub font_weight: u16,
     /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
     pub font_style: FontStyle,
+    /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+    pub text_decoration: TextDecorationLine,
 }
 
 /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
@@ -298,6 +300,25 @@ pub enum FontStyle {
     Oblique,
 }
 
+/// [§ 3 Text Decoration Lines](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+///
+/// "Specifies what line decorations, if any, are added to the element."
+///
+/// "Values: none | [ underline || overline || line-through ]"
+///
+/// Multiple values can be combined (e.g., `underline line-through`).
+/// `Default` gives all `false` = `none`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct TextDecorationLine {
+    /// "Each line of text has an underline."
+    pub underline: bool,
+    /// "Each line of text has a line over it (i.e., on the opposite side
+    /// from an underline)."
+    pub overline: bool,
+    /// "Each line of text has a line through the middle."
+    pub line_through: bool,
+}
+
 /// Inline formatting context that manages line box construction.
 ///
 /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -387,6 +408,7 @@ impl InlineLayout {
         color: &ColorValue,
         font_weight: u16,
         font_style: FontStyle,
+        text_decoration: TextDecorationLine,
         font_metrics: &dyn FontMetrics,
     ) {
         // STEP 1: Measure the text width.
@@ -452,6 +474,7 @@ impl InlineLayout {
                         color,
                         font_weight,
                         font_style,
+                        text_decoration,
                         font_metrics,
                     );
                 }
@@ -469,6 +492,7 @@ impl InlineLayout {
                         color,
                         font_weight,
                         font_style,
+                        text_decoration,
                         font_metrics,
                     );
                 }
@@ -487,6 +511,7 @@ impl InlineLayout {
                 color,
                 font_weight,
                 font_style,
+                text_decoration,
                 font_metrics,
             );
             return;
@@ -500,6 +525,7 @@ impl InlineLayout {
             color,
             font_weight,
             font_style,
+            text_decoration,
             font_metrics,
         );
     }
@@ -517,6 +543,7 @@ impl InlineLayout {
         color: &ColorValue,
         font_weight: u16,
         font_style: FontStyle,
+        text_decoration: TextDecorationLine,
         font_metrics: &dyn FontMetrics,
     ) {
         let text_width = font_metrics.text_width(text, font_size);
@@ -543,6 +570,7 @@ impl InlineLayout {
                 color: color.clone(),
                 font_weight,
                 font_style,
+                text_decoration,
             }),
             vertical_align: VerticalAlign::Baseline,
         };

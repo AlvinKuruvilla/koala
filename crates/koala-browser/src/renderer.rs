@@ -18,6 +18,7 @@
 use anyhow::Result;
 use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
+use koala_css::layout::inline::TextDecorationLine;
 use koala_css::{ColorValue, DisplayCommand, DisplayList, FontStyle};
 use std::collections::HashMap;
 use std::path::Path;
@@ -230,8 +231,18 @@ impl Renderer {
                 color,
                 font_weight,
                 font_style,
+                text_decoration,
             } => {
-                self.draw_text(text, *x, *y, *font_size, color, *font_weight, *font_style);
+                self.draw_text(
+                    text,
+                    *x,
+                    *y,
+                    *font_size,
+                    color,
+                    *font_weight,
+                    *font_style,
+                    *text_decoration,
+                );
             }
             DisplayCommand::PushClip {
                 x,
@@ -370,6 +381,7 @@ impl Renderer {
         color: &ColorValue,
         font_weight: u16,
         font_style: FontStyle,
+        text_decoration: TextDecorationLine,
     ) {
         // Select the best available font for the given weight and style,
         // falling back through: exact match → partial match → regular.
@@ -437,6 +449,32 @@ impl Renderer {
 
             // Advance cursor
             cursor_x += metrics.advance_width;
+        }
+
+        // [§ 3 Text Decoration Lines](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+        //
+        // Draw text decoration lines after the glyphs.
+        let total_advance = cursor_x - x;
+        if total_advance > 0.0
+            && (text_decoration.underline || text_decoration.overline || text_decoration.line_through)
+        {
+            let line_thickness = (font_size / 16.0).max(1.0);
+
+            if text_decoration.underline {
+                // Underline: just below the baseline.
+                let line_y = y + font_size * 0.9;
+                self.fill_rect(x, line_y, total_advance, line_thickness, color);
+            }
+            if text_decoration.line_through {
+                // Line-through: through the middle of the text.
+                let line_y = y + font_size * 0.55;
+                self.fill_rect(x, line_y, total_advance, line_thickness, color);
+            }
+            if text_decoration.overline {
+                // Overline: at the top of the text.
+                let line_y = y + font_size * 0.1;
+                self.fill_rect(x, line_y, total_advance, line_thickness, color);
+            }
         }
     }
 

@@ -21,7 +21,9 @@ use crate::style::{
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
 use super::float::{ClearSide, FloatContext, FloatSide};
-use super::inline::{FontMetrics, FontStyle, FragmentContent, InlineLayout, LineBox, TextAlign};
+use super::inline::{
+    FontMetrics, FontStyle, FragmentContent, InlineLayout, LineBox, TextAlign, TextDecorationLine,
+};
 use super::positioned::{BoxOffsets, PositionType, PositionedLayout};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
@@ -91,6 +93,7 @@ fn layout_inline_content(
     inherited_color: &ColorValue,
     inherited_font_weight: u16,
     inherited_font_style: FontStyle,
+    inherited_text_decoration: TextDecorationLine,
     viewport: Rect,
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
@@ -136,6 +139,7 @@ fn layout_inline_content(
                     inherited_color,
                     inherited_font_weight,
                     inherited_font_style,
+                    inherited_text_decoration,
                     font_metrics,
                 );
             }
@@ -223,6 +227,7 @@ fn layout_inline_content(
                     &child.color,
                     child.font_weight,
                     child.font_style,
+                    child.text_decoration,
                     viewport,
                     font_metrics,
                     content_rect,
@@ -426,6 +431,12 @@ pub struct LayoutBox {
     ///
     /// Inherited from `ComputedStyle`.
     pub font_style: FontStyle,
+
+    /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+    ///
+    /// "Specifies what line decorations, if any, are added to the element."
+    /// Propagated through inline formatting context to text runs.
+    pub text_decoration: TextDecorationLine,
 
     /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
     ///
@@ -1013,6 +1024,7 @@ impl LayoutBox {
                     text_align: TextAlign::default(),
                     font_weight: 400,
                     font_style: FontStyle::Normal,
+                    text_decoration: TextDecorationLine::default(),
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -1133,6 +1145,11 @@ impl LayoutBox {
                 // "The 'font-style' property allows italic or oblique faces to
                 // be selected."
                 let font_style = style.and_then(|s| s.font_style).unwrap_or_default();
+
+                // [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+                let text_decoration = style
+                    .and_then(|s| s.text_decoration_line)
+                    .unwrap_or_default();
 
                 // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
                 let flex_direction = style.and_then(|s| s.flex_direction).unwrap_or_default();
@@ -1359,6 +1376,7 @@ impl LayoutBox {
                     text_align,
                     font_weight,
                     font_style,
+                    text_decoration,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -1441,6 +1459,7 @@ impl LayoutBox {
                     text_align: TextAlign::default(),
                     font_weight: 400,
                     font_style: FontStyle::Normal,
+                    text_decoration: TextDecorationLine::default(),
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -2941,6 +2960,7 @@ impl LayoutBox {
             text_align: TextAlign::default(),
             font_weight: 400,
             font_style: FontStyle::Normal,
+            text_decoration: TextDecorationLine::default(),
             line_boxes: Vec::new(),
             collapsed_margin_top: None,
             collapsed_margin_bottom: None,
@@ -3126,6 +3146,7 @@ impl LayoutBox {
                 &self.color,
                 self.font_weight,
                 self.font_style,
+                self.text_decoration,
                 font_metrics,
             );
         }
@@ -3139,6 +3160,7 @@ impl LayoutBox {
             &self.color,
             self.font_weight,
             self.font_style,
+            self.text_decoration,
             viewport,
             font_metrics,
             content_rect,

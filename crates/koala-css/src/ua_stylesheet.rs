@@ -150,6 +150,12 @@ em, i, cite, dfn, var {
     font-style: italic;
 }
 
+/* "a:any-link { color: -internal-link; text-decoration: underline; }" */
+a {
+    text-decoration: underline;
+    color: #0000EE;
+}
+
 /* [§ 15.5.12–15.5.15 Form controls](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control) */
 input, textarea, select, button {
     display: inline-block;
