@@ -12,7 +12,7 @@
 //! minmax(), auto-fill/auto-fit, alignment properties.
 
 use crate::style::computed::{GridAutoFlow, GridLine, TrackSize};
-use crate::style::AutoLength;
+use crate::style::{AutoLength, LengthValue};
 
 use super::box_model::Rect;
 use super::inline::FontMetrics;
@@ -143,7 +143,7 @@ pub fn layout_grid(
         let item_width = track_span_size(&column_sizes, item.position.col_start, item.position.col_end, col_gap);
 
         // Override the child's width with the grid cell width.
-        child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
+        child.width = Some(AutoLength::Length(LengthValue::Px(
             f64::from(item_width),
         )));
 
@@ -182,7 +182,7 @@ pub fn layout_grid(
         let cell_height = track_span_size(&row_sizes, item.position.row_start, item.position.row_end, row_gap);
 
         // Override width for the final layout.
-        child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
+        child.width = Some(AutoLength::Length(LengthValue::Px(
             f64::from(cell_width),
         )));
 
@@ -201,12 +201,32 @@ pub fn layout_grid(
     //
     // "If the grid container's size is definite, use that. Otherwise,
     // compute from the track sizes."
+    // [§ 10.5](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+    //
+    // "If the height of the containing block is not specified explicitly,
+    // the percentage value is treated as 'auto'."
+    let cb_height_is_auto = containing_block.height >= f32::MAX / 2.0;
+    let height_is_pct_with_auto_cb = matches!(container.height, Some(AutoLength::Length(LengthValue::Percent(_))))
+        && cb_height_is_auto;
     if let Some(AutoLength::Length(ref l)) = container.height {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            container.dimensions.content.height =
-                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
-                    as f32;
+        if height_is_pct_with_auto_cb {
+            // Percentage height with auto CB height → treat as auto.
+            let total_row_gaps = if num_rows > 1 {
+                row_gap * (num_rows - 1) as f32
+            } else {
+                0.0
+            };
+            let total_height: f32 = row_sizes.iter().sum::<f32>() + total_row_gaps;
+            container.dimensions.content.height = total_height;
+        } else {
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                container.dimensions.content.height = l.to_px_with_containing_block(
+                    f64::from(containing_block.height),
+                    f64::from(viewport.width),
+                    f64::from(viewport.height),
+                ) as f32;
+            }
         }
     } else {
         // Auto height: sum of row tracks + gaps.

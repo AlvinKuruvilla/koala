@@ -206,9 +206,9 @@ impl PositionedLayout {
         _abs_cb: Rect,
     ) {
         // STEP 1: Resolve padding, border, and margin to used values.
-        let resolved_padding = layout_box.padding.resolve(viewport);
-        let resolved_border = layout_box.border_width.resolve(viewport);
-        let resolved_margin = layout_box.margin.resolve(viewport);
+        let resolved_padding = layout_box.padding.resolve(viewport, containing_block.width);
+        let resolved_border = layout_box.border_width.resolve(viewport, containing_block.width);
+        let resolved_margin = layout_box.margin.resolve(viewport, containing_block.width);
 
         layout_box.dimensions.padding.left = resolved_padding.left;
         layout_box.dimensions.padding.right = resolved_padding.right;
@@ -243,14 +243,14 @@ impl PositionedLayout {
         let width_auto = layout_box
             .width
             .as_ref()
-            .is_none_or(|al| UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).is_auto());
+            .is_none_or(|al| UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.width).is_auto());
         let ml_auto = resolved_margin.left.is_auto();
         let mr_auto = resolved_margin.right.is_auto();
 
         let left_val = layout_box.offsets.left.unwrap_or(0.0);
         let right_val = layout_box.offsets.right.unwrap_or(0.0);
         let width_val = layout_box.width.as_ref().map_or(0.0, |al| {
-            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(0.0)
+            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.width).to_px_or(0.0)
         });
         let ml_val = resolved_margin.left.to_px_or(0.0);
         let mr_val = resolved_margin.right.to_px_or(0.0);
@@ -285,14 +285,14 @@ impl PositionedLayout {
         let height_auto = layout_box
             .height
             .as_ref()
-            .is_none_or(|al| UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).is_auto());
+            .is_none_or(|al| UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.height).is_auto());
         let mt_auto = resolved_margin.top.is_auto();
         let mb_auto = resolved_margin.bottom.is_auto();
 
         let top_val = layout_box.offsets.top.unwrap_or(0.0);
         let bottom_val = layout_box.offsets.bottom.unwrap_or(0.0);
         let height_val = layout_box.height.as_ref().map_or(0.0, |al| {
-            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(0.0)
+            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.height).to_px_or(0.0)
         });
         let mt_val = resolved_margin.top.to_px_or(0.0);
         let mb_val = resolved_margin.bottom.to_px_or(0.0);
@@ -340,7 +340,7 @@ impl PositionedLayout {
             }
 
             // Auto height: use the content height computed by child layout.
-            layout_box.calculate_block_height(viewport, font_metrics);
+            layout_box.calculate_block_height(containing_block, viewport, font_metrics);
 
             // Now resolve vertical constraint with the known content height.
             let content_height = layout_box.dimensions.content.height;

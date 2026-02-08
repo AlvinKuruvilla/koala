@@ -192,9 +192,9 @@ fn layout_inline_content(
                 // is applied.
 
                 // STEP 1: Resolve the inline box's edge sizes.
-                let resolved_padding = child.padding.resolve(viewport);
-                let resolved_border = child.border_width.resolve(viewport);
-                let resolved_margin = child.margin.resolve(viewport);
+                let resolved_padding = child.padding.resolve(viewport, content_rect.width);
+                let resolved_border = child.border_width.resolve(viewport, content_rect.width);
+                let resolved_margin = child.margin.resolve(viewport, content_rect.width);
 
                 // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
                 //
@@ -886,8 +886,10 @@ impl LayoutBox {
         }
 
         // Case 3: Explicit width — resolve and return.
+        // NOTE: measure_content_size has no containing block; percentages
+        // resolve to 0 in intrinsic sizing contexts.
         if let Some(ref w) = self.width {
-            let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport);
+            let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport, 0.0);
             if !resolved.is_auto() {
                 return resolved.to_px_or(0.0);
             }
@@ -904,8 +906,9 @@ impl LayoutBox {
         //
         // Resolve padding and border on the main axis so we account for
         // them in the intrinsic size.
-        let resolved_padding = self.padding.resolve(viewport);
-        let resolved_border = self.border_width.resolve(viewport);
+        // NOTE: No containing block in intrinsic sizing; percentages resolve to 0.
+        let resolved_padding = self.padding.resolve(viewport, 0.0);
+        let resolved_border = self.border_width.resolve(viewport, 0.0);
         let extra = resolved_padding.left
             + resolved_padding.right
             + resolved_border.left
@@ -1791,7 +1794,7 @@ impl LayoutBox {
         // formatting context... or the bottom edge of the bottom margin of
         // its last in-flow child, if the child's bottom margin does not
         // collapse with the element's bottom margin"
-        self.calculate_block_height(viewport, font_metrics);
+        self.calculate_block_height(containing_block, viewport, font_metrics);
 
         // [§ 10.6.7](https://www.w3.org/TR/CSS2/visudet.html#root-height)
         //
@@ -1812,7 +1815,7 @@ impl LayoutBox {
         //
         // Apply min-height/max-height constraints after the tentative height
         // has been calculated.
-        self.apply_min_max_height(viewport);
+        self.apply_min_max_height(containing_block, viewport);
 
         // STEP 6: Layout absolutely positioned children.
         // [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
@@ -1846,10 +1849,10 @@ impl LayoutBox {
         // completing any remaining calculations to make it the absolute
         // theoretical value used in the layout of the document."
         //
-        // Viewport units (vw, vh) are resolved here using the viewport dimensions.
-        let resolved_padding = self.padding.resolve(viewport);
-        let resolved_border = self.border_width.resolve(viewport);
-        let resolved_margin = self.margin.resolve(viewport);
+        // Viewport units (vw, vh) and percentages are resolved here.
+        let resolved_padding = self.padding.resolve(viewport, containing_block.width);
+        let resolved_border = self.border_width.resolve(viewport, containing_block.width);
+        let resolved_margin = self.margin.resolve(viewport, containing_block.width);
 
         // STEP 2: Read the resolved values.
         // Border and padding cannot be 'auto', only margins and width can.
@@ -1877,8 +1880,10 @@ impl LayoutBox {
         }
 
         // Resolve width: None means 'auto'
+        // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
+        // Width percentages resolve against containing block width.
         let mut width = self.width.as_ref().map_or(AutoOr::Auto, |al| {
-            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport)
+            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.width)
         });
 
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
@@ -2068,9 +2073,9 @@ impl LayoutBox {
         //
         // (We only stored horizontal values in calculate_block_width)
         // Must be done before calculating y position.
-        let resolved_padding = self.padding.resolve(viewport);
-        let resolved_border = self.border_width.resolve(viewport);
-        let resolved_margin = self.margin.resolve(viewport);
+        let resolved_padding = self.padding.resolve(viewport, containing_block.width);
+        let resolved_border = self.border_width.resolve(viewport, containing_block.width);
+        let resolved_margin = self.margin.resolve(viewport, containing_block.width);
 
         self.dimensions.margin.top = resolved_margin.top.to_px_or(0.0);
         self.dimensions.margin.bottom = resolved_margin.bottom.to_px_or(0.0);
@@ -2265,7 +2270,7 @@ impl LayoutBox {
                     OuterDisplayType::Block | OuterDisplayType::ListItem
                 )
             {
-                let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
+                let child_mt = child.margin.resolve(viewport, content_box.width).top.to_px_or(0.0);
                 current_y -= child_mt;
                 self.collapsed_margin_top = Some(collapse_two_margins(parent_margin_top, child_mt));
             }
@@ -2286,7 +2291,7 @@ impl LayoutBox {
             // pure function of the viewport dimensions — identical to what
             // calculate_block_position() will compute internally.
             if let Some(prev_mb) = prev_margin_bottom {
-                let child_mt = child.margin.resolve(viewport).top.to_px_or(0.0);
+                let child_mt = child.margin.resolve(viewport, content_box.width).top.to_px_or(0.0);
                 let collapsed = collapse_two_margins(prev_mb, child_mt);
                 // current_y already includes the previous child's margin-bottom
                 // (from margin_box().height). The child will add its own
@@ -2310,8 +2315,8 @@ impl LayoutBox {
             // margins collapse into a single margin that participates in
             // sibling collapsing with its neighbours.
             if child.is_empty_collapsible_box() {
-                let child_margin_top = child.margin.resolve(viewport).top.to_px_or(0.0);
-                let child_margin_bottom = child.margin.resolve(viewport).bottom.to_px_or(0.0);
+                let child_margin_top = child.margin.resolve(viewport, content_box.width).top.to_px_or(0.0);
+                let child_margin_bottom = child.margin.resolve(viewport, content_box.width).bottom.to_px_or(0.0);
                 let self_collapsed = collapse_two_margins(child_margin_top, child_margin_bottom);
 
                 // Lay out the child so its dimensions are resolved (even
@@ -2392,6 +2397,7 @@ impl LayoutBox {
     /// any block-level children and whether it has padding or borders."
     pub(crate) fn calculate_block_height(
         &mut self,
+        containing_block: Rect,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
     ) {
@@ -2403,12 +2409,39 @@ impl LayoutBox {
         //
         // If height is a length (not auto), resolve it and use that value directly.
         if let Some(AutoLength::Length(l)) = &self.height {
+            // [§ 10.5 Content height: the 'height' property](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+            //
+            // "<percentage>: Specifies a percentage height. The percentage is
+            // calculated with respect to the height of the generated box's
+            // containing block. If the height of the containing block is not
+            // specified explicitly (i.e., it depends on content height), and
+            // this element is not absolutely positioned, the value computes
+            // to 'auto'."
+            //
+            // f32::MAX is the sentinel for "auto" containing block height.
+            // When the CB height is auto, percentage heights become auto —
+            // fall through to the auto height computation below.
+            if matches!(l, LengthValue::Percent(_))
+                && containing_block.height >= f32::MAX / 2.0
+                && !matches!(
+                    self.position_type,
+                    PositionType::Absolute | PositionType::Fixed
+                )
+            {
+                // Percentage height with auto CB height → treat as auto.
+                // Fall through to STEP 2 below.
+            } else {
             // [§ 6.1.1 Specified, computed, and actual values](https://www.w3.org/TR/CSS2/cascade.html#value-stages)
             //
-            // Resolve the computed value to a used value using the viewport.
+            // Resolve the computed value to a used value.
+            // [§ 10.5](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+            // Height percentages resolve against containing block height.
             #[allow(clippy::cast_possible_truncation)]
-            let mut h =
-                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height)) as f32;
+            let mut h = l.to_px_with_containing_block(
+                f64::from(containing_block.height),
+                f64::from(viewport.width),
+                f64::from(viewport.height),
+            ) as f32;
 
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
             //
@@ -2428,6 +2461,7 @@ impl LayoutBox {
 
             self.dimensions.content.height = h;
             return;
+            } // end else (non-percentage or explicit CB height)
         }
 
         // STEP 2: Handle anonymous inline boxes (text content).
@@ -2582,6 +2616,7 @@ impl LayoutBox {
     /// ```
     #[allow(clippy::cast_possible_truncation)]
     fn apply_min_max_width(&mut self, containing_block: Rect, viewport: Rect) {
+        let cb_w = f64::from(containing_block.width);
         let vw = f64::from(viewport.width);
         let vh = f64::from(viewport.height);
 
@@ -2607,7 +2642,7 @@ impl LayoutBox {
         // above are applied again, but this time using the computed value of
         // 'max-width' as the computed value for 'width'."
         if let Some(ref max_w) = self.max_width {
-            let max_px = max_w.to_px_with_viewport(vw, vh) as f32;
+            let max_px = max_w.to_px_with_containing_block(cb_w, vw, vh) as f32;
             let max_content = (max_px - box_overhead).max(0.0);
             if self.dimensions.content.width > max_content {
                 let saved = self.width.take();
@@ -2624,7 +2659,7 @@ impl LayoutBox {
         // are applied again, but this time using the value of 'min-width' as
         // the computed value for 'width'."
         if let Some(ref min_w) = self.min_width {
-            let min_px = min_w.to_px_with_viewport(vw, vh) as f32;
+            let min_px = min_w.to_px_with_containing_block(cb_w, vw, vh) as f32;
             let min_content = (min_px - box_overhead).max(0.0);
             if self.dimensions.content.width < min_content {
                 let saved = self.width.take();
@@ -2684,9 +2719,18 @@ impl LayoutBox {
     /// }
     /// ```
     #[allow(clippy::cast_possible_truncation)]
-    fn apply_min_max_height(&mut self, viewport: Rect) {
+    fn apply_min_max_height(&mut self, containing_block: Rect, viewport: Rect) {
+        let cb_h = f64::from(containing_block.height);
         let vw = f64::from(viewport.width);
         let vh = f64::from(viewport.height);
+
+        // [§ 10.5](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+        //
+        // "If the height of the containing block is not specified explicitly,
+        // the percentage value is treated as 'auto'."
+        //
+        // f32::MAX is the sentinel for "auto" containing block height.
+        let cb_height_is_auto = containing_block.height >= f32::MAX / 2.0;
 
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
         //
@@ -2708,10 +2752,13 @@ impl LayoutBox {
         // above are applied again, but this time using the value of
         // 'max-height' as the computed value for 'height'."
         if let Some(ref max_h) = self.max_height {
-            let max_px = max_h.to_px_with_viewport(vw, vh) as f32;
-            let max_content = (max_px - box_overhead).max(0.0);
-            if self.dimensions.content.height > max_content {
-                self.dimensions.content.height = max_content;
+            // Skip percentage max-height when CB height is auto.
+            if !(cb_height_is_auto && matches!(max_h, LengthValue::Percent(_))) {
+                let max_px = max_h.to_px_with_containing_block(cb_h, vw, vh) as f32;
+                let max_content = (max_px - box_overhead).max(0.0);
+                if self.dimensions.content.height > max_content {
+                    self.dimensions.content.height = max_content;
+                }
             }
         }
 
@@ -2722,10 +2769,13 @@ impl LayoutBox {
         // above are applied again, but this time using the value of
         // 'min-height' as the computed value for 'height'."
         if let Some(ref min_h) = self.min_height {
-            let min_px = min_h.to_px_with_viewport(vw, vh) as f32;
-            let min_content = (min_px - box_overhead).max(0.0);
-            if self.dimensions.content.height < min_content {
-                self.dimensions.content.height = min_content;
+            // Skip percentage min-height when CB height is auto.
+            if !(cb_height_is_auto && matches!(min_h, LengthValue::Percent(_))) {
+                let min_px = min_h.to_px_with_containing_block(cb_h, vw, vh) as f32;
+                let min_content = (min_px - box_overhead).max(0.0);
+                if self.dimensions.content.height < min_content {
+                    self.dimensions.content.height = min_content;
+                }
             }
         }
     }
@@ -3127,9 +3177,9 @@ impl LayoutBox {
     /// Layout a replaced element (e.g., `<img>`) using its intrinsic dimensions.
     fn layout_replaced(&mut self, containing_block: Rect, viewport: Rect) {
         // STEP 1: Resolve padding, border, and margin.
-        let resolved_padding = self.padding.resolve(viewport);
-        let resolved_border = self.border_width.resolve(viewport);
-        let resolved_margin = self.margin.resolve(viewport);
+        let resolved_padding = self.padding.resolve(viewport, containing_block.width);
+        let resolved_border = self.border_width.resolve(viewport, containing_block.width);
+        let resolved_margin = self.margin.resolve(viewport, containing_block.width);
 
         self.dimensions.padding.top = resolved_padding.top;
         self.dimensions.padding.bottom = resolved_padding.bottom;
@@ -3168,7 +3218,7 @@ impl LayoutBox {
                 // conditions above are met, then the used value of 'width'
                 // becomes... height * ratio"
                 let h = self.height.as_ref().map_or(150.0, |al| {
-                    UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(150.0)
+                    UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.height).to_px_or(150.0)
                 });
                 h * ratio
             } else {
@@ -3177,7 +3227,7 @@ impl LayoutBox {
             }
         } else {
             let mut w = self.width.as_ref().map_or(300.0, |al| {
-                UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(300.0)
+                UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.width).to_px_or(300.0)
             });
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
             //
@@ -3220,7 +3270,7 @@ impl LayoutBox {
             )
         } else {
             let mut h = self.height.as_ref().map_or(150.0, |al| {
-                UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).to_px_or(150.0)
+                UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport, containing_block.height).to_px_or(150.0)
             });
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
             //
@@ -3415,9 +3465,9 @@ impl LayoutBox {
         //
         // "Find the available width: this is found by solving for 'width'
         // after setting 'left' (in case 2) or 'right' (in case 4) to 0."
-        let resolved_padding = self.padding.resolve(viewport);
-        let resolved_border = self.border_width.resolve(viewport);
-        let resolved_margin = self.margin.resolve(viewport);
+        let resolved_padding = self.padding.resolve(viewport, containing_block.width);
+        let resolved_border = self.border_width.resolve(viewport, containing_block.width);
+        let resolved_margin = self.margin.resolve(viewport, containing_block.width);
         let available_width = containing_block.width
             - resolved_margin.left.to_px_or(0.0)
             - resolved_margin.right.to_px_or(0.0)

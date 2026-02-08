@@ -29,6 +29,10 @@ pub enum LengthValue {
     /// [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
     /// "1vh = 1% of viewport height"
     Vh(f64),
+    /// [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
+    /// "A <percentage> value is denoted by <percentage>, and consists of a
+    /// <number> immediately followed by a percent sign '%'."
+    Percent(f64),
     // TODO: Implement additional length units:
     //
     // STEP 1: Add rem unit
@@ -36,13 +40,7 @@ pub enum LengthValue {
     // "Equal to the computed value of the font-size property of the root element."
     // Rem(f64),
     //
-    // STEP 2: Add percentage values
-    // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
-    // "A <percentage> value is denoted by <percentage>, and consists of a <number>
-    // immediately followed by a percent sign '%'."
-    // Percent(f64),
-    //
-    // STEP 3: Add calc() function support
+    // STEP 2: Add calc() function support
     // [§ 8.1 calc()](https://www.w3.org/TR/css-values-4/#calc-notation)
     // "The calc() function allows mathematical expressions with addition (+),
     // subtraction (-), multiplication (*), division (/), and parentheses."
@@ -68,6 +66,10 @@ impl LengthValue {
             // Viewport units require viewport dimensions - return 0 as fallback.
             // The layout engine should use to_px_with_viewport() instead.
             Self::Vw(_) | Self::Vh(_) => 0.0,
+            // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
+            // Percentages require containing block dimensions - return 0 as fallback.
+            // The layout engine should use to_px_with_containing_block() instead.
+            Self::Percent(_) => 0.0,
         }
     }
 
@@ -85,6 +87,36 @@ impl LengthValue {
             Self::Vw(vw) => *vw * viewport_width / 100.0,
             // "1vh = 1% of viewport height"
             Self::Vh(vh) => *vh * viewport_height / 100.0,
+            // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
+            // Percentages require containing block — return 0 as fallback.
+            // Use to_px_with_containing_block() when containing block is available.
+            Self::Percent(_) => 0.0,
+        }
+    }
+
+    /// Resolve a length to pixels, resolving percentages against a containing
+    /// block dimension and viewport units against the viewport.
+    ///
+    /// [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
+    /// "Percentages are always relative to another quantity, for example a length."
+    ///
+    /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+    /// [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
+    /// NOTE: Margin AND padding percentages both resolve against the containing
+    /// block's **width**, even for top/bottom (CSS 2.1 § 8.3/8.4).
+    #[must_use]
+    pub fn to_px_with_containing_block(
+        &self,
+        cb_dimension: f64,
+        viewport_width: f64,
+        viewport_height: f64,
+    ) -> f64 {
+        match self {
+            Self::Px(px) => *px,
+            Self::Em(em) => *em * DEFAULT_FONT_SIZE_PX,
+            Self::Vw(vw) => *vw * viewport_width / 100.0,
+            Self::Vh(vh) => *vh * viewport_height / 100.0,
+            Self::Percent(pct) => *pct * cb_dimension / 100.0,
         }
     }
 }
@@ -172,6 +204,12 @@ pub fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
                 warn_once("CSS", &format!("unsupported unit '{unit}'"));
                 None
             }
+        }
+        // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
+        // "A <percentage> value is denoted by <percentage>, and consists of a
+        // <number> immediately followed by a percent sign '%'."
+        ComponentValue::Token(CSSToken::Percentage { value, .. }) => {
+            Some(LengthValue::Percent(*value))
         }
         ComponentValue::Token(CSSToken::Number { value, .. }) if *value == 0.0 => {
             Some(LengthValue::Px(0.0))

@@ -37,29 +37,35 @@ impl UnresolvedEdgeSizes {
     /// completing any remaining calculations to make it the absolute
     /// theoretical value used in the layout of the document."
     ///
-    /// Resolve to concrete pixel values using viewport dimensions.
+    /// Resolve to concrete pixel values using viewport dimensions and
+    /// containing block width.
+    ///
+    /// [§ 8.4 Padding properties](https://www.w3.org/TR/CSS2/box.html#padding-properties)
+    /// "Percentages: refer to width of containing block"
+    /// NOTE: All four sides (including top/bottom) resolve against CB width.
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
-    pub fn resolve(&self, viewport: Rect) -> EdgeSizes {
+    pub fn resolve(&self, viewport: Rect, cb_width: f32) -> EdgeSizes {
         let vw = f64::from(viewport.width);
         let vh = f64::from(viewport.height);
+        let cb = f64::from(cb_width);
         EdgeSizes {
             top: self
                 .top
                 .as_ref()
-                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
+                .map_or(0.0, |l| l.to_px_with_containing_block(cb, vw, vh) as f32),
             right: self
                 .right
                 .as_ref()
-                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
+                .map_or(0.0, |l| l.to_px_with_containing_block(cb, vw, vh) as f32),
             bottom: self
                 .bottom
                 .as_ref()
-                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
+                .map_or(0.0, |l| l.to_px_with_containing_block(cb, vw, vh) as f32),
             left: self
                 .left
                 .as_ref()
-                .map_or(0.0, |l| l.to_px_with_viewport(vw, vh) as f32),
+                .map_or(0.0, |l| l.to_px_with_containing_block(cb, vw, vh) as f32),
         }
     }
 }
@@ -83,41 +89,50 @@ pub struct UnresolvedAutoEdgeSizes {
 impl UnresolvedAutoEdgeSizes {
     /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
     ///
-    /// Resolve to `AutoOr` values using viewport dimensions.
+    /// Resolve to `AutoOr` values using viewport dimensions and containing
+    /// block width.
     /// 'auto' is preserved for later resolution during width/margin calculation.
+    ///
+    /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
+    /// "Percentages: refer to width of containing block"
+    /// NOTE: All four sides (including top/bottom) resolve against CB width.
     #[must_use]
-    pub fn resolve(&self, viewport: Rect) -> AutoEdgeSizes {
+    pub fn resolve(&self, viewport: Rect, cb_width: f32) -> AutoEdgeSizes {
         AutoEdgeSizes {
             top: self.top.as_ref().map_or(AutoOr::Length(0.0), |al| {
-                Self::resolve_auto_length(al, viewport)
+                Self::resolve_auto_length(al, viewport, cb_width)
             }),
             right: self.right.as_ref().map_or(AutoOr::Length(0.0), |al| {
-                Self::resolve_auto_length(al, viewport)
+                Self::resolve_auto_length(al, viewport, cb_width)
             }),
             bottom: self.bottom.as_ref().map_or(AutoOr::Length(0.0), |al| {
-                Self::resolve_auto_length(al, viewport)
+                Self::resolve_auto_length(al, viewport, cb_width)
             }),
             left: self.left.as_ref().map_or(AutoOr::Length(0.0), |al| {
-                Self::resolve_auto_length(al, viewport)
+                Self::resolve_auto_length(al, viewport, cb_width)
             }),
         }
     }
 
     /// [§ 6.1 Used Values](https://www.w3.org/TR/css-cascade-4/#used)
     ///
-    /// Resolve a single `AutoLength` to `AutoOr` using viewport dimensions.
+    /// Resolve a single `AutoLength` to `AutoOr` using viewport dimensions
+    /// and containing block width for percentages.
     #[must_use]
-    pub fn resolve_auto_length(al: &AutoLength, viewport: Rect) -> AutoOr {
+    pub fn resolve_auto_length(al: &AutoLength, viewport: Rect, cb_width: f32) -> AutoOr {
         match al {
             // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
             //
             // 'auto' is preserved - it will be resolved during width calculation.
             AutoLength::Auto => AutoOr::Auto,
-            // Resolve length using viewport for vw/vh units.
+            // Resolve length using viewport for vw/vh units and CB width for percentages.
             #[allow(clippy::cast_possible_truncation)]
             AutoLength::Length(len) => AutoOr::Length(
-                len.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
-                    as f32,
+                len.to_px_with_containing_block(
+                    f64::from(cb_width),
+                    f64::from(viewport.width),
+                    f64::from(viewport.height),
+                ) as f32,
             ),
         }
     }

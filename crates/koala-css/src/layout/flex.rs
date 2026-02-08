@@ -14,7 +14,7 @@
 //!
 //! Not yet implemented: column direction, align-content, order, inline-flex.
 
-use crate::style::AutoLength;
+use crate::style::{AutoLength, LengthValue};
 use crate::style::computed::{AlignItems, AlignSelf, FlexWrap, JustifyContent};
 
 use super::box_model::Rect;
@@ -127,9 +127,10 @@ pub fn layout_flex(
 
         // Resolve the child's margin/border/padding to compute its outer
         // contribution on the main axis.
-        let resolved_padding = child.padding.resolve(viewport);
-        let resolved_border = child.border_width.resolve(viewport);
-        let resolved_margin = child.margin.resolve(viewport);
+        let cb_width = container.dimensions.content.width;
+        let resolved_padding = child.padding.resolve(viewport, cb_width);
+        let resolved_border = child.border_width.resolve(viewport, cb_width);
+        let resolved_margin = child.margin.resolve(viewport, cb_width);
 
         let outer_main = resolved_margin.left.to_px_or(0.0)
             + resolved_border.left
@@ -145,12 +146,12 @@ pub fn layout_flex(
         //   B. If flex-basis is auto and the item has a definite width, use that.
         //   C. Otherwise, use max-content size via measure_content_size().
         let mut base_size = child.flex_basis.as_ref().map_or_else(
-            || flex_base_from_width_or_content(child, viewport, font_metrics),
+            || flex_base_from_width_or_content(child, viewport, cb_width, font_metrics),
             |fb| {
-                let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport);
+                let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport, cb_width);
                 if resolved.is_auto() {
                     // flex-basis: auto — fall through to width or content sizing
-                    flex_base_from_width_or_content(child, viewport, font_metrics)
+                    flex_base_from_width_or_content(child, viewport, cb_width, font_metrics)
                 } else {
                     resolved.to_px_or(0.0)
                 }
@@ -312,13 +313,13 @@ pub fn layout_flex(
             //
             // "Set each item's used main size to its target main size."
             let width_for_layout = if child.box_sizing_border_box {
-                let rp = child.padding.resolve(viewport);
-                let rb = child.border_width.resolve(viewport);
+                let rp = child.padding.resolve(viewport, content_box.width);
+                let rb = child.border_width.resolve(viewport, content_box.width);
                 line_item.target_size + rp.left + rp.right + rb.left + rb.right
             } else {
                 line_item.target_size
             };
-            child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
+            child.width = Some(AutoLength::Length(LengthValue::Px(
                 f64::from(width_for_layout),
             )));
 
@@ -359,12 +360,26 @@ pub fn layout_flex(
     //
     // "Otherwise, use the sum of the flex lines' cross sizes, clamped by
     // the used min and max cross sizes of the flex container."
+    // [§ 10.5](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+    //
+    // "If the height of the containing block is not specified explicitly,
+    // the percentage value is treated as 'auto'."
+    let cb_height_is_auto = containing_block.height >= f32::MAX / 2.0;
+    let height_is_pct_with_auto_cb = matches!(container.height, Some(AutoLength::Length(LengthValue::Percent(_))))
+        && cb_height_is_auto;
     if let Some(AutoLength::Length(ref l)) = container.height {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            container.dimensions.content.height =
-                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
-                    as f32;
+        if height_is_pct_with_auto_cb {
+            // Percentage height with auto CB height → treat as auto.
+            container.dimensions.content.height = line_cross_sizes.iter().sum();
+        } else {
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                container.dimensions.content.height = l.to_px_with_containing_block(
+                    f64::from(containing_block.height),
+                    f64::from(viewport.width),
+                    f64::from(viewport.height),
+                ) as f32;
+            }
         }
     } else {
         // Auto cross size: sum of all flex lines' cross sizes.
@@ -457,10 +472,11 @@ pub fn layout_flex(
 fn flex_base_from_width_or_content(
     child: &LayoutBox,
     viewport: Rect,
+    cb_width: f32,
     font_metrics: &dyn FontMetrics,
 ) -> f32 {
     if let Some(ref w) = child.width {
-        let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport);
+        let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport, cb_width);
         if !resolved.is_auto() {
             // Note: The caller handles border-box conversion after this
             // returns, so we return the raw CSS value here.
