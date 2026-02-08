@@ -972,7 +972,12 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                 }
 
                 if pseudo_name.is_empty() {
-                    return None;
+                    // Invalid pseudo-class syntax (e.g., `:` followed by `.` or `[`).
+                    // Per CSS error handling, treat the invalid pseudo-class as never
+                    // matching rather than discarding the entire selector. This allows
+                    // the rest of the selector list (comma-separated) to still be parsed.
+                    current_compound.push(SimpleSelector::NeverMatch);
+                    continue;
                 }
 
                 // If followed by '(', consume balanced parentheses
