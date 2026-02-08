@@ -691,3 +691,139 @@ fn test_inline_style_standalone() {
     assert_eq!(bg.b, 0x00);
     assert!(div_style.padding_top.is_some());
 }
+
+// ---------------------------------------------------------------------------
+// Border longhand property tests
+//
+// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_border_top_color_longhand() {
+    // [§ 4.1 'border-top-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
+    //
+    // Setting border-top-color alone should create a BorderValue with the
+    // given color and spec initial values for width (medium=3px) and style (none).
+    let css = "div { border-top-color: #ff0000; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    let border = div_style.border_top.as_ref().expect("border_top should be set");
+    assert_eq!(border.color.r, 0xff);
+    assert_eq!(border.color.g, 0x00);
+    assert_eq!(border.color.b, 0x00);
+    // Initial style is "none" — border won't render until style is set
+    assert_eq!(border.style, "none");
+    // Initial width is medium (3px)
+    assert!((border.width.to_px() - 3.0).abs() < 0.01);
+    // Other sides should be unset
+    assert!(div_style.border_right.is_none());
+    assert!(div_style.border_bottom.is_none());
+    assert!(div_style.border_left.is_none());
+}
+
+#[test]
+fn test_border_longhand_overrides_shorthand() {
+    // [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
+    //
+    // A longhand after a shorthand should override just that component.
+    let css = "div { border: 2px solid #000; border-top-color: #00ff00; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    // Top border should have overridden color but keep width/style from shorthand
+    let top = div_style.border_top.as_ref().unwrap();
+    assert_eq!(top.color.r, 0x00);
+    assert_eq!(top.color.g, 0xff);
+    assert_eq!(top.color.b, 0x00);
+    assert!((top.width.to_px() - 2.0).abs() < 0.01);
+    assert_eq!(top.style, "solid");
+
+    // Other sides should keep shorthand values unchanged
+    let right = div_style.border_right.as_ref().unwrap();
+    assert_eq!(right.color.r, 0x00);
+    assert_eq!(right.color.g, 0x00);
+    assert_eq!(right.color.b, 0x00);
+}
+
+#[test]
+fn test_border_width_shorthand() {
+    // [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+    //
+    // "Value: <line-width>{1,4}" with same expansion rules as margin.
+    let css = "div { border-style: solid; border-width: 1px 2px 3px 4px; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    assert!((div_style.border_top.as_ref().unwrap().width.to_px() - 1.0).abs() < 0.01);
+    assert!((div_style.border_right.as_ref().unwrap().width.to_px() - 2.0).abs() < 0.01);
+    assert!((div_style.border_bottom.as_ref().unwrap().width.to_px() - 3.0).abs() < 0.01);
+    assert!((div_style.border_left.as_ref().unwrap().width.to_px() - 4.0).abs() < 0.01);
+}
+
+#[test]
+fn test_border_style_shorthand() {
+    // [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
+    //
+    // Two-value form: top/bottom get first, left/right get second.
+    let css = "div { border-style: solid dashed; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    assert_eq!(div_style.border_top.as_ref().unwrap().style, "solid");
+    assert_eq!(div_style.border_bottom.as_ref().unwrap().style, "solid");
+    assert_eq!(div_style.border_right.as_ref().unwrap().style, "dashed");
+    assert_eq!(div_style.border_left.as_ref().unwrap().style, "dashed");
+}
+
+#[test]
+fn test_border_color_shorthand() {
+    // [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
+    //
+    // Single-value form applies to all sides.
+    let css = "div { border-color: #abcdef; }";
+    let stylesheet = parse_css(css);
+
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+    let div_style = styles.get(&div_id).unwrap();
+
+    for border in [
+        &div_style.border_top,
+        &div_style.border_right,
+        &div_style.border_bottom,
+        &div_style.border_left,
+    ] {
+        let b = border.as_ref().expect("all borders should be set");
+        assert_eq!(b.color.r, 0xab);
+        assert_eq!(b.color.g, 0xcd);
+        assert_eq!(b.color.b, 0xef);
+    }
+}

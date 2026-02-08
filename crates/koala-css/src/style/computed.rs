@@ -555,6 +555,112 @@ impl ComputedStyle {
                     self.border_left = Some(border);
                 }
             }
+            // [§ 4.1 'border-top-color', etc.](https://www.w3.org/TR/css-backgrounds-3/#border-color)
+            //
+            // "These properties set the foreground color of the border
+            // specified by the border-top, border-right, border-bottom,
+            // and border-left properties respectively."
+            "border-top-color" => {
+                if let Some(color) = parse_color_value(&decl.value) {
+                    self.ensure_border_top().color = color;
+                }
+            }
+            "border-right-color" => {
+                if let Some(color) = parse_color_value(&decl.value) {
+                    self.ensure_border_right().color = color;
+                }
+            }
+            "border-bottom-color" => {
+                if let Some(color) = parse_color_value(&decl.value) {
+                    self.ensure_border_bottom().color = color;
+                }
+            }
+            "border-left-color" => {
+                if let Some(color) = parse_color_value(&decl.value) {
+                    self.ensure_border_left().color = color;
+                }
+            }
+            // [§ 4.3 'border-top-width', etc.](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+            //
+            // "These properties set the thickness of the border."
+            // "<line-width> = <length [0,∞]> | thin | medium | thick"
+            "border-top-width" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.ensure_border_top().width = self.resolve_length(len);
+                }
+            }
+            "border-right-width" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.ensure_border_right().width = self.resolve_length(len);
+                }
+            }
+            "border-bottom-width" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.ensure_border_bottom().width = self.resolve_length(len);
+                }
+            }
+            "border-left-width" => {
+                if let Some(len) = parse_length_value(&decl.value) {
+                    self.ensure_border_left().width = self.resolve_length(len);
+                }
+            }
+            // [§ 4.2 'border-top-style', etc.](https://www.w3.org/TR/css-backgrounds-3/#border-style)
+            //
+            // "These properties set the style of the border."
+            // "<line-style> = none | hidden | dotted | dashed | solid | double |
+            //                 groove | ridge | inset | outset"
+            "border-top-style" => {
+                if let Some(first) = decl.value.first()
+                    && let Some(s) = Self::parse_border_style(first)
+                {
+                    self.ensure_border_top().style = s;
+                }
+            }
+            "border-right-style" => {
+                if let Some(first) = decl.value.first()
+                    && let Some(s) = Self::parse_border_style(first)
+                {
+                    self.ensure_border_right().style = s;
+                }
+            }
+            "border-bottom-style" => {
+                if let Some(first) = decl.value.first()
+                    && let Some(s) = Self::parse_border_style(first)
+                {
+                    self.ensure_border_bottom().style = s;
+                }
+            }
+            "border-left-style" => {
+                if let Some(first) = decl.value.first()
+                    && let Some(s) = Self::parse_border_style(first)
+                {
+                    self.ensure_border_left().style = s;
+                }
+            }
+            // [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
+            //
+            // "The 'border-color' property is a shorthand for setting
+            // 'border-top-color', 'border-right-color', 'border-bottom-color',
+            // and 'border-left-color'."
+            "border-color" => {
+                self.apply_border_color_shorthand(&decl.value);
+            }
+            // [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+            //
+            // "The 'border-width' property is a shorthand for setting
+            // 'border-top-width', 'border-right-width', 'border-bottom-width',
+            // and 'border-left-width'."
+            "border-width" => {
+                self.apply_border_width_shorthand(&decl.value);
+            }
+            // [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
+            //
+            // "The 'border-style' property is a shorthand for setting
+            // 'border-top-style', 'border-right-style', 'border-bottom-style',
+            // and 'border-left-style'."
+            "border-style" => {
+                self.apply_border_style_shorthand(&decl.value);
+            }
             "background" => {
                 self.apply_background_shorthand(&decl.value);
             }
@@ -914,6 +1020,177 @@ impl ComputedStyle {
             self.border_right = Some(border.clone());
             self.border_bottom = Some(border.clone());
             self.border_left = Some(border);
+        }
+    }
+
+    /// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
+    ///
+    /// Get or create the border value for a side with spec initial values.
+    ///
+    /// [§ 4.1](https://www.w3.org/TR/css-backgrounds-3/#border-color): Initial color = currentcolor
+    /// [§ 4.2](https://www.w3.org/TR/css-backgrounds-3/#border-style): Initial style = none
+    /// [§ 4.3](https://www.w3.org/TR/css-backgrounds-3/#border-width): Initial width = medium (3px)
+    fn default_border(&self) -> BorderValue {
+        BorderValue {
+            width: LengthValue::Px(3.0),
+            style: "none".to_string(),
+            color: self.color.clone().unwrap_or(ColorValue::BLACK),
+        }
+    }
+
+    /// Get or create the `border_top` value.
+    fn ensure_border_top(&mut self) -> &mut BorderValue {
+        if self.border_top.is_none() {
+            self.border_top = Some(self.default_border());
+        }
+        self.border_top.as_mut().unwrap()
+    }
+
+    /// Get or create the `border_right` value.
+    fn ensure_border_right(&mut self) -> &mut BorderValue {
+        if self.border_right.is_none() {
+            self.border_right = Some(self.default_border());
+        }
+        self.border_right.as_mut().unwrap()
+    }
+
+    /// Get or create the `border_bottom` value.
+    fn ensure_border_bottom(&mut self) -> &mut BorderValue {
+        if self.border_bottom.is_none() {
+            self.border_bottom = Some(self.default_border());
+        }
+        self.border_bottom.as_mut().unwrap()
+    }
+
+    /// Get or create the `border_left` value.
+    fn ensure_border_left(&mut self) -> &mut BorderValue {
+        if self.border_left.is_none() {
+            self.border_left = Some(self.default_border());
+        }
+        self.border_left.as_mut().unwrap()
+    }
+
+    /// [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
+    ///
+    /// "Value: <color>{1,4}"
+    ///
+    /// Shorthand following the same 1-4 value expansion as margin/padding.
+    fn apply_border_color_shorthand(&mut self, values: &[ComponentValue]) {
+        let colors: Vec<ColorValue> = values.iter().filter_map(parse_single_color).collect();
+
+        match colors.len() {
+            1 => {
+                self.ensure_border_top().color = colors[0].clone();
+                self.ensure_border_right().color = colors[0].clone();
+                self.ensure_border_bottom().color = colors[0].clone();
+                self.ensure_border_left().color = colors[0].clone();
+            }
+            2 => {
+                self.ensure_border_top().color = colors[0].clone();
+                self.ensure_border_bottom().color = colors[0].clone();
+                self.ensure_border_right().color = colors[1].clone();
+                self.ensure_border_left().color = colors[1].clone();
+            }
+            3 => {
+                self.ensure_border_top().color = colors[0].clone();
+                self.ensure_border_right().color = colors[1].clone();
+                self.ensure_border_left().color = colors[1].clone();
+                self.ensure_border_bottom().color = colors[2].clone();
+            }
+            4 => {
+                self.ensure_border_top().color = colors[0].clone();
+                self.ensure_border_right().color = colors[1].clone();
+                self.ensure_border_bottom().color = colors[2].clone();
+                self.ensure_border_left().color = colors[3].clone();
+            }
+            _ => {}
+        }
+    }
+
+    /// [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+    ///
+    /// "Value: <line-width>{1,4}"
+    ///
+    /// Shorthand following the same 1-4 value expansion as margin/padding.
+    fn apply_border_width_shorthand(&mut self, values: &[ComponentValue]) {
+        let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
+
+        match lengths.len() {
+            1 => {
+                let w = self.resolve_length(lengths[0]);
+                self.ensure_border_top().width = w;
+                self.ensure_border_right().width = w;
+                self.ensure_border_bottom().width = w;
+                self.ensure_border_left().width = w;
+            }
+            2 => {
+                let tb = self.resolve_length(lengths[0]);
+                let lr = self.resolve_length(lengths[1]);
+                self.ensure_border_top().width = tb;
+                self.ensure_border_bottom().width = tb;
+                self.ensure_border_right().width = lr;
+                self.ensure_border_left().width = lr;
+            }
+            3 => {
+                let t = self.resolve_length(lengths[0]);
+                let lr = self.resolve_length(lengths[1]);
+                let b = self.resolve_length(lengths[2]);
+                self.ensure_border_top().width = t;
+                self.ensure_border_right().width = lr;
+                self.ensure_border_left().width = lr;
+                self.ensure_border_bottom().width = b;
+            }
+            4 => {
+                let t = self.resolve_length(lengths[0]);
+                let r = self.resolve_length(lengths[1]);
+                let b = self.resolve_length(lengths[2]);
+                let l = self.resolve_length(lengths[3]);
+                self.ensure_border_top().width = t;
+                self.ensure_border_right().width = r;
+                self.ensure_border_bottom().width = b;
+                self.ensure_border_left().width = l;
+            }
+            _ => {}
+        }
+    }
+
+    /// [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
+    ///
+    /// "Value: <line-style>{1,4}"
+    ///
+    /// Shorthand following the same 1-4 value expansion as margin/padding.
+    fn apply_border_style_shorthand(&mut self, values: &[ComponentValue]) {
+        let styles: Vec<String> = values
+            .iter()
+            .filter_map(Self::parse_border_style)
+            .collect();
+
+        match styles.len() {
+            1 => {
+                self.ensure_border_top().style = styles[0].clone();
+                self.ensure_border_right().style = styles[0].clone();
+                self.ensure_border_bottom().style = styles[0].clone();
+                self.ensure_border_left().style = styles[0].clone();
+            }
+            2 => {
+                self.ensure_border_top().style = styles[0].clone();
+                self.ensure_border_bottom().style = styles[0].clone();
+                self.ensure_border_right().style = styles[1].clone();
+                self.ensure_border_left().style = styles[1].clone();
+            }
+            3 => {
+                self.ensure_border_top().style = styles[0].clone();
+                self.ensure_border_right().style = styles[1].clone();
+                self.ensure_border_left().style = styles[1].clone();
+                self.ensure_border_bottom().style = styles[2].clone();
+            }
+            4 => {
+                self.ensure_border_top().style = styles[0].clone();
+                self.ensure_border_right().style = styles[1].clone();
+                self.ensure_border_bottom().style = styles[2].clone();
+                self.ensure_border_left().style = styles[3].clone();
+            }
+            _ => {}
         }
     }
 
