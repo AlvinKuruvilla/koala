@@ -481,3 +481,99 @@ fn test_scope_checking_basic() {
     let full_text = text_content(&tree, body);
     assert!(full_text.contains("text"));
 }
+
+// ---------------------------------------------------------------------------
+// List element parsing tests
+//
+// [§ 13.2.6.4.7 "in body"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+// ---------------------------------------------------------------------------
+
+/// Helper to collect all direct element children with a given tag name.
+fn element_children(tree: &DomTree, parent: NodeId, tag: &str) -> Vec<NodeId> {
+    tree.children(parent)
+        .iter()
+        .copied()
+        .filter(|&id| {
+            tree.as_element(id)
+                .is_some_and(|d| d.tag_name == tag)
+        })
+        .collect()
+}
+
+#[test]
+fn test_li_implicit_close() {
+    // [§ 13.2.6.4.7](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    //
+    // "A start tag whose tag name is "li""
+    // When a second <li> is encountered, it should implicitly close the first.
+    // Result: <ul> has two <li> children, not nested.
+    let tree = parse("<ul><li>A<li>B</ul>");
+    let ul = find_element(&tree, NodeId::ROOT, "ul").unwrap();
+    let lis = element_children(&tree, ul, "li");
+    assert_eq!(lis.len(), 2, "ul should have 2 <li> children, got {}", lis.len());
+    assert_eq!(text_content(&tree, lis[0]), "A");
+    assert_eq!(text_content(&tree, lis[1]), "B");
+}
+
+#[test]
+fn test_dd_dt_implicit_close() {
+    // [§ 13.2.6.4.7](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    //
+    // "A start tag whose tag name is one of: "dd", "dt""
+    // <dt> and <dd> implicitly close each other.
+    let tree = parse("<dl><dt>T<dd>D<dt>T2</dl>");
+    let dl = find_element(&tree, NodeId::ROOT, "dl").unwrap();
+    let dts = element_children(&tree, dl, "dt");
+    let dds = element_children(&tree, dl, "dd");
+    assert_eq!(dts.len(), 2, "dl should have 2 <dt> children, got {}", dts.len());
+    assert_eq!(dds.len(), 1, "dl should have 1 <dd> child, got {}", dds.len());
+    assert_eq!(text_content(&tree, dts[0]), "T");
+    assert_eq!(text_content(&tree, dds[0]), "D");
+    assert_eq!(text_content(&tree, dts[1]), "T2");
+}
+
+#[test]
+fn test_li_end_tag_no_scope() {
+    // [§ 13.2.6.4.7](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    //
+    // "An end tag whose tag name is "li""
+    // "If the stack of open elements does not have an li element in
+    //  list item scope, then this is a parse error; ignore the token."
+    //
+    // A stray </li> with no <li> in scope should be ignored.
+    let tree = parse("<body></li>text</body>");
+    let body = find_element(&tree, NodeId::ROOT, "body").unwrap();
+    let full_text = text_content(&tree, body);
+    assert!(full_text.contains("text"), "text should still appear after stray </li>");
+}
+
+#[test]
+fn test_nested_lists() {
+    // Properly nested lists: inner <li> should be children of the inner <ul>,
+    // not siblings of the outer <li>.
+    let tree = parse("<ul><li>A<ul><li>B</li></ul></li></ul>");
+    let outer_ul = find_element(&tree, NodeId::ROOT, "ul").unwrap();
+    let outer_lis = element_children(&tree, outer_ul, "li");
+    assert_eq!(outer_lis.len(), 1, "outer ul should have 1 <li>");
+
+    let inner_ul = find_element(&tree, outer_lis[0], "ul").unwrap();
+    let inner_lis = element_children(&tree, inner_ul, "li");
+    assert_eq!(inner_lis.len(), 1, "inner ul should have 1 <li>");
+    assert_eq!(text_content(&tree, inner_lis[0]), "B");
+}
+
+#[test]
+fn test_ol_end_tag_scope_checking() {
+    // [§ 13.2.6.4.7](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+    //
+    // "An end tag whose tag name is one of: ... "ol" ..."
+    // "If the stack of open elements does not have an element in scope that
+    //  is an HTML element with the same tag name as that of the token, then
+    //  this is a parse error; ignore the token."
+    //
+    // A stray </ol> with no <ol> in scope should be ignored.
+    let tree = parse("<body></ol>text</body>");
+    let body = find_element(&tree, NodeId::ROOT, "body").unwrap();
+    let full_text = text_content(&tree, body);
+    assert!(full_text.contains("text"), "text should still appear after stray </ol>");
+}

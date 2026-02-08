@@ -275,6 +275,17 @@ pub struct ComputedStyle {
     /// Inherited: no
     pub clear: Option<String>,
 
+    /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
+    ///
+    /// "The list-style-type property specifies a counter style or string for
+    /// the element's marker."
+    ///
+    /// Values: disc | circle | square | decimal | lower-alpha | upper-alpha |
+    ///         lower-roman | upper-roman | none
+    /// Initial: disc
+    /// Inherited: yes
+    pub list_style_type: Option<String>,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Source order tracking for cascade resolution of logical property groups
     // ─────────────────────────────────────────────────────────────────────────
@@ -735,6 +746,31 @@ impl ComputedStyle {
             "left" => {
                 if let Some(al) = parse_auto_length_value(&decl.value) {
                     self.left = Some(self.resolve_auto_length(al));
+                }
+            }
+            // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
+            //
+            // "The list-style-type property specifies a counter style or string
+            // for the element's marker."
+            // Values: disc | circle | square | decimal | lower-alpha | upper-alpha |
+            //         lower-roman | upper-roman | none
+            "list-style-type" => {
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
+                    let lower = ident.to_ascii_lowercase();
+                    if matches!(
+                        lower.as_str(),
+                        "disc"
+                            | "circle"
+                            | "square"
+                            | "decimal"
+                            | "lower-alpha"
+                            | "upper-alpha"
+                            | "lower-roman"
+                            | "upper-roman"
+                            | "none"
+                    ) {
+                        self.list_style_type = Some(lower);
+                    }
                 }
             }
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)

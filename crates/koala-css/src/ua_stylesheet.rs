@@ -35,9 +35,15 @@ noframes, param, rp, script, style, template, title {
 address, article, aside, blockquote, body, center, dd, details,
 dialog, dir, div, dl, dt, fieldset, figcaption, figure, footer,
 form, h1, h2, h3, h4, h5, h6, header, hgroup, hr, html, legend,
-li, listing, main, menu, nav, ol, p, plaintext, pre, search,
+listing, main, menu, nav, ol, p, plaintext, pre, search,
 section, summary, ul, xmp {
     display: block;
+}
+
+/* [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists) */
+/* "li { display: list-item; }" */
+li {
+    display: list-item;
 }
 
 /* [§ 15.3.6 Sections and headings](https://html.spec.whatwg.org/multipage/rendering.html#sections-and-headings) */
@@ -111,6 +117,17 @@ ol, ul, menu {
     margin-block-start: 1em;
     margin-block-end: 1em;
     padding-left: 40px;
+}
+
+/* [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists) */
+/* "ul, menu { list-style-type: disc; }" */
+ul, menu {
+    list-style-type: disc;
+}
+
+/* "ol { list-style-type: decimal; }" */
+ol {
+    list-style-type: decimal;
 }
 
 /* [§ 15.3.4 The page](https://html.spec.whatwg.org/multipage/rendering.html#the-page) */

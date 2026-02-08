@@ -1965,3 +1965,117 @@ fn test_inline_block_text_align_center() {
         ib.dimensions.content.x
     );
 }
+
+// ---------------------------------------------------------------------------
+// List item / marker tests
+//
+// [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
+// [§ 3 Markers](https://www.w3.org/TR/css-lists-3/#markers)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_list_item_display() {
+    // [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists)
+    // "li { display: list-item; }"
+    assert_eq!(
+        default_display_for_element("li"),
+        Some(DisplayValue::list_item()),
+        "default display for <li> should be list-item"
+    );
+}
+
+#[test]
+fn test_ul_marker_disc() {
+    // [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists)
+    //
+    // <ul> sets list-style-type: disc (inherited by <li>).
+    // The list item should generate a bullet marker "\u{2022} ".
+    let root = layout_html("<ul><li>Item</li></ul>");
+
+    // Document > html > body > ul > li
+    let body = box_at_depth(&root, 2);
+    let ul = &body.children[0];
+    assert!(!ul.children.is_empty(), "ul should have children");
+    let li = &ul.children[0];
+    assert_eq!(
+        li.display.outer,
+        OuterDisplayType::ListItem,
+        "li should have display: list-item"
+    );
+    assert_eq!(
+        li.marker_text.as_deref(),
+        Some("\u{2022} "),
+        "ul > li should have disc marker"
+    );
+}
+
+#[test]
+fn test_ol_marker_decimal() {
+    // [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists)
+    //
+    // <ol> sets list-style-type: decimal (inherited by <li>).
+    // The list items should generate "1. ", "2. ", etc.
+    let root = layout_html("<ol><li>First</li><li>Second</li></ol>");
+
+    // Document > html > body > ol > [li, li]
+    let body = box_at_depth(&root, 2);
+    let ol = &body.children[0];
+    assert!(ol.children.len() >= 2, "ol should have at least 2 children");
+    let li1 = &ol.children[0];
+    let li2 = &ol.children[1];
+    assert_eq!(li1.marker_text.as_deref(), Some("1. "), "first li should have marker '1. '");
+    assert_eq!(li2.marker_text.as_deref(), Some("2. "), "second li should have marker '2. '");
+}
+
+#[test]
+fn test_list_style_type_none() {
+    // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
+    //
+    // list-style-type: none suppresses marker generation.
+    let root = layout_html(
+        "<style>ul { list-style-type: none; }</style><ul><li>No bullet</li></ul>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let ul = &body.children[0];
+    let li = &ul.children[0];
+    assert!(
+        li.marker_text.is_none(),
+        "list-style-type: none should suppress marker, got {:?}",
+        li.marker_text
+    );
+}
+
+#[test]
+fn test_list_style_type_circle() {
+    // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
+    //
+    // Setting list-style-type: circle should produce a white circle marker.
+    let root = layout_html(
+        "<style>ul { list-style-type: circle; }</style><ul><li>Item</li></ul>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let ul = &body.children[0];
+    let li = &ul.children[0];
+    assert_eq!(
+        li.marker_text.as_deref(),
+        Some("\u{25CB} "),
+        "list-style-type: circle should produce white circle marker"
+    );
+}
+
+#[test]
+fn test_ol_start_attribute() {
+    // [§ 4.4.5 The ol element](https://html.spec.whatwg.org/multipage/grouping-content.html#the-ol-element)
+    //
+    // The `start` attribute on <ol> sets the starting ordinal.
+    let root = layout_html("<ol start=\"5\"><li>A</li><li>B</li></ol>");
+
+    let body = box_at_depth(&root, 2);
+    let ol = &body.children[0];
+    let li1 = &ol.children[0];
+    let li2 = &ol.children[1];
+    assert_eq!(li1.marker_text.as_deref(), Some("5. "));
+    assert_eq!(li2.marker_text.as_deref(), Some("6. "));
+}

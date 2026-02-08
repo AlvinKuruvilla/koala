@@ -104,7 +104,6 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
         "hr",
         "html",
         "legend",
-        "li",
         "listing",
         "main",
         "menu",
@@ -121,6 +120,12 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
     ];
     if block_elements.contains(&tag_name) {
         return Some(DisplayValue::block());
+    }
+
+    // [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists)
+    // "li { display: list-item; }"
+    if tag_name == "li" {
+        return Some(DisplayValue::list_item());
     }
 
     // Inline elements (default)

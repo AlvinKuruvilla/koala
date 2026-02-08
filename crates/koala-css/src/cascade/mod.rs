@@ -273,6 +273,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: yes"
         text_align: parent.text_align.clone(),
 
+        // [§ 3.1 list-style-type](https://www.w3.org/TR/css-lists-3/#list-style-type)
+        // "Inherited: yes"
+        list_style_type: parent.list_style_type.clone(),
+
         // Non-inherited properties start as None
         //
         // [§ 2 display](https://www.w3.org/TR/css-display-3/#the-display-properties)

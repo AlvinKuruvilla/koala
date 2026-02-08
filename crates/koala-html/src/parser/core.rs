@@ -617,7 +617,6 @@ impl HTMLParser {
     /// [§ 13.2.4.2](https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-list-item-scope)
     ///
     /// "has an element in list item scope" — default scope markers plus ol, ul.
-    #[allow(dead_code)]
     fn has_element_in_list_item_scope(&self, tag_name: &str) -> bool {
         const LIST_ITEM_SCOPE: &[&str] = &[
             "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template",
@@ -668,11 +667,11 @@ impl HTMLParser {
     /// Used for elements like <li>, <p>, <dd>, <dt> that implicitly close
     /// when a new one is encountered.
     fn close_element_if_in_scope(&mut self, tag_name: &str) {
-        // STEP 1: Generate implied end tags (excluding the target)
-        self.generate_implied_end_tags_excluding(Some(tag_name));
-
-        // STEP 2: Check if element is in scope.
+        // STEP 1: Check if element is in scope.
         // Per spec, "p" uses button scope; others use default scope.
+        // We must check scope BEFORE generating implied end tags, because
+        // generate_implied_end_tags can pop elements (like <li>) that should
+        // only be popped if the target element is actually in scope.
         let in_scope = if tag_name == "p" {
             self.has_element_in_button_scope(tag_name)
         } else {
@@ -680,6 +679,8 @@ impl HTMLParser {
         };
 
         if in_scope {
+            // STEP 2: Generate implied end tags (excluding the target)
+            self.generate_implied_end_tags_excluding(Some(tag_name));
             // STEP 3: Pop elements until target is found
             self.pop_until_tag(tag_name);
         }
@@ -2213,24 +2214,98 @@ impl HTMLParser {
             //     - If the current node is not an li element, then this is a parse error.
             //     - Pop elements from the stack of open elements until an li element has been popped.
             //     - Jump to the step labeled done below.
+            //  4. If node is in the special category, but is not an address, div, or p element,
+            //     then jump to the step labeled done below.
+            //  5. Otherwise, set node to the previous entry in the stack of open elements and
+            //     return to the step labeled loop.
             //  ...
             //  8. Done: If the stack of open elements has a p element in button scope, then close a p element.
             //  9. Insert an HTML element for the token."
             Token::StartTag { name, .. } if name == "li" => {
-                // Close any existing <li> element first
-                self.close_element_if_in_scope("li");
-                // Close any <p> in button scope
-                self.close_element_if_in_scope("p");
+                // TODO: STEP 1: Set frameset-ok flag to "not ok".
+
+                // STEP 2-5: Walk the stack backwards looking for <li>.
+                let mut found_li = false;
+                for i in (0..self.stack_of_open_elements.len()).rev() {
+                    let node_id = self.stack_of_open_elements[i];
+                    if let Some(tag) = self.get_tag_name(node_id) {
+                        // STEP 3: If node is "li", close it.
+                        if tag == "li" {
+                            found_li = true;
+                            break;
+                        }
+                        // STEP 4: If node is special but not address/div/p, stop.
+                        if Self::is_special_element(tag)
+                            && !matches!(tag, "address" | "div" | "p")
+                        {
+                            break;
+                        }
+                        // STEP 5: Otherwise continue to previous entry.
+                    }
+                }
+                if found_li {
+                    self.generate_implied_end_tags_excluding(Some("li"));
+                    // If current node is not "li", this is a parse error (ignored).
+                    self.pop_until_tag("li");
+                }
+
+                // STEP 8: Done. If <p> in button scope, close it.
+                if self.has_element_in_button_scope("p") {
+                    self.close_element_if_in_scope("p");
+                }
+
+                // STEP 9: Insert an HTML element for the token.
                 let _ = self.insert_html_element(token);
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tags "dd", "dt"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            // Similar to <li> but checks for dd/dt
+            // "A start tag whose tag name is one of: "dd", "dt""
+            // Same pattern as <li> but the loop checks for both "dd" and "dt".
+            //  1. Set the frameset-ok flag to "not ok".
+            //  2. Initialize node to be the current node.
+            //  3. Loop:
+            //     - If node is "dd": generate implied end tags excluding "dd",
+            //       pop until "dd", jump to Done.
+            //     - If node is "dt": generate implied end tags excluding "dt",
+            //       pop until "dt", jump to Done.
+            //     - If node is special but not address/div/p: break.
+            //     - Otherwise: set node to previous entry, continue.
+            //  8. Done: If <p> in button scope, close <p>.
+            //  9. Insert an HTML element for the token.
             Token::StartTag { name, .. } if matches!(name.as_str(), "dd" | "dt") => {
-                // Close any existing <dd> or <dt> element
-                self.close_element_if_in_scope("dd");
-                self.close_element_if_in_scope("dt");
-                self.close_element_if_in_scope("p");
+                // TODO: STEP 1: Set frameset-ok flag to "not ok".
+
+                // STEP 2-5: Walk the stack backwards looking for "dd" or "dt".
+                let mut found_tag: Option<&str> = None;
+                for i in (0..self.stack_of_open_elements.len()).rev() {
+                    let node_id = self.stack_of_open_elements[i];
+                    if let Some(tag) = self.get_tag_name(node_id) {
+                        if tag == "dd" {
+                            found_tag = Some("dd");
+                            break;
+                        }
+                        if tag == "dt" {
+                            found_tag = Some("dt");
+                            break;
+                        }
+                        if Self::is_special_element(tag)
+                            && !matches!(tag, "address" | "div" | "p")
+                        {
+                            break;
+                        }
+                    }
+                }
+                if let Some(close_tag) = found_tag {
+                    self.generate_implied_end_tags_excluding(Some(close_tag));
+                    self.pop_until_tag(close_tag);
+                }
+
+                // STEP 8: Done. If <p> in button scope, close it.
+                if self.has_element_in_button_scope("p") {
+                    self.close_element_if_in_scope("p");
+                }
+
+                // STEP 9: Insert an HTML element for the token.
                 let _ = self.insert_html_element(token);
             }
 
@@ -2334,9 +2409,45 @@ impl HTMLParser {
                 self.insertion_mode = InsertionMode::Text;
             }
 
-            // [§ 13.2.6.4.7 "in body" - End tags "dd", "dt", "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            Token::EndTag { name, .. } if matches!(name.as_str(), "dd" | "dt" | "li") => {
-                self.pop_until_tag(name);
+            // [§ 13.2.6.4.7 "in body" - End tag "li"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "An end tag whose tag name is "li""
+            // "If the stack of open elements does not have an li element in
+            //  list item scope, then this is a parse error; ignore the token."
+            // "Otherwise, run these steps:
+            //  1. Generate implied end tags, except for li elements.
+            //  2. If the current node is not an li element, then this is a parse error.
+            //  3. Pop elements from the stack of open elements until an li element
+            //     has been popped from the stack."
+            Token::EndTag { name, .. } if name == "li" => {
+                if self.has_element_in_list_item_scope("li") {
+                    self.generate_implied_end_tags_excluding(Some("li"));
+                    // If current node is not "li", this is a parse error (ignored).
+                    self.pop_until_tag("li");
+                }
+                // else: parse error, ignore token
+            }
+
+            // [§ 13.2.6.4.7 "in body" - End tags "dd", "dt"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
+            //
+            // "An end tag whose tag name is one of: "dd", "dt""
+            // "If the stack of open elements does not have an element in scope
+            //  that is an HTML element with the same tag name as that of the
+            //  token, then this is a parse error; ignore the token."
+            // "Otherwise, run these steps:
+            //  1. Generate implied end tags, except for HTML elements with the
+            //     same tag name as the token.
+            //  2. If the current node is not an HTML element with the same tag
+            //     name as the token, then this is a parse error.
+            //  3. Pop elements from the stack of open elements until an HTML
+            //     element with the same tag name as the token has been popped."
+            Token::EndTag { name, .. } if matches!(name.as_str(), "dd" | "dt") => {
+                if self.has_element_in_scope(name) {
+                    self.generate_implied_end_tags_excluding(Some(name));
+                    // If current node is not the target, this is a parse error (ignored).
+                    self.pop_until_tag(name);
+                }
+                // else: parse error, ignore token
             }
 
             // [§ 13.2.6.4.7 "in body" - Start tag "table"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
@@ -2547,7 +2658,15 @@ impl HTMLParser {
                         | "ul"
                 ) =>
             {
-                // NOTE: We skip scope checking and implied end tag generation for simplicity.
+                // STEP 1: Check if element is in scope.
+                if !self.has_element_in_scope(name) {
+                    // "this is a parse error; ignore the token."
+                    return;
+                }
+                // STEP 2: Generate implied end tags.
+                self.generate_implied_end_tags();
+                // STEP 3: If current node is not the target, this is a parse error (ignored).
+                // STEP 4: Pop until target is popped.
                 self.pop_until_tag(name);
             }
 

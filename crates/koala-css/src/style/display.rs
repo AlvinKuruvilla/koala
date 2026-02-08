@@ -29,6 +29,14 @@ pub enum OuterDisplayType {
     Inline,
     /// "The element generates a run-in box, which is a type of inline-level box."
     RunIn,
+    /// [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
+    ///
+    /// "An element with `display: list-item` generates a principal block box
+    /// for its content and, optionally, a marker box."
+    ///
+    /// In flow layout, list-item behaves like block but additionally generates
+    /// marker content (bullets, numbers, etc.).
+    ListItem,
 }
 
 /// [§ 2.2 Inner Display Layout Models](https://www.w3.org/TR/css-display-3/#inner-model)
@@ -105,6 +113,19 @@ impl DisplayValue {
             inner: InnerDisplayType::Grid,
         }
     }
+
+    /// `display: list-item` - list-item outer, flow inner
+    ///
+    /// [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
+    ///
+    /// "An element with `display: list-item` generates a `::marker` pseudo-element."
+    #[must_use]
+    pub const fn list_item() -> Self {
+        Self {
+            outer: OuterDisplayType::ListItem,
+            inner: InnerDisplayType::Flow,
+        }
+    }
 }
 
 /// [§ 2 The display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
@@ -135,6 +156,10 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
 
                 // "grid: The element generates a principal grid container box."
                 "grid" => return Some(DisplayValue::grid()),
+
+                // [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
+                // "list-item: The element generates a ::marker pseudo-element."
+                "list-item" => return Some(DisplayValue::list_item()),
 
                 // "none" is handled separately by is_display_none
                 "none" => return None,
