@@ -16,6 +16,8 @@
 //!    from the normal flow entirely and assigned a position with respect to a
 //!    containing block."
 
+use serde::Serialize;
+
 use super::box_model::{BoxDimensions, Rect};
 use super::inline::FontMetrics;
 use super::layout_box::LayoutBox;
@@ -48,7 +50,7 @@ use super::values::UnresolvedAutoEdgeSizes;
 /// sticky (CSS Positioned Layout Module Level 3)
 ///   The box's position is calculated according to the normal flow, then
 ///   offset relative to its nearest scrolling ancestor."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum PositionType {
     /// "The box is a normal box, laid out according to the normal flow."
     #[default]

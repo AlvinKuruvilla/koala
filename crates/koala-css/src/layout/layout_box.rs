@@ -1061,14 +1061,8 @@ impl LayoutBox {
                 // "Values: static | relative | absolute | fixed | sticky"
                 // Initial: static
                 let position_type = style
-                    .and_then(|s| s.position.as_deref())
-                    .map_or(PositionType::Static, |p| match p {
-                        "relative" => PositionType::Relative,
-                        "absolute" => PositionType::Absolute,
-                        "fixed" => PositionType::Fixed,
-                        "sticky" => PositionType::Sticky,
-                        _ => PositionType::Static,
-                    });
+                    .and_then(|s| s.position)
+                    .unwrap_or(PositionType::Static);
 
                 // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
                 //

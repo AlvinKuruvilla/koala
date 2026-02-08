@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
+use crate::layout::positioned::PositionType;
 use crate::{AutoLength, BorderValue, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
 
@@ -224,7 +225,7 @@ pub struct ComputedStyle {
     /// Values: static | relative | absolute | fixed | sticky
     /// Initial: static
     /// Inherited: no
-    pub position: Option<String>,
+    pub position: Option<PositionType>,
 
     /// [§ 9.3.2 'top'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
     ///
@@ -832,12 +833,13 @@ impl ComputedStyle {
             // adds "sticky"
             "position" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first() {
-                    let lower = ident.to_ascii_lowercase();
-                    if matches!(
-                        lower.as_str(),
-                        "static" | "relative" | "absolute" | "fixed" | "sticky"
-                    ) {
-                        self.position = Some(lower);
+                    match ident.to_ascii_lowercase().as_str() {
+                        "static" => self.position = Some(PositionType::Static),
+                        "relative" => self.position = Some(PositionType::Relative),
+                        "absolute" => self.position = Some(PositionType::Absolute),
+                        "fixed" => self.position = Some(PositionType::Fixed),
+                        "sticky" => self.position = Some(PositionType::Sticky),
+                        _ => {}
                     }
                 }
             }
