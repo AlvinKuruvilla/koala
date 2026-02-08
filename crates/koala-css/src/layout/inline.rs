@@ -323,6 +323,14 @@ pub struct InlineLayout {
     /// the block container that established it.
     pub text_align: TextAlign,
 
+    /// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+    ///
+    /// Absolute X coordinate of the containing block's content edge.
+    /// All fragment X positions are offset by this amount so they are
+    /// in absolute coordinates (matching `current_y` which is already
+    /// absolute).
+    pub start_x: f32,
+
     /// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
     ///
     /// "The current and subsequent line boxes created next to the float
@@ -343,7 +351,12 @@ pub struct InlineLayout {
 impl InlineLayout {
     /// Create a new inline layout context.
     #[must_use]
-    pub const fn new(available_width: f32, start_y: f32, text_align: TextAlign) -> Self {
+    pub const fn new(
+        available_width: f32,
+        start_x: f32,
+        start_y: f32,
+        text_align: TextAlign,
+    ) -> Self {
         Self {
             line_boxes: Vec::new(),
             current_line_fragments: Vec::new(),
@@ -352,6 +365,7 @@ impl InlineLayout {
             available_width,
             current_line_max_height: 0.0,
             text_align,
+            start_x,
             left_offset: 0.0,
             no_wrap: false,
         }
@@ -517,7 +531,7 @@ impl InlineLayout {
         // intruding into the line box.
         let fragment = LineFragment {
             bounds: Rect {
-                x: self.left_offset + self.current_x,
+                x: self.start_x + self.left_offset + self.current_x,
                 y: self.current_y,
                 width: text_width,
                 height: line_height,
@@ -579,7 +593,7 @@ impl InlineLayout {
         // dimensions of the inline box, as computed by the caller.
         let fragment = LineFragment {
             bounds: Rect {
-                x: self.left_offset + self.current_x,
+                x: self.start_x + self.left_offset + self.current_x,
                 y: self.current_y,
                 width,
                 height,
@@ -628,7 +642,7 @@ impl InlineLayout {
         // STEP 2: Place the inline-block fragment on the current line.
         let fragment = LineFragment {
             bounds: Rect {
-                x: self.left_offset + self.current_x,
+                x: self.start_x + self.left_offset + self.current_x,
                 y: self.current_y,
                 width,
                 height,
@@ -859,7 +873,7 @@ impl InlineLayout {
         let fragments = std::mem::take(&mut self.current_line_fragments);
         let line_box = LineBox {
             bounds: Rect {
-                x: 0.0,
+                x: self.start_x,
                 y: self.current_y,
                 width: self.available_width,
                 height: line_height,

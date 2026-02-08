@@ -2987,8 +2987,12 @@ impl LayoutBox {
             self.dimensions.content.width
         };
 
-        let mut inline_layout =
-            InlineLayout::new(effective_width, self.dimensions.content.y, self.text_align);
+        let mut inline_layout = InlineLayout::new(
+            effective_width,
+            self.dimensions.content.x,
+            self.dimensions.content.y,
+            self.text_align,
+        );
         inline_layout.left_offset = left_offset;
 
         // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)

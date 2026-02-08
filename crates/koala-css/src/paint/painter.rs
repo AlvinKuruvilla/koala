@@ -12,7 +12,7 @@ use koala_dom::NodeId;
 use crate::layout::inline::FragmentContent;
 use crate::layout::positioned::PositionType;
 use crate::style::ComputedStyle;
-use crate::{BoxType, ColorValue, LayoutBox};
+use crate::{BoxType, LayoutBox};
 
 use super::{DisplayCommand, DisplayList};
 
@@ -199,32 +199,11 @@ impl<'a> Painter<'a> {
                         }
                     }
                 }
-            } else if let BoxType::AnonymousInline(text) = &layout_box.box_type {
-                let text_color = effective_style
-                    .and_then(|s| s.color.as_ref())
-                    .cloned()
-                    .unwrap_or(ColorValue::BLACK);
-
-                let font_size = effective_style
-                    .and_then(|s| s.font_size.as_ref())
-                    .map_or(16.0, |fs| fs.to_px() as f32);
-
-                let font_weight = effective_style.and_then(|s| s.font_weight).unwrap_or(400);
-
-                let font_style = effective_style
-                    .and_then(|s| s.font_style)
-                    .unwrap_or_default();
-
-                display_list.push(DisplayCommand::DrawText {
-                    x: dims.content.x,
-                    y: dims.content.y,
-                    text: text.clone(),
-                    font_size,
-                    color: text_color,
-                    font_weight,
-                    font_style,
-                });
             }
+            // NOTE: AnonymousInline text is NOT drawn here. It is always
+            // consumed by the parent's inline formatting context and rendered
+            // via the parent's line_boxes above. Drawing it again from the
+            // child's own paint_box would produce duplicate text.
         }
 
         // [CSS 2.1 Appendix E.2 Step 4](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
