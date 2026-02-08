@@ -160,6 +160,19 @@ input, textarea, select, button {
 button {
     padding: 1px 6px;
 }
+
+/* [§ 15.3.10 Tables](https://html.spec.whatwg.org/multipage/rendering.html#tables-2) */
+table {
+    display: table;
+}
+
+td, th {
+    padding: 1px;
+}
+
+th {
+    font-weight: bold;
+}
 "#;
 
 /// Return the parsed UA stylesheet, parsing only once.

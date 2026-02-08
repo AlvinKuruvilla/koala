@@ -641,6 +641,19 @@ pub struct LayoutBox {
     /// Contains the rendered marker string (e.g., "\u{2022} ", "1. ").
     /// None for non-list-item boxes or `list-style-type: none`.
     pub marker_text: Option<String>,
+
+    // ===== Table fields =====
+    /// [§ 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
+    ///
+    /// The HTML tag name of the element, used by table layout to identify
+    /// `<tr>`, `<td>`, `<th>`, `<thead>`, `<tbody>`, `<tfoot>`, `<caption>`.
+    /// None for anonymous boxes, Document nodes, and text nodes.
+    pub tag_name: Option<String>,
+
+    /// [§ 17.2.1 Anonymous table objects](https://www.w3.org/TR/CSS2/tables.html#anonymous-boxes)
+    ///
+    /// HTML `colspan` attribute value. Default: 1.
+    pub colspan: u32,
 }
 
 impl LayoutBox {
@@ -1028,6 +1041,8 @@ impl LayoutBox {
                     opacity: 1.0,
                     list_style_type: None,
                     marker_text: None,
+                    tag_name: None,
+                    colspan: 1,
                 })
             }
             // [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
@@ -1367,6 +1382,8 @@ impl LayoutBox {
                     opacity,
                     list_style_type,
                     marker_text,
+                    tag_name: Some(tag.clone()),
+                    colspan: data.attrs.get("colspan").and_then(|v| v.parse().ok()).unwrap_or(1),
                 })
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -1446,6 +1463,8 @@ impl LayoutBox {
                     opacity: 1.0,
                     list_style_type: None,
                     marker_text: None,
+                    tag_name: None,
+                    colspan: 1,
                 })
             }
             // Comments do not generate boxes and are not part of the render tree.
@@ -1609,6 +1628,11 @@ impl LayoutBox {
             //
             // Check inner display type — grid containers use their own algorithm.
             super::grid::layout_grid(self, containing_block, viewport, font_metrics, abs_cb);
+        } else if self.display.inner == InnerDisplayType::Table {
+            // [§ 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
+            //
+            // Check inner display type — table containers use automatic table layout.
+            super::table::layout_table(self, containing_block, viewport, font_metrics, abs_cb);
         } else {
             match self.display.outer {
                 OuterDisplayType::Block | OuterDisplayType::ListItem => {
@@ -2938,6 +2962,8 @@ impl LayoutBox {
             opacity: 1.0,
             list_style_type: None,
             marker_text: None,
+            tag_name: None,
+            colspan: 1,
         }
     }
 
@@ -3326,68 +3352,6 @@ impl LayoutBox {
         for child in &mut bx.children {
             Self::shift_box_tree(child, dx, dy);
         }
-    }
-
-    /// [§ 11.1 Overflow and clipping](https://www.w3.org/TR/CSS2/visufx.html#overflow)
-    ///
-    /// "This property specifies whether content of a block container element
-    /// is clipped when it overflows the element's box."
-    ///
-    /// "Values have the following meanings:
-    ///
-    /// visible
-    ///   This value indicates that content is not clipped, i.e., it may be
-    ///   rendered outside the block box.
-    ///
-    /// hidden
-    ///   This value indicates that the content is clipped and that no
-    ///   scrolling user interface should be provided to view the content
-    ///   outside the clipping region.
-    ///
-    /// scroll
-    ///   This value indicates that the content is clipped and that if the
-    ///   user agent uses a scrolling mechanism that is visible on the screen
-    ///   (such as a scroll bar or a panner), that mechanism should be
-    ///   displayed for a box whether or not any of its content is clipped.
-    ///
-    /// auto
-    ///   The behavior of the 'auto' value is user agent-dependent, but
-    ///   should cause a scrolling mechanism to be provided for overflowing boxes."
-    ///
-    /// NOTE: Requires `overflow` property to be parsed into `ComputedStyle`.
-    ///
-    /// TODO: Implement overflow handling:
-    ///
-    /// STEP 1: Determine if content overflows
-    ///
-    /// ```text
-    /// let content_height = self.dimensions.content.height;
-    /// let box_height = specified_height or auto;
-    /// overflows = content_height > box_height
-    /// ```
-    ///
-    /// STEP 2: Apply clipping if overflow is hidden/scroll/auto
-    ///
-    /// ```text
-    /// // Create a clip rect matching the padding box
-    /// clip_rect = self.dimensions.padding_box();
-    /// ```
-    ///
-    /// STEP 3: Handle scrollable overflow
-    ///
-    /// [CSS Overflow Module Level 3 § 2](https://www.w3.org/TR/css-overflow-3/#overflow-properties)
-    ///
-    /// Calculate scrollable overflow region:
-    ///
-    /// "The scrollable overflow region is the union of the border boxes
-    ///  of all descendants that extend beyond the padding edge."
-    ///
-    /// ```text
-    /// scroll_width = max(child.margin_box().x + child.margin_box().width) - content.x
-    /// scroll_height = max(child.margin_box().y + child.margin_box().height) - content.y
-    /// ```
-    fn apply_overflow_clipping(&self) -> Option<Rect> {
-        todo!("Apply overflow clipping per CSS 2.1 § 11.1")
     }
 
     /// [§ 10.3.5 Floating, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#float-width)

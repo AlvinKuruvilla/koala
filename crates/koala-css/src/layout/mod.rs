@@ -139,6 +139,12 @@ pub fn default_display_for_element(tag_name: &str) -> Option<DisplayValue> {
         return Some(DisplayValue::inline_block());
     }
 
+    // [§ 15.3.10 Tables](https://html.spec.whatwg.org/multipage/rendering.html#tables-2)
+    // "table { display: table; }"
+    if tag_name == "table" {
+        return Some(DisplayValue::table());
+    }
+
     // Inline elements (default)
     // a, abbr, acronym, b, bdi, bdo, big, br, cite, code, data, del, dfn,
     // em, font, i, img, ins, kbd, label, mark, nobr, q, ruby, s, samp,

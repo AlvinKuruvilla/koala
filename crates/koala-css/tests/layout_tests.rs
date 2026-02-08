@@ -2861,3 +2861,381 @@ fn test_grid_auto_rows() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Table layout tests
+//
+// [§ 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
+//
+// Tests for automatic table layout algorithm (§ 17.5.2).
+// ---------------------------------------------------------------------------
+
+/// [§ 17.5.2 Automatic table layout](https://www.w3.org/TR/CSS2/tables.html#auto-table-layout)
+///
+/// Basic 2x2 table: cells should be positioned in a grid, not stacked
+/// vertically like blocks.
+///
+/// NOTE: The HTML parser implicitly wraps `<tr>` elements in a `<tbody>`
+/// per [§ 13.2.6.4.9](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable),
+/// so the layout tree is: table > tbody > tr > td.
+#[test]
+fn test_table_basic_2x2() {
+    let root = layout_html(
+        "<html><body>
+            <table>
+                <tr><td>A</td><td>B</td></tr>
+                <tr><td>C</td><td>D</td></tr>
+            </table>
+        </body></html>",
+    );
+
+    // Document > html > body > table
+    let body = box_at_depth(&root, 2);
+    assert!(
+        !body.children.is_empty(),
+        "body should have at least one child (the table)"
+    );
+    let table = &body.children[0];
+    assert_eq!(
+        table.display,
+        DisplayValue::table(),
+        "table element should have display: table"
+    );
+
+    // Table should have positive height (cells rendered).
+    assert!(
+        table.dimensions.content.height > 0.0,
+        "table should have positive height, got {:.1}",
+        table.dimensions.content.height
+    );
+
+    // Parser wraps <tr> in an implicit <tbody>.
+    // table > tbody > [tr, tr]
+    let tbody: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tbody"))
+        .collect();
+    assert_eq!(tbody.len(), 1, "table should have 1 implicit <tbody>");
+
+    let trs: Vec<&LayoutBox> = tbody[0]
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tr"))
+        .collect();
+    assert_eq!(trs.len(), 2, "tbody should have 2 <tr> children");
+
+    // Row 1 cells: A and B should be on the same row (same y).
+    let row1 = trs[0];
+    assert!(
+        row1.children.len() >= 2,
+        "first row should have at least 2 cells"
+    );
+    let cell_a = &row1.children[0];
+    let cell_b = &row1.children[1];
+    assert!(
+        (cell_a.dimensions.content.y - cell_b.dimensions.content.y).abs() < 1.0,
+        "cells A and B should be on the same row: A.y={:.1}, B.y={:.1}",
+        cell_a.dimensions.content.y,
+        cell_b.dimensions.content.y
+    );
+
+    // Cells A and B should be side by side (B.x > A.x).
+    assert!(
+        cell_b.dimensions.content.x > cell_a.dimensions.content.x,
+        "cell B should be to the right of cell A: A.x={:.1}, B.x={:.1}",
+        cell_a.dimensions.content.x,
+        cell_b.dimensions.content.x
+    );
+
+    // Row 2 should be below row 1.
+    let row2 = trs[1];
+    assert!(
+        row2.dimensions.content.y > row1.dimensions.content.y,
+        "row 2 should be below row 1: r1.y={:.1}, r2.y={:.1}",
+        row1.dimensions.content.y,
+        row2.dimensions.content.y
+    );
+}
+
+/// [§ 17.5.2.2](https://www.w3.org/TR/CSS2/tables.html#auto-table-layout)
+///
+/// Table with explicit width: columns should fill the table width.
+#[test]
+fn test_table_explicit_width() {
+    let root = layout_html(
+        "<html><body>
+            <style>table { width: 400px; }</style>
+            <table>
+                <tr><td>A</td><td>B</td></tr>
+            </table>
+        </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let table = &body.children[0];
+
+    // Table content width should be 400px (minus margin/padding/border).
+    // The block width algorithm resolves explicit widths.
+    assert!(
+        (table.dimensions.content.width - 400.0).abs() < 1.0,
+        "table width should be ~400px, got {:.1}",
+        table.dimensions.content.width
+    );
+
+    // Both cells should fit within the table width.
+    // Parser wraps <tr> in implicit <tbody>.
+    let tbody: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tbody"))
+        .collect();
+    assert!(!tbody.is_empty());
+    let trs: Vec<&LayoutBox> = tbody[0]
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tr"))
+        .collect();
+    assert!(!trs.is_empty());
+    let row = trs[0];
+    if row.children.len() >= 2 {
+        let cell_a = &row.children[0];
+        let cell_b = &row.children[1];
+        // Each column should get roughly half the table width (minus border-spacing).
+        let a_width = cell_a.dimensions.content.width;
+        let b_width = cell_b.dimensions.content.width;
+        assert!(
+            a_width > 50.0 && b_width > 50.0,
+            "each cell should have reasonable width: A={a_width:.1}, B={b_width:.1}"
+        );
+    }
+}
+
+/// [§ 17.2.1](https://www.w3.org/TR/CSS2/tables.html#anonymous-boxes)
+///
+/// Table with colspan: merged cells should span multiple columns.
+#[test]
+fn test_table_colspan() {
+    let root = layout_html(
+        "<html><body>
+            <style>table { width: 400px; }</style>
+            <table>
+                <tr><td colspan=\"2\">Header</td></tr>
+                <tr><td>Left</td><td>Right</td></tr>
+            </table>
+        </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let table = &body.children[0];
+
+    // Parser wraps <tr> in implicit <tbody>.
+    let tbody: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tbody"))
+        .collect();
+    assert_eq!(tbody.len(), 1, "table should have 1 implicit <tbody>");
+
+    let trs: Vec<&LayoutBox> = tbody[0]
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tr"))
+        .collect();
+    assert_eq!(trs.len(), 2, "table should have 2 rows");
+
+    // Row 1: single cell with colspan=2 should be wider than either cell
+    // in row 2.
+    let header_cell = &trs[0].children[0];
+    let left_cell = &trs[1].children[0];
+    let right_cell = &trs[1].children[1];
+
+    assert!(
+        header_cell.dimensions.content.width
+            > left_cell.dimensions.content.width + 1.0,
+        "colspan=2 cell should be wider than single cell: header={:.1}, left={:.1}",
+        header_cell.dimensions.content.width,
+        left_cell.dimensions.content.width
+    );
+
+    // The colspan cell width should be approximately equal to the sum of
+    // the two single cells plus the border-spacing between them.
+    let expected_width =
+        left_cell.dimensions.content.width + right_cell.dimensions.content.width;
+    // Allow for border-spacing (2px) + padding differences.
+    assert!(
+        (header_cell.dimensions.content.width - expected_width).abs() < 10.0,
+        "colspan cell width should be ~sum of single cells: header={:.1}, expected~{:.1}",
+        header_cell.dimensions.content.width,
+        expected_width
+    );
+}
+
+/// [§ 17.2.1](https://www.w3.org/TR/CSS2/tables.html#table-display)
+///
+/// Table with row groups: <thead> + <tbody> rows should be laid out correctly.
+#[test]
+fn test_table_row_groups() {
+    let root = layout_html(
+        "<html><body>
+            <table>
+                <thead><tr><td>H1</td><td>H2</td></tr></thead>
+                <tbody>
+                    <tr><td>A</td><td>B</td></tr>
+                    <tr><td>C</td><td>D</td></tr>
+                </tbody>
+            </table>
+        </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let table = &body.children[0];
+
+    // Table should have positive height.
+    assert!(
+        table.dimensions.content.height > 0.0,
+        "table with row groups should have positive height"
+    );
+
+    // Find the <thead> and <tbody> children.
+    let thead: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("thead"))
+        .collect();
+    let tbody: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tbody"))
+        .collect();
+
+    assert_eq!(thead.len(), 1, "should have 1 thead");
+    assert_eq!(tbody.len(), 1, "should have 1 tbody");
+
+    // The thead row's cells should be above the tbody rows' cells.
+    // thead's first <tr> cells.
+    let thead_tr = &thead[0].children[0];
+    let thead_cell_y = thead_tr.children[0].dimensions.content.y;
+
+    // tbody's first <tr> cells.
+    let tbody_tr = &tbody[0].children[0];
+    let tbody_cell_y = tbody_tr.children[0].dimensions.content.y;
+
+    assert!(
+        tbody_cell_y > thead_cell_y,
+        "tbody cells should be below thead cells: thead_y={:.1}, tbody_y={:.1}",
+        thead_cell_y,
+        tbody_cell_y
+    );
+}
+
+/// Table cells with nested content (paragraphs and text).
+#[test]
+fn test_table_nested_content() {
+    let root = layout_html(
+        "<html><body>
+            <table>
+                <tr>
+                    <td><p>Paragraph in cell</p></td>
+                    <td>Plain text</td>
+                </tr>
+            </table>
+        </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let table = &body.children[0];
+
+    assert!(
+        table.dimensions.content.height > 0.0,
+        "table with nested content should have positive height"
+    );
+
+    // Find the row (parser wraps <tr> in implicit <tbody>).
+    let tbody: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tbody"))
+        .collect();
+    assert_eq!(tbody.len(), 1);
+    let trs: Vec<&LayoutBox> = tbody[0]
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tr"))
+        .collect();
+    assert_eq!(trs.len(), 1);
+
+    // Both cells should be on the same row and have positive dimensions.
+    let row = trs[0];
+    assert!(row.children.len() >= 2, "row should have at least 2 cells");
+    let cell_1 = &row.children[0];
+    let cell_2 = &row.children[1];
+
+    assert!(
+        cell_1.dimensions.content.height > 0.0,
+        "cell with paragraph should have positive height"
+    );
+    assert!(
+        cell_2.dimensions.content.height > 0.0,
+        "cell with text should have positive height"
+    );
+    assert!(
+        (cell_1.dimensions.content.y - cell_2.dimensions.content.y).abs() < 1.0,
+        "both cells should be on the same row"
+    );
+}
+
+/// [§ 15.3.10 Tables](https://html.spec.whatwg.org/multipage/rendering.html#tables-2)
+///
+/// Verify that <table> gets `display: table` from default_display_for_element.
+#[test]
+fn test_default_display_table() {
+    assert_eq!(
+        default_display_for_element("table"),
+        Some(DisplayValue::table())
+    );
+}
+
+/// <th> elements should render with bold text (font-weight: bold from UA).
+#[test]
+fn test_table_th_bold() {
+    let root = layout_html(
+        "<html><body>
+            <table>
+                <tr><th>Header</th><td>Data</td></tr>
+            </table>
+        </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let table = &body.children[0];
+    // Parser wraps <tr> in implicit <tbody>.
+    let tbody: Vec<&LayoutBox> = table
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tbody"))
+        .collect();
+    assert!(!tbody.is_empty());
+    let trs: Vec<&LayoutBox> = tbody[0]
+        .children
+        .iter()
+        .filter(|c| c.tag_name.as_deref() == Some("tr"))
+        .collect();
+    assert!(!trs.is_empty());
+    let row = trs[0];
+    let th = &row.children[0];
+    let td = &row.children[1];
+
+    // <th> should have bold font-weight (700).
+    assert!(
+        th.font_weight >= 700,
+        "th should be bold (font-weight >= 700), got {}",
+        th.font_weight
+    );
+    // <td> should have normal font-weight (400).
+    assert!(
+        td.font_weight <= 400,
+        "td should be normal weight (<= 400), got {}",
+        td.font_weight
+    );
+}

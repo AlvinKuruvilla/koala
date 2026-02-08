@@ -310,18 +310,18 @@ impl HTMLParser {
             //   [§ 13.2.6.4.13](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
             //   - "A start tag whose tag name is 'tr'" -> insert element, switch to InRow
             //   - "A start tag whose tag name is one of: 'th', 'td'" -> act as if 'tr', reprocess
-            InsertionMode::InTableBody => todo!("InTableBody mode - see STEP 5 above"),
+            InsertionMode::InTableBody => self.handle_in_table_body_mode(token),
 
             // STEP 6: InRow mode - handles <tr> and its children
             //   [§ 13.2.6.4.14](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow)
             //   - "A start tag whose tag name is one of: 'th', 'td'" -> switch to InCell
-            InsertionMode::InRow => todo!("InRow mode - see STEP 6 above"),
+            InsertionMode::InRow => self.handle_in_row_mode(token),
 
             // STEP 7: InCell mode - handles <td> and <th> content
             //   [§ 13.2.6.4.15](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incell)
             //   - Process most tokens using InBody rules
             //   - Special handling for table-related end tags
-            InsertionMode::InCell => todo!("InCell mode - see STEP 7 above"),
+            InsertionMode::InCell => self.handle_in_cell_mode(token),
 
             // ===== FORM ELEMENT MODES =====
             //
@@ -753,6 +753,58 @@ impl HTMLParser {
             }
             let _ = self.stack_of_open_elements.pop();
         }
+    }
+
+    /// [§ 13.2.6.4.13 Clear the stack back to a table body context](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
+    ///
+    /// "When the steps above require the UA to clear the stack back to a table
+    /// body context, it means that the UA must, while the current node is not a
+    /// tbody, tfoot, thead, template, or html element, pop elements from the
+    /// stack of open elements."
+    fn clear_stack_back_to_table_body_context(&mut self) {
+        while let Some(&current) = self.stack_of_open_elements.last() {
+            if let Some(tag) = self.get_tag_name(current)
+                && matches!(tag, "tbody" | "tfoot" | "thead" | "template" | "html")
+            {
+                break;
+            }
+            let _ = self.stack_of_open_elements.pop();
+        }
+    }
+
+    /// [§ 13.2.6.4.14 Clear the stack back to a table row context](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow)
+    ///
+    /// "When the steps above require the UA to clear the stack back to a table
+    /// row context, it means that the UA must, while the current node is not a
+    /// tr, template, or html element, pop elements from the stack of open
+    /// elements."
+    fn clear_stack_back_to_table_row_context(&mut self) {
+        while let Some(&current) = self.stack_of_open_elements.last() {
+            if let Some(tag) = self.get_tag_name(current)
+                && matches!(tag, "tr" | "template" | "html")
+            {
+                break;
+            }
+            let _ = self.stack_of_open_elements.pop();
+        }
+    }
+
+    /// [§ 13.2.6.4.15 Close the cell](https://html.spec.whatwg.org/multipage/parsing.html#close-the-cell)
+    ///
+    /// "Where the steps above say to close the cell, they mean to run the
+    /// following algorithm:"
+    fn close_the_cell(&mut self) {
+        // "Generate implied end tags."
+        self.generate_implied_end_tags();
+        // "If the current node is not now a td element or a th element,
+        //  then this is a parse error."
+        // "Pop elements from the stack of open elements stack until a td
+        //  element or a th element has been popped from the stack."
+        self.pop_until_one_of(&["td", "th"]);
+        // "Clear the list of active formatting elements up to the last marker."
+        self.clear_active_formatting_elements_to_last_marker();
+        // "Switch the insertion mode to "in row"."
+        self.insertion_mode = InsertionMode::InRow;
     }
 
     /// [§ 13.2.4.1 Reset the insertion mode appropriately](https://html.spec.whatwg.org/multipage/parsing.html#reset-the-insertion-mode-appropriately)
@@ -3502,6 +3554,317 @@ impl HTMLParser {
                     self.insertion_mode = original_mode;
                 }
                 self.reprocess_token(token);
+            }
+        }
+    }
+
+    /// [§ 13.2.6.4.13 The "in table body" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
+    fn handle_in_table_body_mode(&mut self, token: &Token) {
+        match token {
+            // "A start tag whose tag name is "tr""
+            // "Clear the stack back to a table body context."
+            // "Insert an HTML element for the token, then switch the insertion
+            //  mode to "in row"."
+            Token::StartTag { name, .. } if name == "tr" => {
+                self.clear_stack_back_to_table_body_context();
+                let _ = self.insert_html_element(token);
+                self.insertion_mode = InsertionMode::InRow;
+            }
+
+            // "A start tag whose tag name is one of: "th", "td""
+            // "Parse error."
+            // "Clear the stack back to a table body context."
+            // "Insert an HTML element for a "tr" start tag token with no
+            //  attributes, then switch the insertion mode to "in row"."
+            // "Reprocess the current token."
+            Token::StartTag { name, .. } if matches!(name.as_str(), "th" | "td") => {
+                self.clear_stack_back_to_table_body_context();
+                let fake_tr = Token::StartTag {
+                    name: "tr".to_string(),
+                    self_closing: false,
+                    attributes: Vec::new(),
+                };
+                let _ = self.insert_html_element(&fake_tr);
+                self.insertion_mode = InsertionMode::InRow;
+                self.reprocess_token(token);
+            }
+
+            // "An end tag whose tag name is one of: "tbody", "tfoot", "thead""
+            // "If the stack of open elements does not have an element in table
+            //  scope that is an HTML element with the same tag name as the
+            //  token, this is a parse error; ignore the token."
+            // "Otherwise:"
+            //   "Clear the stack back to a table body context."
+            //   "Pop the current node from the stack of open elements. Switch
+            //    the insertion mode to "in table"."
+            Token::EndTag { name, .. }
+                if matches!(name.as_str(), "tbody" | "tfoot" | "thead") =>
+            {
+                if self.has_element_in_table_scope(name) {
+                    self.clear_stack_back_to_table_body_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTable;
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "A start tag whose tag name is one of: "caption", "col",
+            //  "colgroup", "tbody", "tfoot", "thead""
+            // "An end tag whose tag name is "table""
+            // "If the stack of open elements does not have a tbody, thead, or
+            //  tfoot element in table scope, this is a parse error; ignore
+            //  the token."
+            // "Otherwise:"
+            //   "Clear the stack back to a table body context."
+            //   "Pop the current node from the stack of open elements. Switch
+            //    the insertion mode to "in table"."
+            //   "Reprocess the token."
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "caption" | "col" | "colgroup" | "tbody" | "tfoot" | "thead"
+                ) =>
+            {
+                if self.has_element_in_table_scope("tbody")
+                    || self.has_element_in_table_scope("thead")
+                    || self.has_element_in_table_scope("tfoot")
+                {
+                    self.clear_stack_back_to_table_body_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTable;
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore.
+            }
+            Token::EndTag { name, .. } if name == "table" => {
+                if self.has_element_in_table_scope("tbody")
+                    || self.has_element_in_table_scope("thead")
+                    || self.has_element_in_table_scope("tfoot")
+                {
+                    self.clear_stack_back_to_table_body_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTable;
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "An end tag whose tag name is one of: "body", "caption", "col",
+            //  "colgroup", "html", "td", "th", "tr""
+            // "Parse error. Ignore the token."
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "body" | "caption" | "col" | "colgroup" | "html" | "td" | "th" | "tr"
+                ) => {}
+
+            // "Anything else"
+            // "Process the token using the rules for the "in table" insertion mode."
+            _ => {
+                self.handle_in_table_mode(token);
+            }
+        }
+    }
+
+    /// [§ 13.2.6.4.14 The "in row" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow)
+    fn handle_in_row_mode(&mut self, token: &Token) {
+        match token {
+            // "A start tag whose tag name is one of: "th", "td""
+            // "Clear the stack back to a table row context."
+            // "Insert an HTML element for the token, then switch the insertion
+            //  mode to "in cell"."
+            // "Insert a marker at the end of the list of active formatting elements."
+            Token::StartTag { name, .. } if matches!(name.as_str(), "th" | "td") => {
+                self.clear_stack_back_to_table_row_context();
+                let _ = self.insert_html_element(token);
+                self.insertion_mode = InsertionMode::InCell;
+                self.active_formatting_elements
+                    .push(ActiveFormattingElement::Marker);
+            }
+
+            // "An end tag whose tag name is "tr""
+            // "If the stack of open elements does not have a tr element in
+            //  table scope, this is a parse error; ignore the token."
+            // "Otherwise:"
+            //   "Clear the stack back to a table row context."
+            //   "Pop the current node (which will be a tr element) from the
+            //    stack of open elements. Switch the insertion mode to
+            //    "in table body"."
+            Token::EndTag { name, .. } if name == "tr" => {
+                if self.has_element_in_table_scope("tr") {
+                    self.clear_stack_back_to_table_row_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTableBody;
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "A start tag whose tag name is one of: "caption", "col",
+            //  "colgroup", "tbody", "tfoot", "thead", "tr""
+            // "An end tag whose tag name is "table""
+            // "If the stack of open elements does not have a tr element in
+            //  table scope, this is a parse error; ignore the token."
+            // "Otherwise:"
+            //   "Clear the stack back to a table row context."
+            //   "Pop the current node (which will be a tr element) from the
+            //    stack of open elements. Switch the insertion mode to
+            //    "in table body"."
+            //   "Reprocess the token."
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "caption" | "col" | "colgroup" | "tbody" | "tfoot" | "thead" | "tr"
+                ) =>
+            {
+                if self.has_element_in_table_scope("tr") {
+                    self.clear_stack_back_to_table_row_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTableBody;
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore.
+            }
+            Token::EndTag { name, .. } if name == "table" => {
+                if self.has_element_in_table_scope("tr") {
+                    self.clear_stack_back_to_table_row_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTableBody;
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "An end tag whose tag name is one of: "tbody", "tfoot", "thead""
+            // "If the stack of open elements does not have an element in table
+            //  scope that is an HTML element with the same tag name as the
+            //  token, this is a parse error; ignore the token."
+            // "If the stack of open elements does not have a tr element in
+            //  table scope, ignore the token."
+            // "Otherwise:"
+            //   "Clear the stack back to a table row context."
+            //   "Pop the current node (which will be a tr element) from the
+            //    stack of open elements. Switch the insertion mode to
+            //    "in table body"."
+            //   "Reprocess the token."
+            Token::EndTag { name, .. }
+                if matches!(name.as_str(), "tbody" | "tfoot" | "thead") =>
+            {
+                if !self.has_element_in_table_scope(name) {
+                    // Parse error, ignore.
+                } else if !self.has_element_in_table_scope("tr") {
+                    // Ignore.
+                } else {
+                    self.clear_stack_back_to_table_row_context();
+                    let _ = self.stack_of_open_elements.pop();
+                    self.insertion_mode = InsertionMode::InTableBody;
+                    self.reprocess_token(token);
+                }
+            }
+
+            // "An end tag whose tag name is one of: "body", "caption", "col",
+            //  "colgroup", "html", "td", "th""
+            // "Parse error. Ignore the token."
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "body" | "caption" | "col" | "colgroup" | "html" | "td" | "th"
+                ) => {}
+
+            // "Anything else"
+            // "Process the token using the rules for the "in table" insertion mode."
+            _ => {
+                self.handle_in_table_mode(token);
+            }
+        }
+    }
+
+    /// [§ 13.2.6.4.15 The "in cell" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incell)
+    fn handle_in_cell_mode(&mut self, token: &Token) {
+        match token {
+            // "An end tag whose tag name is one of: "td", "th""
+            // "If the stack of open elements does not have an element in table
+            //  scope that is an HTML element with the same tag name as that of
+            //  the token, then this is a parse error; ignore the token."
+            // "Otherwise:"
+            //   "Generate implied end tags."
+            //   "If the current node is not an HTML element with the same tag
+            //    name as the token, then this is a parse error."
+            //   "Pop elements from the stack of open elements stack until an
+            //    HTML element with the same tag name as the token has been
+            //    popped from the stack."
+            //   "Clear the list of active formatting elements up to the last
+            //    marker."
+            //   "Switch the insertion mode to "in row"."
+            Token::EndTag { name, .. } if matches!(name.as_str(), "td" | "th") => {
+                if self.has_element_in_table_scope(name) {
+                    self.generate_implied_end_tags();
+                    self.pop_until_tag(name);
+                    self.clear_active_formatting_elements_to_last_marker();
+                    self.insertion_mode = InsertionMode::InRow;
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "A start tag whose tag name is one of: "caption", "col",
+            //  "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr""
+            // "If the stack of open elements does not have a td or th element
+            //  in table scope, then this is a parse error; ignore the token."
+            // "Otherwise, close the cell and reprocess the token."
+            Token::StartTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "caption"
+                        | "col"
+                        | "colgroup"
+                        | "tbody"
+                        | "td"
+                        | "tfoot"
+                        | "th"
+                        | "thead"
+                        | "tr"
+                ) =>
+            {
+                if self.has_element_in_table_scope("td")
+                    || self.has_element_in_table_scope("th")
+                {
+                    self.close_the_cell();
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "An end tag whose tag name is one of: "body", "caption", "col",
+            //  "colgroup", "html""
+            // "Parse error. Ignore the token."
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "body" | "caption" | "col" | "colgroup" | "html"
+                ) => {}
+
+            // "An end tag whose tag name is one of: "table", "tbody", "tfoot",
+            //  "thead", "tr""
+            // "If the stack of open elements does not have an element in table
+            //  scope that is an HTML element with the same tag name as that of
+            //  the token, then this is a parse error; ignore the token."
+            // "Otherwise, close the cell and reprocess the token."
+            Token::EndTag { name, .. }
+                if matches!(
+                    name.as_str(),
+                    "table" | "tbody" | "tfoot" | "thead" | "tr"
+                ) =>
+            {
+                if self.has_element_in_table_scope(name) {
+                    self.close_the_cell();
+                    self.reprocess_token(token);
+                }
+                // Otherwise: parse error, ignore.
+            }
+
+            // "Anything else"
+            // "Process the token using the rules for the "in body" insertion mode."
+            _ => {
+                self.handle_in_body_mode(token);
             }
         }
     }
