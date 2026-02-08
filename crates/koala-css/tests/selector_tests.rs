@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use koala_css::selector::{Combinator, SimpleSelector, Specificity, parse_selector};
+use koala_css::selector::{
+    AttributeSelector, Combinator, PseudoClass, SimpleSelector, Specificity, parse_selector,
+};
 use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 
 fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> ElementData {
@@ -488,4 +490,555 @@ fn test_matches_complex_combinator_chain() {
     // "div.container > li a" should NOT match (li is not direct child of div)
     let selector3 = parse_selector("div.container > li a").unwrap();
     assert!(!selector3.matches_in_tree(&tree, a_id));
+}
+
+// =============================================================================
+// Pseudo-class and Pseudo-element Parsing Tests
+// [§ 4 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
+// [§ 11 Pseudo-elements](https://www.w3.org/TR/selectors-4/#pseudo-elements)
+// =============================================================================
+
+#[test]
+fn test_parse_hover_pseudo_class() {
+    // :hover → interactive pseudo-class → NeverMatch
+    let selector = parse_selector(":hover").unwrap();
+    assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_pseudo_element_before() {
+    // ::before → pseudo-element → NeverMatch
+    let selector = parse_selector("::before").unwrap();
+    assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_pseudo_element_after() {
+    // ::after → pseudo-element → NeverMatch
+    let selector = parse_selector("::after").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_legacy_pseudo_element_before() {
+    // :before (single colon, legacy syntax) → NeverMatch
+    let selector = parse_selector(":before").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_btn_hover_compound() {
+    // .btn:hover → [Class("btn"), NeverMatch]
+    let selector = parse_selector(".btn:hover").unwrap();
+    assert_eq!(selector.complex.subject.simple_selectors.len(), 2);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Class(name) if name == "btn"
+    ));
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[1],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_first_child_pseudo() {
+    // a:first-child → [Type("a"), PseudoClass(FirstChild)]
+    let selector = parse_selector("a:first-child").unwrap();
+    assert_eq!(selector.complex.subject.simple_selectors.len(), 2);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Type(name) if name == "a"
+    ));
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[1],
+        SimpleSelector::PseudoClass(PseudoClass::FirstChild)
+    ));
+}
+
+#[test]
+fn test_parse_root_pseudo() {
+    // :root → [PseudoClass(Root)]
+    let selector = parse_selector(":root").unwrap();
+    assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::Root)
+    ));
+}
+
+#[test]
+fn test_parse_structural_pseudo_classes() {
+    assert!(matches!(
+        parse_selector(":last-child").unwrap().complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::LastChild)
+    ));
+    assert!(matches!(
+        parse_selector(":first-of-type").unwrap().complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::FirstOfType)
+    ));
+    assert!(matches!(
+        parse_selector(":last-of-type").unwrap().complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::LastOfType)
+    ));
+    assert!(matches!(
+        parse_selector(":only-child").unwrap().complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::OnlyChild)
+    ));
+    assert!(matches!(
+        parse_selector(":empty").unwrap().complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::Empty)
+    ));
+    assert!(matches!(
+        parse_selector(":link").unwrap().complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::Link)
+    ));
+}
+
+#[test]
+fn test_parse_functional_pseudo_class() {
+    // :nth-child(2) → NeverMatch (functional pseudo-class, consumed but not evaluated)
+    let selector = parse_selector(":nth-child(2)").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_not_pseudo_class() {
+    // :not(.foo) → NeverMatch for now
+    let selector = parse_selector(":not(.foo)").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+#[test]
+fn test_parse_vendor_prefixed_pseudo_element() {
+    // ::-webkit-scrollbar → NeverMatch
+    let selector = parse_selector("::-webkit-scrollbar").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::NeverMatch
+    ));
+}
+
+// =============================================================================
+// Attribute Selector Parsing Tests
+// [§ 6.4 Attribute selectors](https://www.w3.org/TR/selectors-4/#attribute-selectors)
+// =============================================================================
+
+#[test]
+fn test_parse_attribute_exists() {
+    // [href] → Attribute(Exists("href"))
+    let selector = parse_selector("[href]").unwrap();
+    assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::Exists(name)) if name == "href"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_equals() {
+    // [type=text] → Attribute(Equals("type", "text"))
+    let selector = parse_selector("[type=text]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::Equals(name, val))
+            if name == "type" && val == "text"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_equals_quoted() {
+    // [type="text"] → Attribute(Equals("type", "text"))
+    let selector = parse_selector("[type=\"text\"]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::Equals(name, val))
+            if name == "type" && val == "text"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_includes() {
+    // [class~=foo] → Attribute(Includes("class", "foo"))
+    let selector = parse_selector("[class~=foo]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::Includes(name, val))
+            if name == "class" && val == "foo"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_dash_match() {
+    // [lang|=en] → Attribute(DashMatch("lang", "en"))
+    let selector = parse_selector("[lang|=en]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::DashMatch(name, val))
+            if name == "lang" && val == "en"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_prefix_match() {
+    // [href^=https] → Attribute(PrefixMatch("href", "https"))
+    let selector = parse_selector("[href^=https]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::PrefixMatch(name, val))
+            if name == "href" && val == "https"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_suffix_match() {
+    // [src$=".png"] → Attribute(SuffixMatch("src", ".png"))
+    let selector = parse_selector("[src$=\".png\"]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::SuffixMatch(name, val))
+            if name == "src" && val == ".png"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_substring_match() {
+    // [data-theme*=dark] → Attribute(SubstringMatch("data-theme", "dark"))
+    let selector = parse_selector("[data-theme*=dark]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::SubstringMatch(name, val))
+            if name == "data-theme" && val == "dark"
+    ));
+}
+
+#[test]
+fn test_parse_attribute_with_whitespace() {
+    // [ href = "value" ] → Attribute(Equals("href", "value"))
+    let selector = parse_selector("[ href = \"value\" ]").unwrap();
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::Equals(name, val))
+            if name == "href" && val == "value"
+    ));
+}
+
+#[test]
+fn test_parse_complex_selector_with_pseudo_and_attr() {
+    // div.class:hover [attr=val] → complex selector parses fully
+    let selector = parse_selector("div.class:hover [attr=val]").unwrap();
+    // Subject: [Attribute(Equals("attr", "val"))]
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::Attribute(AttributeSelector::Equals(name, val))
+            if name == "attr" && val == "val"
+    ));
+    // Combinator chain: Descendant with compound [Type("div"), Class("class"), NeverMatch]
+    assert_eq!(selector.complex.combinators.len(), 1);
+    assert_eq!(selector.complex.combinators[0].0, Combinator::Descendant);
+    assert_eq!(
+        selector.complex.combinators[0].1.simple_selectors.len(),
+        3
+    );
+}
+
+// =============================================================================
+// Pseudo-class Matching Tests (with DOM tree context)
+// =============================================================================
+
+#[test]
+fn test_matches_first_child() {
+    // Build: <div><p>first</p><p>second</p></div>
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+    let p1_id = tree.alloc(make_element_type("p", None, &[]));
+    let p2_id = tree.alloc(make_element_type("p", None, &[]));
+
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, p1_id);
+    tree.append_child(div_id, p2_id);
+
+    let selector = parse_selector(":first-child").unwrap();
+    assert!(selector.matches_in_tree(&tree, p1_id));
+    assert!(!selector.matches_in_tree(&tree, p2_id));
+}
+
+#[test]
+fn test_matches_last_child() {
+    // Build: <div><p>first</p><p>second</p></div>
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+    let p1_id = tree.alloc(make_element_type("p", None, &[]));
+    let p2_id = tree.alloc(make_element_type("p", None, &[]));
+
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, p1_id);
+    tree.append_child(div_id, p2_id);
+
+    let selector = parse_selector(":last-child").unwrap();
+    assert!(!selector.matches_in_tree(&tree, p1_id));
+    assert!(selector.matches_in_tree(&tree, p2_id));
+}
+
+#[test]
+fn test_matches_first_of_type() {
+    // Build: <div><div>first div</div><p>first p</p><p>second p</p></div>
+    let mut tree = DomTree::new();
+    let parent_id = tree.alloc(make_element_type("div", None, &[]));
+    let inner_div_id = tree.alloc(make_element_type("div", None, &[]));
+    let p1_id = tree.alloc(make_element_type("p", None, &[]));
+    let p2_id = tree.alloc(make_element_type("p", None, &[]));
+
+    tree.append_child(NodeId::ROOT, parent_id);
+    tree.append_child(parent_id, inner_div_id);
+    tree.append_child(parent_id, p1_id);
+    tree.append_child(parent_id, p2_id);
+
+    // p:first-of-type matches the first <p> even when preceded by <div>
+    let selector = parse_selector("p:first-of-type").unwrap();
+    assert!(selector.matches_in_tree(&tree, p1_id));
+    assert!(!selector.matches_in_tree(&tree, p2_id));
+    assert!(!selector.matches_in_tree(&tree, inner_div_id)); // wrong tag
+}
+
+#[test]
+fn test_matches_root() {
+    // Build: Document → html → body
+    let mut tree = DomTree::new();
+    let html_id = tree.alloc(make_element_type("html", None, &[]));
+    let body_id = tree.alloc(make_element_type("body", None, &[]));
+
+    tree.append_child(NodeId::ROOT, html_id);
+    tree.append_child(html_id, body_id);
+
+    let selector = parse_selector(":root").unwrap();
+    assert!(selector.matches_in_tree(&tree, html_id));
+    assert!(!selector.matches_in_tree(&tree, body_id));
+}
+
+#[test]
+fn test_matches_only_child() {
+    // Build: <div><p>only child</p></div>
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+    let p_id = tree.alloc(make_element_type("p", None, &[]));
+
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, p_id);
+
+    let selector = parse_selector(":only-child").unwrap();
+    assert!(selector.matches_in_tree(&tree, p_id));
+
+    // Add another child — now p is no longer only-child
+    let span_id = tree.alloc(make_element_type("span", None, &[]));
+    tree.append_child(div_id, span_id);
+
+    assert!(!selector.matches_in_tree(&tree, p_id));
+    assert!(!selector.matches_in_tree(&tree, span_id));
+}
+
+#[test]
+fn test_matches_empty() {
+    // Build: <br/> (no children) and <p>text</p>
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+    let br_id = tree.alloc(make_element_type("br", None, &[]));
+    let p_id = tree.alloc(make_element_type("p", None, &[]));
+    let text_id = tree.alloc(NodeType::Text("some text".to_string()));
+
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, br_id);
+    tree.append_child(div_id, p_id);
+    tree.append_child(p_id, text_id);
+
+    let selector = parse_selector(":empty").unwrap();
+    assert!(selector.matches_in_tree(&tree, br_id)); // no children
+    assert!(!selector.matches_in_tree(&tree, p_id)); // has text child
+}
+
+#[test]
+fn test_matches_link() {
+    // <a href="..."> matches :link, <a> without href does not
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+
+    let mut a_attrs = HashMap::new();
+    let _ = a_attrs.insert("href".to_string(), "https://example.com".to_string());
+    let a_with_href = tree.alloc(NodeType::Element(ElementData {
+        tag_name: "a".to_string(),
+        attrs: a_attrs,
+    }));
+    let a_without_href = tree.alloc(make_element_type("a", None, &[]));
+
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, a_with_href);
+    tree.append_child(div_id, a_without_href);
+
+    let selector = parse_selector(":link").unwrap();
+    assert!(selector.matches_in_tree(&tree, a_with_href));
+    assert!(!selector.matches_in_tree(&tree, a_without_href));
+}
+
+// =============================================================================
+// Attribute Selector Matching Tests
+// =============================================================================
+
+fn make_element_with_attrs(tag: &str, attrs: &[(&str, &str)]) -> ElementData {
+    let mut attr_map = HashMap::new();
+    for (k, v) in attrs {
+        let _ = attr_map.insert(k.to_string(), v.to_string());
+    }
+    ElementData {
+        tag_name: tag.to_string(),
+        attrs: attr_map,
+    }
+}
+
+#[test]
+fn test_match_attribute_exists() {
+    let selector = parse_selector("[class]").unwrap();
+    let with_class = make_element_with_attrs("div", &[("class", "foo")]);
+    let without_class = make_element_with_attrs("div", &[]);
+
+    assert!(selector.matches(&with_class));
+    assert!(!selector.matches(&without_class));
+}
+
+#[test]
+fn test_match_attribute_equals() {
+    let selector = parse_selector("[type=text]").unwrap();
+    let matches = make_element_with_attrs("input", &[("type", "text")]);
+    let no_match = make_element_with_attrs("input", &[("type", "password")]);
+
+    assert!(selector.matches(&matches));
+    assert!(!selector.matches(&no_match));
+}
+
+#[test]
+fn test_match_attribute_includes() {
+    // [class~=bar] — word match in space-separated list
+    let selector = parse_selector("[class~=bar]").unwrap();
+    let matches = make_element_with_attrs("div", &[("class", "foo bar baz")]);
+    let no_match = make_element_with_attrs("div", &[("class", "foobar")]);
+
+    assert!(selector.matches(&matches));
+    assert!(!selector.matches(&no_match));
+}
+
+#[test]
+fn test_match_attribute_dash_match() {
+    // [lang|=en] — exact "en" or starts with "en-"
+    let selector = parse_selector("[lang|=en]").unwrap();
+    let exact = make_element_with_attrs("p", &[("lang", "en")]);
+    let prefix = make_element_with_attrs("p", &[("lang", "en-US")]);
+    let no_match = make_element_with_attrs("p", &[("lang", "fr")]);
+
+    assert!(selector.matches(&exact));
+    assert!(selector.matches(&prefix));
+    assert!(!selector.matches(&no_match));
+}
+
+#[test]
+fn test_match_attribute_prefix() {
+    let selector = parse_selector("[href^=https]").unwrap();
+    let matches = make_element_with_attrs("a", &[("href", "https://example.com")]);
+    let no_match = make_element_with_attrs("a", &[("href", "http://example.com")]);
+
+    assert!(selector.matches(&matches));
+    assert!(!selector.matches(&no_match));
+}
+
+#[test]
+fn test_match_attribute_suffix() {
+    let selector = parse_selector("[src$=\".png\"]").unwrap();
+    let matches = make_element_with_attrs("img", &[("src", "image.png")]);
+    let no_match = make_element_with_attrs("img", &[("src", "image.jpg")]);
+
+    assert!(selector.matches(&matches));
+    assert!(!selector.matches(&no_match));
+}
+
+#[test]
+fn test_match_attribute_substring() {
+    let selector = parse_selector("[data-theme*=dark]").unwrap();
+    let matches = make_element_with_attrs("div", &[("data-theme", "my-dark-theme")]);
+    let no_match = make_element_with_attrs("div", &[("data-theme", "light")]);
+
+    assert!(selector.matches(&matches));
+    assert!(!selector.matches(&no_match));
+}
+
+#[test]
+fn test_never_match_doesnt_match() {
+    // .btn:hover → NeverMatch makes the whole compound fail
+    let selector = parse_selector(".btn:hover").unwrap();
+    let btn = make_element("div", None, &["btn"]);
+    assert!(!selector.matches(&btn));
+}
+
+// =============================================================================
+// Specificity Tests for New Variants
+// [§ 17 Calculating Specificity](https://www.w3.org/TR/selectors-4/#specificity-rules)
+// =============================================================================
+
+#[test]
+fn test_specificity_first_child() {
+    // :first-child → pseudo-class = (0,1,0)
+    let selector = parse_selector(":first-child").unwrap();
+    assert_eq!(selector.specificity, Specificity(0, 1, 0));
+}
+
+#[test]
+fn test_specificity_attribute() {
+    // [href] → attribute selector = (0,1,0)
+    let selector = parse_selector("[href]").unwrap();
+    assert_eq!(selector.specificity, Specificity(0, 1, 0));
+}
+
+#[test]
+fn test_specificity_btn_hover() {
+    // .btn:hover → Class(0,1,0) + NeverMatch(0,0,0) = (0,1,0)
+    let selector = parse_selector(".btn:hover").unwrap();
+    assert_eq!(selector.specificity, Specificity(0, 1, 0));
+}
+
+#[test]
+fn test_specificity_root() {
+    // :root → pseudo-class = (0,1,0)
+    let selector = parse_selector(":root").unwrap();
+    assert_eq!(selector.specificity, Specificity(0, 1, 0));
+}
+
+#[test]
+fn test_specificity_type_with_attribute() {
+    // input[type=text] → Type(0,0,1) + Attr(0,1,0) = (0,1,1)
+    let selector = parse_selector("input[type=text]").unwrap();
+    assert_eq!(selector.specificity, Specificity(0, 1, 1));
+}
+
+#[test]
+fn test_specificity_pseudo_element() {
+    // ::before → NeverMatch = (0,0,0) (pseudo-element would be C but we use NeverMatch)
+    let selector = parse_selector("::before").unwrap();
+    assert_eq!(selector.specificity, Specificity(0, 0, 0));
 }

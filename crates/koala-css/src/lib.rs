@@ -70,7 +70,9 @@ pub use layout::{
 };
 pub use paint::{DisplayCommand, DisplayList, Painter};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
-pub use selector::{ParsedSelector, Specificity, parse_selector};
+pub use selector::{
+    AttributeSelector, ParsedSelector, PseudoClass, SimpleSelector, Specificity, parse_selector,
+};
 pub use style::ComputedStyle;
 pub use style::{
     AutoLength, BorderValue, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue, InnerDisplayType,
