@@ -2254,9 +2254,8 @@ static ENTITY_DATA: &[(&str, &str)] = &[
 /// NOTE: Some entities map to multiple characters (e.g., "fjlig;" -> "fj").
 /// The spec requires entities to be matched WITH the trailing semicolon when present,
 /// but some legacy entities work without it (e.g., "&amp" matches "&amp;").
-static NAMED_ENTITIES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    ENTITY_DATA.iter().copied().collect()
-});
+static NAMED_ENTITIES: LazyLock<HashMap<&'static str, &'static str>> =
+    LazyLock::new(|| ENTITY_DATA.iter().copied().collect());
 
 /// Sorted entity names for efficient prefix search via binary search.
 static SORTED_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {

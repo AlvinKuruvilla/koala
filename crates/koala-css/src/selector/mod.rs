@@ -369,9 +369,9 @@ impl ParsedSelector {
                 // arbitrary descendant of some ancestor element A."
                 Combinator::Descendant => {
                     // Find any ancestor that matches the compound selector
-                    let matched_ancestor = tree.ancestors(current_id).find(|&ancestor_id| {
-                        compound_matches_in_tree(compound, tree, ancestor_id)
-                    });
+                    let matched_ancestor = tree
+                        .ancestors(current_id)
+                        .find(|&ancestor_id| compound_matches_in_tree(compound, tree, ancestor_id));
 
                     match matched_ancestor {
                         Some(ancestor_id) => current_id = ancestor_id,
@@ -437,11 +437,7 @@ impl ParsedSelector {
 
 /// Check if a compound selector matches an element, with optional tree context
 /// for structural pseudo-class matching.
-fn compound_matches_in_tree(
-    compound: &CompoundSelector,
-    tree: &DomTree,
-    node_id: NodeId,
-) -> bool {
+fn compound_matches_in_tree(compound: &CompoundSelector, tree: &DomTree, node_id: NodeId) -> bool {
     let Some(element) = tree.as_element(node_id) else {
         return false;
     };
@@ -491,27 +487,20 @@ fn pseudo_class_matches(
         // "The :first-of-type pseudo-class represents an element that is the first sibling
         // of its type."
         PseudoClass::FirstOfType => tree.parent(node_id).is_some_and(|parent| {
-            tree.children(parent)
-                .iter()
-                .find(|&&c| {
-                    tree.as_element(c)
-                        .is_some_and(|e| e.tag_name.eq_ignore_ascii_case(&element.tag_name))
-                })
-                == Some(&node_id)
+            tree.children(parent).iter().find(|&&c| {
+                tree.as_element(c)
+                    .is_some_and(|e| e.tag_name.eq_ignore_ascii_case(&element.tag_name))
+            }) == Some(&node_id)
         }),
 
         // [§ 4.11 :last-of-type](https://www.w3.org/TR/selectors-4/#the-last-of-type-pseudo)
         // "The :last-of-type pseudo-class represents an element that is the last sibling
         // of its type."
         PseudoClass::LastOfType => tree.parent(node_id).is_some_and(|parent| {
-            tree.children(parent)
-                .iter()
-                .rev()
-                .find(|&&c| {
-                    tree.as_element(c)
-                        .is_some_and(|e| e.tag_name.eq_ignore_ascii_case(&element.tag_name))
-                })
-                == Some(&node_id)
+            tree.children(parent).iter().rev().find(|&&c| {
+                tree.as_element(c)
+                    .is_some_and(|e| e.tag_name.eq_ignore_ascii_case(&element.tag_name))
+            }) == Some(&node_id)
         }),
 
         // [§ 4.12 :only-child](https://www.w3.org/TR/selectors-4/#the-only-child-pseudo)
@@ -528,13 +517,15 @@ fn pseudo_class_matches(
         // "The :empty pseudo-class represents an element that has no children at all.
         // In terms of the document tree, only element nodes and content nodes...
         // must be considered."
-        PseudoClass::Empty => tree.children(node_id).iter().all(|&c| {
-            match tree.get(c).map(|n| &n.node_type) {
-                Some(NodeType::Text(t)) => t.trim().is_empty(),
-                Some(NodeType::Comment(_)) => true,
-                _ => false,
-            }
-        }),
+        PseudoClass::Empty => {
+            tree.children(node_id)
+                .iter()
+                .all(|&c| match tree.get(c).map(|n| &n.node_type) {
+                    Some(NodeType::Text(t)) => t.trim().is_empty(),
+                    Some(NodeType::Comment(_)) => true,
+                    _ => false,
+                })
+        }
 
         // [§ 4.6 :link](https://www.w3.org/TR/selectors-4/#the-link-pseudo)
         // "The :link pseudo-class applies to links that have not yet been visited."
@@ -737,11 +728,7 @@ fn parse_attr_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Opt
             {
                 val.push(chars.next().unwrap());
             }
-            if val.is_empty() {
-                None
-            } else {
-                Some(val)
-            }
+            if val.is_empty() { None } else { Some(val) }
         }
         None => None,
     }
@@ -1019,16 +1006,30 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     // Dispatch pseudo-class by name
                     match pseudo_lower.as_str() {
                         // Structural pseudo-classes that affect static rendering
-                        "root" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Root)),
-                        "first-child" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::FirstChild)),
-                        "last-child" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::LastChild)),
-                        "first-of-type" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::FirstOfType)),
-                        "last-of-type" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::LastOfType)),
-                        "only-child" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::OnlyChild)),
-                        "empty" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Empty)),
-                        "link" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Link)),
-                        "disabled" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Disabled)),
-                        "enabled" => current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Enabled)),
+                        "root" => {
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Root))
+                        }
+                        "first-child" => current_compound
+                            .push(SimpleSelector::PseudoClass(PseudoClass::FirstChild)),
+                        "last-child" => current_compound
+                            .push(SimpleSelector::PseudoClass(PseudoClass::LastChild)),
+                        "first-of-type" => current_compound
+                            .push(SimpleSelector::PseudoClass(PseudoClass::FirstOfType)),
+                        "last-of-type" => current_compound
+                            .push(SimpleSelector::PseudoClass(PseudoClass::LastOfType)),
+                        "only-child" => current_compound
+                            .push(SimpleSelector::PseudoClass(PseudoClass::OnlyChild)),
+                        "empty" => {
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Empty))
+                        }
+                        "link" => {
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Link))
+                        }
+                        "disabled" => current_compound
+                            .push(SimpleSelector::PseudoClass(PseudoClass::Disabled)),
+                        "enabled" => {
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Enabled))
+                        }
 
                         // Everything else: interactive states, legacy pseudo-elements
                         // (:before, :after), functional pseudo-classes (:nth-child, :not,

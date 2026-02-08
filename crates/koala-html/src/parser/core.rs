@@ -596,7 +596,8 @@ impl HTMLParser {
     /// (plus MathML/SVG markers omitted for now)
     fn has_element_in_scope(&self, tag_name: &str) -> bool {
         const DEFAULT_SCOPE: &[&str] = &[
-            "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template",
+            "applet", "caption", "html", "table", "td", "th", "marquee", "object",
+            "template",
             // MathML: mi, mo, mn, ms, mtext, annotation-xml
             // SVG: foreignObject, desc, title
         ];
@@ -642,8 +643,9 @@ impl HTMLParser {
     /// an element to exclude from the process, then the user agent must perform
     /// the above steps as if that element was not in the above list."
     fn generate_implied_end_tags_excluding(&mut self, exclude: Option<&str>) {
-        const IMPLIED_END_TAG_ELEMENTS: &[&str] =
-            &["dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"];
+        const IMPLIED_END_TAG_ELEMENTS: &[&str] = &[
+            "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc",
+        ];
 
         while let Some(&current) = self.stack_of_open_elements.last() {
             if let Some(tag) = self.get_tag_name(current)
@@ -1103,12 +1105,11 @@ impl HTMLParser {
             };
 
             // Get the formatting element's NodeId
-            let formatting_element_id = match &self.active_formatting_elements
-                [formatting_element_afl_index]
-            {
-                ActiveFormattingElement::Element { node_id, .. } => *node_id,
-                ActiveFormattingElement::Marker => unreachable!(),
-            };
+            let formatting_element_id =
+                match &self.active_formatting_elements[formatting_element_afl_index] {
+                    ActiveFormattingElement::Element { node_id, .. } => *node_id,
+                    ActiveFormattingElement::Marker => unreachable!(),
+                };
 
             // STEP 9: "If formatting element is not in the stack of open elements,
             //          then this is a parse error; remove the element from the list,
@@ -1313,12 +1314,11 @@ impl HTMLParser {
             // STEP 20: "Create an element for the token for which the formatting
             //           element was created, in the HTML namespace, with the furthest
             //           block as the intended parent."
-            let formatting_token = match &self.active_formatting_elements
-                [formatting_element_afl_index]
-            {
-                ActiveFormattingElement::Element { token, .. } => token.clone(),
-                ActiveFormattingElement::Marker => unreachable!(),
-            };
+            let formatting_token =
+                match &self.active_formatting_elements[formatting_element_afl_index] {
+                    ActiveFormattingElement::Element { token, .. } => token.clone(),
+                    ActiveFormattingElement::Marker => unreachable!(),
+                };
             let new_element_id = self.create_element_for_token(&formatting_token);
 
             // STEP 21: "Take all of the child nodes of the furthest block and append
@@ -1332,7 +1332,8 @@ impl HTMLParser {
             //           elements, and insert the new element into the list of active
             //           formatting elements at the position of the aforementioned bookmark."
             // First remove old entry. Adjust bookmark if needed.
-            let _ = self.active_formatting_elements
+            let _ = self
+                .active_formatting_elements
                 .remove(formatting_element_afl_index);
             if bookmark > formatting_element_afl_index {
                 bookmark -= 1;
@@ -1341,11 +1342,13 @@ impl HTMLParser {
             if bookmark > self.active_formatting_elements.len() {
                 bookmark = self.active_formatting_elements.len();
             }
-            self.active_formatting_elements
-                .insert(bookmark, ActiveFormattingElement::Element {
+            self.active_formatting_elements.insert(
+                bookmark,
+                ActiveFormattingElement::Element {
                     node_id: new_element_id,
                     token: formatting_token,
-                });
+                },
+            );
 
             // STEP 24: "Remove the formatting element from the stack of open elements,
             //           and insert the new element into the stack of open elements
@@ -2235,8 +2238,7 @@ impl HTMLParser {
                             break;
                         }
                         // STEP 4: If node is special but not address/div/p, stop.
-                        if Self::is_special_element(tag)
-                            && !matches!(tag, "address" | "div" | "p")
+                        if Self::is_special_element(tag) && !matches!(tag, "address" | "div" | "p")
                         {
                             break;
                         }
@@ -2288,8 +2290,7 @@ impl HTMLParser {
                             found_tag = Some("dt");
                             break;
                         }
-                        if Self::is_special_element(tag)
-                            && !matches!(tag, "address" | "div" | "p")
+                        if Self::is_special_element(tag) && !matches!(tag, "address" | "div" | "p")
                         {
                             break;
                         }

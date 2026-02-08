@@ -240,9 +240,10 @@ impl PositionedLayout {
 
         let left_auto = layout_box.offsets.left.is_none();
         let right_auto = layout_box.offsets.right.is_none();
-        let width_auto = layout_box.width.as_ref().is_none_or(|al| {
-            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).is_auto()
-        });
+        let width_auto = layout_box
+            .width
+            .as_ref()
+            .is_none_or(|al| UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).is_auto());
         let ml_auto = resolved_margin.left.is_auto();
         let mr_auto = resolved_margin.right.is_auto();
 
@@ -256,21 +257,8 @@ impl PositionedLayout {
 
         let (used_left, used_width, used_ml, used_mr, _used_right) =
             Self::solve_horizontal_constraint(
-                cb_width,
-                left_auto,
-                left_val,
-                right_auto,
-                right_val,
-                width_auto,
-                width_val,
-                ml_auto,
-                ml_val,
-                mr_auto,
-                mr_val,
-                bl,
-                pl,
-                pr,
-                br,
+                cb_width, left_auto, left_val, right_auto, right_val, width_auto, width_val,
+                ml_auto, ml_val, mr_auto, mr_val, bl, pl, pr, br,
             );
 
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
@@ -279,8 +267,7 @@ impl PositionedLayout {
         // solver treated the CSS width value as the border-box width. The
         // used_width returned includes padding+border. Convert to content width.
         if layout_box.box_sizing_border_box && !width_auto {
-            layout_box.dimensions.content.width =
-                (used_width - pl - pr - bl - br).max(0.0);
+            layout_box.dimensions.content.width = (used_width - pl - pr - bl - br).max(0.0);
         } else {
             layout_box.dimensions.content.width = used_width;
         }
@@ -295,9 +282,10 @@ impl PositionedLayout {
 
         let top_auto = layout_box.offsets.top.is_none();
         let bottom_auto = layout_box.offsets.bottom.is_none();
-        let height_auto = layout_box.height.as_ref().is_none_or(|al| {
-            UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).is_auto()
-        });
+        let height_auto = layout_box
+            .height
+            .as_ref()
+            .is_none_or(|al| UnresolvedAutoEdgeSizes::resolve_auto_length(al, viewport).is_auto());
         let mt_auto = resolved_margin.top.is_auto();
         let mb_auto = resolved_margin.bottom.is_auto();
 
@@ -311,8 +299,7 @@ impl PositionedLayout {
 
         // Position the content box horizontally first so children can lay out.
         // [§ 10.3.7](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
-        layout_box.dimensions.content.x =
-            containing_block.x + used_left + used_ml + bl + pl;
+        layout_box.dimensions.content.x = containing_block.x + used_left + used_ml + bl + pl;
 
         // Temporarily set the y position (will be refined after height is resolved).
         // We need a valid y for child layout.
@@ -337,9 +324,19 @@ impl PositionedLayout {
             let mut float_ctx =
                 super::float::FloatContext::new(layout_box.dimensions.content.width);
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
-                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
+                layout_box.layout_inline_children(
+                    viewport,
+                    font_metrics,
+                    child_abs_cb,
+                    &mut float_ctx,
+                );
             } else {
-                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
+                layout_box.layout_block_children(
+                    viewport,
+                    font_metrics,
+                    child_abs_cb,
+                    &mut float_ctx,
+                );
             }
 
             // Auto height: use the content height computed by child layout.
@@ -348,29 +345,27 @@ impl PositionedLayout {
             // Now resolve vertical constraint with the known content height.
             let content_height = layout_box.dimensions.content.height;
 
-            let (used_top, _used_height, used_mt, used_mb) =
-                Self::solve_vertical_constraint(
-                    cb_height,
-                    top_auto,
-                    top_val,
-                    bottom_auto,
-                    bottom_val,
-                    false, // height is no longer auto — we measured it
-                    content_height,
-                    mt_auto,
-                    mt_val,
-                    mb_auto,
-                    mb_val,
-                    bt,
-                    pt,
-                    pb,
-                    bb,
-                );
+            let (used_top, _used_height, used_mt, used_mb) = Self::solve_vertical_constraint(
+                cb_height,
+                top_auto,
+                top_val,
+                bottom_auto,
+                bottom_val,
+                false, // height is no longer auto — we measured it
+                content_height,
+                mt_auto,
+                mt_val,
+                mb_auto,
+                mb_val,
+                bt,
+                pt,
+                pb,
+                bb,
+            );
 
             layout_box.dimensions.margin.top = used_mt;
             layout_box.dimensions.margin.bottom = used_mb;
-            layout_box.dimensions.content.y =
-                containing_block.y + used_top + used_mt + bt + pt;
+            layout_box.dimensions.content.y = containing_block.y + used_top + used_mt + bt + pt;
 
             // Re-position children to match the final y.
             // The difference between the temporary y and the final y.
@@ -381,39 +376,36 @@ impl PositionedLayout {
             }
         } else {
             // Height is explicit — resolve vertical constraint fully.
-            let (used_top, used_height, used_mt, used_mb) =
-                Self::solve_vertical_constraint(
-                    cb_height,
-                    top_auto,
-                    top_val,
-                    bottom_auto,
-                    bottom_val,
-                    height_auto,
-                    height_val,
-                    mt_auto,
-                    mt_val,
-                    mb_auto,
-                    mb_val,
-                    bt,
-                    pt,
-                    pb,
-                    bb,
-                );
+            let (used_top, used_height, used_mt, used_mb) = Self::solve_vertical_constraint(
+                cb_height,
+                top_auto,
+                top_val,
+                bottom_auto,
+                bottom_val,
+                height_auto,
+                height_val,
+                mt_auto,
+                mt_val,
+                mb_auto,
+                mb_val,
+                bt,
+                pt,
+                pb,
+                bb,
+            );
 
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
             //
             // When box-sizing is border-box and height is explicit, the
             // solver returned border-box height. Convert to content height.
             if layout_box.box_sizing_border_box && !height_auto {
-                layout_box.dimensions.content.height =
-                    (used_height - pt - pb - bt - bb).max(0.0);
+                layout_box.dimensions.content.height = (used_height - pt - pb - bt - bb).max(0.0);
             } else {
                 layout_box.dimensions.content.height = used_height;
             }
             layout_box.dimensions.margin.top = used_mt;
             layout_box.dimensions.margin.bottom = used_mb;
-            layout_box.dimensions.content.y =
-                containing_block.y + used_top + used_mt + bt + pt;
+            layout_box.dimensions.content.y = containing_block.y + used_top + used_mt + bt + pt;
 
             // Lay out children within the positioned box.
             layout_box.generate_anonymous_boxes();
@@ -421,17 +413,26 @@ impl PositionedLayout {
             let mut float_ctx2 =
                 super::float::FloatContext::new(layout_box.dimensions.content.width);
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
-                layout_box.layout_inline_children(viewport, font_metrics, child_abs_cb, &mut float_ctx2);
+                layout_box.layout_inline_children(
+                    viewport,
+                    font_metrics,
+                    child_abs_cb,
+                    &mut float_ctx2,
+                );
             } else {
-                layout_box.layout_block_children(viewport, font_metrics, child_abs_cb, &mut float_ctx2);
+                layout_box.layout_block_children(
+                    viewport,
+                    font_metrics,
+                    child_abs_cb,
+                    &mut float_ctx2,
+                );
             }
 
             // Restore the explicit height — child layout may have
             // overwritten it (e.g., layout_inline_children sets content
             // height from line boxes).
             if layout_box.box_sizing_border_box && !height_auto {
-                layout_box.dimensions.content.height =
-                    (used_height - pt - pb - bt - bb).max(0.0);
+                layout_box.dimensions.content.height = (used_height - pt - pb - bt - bb).max(0.0);
             } else {
                 layout_box.dimensions.content.height = used_height;
             }
@@ -447,7 +448,11 @@ impl PositionedLayout {
     /// Solve the horizontal constraint equation per § 10.3.7.
     ///
     /// Returns (`used_left`, `used_width`, `used_margin_left`, `used_margin_right`, `used_right`).
-    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools, clippy::similar_names)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::fn_params_excessive_bools,
+        clippy::similar_names
+    )]
     fn solve_horizontal_constraint(
         cb_width: f32,
         left_auto: bool,
@@ -572,7 +577,11 @@ impl PositionedLayout {
     /// Solve the vertical constraint equation per § 10.6.4.
     ///
     /// Returns (`used_top`, `used_height`, `used_margin_top`, `used_margin_bottom`).
-    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools, clippy::similar_names)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::fn_params_excessive_bools,
+        clippy::similar_names
+    )]
     fn solve_vertical_constraint(
         cb_height: f32,
         top_auto: bool,

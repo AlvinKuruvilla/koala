@@ -584,27 +584,51 @@ fn test_parse_root_pseudo() {
 #[test]
 fn test_parse_structural_pseudo_classes() {
     assert!(matches!(
-        parse_selector(":last-child").unwrap().complex.subject.simple_selectors[0],
+        parse_selector(":last-child")
+            .unwrap()
+            .complex
+            .subject
+            .simple_selectors[0],
         SimpleSelector::PseudoClass(PseudoClass::LastChild)
     ));
     assert!(matches!(
-        parse_selector(":first-of-type").unwrap().complex.subject.simple_selectors[0],
+        parse_selector(":first-of-type")
+            .unwrap()
+            .complex
+            .subject
+            .simple_selectors[0],
         SimpleSelector::PseudoClass(PseudoClass::FirstOfType)
     ));
     assert!(matches!(
-        parse_selector(":last-of-type").unwrap().complex.subject.simple_selectors[0],
+        parse_selector(":last-of-type")
+            .unwrap()
+            .complex
+            .subject
+            .simple_selectors[0],
         SimpleSelector::PseudoClass(PseudoClass::LastOfType)
     ));
     assert!(matches!(
-        parse_selector(":only-child").unwrap().complex.subject.simple_selectors[0],
+        parse_selector(":only-child")
+            .unwrap()
+            .complex
+            .subject
+            .simple_selectors[0],
         SimpleSelector::PseudoClass(PseudoClass::OnlyChild)
     ));
     assert!(matches!(
-        parse_selector(":empty").unwrap().complex.subject.simple_selectors[0],
+        parse_selector(":empty")
+            .unwrap()
+            .complex
+            .subject
+            .simple_selectors[0],
         SimpleSelector::PseudoClass(PseudoClass::Empty)
     ));
     assert!(matches!(
-        parse_selector(":link").unwrap().complex.subject.simple_selectors[0],
+        parse_selector(":link")
+            .unwrap()
+            .complex
+            .subject
+            .simple_selectors[0],
         SimpleSelector::PseudoClass(PseudoClass::Link)
     ));
 }
@@ -756,10 +780,7 @@ fn test_parse_complex_selector_with_pseudo_and_attr() {
     // Combinator chain: Descendant with compound [Type("div"), Class("class"), NeverMatch]
     assert_eq!(selector.complex.combinators.len(), 1);
     assert_eq!(selector.complex.combinators[0].0, Combinator::Descendant);
-    assert_eq!(
-        selector.complex.combinators[0].1.simple_selectors.len(),
-        3
-    );
+    assert_eq!(selector.complex.combinators[0].1.simple_selectors.len(), 3);
 }
 
 // =============================================================================

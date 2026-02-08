@@ -665,9 +665,17 @@ fn test_inline_style_overrides_stylesheet() {
     let p_style = styles.get(&p_id).unwrap();
     let color = p_style.color.as_ref().unwrap();
     // Inline style (blue) should win over stylesheet (red)
-    assert_eq!(color.r, 0x00, "Expected blue from inline style, got red component {}", color.r);
+    assert_eq!(
+        color.r, 0x00,
+        "Expected blue from inline style, got red component {}",
+        color.r
+    );
     assert_eq!(color.g, 0x00);
-    assert_eq!(color.b, 0xff, "Expected blue from inline style, got blue component {}", color.b);
+    assert_eq!(
+        color.b, 0xff,
+        "Expected blue from inline style, got blue component {}",
+        color.b
+    );
 }
 
 /// Inline style works even when no stylesheet rule matches.
@@ -714,7 +722,10 @@ fn test_border_top_color_longhand() {
     let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
     let div_style = styles.get(&div_id).unwrap();
 
-    let border = div_style.border_top.as_ref().expect("border_top should be set");
+    let border = div_style
+        .border_top
+        .as_ref()
+        .expect("border_top should be set");
     assert_eq!(border.color.r, 0xff);
     assert_eq!(border.color.g, 0x00);
     assert_eq!(border.color.b, 0x00);

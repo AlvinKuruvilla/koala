@@ -713,7 +713,8 @@ fn test_relative_position_top_offset() {
     // "After" div should be positioned as if the first div were NOT offset.
     // Its y should be body.content.y + first_div_height (normal flow).
     assert!(
-        after_div.dimensions.content.y < moved_div.dimensions.content.y + moved_div.dimensions.content.height,
+        after_div.dimensions.content.y
+            < moved_div.dimensions.content.y + moved_div.dimensions.content.height,
         "after div should overlap with moved div since relative positioning \
          does not affect subsequent siblings"
     );
@@ -762,8 +763,7 @@ fn test_relative_position_bottom_offset() {
 
     // bottom: 5px means "shift up by 5px". The normal-flow y of the second
     // div is after the first div. The offset should reduce y by 5.
-    let normal_flow_y =
-        before_div.dimensions.content.y + before_div.dimensions.content.height;
+    let normal_flow_y = before_div.dimensions.content.y + before_div.dimensions.content.height;
     let actual_y = moved_div.dimensions.content.y;
     assert!(
         (actual_y - (normal_flow_y - 5.0)).abs() < 0.1,
@@ -2023,8 +2023,16 @@ fn test_ol_marker_decimal() {
     assert!(ol.children.len() >= 2, "ol should have at least 2 children");
     let li1 = &ol.children[0];
     let li2 = &ol.children[1];
-    assert_eq!(li1.marker_text.as_deref(), Some("1. "), "first li should have marker '1. '");
-    assert_eq!(li2.marker_text.as_deref(), Some("2. "), "second li should have marker '2. '");
+    assert_eq!(
+        li1.marker_text.as_deref(),
+        Some("1. "),
+        "first li should have marker '1. '"
+    );
+    assert_eq!(
+        li2.marker_text.as_deref(),
+        Some("2. "),
+        "second li should have marker '2. '"
+    );
 }
 
 #[test]
@@ -2032,9 +2040,8 @@ fn test_list_style_type_none() {
     // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
     //
     // list-style-type: none suppresses marker generation.
-    let root = layout_html(
-        "<style>ul { list-style-type: none; }</style><ul><li>No bullet</li></ul>",
-    );
+    let root =
+        layout_html("<style>ul { list-style-type: none; }</style><ul><li>No bullet</li></ul>");
 
     let body = box_at_depth(&root, 2);
     let ul = &body.children[0];
@@ -2051,9 +2058,7 @@ fn test_list_style_type_circle() {
     // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
     //
     // Setting list-style-type: circle should produce a white circle marker.
-    let root = layout_html(
-        "<style>ul { list-style-type: circle; }</style><ul><li>Item</li></ul>",
-    );
+    let root = layout_html("<style>ul { list-style-type: circle; }</style><ul><li>Item</li></ul>");
 
     let body = box_at_depth(&root, 2);
     let ul = &body.children[0];
@@ -2223,8 +2228,14 @@ fn test_nested_overflow_hidden() {
         .filter(|c| matches!(c, DisplayCommand::PopClip))
         .count();
 
-    assert_eq!(push_count, 2, "nested overflow: hidden should produce 2 PushClip");
-    assert_eq!(pop_count, 2, "nested overflow: hidden should produce 2 PopClip");
+    assert_eq!(
+        push_count, 2,
+        "nested overflow: hidden should produce 2 PushClip"
+    );
+    assert_eq!(
+        pop_count, 2,
+        "nested overflow: hidden should produce 2 PopClip"
+    );
 
     // Verify nesting order: PushClip, PushClip, ..., PopClip, PopClip
     let mut depth = 0i32;
@@ -2243,5 +2254,8 @@ fn test_nested_overflow_hidden() {
         }
     }
     assert_eq!(depth, 0, "clip stack should be balanced at end");
-    assert_eq!(max_depth, 2, "max clip depth should be 2 for nested overflow");
+    assert_eq!(
+        max_depth, 2,
+        "max clip depth should be 2 for nested overflow"
+    );
 }

@@ -350,7 +350,11 @@ fn test_adoption_agency_simple_misnesting() {
     // Find <i> elements under p
     let i_elements = find_all_elements(&tree, p, "i");
     // There should be at least one <i> inside <b> with "Y" and one outside with "Z"
-    assert!(i_elements.len() >= 2, "Expected at least 2 <i> elements, got {}", i_elements.len());
+    assert!(
+        i_elements.len() >= 2,
+        "Expected at least 2 <i> elements, got {}",
+        i_elements.len()
+    );
 
     // The <b> should contain an <i> with "Y"
     let i_in_b = find_element(&tree, b, "i").unwrap();
@@ -359,7 +363,9 @@ fn test_adoption_agency_simple_misnesting() {
     // There should be an <i> after <b> (as child of p) with "Z"
     let mut found_z = false;
     for &child in p_children {
-        if tree.as_element(child).is_some_and(|e| e.tag_name == "i") && text_content(&tree, child) == "Z" {
+        if tree.as_element(child).is_some_and(|e| e.tag_name == "i")
+            && text_content(&tree, child) == "Z"
+        {
             found_z = true;
             break;
         }
@@ -398,7 +404,11 @@ fn test_formatting_reconstruction_across_blocks() {
 
     // Should have two <p> elements
     let ps = find_all_elements(&tree, body, "p");
-    assert!(ps.len() >= 2, "Expected at least 2 <p> elements, got {}", ps.len());
+    assert!(
+        ps.len() >= 2,
+        "Expected at least 2 <p> elements, got {}",
+        ps.len()
+    );
 
     // First <p> should contain "bold" inside a <b>
     assert_eq!(text_content(&tree, ps[0]), "bold");
@@ -409,7 +419,10 @@ fn test_formatting_reconstruction_across_blocks() {
     // inside a reconstructed <b> (from AFL reconstruction)
     assert_eq!(text_content(&tree, ps[1]), "still bold");
     let b_in_p2 = find_element(&tree, ps[1], "b");
-    assert!(b_in_p2.is_some(), "Expected <b> inside second <p> from formatting reconstruction");
+    assert!(
+        b_in_p2.is_some(),
+        "Expected <b> inside second <p> from formatting reconstruction"
+    );
 }
 
 #[test]
@@ -447,7 +460,11 @@ fn test_nested_anchor_tags() {
 
     // Both <a> tags should exist under body
     let anchors = find_all_elements(&tree, body, "a");
-    assert!(anchors.len() >= 2, "Expected at least 2 <a> elements, got {}", anchors.len());
+    assert!(
+        anchors.len() >= 2,
+        "Expected at least 2 <a> elements, got {}",
+        anchors.len()
+    );
 
     // The first <a> should contain "first"
     let first_a = anchors[0];
@@ -493,10 +510,7 @@ fn element_children(tree: &DomTree, parent: NodeId, tag: &str) -> Vec<NodeId> {
     tree.children(parent)
         .iter()
         .copied()
-        .filter(|&id| {
-            tree.as_element(id)
-                .is_some_and(|d| d.tag_name == tag)
-        })
+        .filter(|&id| tree.as_element(id).is_some_and(|d| d.tag_name == tag))
         .collect()
 }
 
@@ -510,7 +524,12 @@ fn test_li_implicit_close() {
     let tree = parse("<ul><li>A<li>B</ul>");
     let ul = find_element(&tree, NodeId::ROOT, "ul").unwrap();
     let lis = element_children(&tree, ul, "li");
-    assert_eq!(lis.len(), 2, "ul should have 2 <li> children, got {}", lis.len());
+    assert_eq!(
+        lis.len(),
+        2,
+        "ul should have 2 <li> children, got {}",
+        lis.len()
+    );
     assert_eq!(text_content(&tree, lis[0]), "A");
     assert_eq!(text_content(&tree, lis[1]), "B");
 }
@@ -525,8 +544,18 @@ fn test_dd_dt_implicit_close() {
     let dl = find_element(&tree, NodeId::ROOT, "dl").unwrap();
     let dts = element_children(&tree, dl, "dt");
     let dds = element_children(&tree, dl, "dd");
-    assert_eq!(dts.len(), 2, "dl should have 2 <dt> children, got {}", dts.len());
-    assert_eq!(dds.len(), 1, "dl should have 1 <dd> child, got {}", dds.len());
+    assert_eq!(
+        dts.len(),
+        2,
+        "dl should have 2 <dt> children, got {}",
+        dts.len()
+    );
+    assert_eq!(
+        dds.len(),
+        1,
+        "dl should have 1 <dd> child, got {}",
+        dds.len()
+    );
     assert_eq!(text_content(&tree, dts[0]), "T");
     assert_eq!(text_content(&tree, dds[0]), "D");
     assert_eq!(text_content(&tree, dts[1]), "T2");
@@ -544,7 +573,10 @@ fn test_li_end_tag_no_scope() {
     let tree = parse("<body></li>text</body>");
     let body = find_element(&tree, NodeId::ROOT, "body").unwrap();
     let full_text = text_content(&tree, body);
-    assert!(full_text.contains("text"), "text should still appear after stray </li>");
+    assert!(
+        full_text.contains("text"),
+        "text should still appear after stray </li>"
+    );
 }
 
 #[test]
@@ -575,5 +607,8 @@ fn test_ol_end_tag_scope_checking() {
     let tree = parse("<body></ol>text</body>");
     let body = find_element(&tree, NodeId::ROOT, "body").unwrap();
     let full_text = text_content(&tree, body);
-    assert!(full_text.contains("text"), "text should still appear after stray </ol>");
+    assert!(
+        full_text.contains("text"),
+        "text should still appear after stray </ol>"
+    );
 }
