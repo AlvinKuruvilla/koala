@@ -14,7 +14,7 @@ use crate::style::computed::{
     ListStyleType, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
-    AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
+    AutoLength, BoxShadow, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
     OuterDisplayType,
 };
 
@@ -623,6 +623,12 @@ pub struct LayoutBox {
     /// Initial: 1.0
     pub opacity: f32,
 
+    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    ///
+    /// "The 'box-shadow' property attaches one or more drop-shadows to the box."
+    /// Empty vec means no shadows (equivalent to `none`).
+    pub box_shadow: Vec<BoxShadow>,
+
     // ===== List marker fields =====
     /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
     ///
@@ -1039,6 +1045,7 @@ impl LayoutBox {
                     white_space: WhiteSpace::default(),
                     visibility: Visibility::default(),
                     opacity: 1.0,
+                    box_shadow: Vec::new(),
                     list_style_type: None,
                     marker_text: None,
                     tag_name: None,
@@ -1150,6 +1157,10 @@ impl LayoutBox {
                 let visibility = style.and_then(|s| s.visibility).unwrap_or_default();
                 // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
                 let opacity = style.and_then(|s| s.opacity).unwrap_or(1.0);
+                // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+                let box_shadow = style
+                    .and_then(|s| s.box_shadow.clone())
+                    .unwrap_or_default();
 
                 // [§ 7.2 'grid-template-columns'/'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
                 let grid_template_columns = style
@@ -1380,6 +1391,7 @@ impl LayoutBox {
                     white_space,
                     visibility,
                     opacity,
+                    box_shadow,
                     list_style_type,
                     marker_text,
                     tag_name: Some(tag.clone()),
@@ -1461,6 +1473,7 @@ impl LayoutBox {
                     white_space: WhiteSpace::default(),
                     visibility: Visibility::default(),
                     opacity: 1.0,
+                    box_shadow: Vec::new(),
                     list_style_type: None,
                     marker_text: None,
                     tag_name: None,
@@ -2960,6 +2973,7 @@ impl LayoutBox {
             white_space: WhiteSpace::default(),
             visibility: Visibility::default(),
             opacity: 1.0,
+            box_shadow: Vec::new(),
             list_style_type: None,
             marker_text: None,
             tag_name: None,

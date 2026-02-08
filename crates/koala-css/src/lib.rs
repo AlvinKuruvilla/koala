@@ -79,8 +79,8 @@ pub use style::computed::{
     ListStyleType, Overflow, TrackList, TrackSize, Visibility, WhiteSpace,
 };
 pub use style::{
-    AutoLength, BorderValue, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue, InnerDisplayType,
-    LengthValue, OuterDisplayType,
+    AutoLength, BorderValue, BoxShadow, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue,
+    InnerDisplayType, LengthValue, OuterDisplayType,
 };
 pub use tokenizer::{CSSToken, CSSTokenizer};
 

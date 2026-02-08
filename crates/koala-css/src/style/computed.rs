@@ -10,7 +10,7 @@ use crate::layout::inline::{FontStyle, TextAlign};
 use crate::layout::positioned::PositionType;
 use crate::parser::{ComponentValue, Declaration};
 use crate::tokenizer::CSSToken;
-use crate::{AutoLength, BorderValue, ColorValue, LengthValue};
+use crate::{AutoLength, BorderValue, BoxShadow, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
 
 /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
@@ -714,6 +714,15 @@ pub struct ComputedStyle {
     /// Initial: 1
     /// Inherited: no
     pub opacity: Option<f32>,
+
+    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    ///
+    /// "The 'box-shadow' property attaches one or more drop-shadows to the box."
+    ///
+    /// Values: none | `<shadow>#`
+    /// Initial: none
+    /// Inherited: no
+    pub box_shadow: Option<Vec<BoxShadow>>,
 
     /// Source order of the declaration that set `margin_top` (for cascade resolution)
     #[serde(skip)]
@@ -1441,6 +1450,21 @@ impl ComputedStyle {
                     self.opacity = Some((*value as f32).clamp(0.0, 1.0));
                 }
             }
+            // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+            //
+            // "The 'box-shadow' property attaches one or more drop-shadows to the box."
+            // Values: none | <shadow>#
+            "box-shadow" => {
+                // "none" keyword clears shadows
+                if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = decl.value.first()
+                    && ident.eq_ignore_ascii_case("none")
+                {
+                    self.box_shadow = None;
+                } else {
+                    self.box_shadow = self.parse_box_shadow(&decl.value);
+                }
+            }
+
             // ===== Grid layout properties =====
 
             // [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
@@ -1864,6 +1888,115 @@ impl ComputedStyle {
             AutoLength::Auto => AutoLength::Auto,
             AutoLength::Length(len) => AutoLength::Length(self.resolve_length(len)),
         }
+    }
+
+    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    ///
+    /// Parse a comma-separated list of `<shadow>` values.
+    ///
+    /// `<shadow> = inset? && <length>{2,4} && <color>?`
+    #[allow(clippy::cast_possible_truncation)]
+    fn parse_box_shadow(&self, values: &[ComponentValue]) -> Option<Vec<BoxShadow>> {
+        // Split on commas to get individual shadow groups
+        let mut groups: Vec<Vec<&ComponentValue>> = Vec::new();
+        let mut current: Vec<&ComponentValue> = Vec::new();
+        for v in values {
+            if matches!(v, ComponentValue::Token(CSSToken::Comma)) {
+                if !current.is_empty() {
+                    groups.push(current);
+                    current = Vec::new();
+                }
+            } else {
+                current.push(v);
+            }
+        }
+        if !current.is_empty() {
+            groups.push(current);
+        }
+
+        let mut shadows = Vec::new();
+        for group in &groups {
+            if let Some(shadow) = self.parse_single_shadow(group) {
+                shadows.push(shadow);
+            } else {
+                return None; // Invalid shadow = entire property invalid
+            }
+        }
+
+        if shadows.is_empty() {
+            None
+        } else {
+            Some(shadows)
+        }
+    }
+
+    /// Parse a single `<shadow>` value.
+    ///
+    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    ///
+    /// `<shadow> = inset? && <length>{2,4} && <color>?`
+    ///
+    /// "The lengths are interpreted as follows:
+    /// - The first length is the horizontal offset (positive = right).
+    /// - The second length is the vertical offset (positive = down).
+    /// - The third length is the blur radius (must be >= 0, default 0).
+    /// - The fourth length is the spread distance (default 0)."
+    #[allow(clippy::cast_possible_truncation)]
+    fn parse_single_shadow(&self, values: &[&ComponentValue]) -> Option<BoxShadow> {
+        let mut inset = false;
+        let mut lengths: Vec<f32> = Vec::new();
+        let mut color: Option<ColorValue> = None;
+
+        for &v in values {
+            // Skip whitespace tokens
+            if matches!(v, ComponentValue::Token(CSSToken::Whitespace)) {
+                continue;
+            }
+
+            // Check for "inset" keyword
+            if let ComponentValue::Token(CSSToken::Ident(ident)) = v
+                && ident.eq_ignore_ascii_case("inset")
+            {
+                inset = true;
+                continue;
+            }
+
+            // Try to parse as a length
+            if let Some(len) = parse_single_length(v) {
+                lengths.push(self.resolve_length(len).to_px() as f32);
+                continue;
+            }
+
+            // Try to parse as a color
+            if color.is_none()
+                && let Some(c) = parse_single_color(v)
+            {
+                color = Some(c);
+                continue;
+            }
+        }
+
+        // Need at least 2 lengths (offset-x, offset-y)
+        if lengths.len() < 2 {
+            return None;
+        }
+
+        let offset_x = lengths[0];
+        let offset_y = lengths[1];
+        let blur_radius = lengths.get(2).copied().unwrap_or(0.0).max(0.0);
+        let spread_radius = lengths.get(3).copied().unwrap_or(0.0);
+
+        // "If the color is absent, the used color is taken from the 'color' property."
+        let color = color.unwrap_or_else(|| self.color.clone().unwrap_or(ColorValue::BLACK));
+
+        Some(BoxShadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            color,
+            inset,
+        })
     }
 
     /// [§ 4 Logical Property Groups](https://drafts.csswg.org/css-logical-1/#logical-property-groups)

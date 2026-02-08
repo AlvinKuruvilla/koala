@@ -10,7 +10,7 @@ mod color;
 mod font;
 mod length;
 
-pub use border::BorderValue;
+pub use border::{BorderValue, BoxShadow};
 pub use color::{ColorValue, parse_color_value, parse_single_color};
 pub use font::{parse_font_family, parse_font_weight, parse_line_height};
 pub use length::{

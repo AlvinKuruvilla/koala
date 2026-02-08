@@ -15,6 +15,35 @@ use crate::layout::inline::FontStyle;
 /// Commands are added to the display list in painting order (back to front).
 #[derive(Debug, Clone)]
 pub enum DisplayCommand {
+    /// Draw a box shadow (outer or inset).
+    ///
+    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    ///
+    /// Outer shadows are painted before the background (painting order step 1).
+    /// Inset shadows are painted after the border (painting order step 3).
+    DrawBoxShadow {
+        /// X coordinate of the border box's top-left corner.
+        border_box_x: f32,
+        /// Y coordinate of the border box's top-left corner.
+        border_box_y: f32,
+        /// Width of the border box.
+        border_box_width: f32,
+        /// Height of the border box.
+        border_box_height: f32,
+        /// Horizontal offset of the shadow.
+        offset_x: f32,
+        /// Vertical offset of the shadow.
+        offset_y: f32,
+        /// Blur radius. 0 = sharp edge.
+        blur_radius: f32,
+        /// Spread distance. Positive = larger shadow, negative = smaller.
+        spread_radius: f32,
+        /// Shadow color.
+        color: ColorValue,
+        /// If true, this is an inset (inner) shadow.
+        inset: bool,
+    },
+
     /// Fill a rectangle with a solid color.
     ///
     /// Used for backgrounds and solid borders.

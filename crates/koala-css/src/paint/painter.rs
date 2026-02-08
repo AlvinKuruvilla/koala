@@ -100,6 +100,19 @@ impl<'a> Painter<'a> {
         let padding_width = dims.content.width + dims.padding.left + dims.padding.right;
         let padding_height = dims.content.height + dims.padding.top + dims.padding.bottom;
 
+        // Compute border-box coordinates once for shadow + background + border painting.
+        //
+        // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
+        //
+        // "The initial value of 'background-clip' is 'border-box', meaning
+        // the background is painted within the border box."
+        let border_box_x = padding_x - dims.border.left;
+        let border_box_y = padding_y - dims.border.top;
+        let border_box_width =
+            padding_width + dims.border.left + dims.border.right;
+        let border_box_height =
+            padding_height + dims.border.top + dims.border.bottom;
+
         // [CSS 2.1 Appendix E.2 Step 2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the background color of the element"
         //
@@ -107,33 +120,37 @@ impl<'a> Painter<'a> {
         if let Some(style) = style
             && is_visible
         {
-            if let Some(bg) = &style.background_color {
-                // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
-                //
-                // "The initial value of 'background-clip' is 'border-box', meaning
-                // the background is painted within the border box."
-                let border_top = style
-                    .border_top
-                    .as_ref()
-                    .map_or(0.0, |b| b.width.to_px() as f32);
-                let border_right = style
-                    .border_right
-                    .as_ref()
-                    .map_or(0.0, |b| b.width.to_px() as f32);
-                let border_bottom = style
-                    .border_bottom
-                    .as_ref()
-                    .map_or(0.0, |b| b.width.to_px() as f32);
-                let border_left = style
-                    .border_left
-                    .as_ref()
-                    .map_or(0.0, |b| b.width.to_px() as f32);
+            // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+            //
+            // "An outer box-shadow casts a shadow as if the border-box of the
+            // element were opaque. ...it is painted below the background of the
+            // element, but above the background and border of the element below it."
+            //
+            // Painted in reverse order: last shadow in the list is painted first
+            // (furthest back), first shadow is painted last (on top).
+            for shadow in layout_box.box_shadow.iter().rev() {
+                if !shadow.inset {
+                    display_list.push(DisplayCommand::DrawBoxShadow {
+                        border_box_x,
+                        border_box_y,
+                        border_box_width,
+                        border_box_height,
+                        offset_x: shadow.offset_x,
+                        offset_y: shadow.offset_y,
+                        blur_radius: shadow.blur_radius,
+                        spread_radius: shadow.spread_radius,
+                        color: shadow.color.clone(),
+                        inset: false,
+                    });
+                }
+            }
 
+            if let Some(bg) = &style.background_color {
                 display_list.push(DisplayCommand::FillRect {
-                    x: padding_x - border_left,
-                    y: padding_y - border_top,
-                    width: padding_width + border_left + border_right,
-                    height: padding_height + border_top + border_bottom,
+                    x: border_box_x,
+                    y: border_box_y,
+                    width: border_box_width,
+                    height: border_box_height,
                     color: bg.clone(),
                 });
             }
@@ -148,6 +165,28 @@ impl<'a> Painter<'a> {
                 padding_height,
                 display_list,
             );
+
+            // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+            //
+            // "The inner shadow is drawn inside the padding edge:
+            // ...it is painted above the background of the element
+            // but below the content (including the border)."
+            for shadow in layout_box.box_shadow.iter().rev() {
+                if shadow.inset {
+                    display_list.push(DisplayCommand::DrawBoxShadow {
+                        border_box_x,
+                        border_box_y,
+                        border_box_width,
+                        border_box_height,
+                        offset_x: shadow.offset_x,
+                        offset_y: shadow.offset_y,
+                        blur_radius: shadow.blur_radius,
+                        spread_radius: shadow.spread_radius,
+                        color: shadow.color.clone(),
+                        inset: true,
+                    });
+                }
+            }
         }
 
         // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)

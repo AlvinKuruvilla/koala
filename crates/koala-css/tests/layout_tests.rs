@@ -3239,3 +3239,132 @@ fn test_table_th_bold() {
         td.font_weight
     );
 }
+
+// ---------------------------------------------------------------------------
+// box-shadow tests
+//
+// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+//
+// "The 'box-shadow' property attaches one or more drop-shadows to the box."
+// ---------------------------------------------------------------------------
+
+/// `box-shadow: none` should produce an empty shadow vec.
+#[test]
+fn test_box_shadow_none() {
+    let root = layout_html(
+        "<style>div { box-shadow: none; }</style><div>Test</div>",
+    );
+    // Document > html > body > div
+    let div = &box_at_depth(&root, 2).children[0];
+    assert!(
+        div.box_shadow.is_empty(),
+        "box-shadow: none should produce empty vec, got {:?}",
+        div.box_shadow
+    );
+}
+
+/// Simple box-shadow with offset-x and offset-y only.
+#[test]
+fn test_box_shadow_simple() {
+    let root = layout_html(
+        "<style>div { box-shadow: 5px 10px black; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    assert_eq!(div.box_shadow.len(), 1, "should have 1 shadow");
+
+    let s = &div.box_shadow[0];
+    assert!((s.offset_x - 5.0).abs() < 0.01, "offset_x should be 5, got {}", s.offset_x);
+    assert!((s.offset_y - 10.0).abs() < 0.01, "offset_y should be 10, got {}", s.offset_y);
+    assert!((s.blur_radius - 0.0).abs() < 0.01, "blur should default to 0");
+    assert!((s.spread_radius - 0.0).abs() < 0.01, "spread should default to 0");
+    assert!(!s.inset, "should not be inset");
+}
+
+/// box-shadow with all 4 lengths: offset-x, offset-y, blur, spread.
+#[test]
+fn test_box_shadow_with_blur_and_spread() {
+    let root = layout_html(
+        "<style>div { box-shadow: 2px 3px 4px 5px red; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    assert_eq!(div.box_shadow.len(), 1);
+
+    let s = &div.box_shadow[0];
+    assert!((s.offset_x - 2.0).abs() < 0.01);
+    assert!((s.offset_y - 3.0).abs() < 0.01);
+    assert!((s.blur_radius - 4.0).abs() < 0.01);
+    assert!((s.spread_radius - 5.0).abs() < 0.01);
+    // red = #ff0000
+    assert_eq!(s.color.r, 255);
+    assert_eq!(s.color.g, 0);
+    assert_eq!(s.color.b, 0);
+}
+
+/// box-shadow with `inset` keyword.
+#[test]
+fn test_box_shadow_inset() {
+    let root = layout_html(
+        "<style>div { box-shadow: inset 3px 4px 5px black; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    assert_eq!(div.box_shadow.len(), 1);
+    assert!(div.box_shadow[0].inset, "should be inset shadow");
+    assert!((div.box_shadow[0].offset_x - 3.0).abs() < 0.01);
+    assert!((div.box_shadow[0].offset_y - 4.0).abs() < 0.01);
+}
+
+/// Multiple comma-separated shadows.
+#[test]
+fn test_box_shadow_multiple() {
+    let root = layout_html(
+        "<style>div { box-shadow: 1px 2px red, 3px 4px 5px blue; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    assert_eq!(div.box_shadow.len(), 2, "should have 2 shadows");
+
+    // First shadow: 1px 2px red
+    assert!((div.box_shadow[0].offset_x - 1.0).abs() < 0.01);
+    assert!((div.box_shadow[0].offset_y - 2.0).abs() < 0.01);
+    assert_eq!(div.box_shadow[0].color.r, 255);
+    assert_eq!(div.box_shadow[0].color.g, 0);
+
+    // Second shadow: 3px 4px 5px blue
+    assert!((div.box_shadow[1].offset_x - 3.0).abs() < 0.01);
+    assert!((div.box_shadow[1].offset_y - 4.0).abs() < 0.01);
+    assert!((div.box_shadow[1].blur_radius - 5.0).abs() < 0.01);
+    assert_eq!(div.box_shadow[1].color.b, 255);
+}
+
+/// When no color is specified, box-shadow defaults to the element's `color`.
+#[test]
+fn test_box_shadow_default_color() {
+    let root = layout_html(
+        "<style>div { color: green; box-shadow: 5px 5px; }</style><div>Test</div>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    assert_eq!(div.box_shadow.len(), 1);
+
+    // "green" = #008000
+    let s = &div.box_shadow[0];
+    assert_eq!(s.color.r, 0);
+    assert_eq!(s.color.g, 128);
+    assert_eq!(s.color.b, 0);
+}
+
+/// box-shadow is NOT inherited — child should not have parent's shadow.
+#[test]
+fn test_box_shadow_not_inherited() {
+    let root = layout_html(
+        "<style>.parent { box-shadow: 5px 5px black; }</style>\
+         <div class='parent'><div class='child'>Child</div></div>",
+    );
+    let parent = &box_at_depth(&root, 2).children[0];
+    assert_eq!(parent.box_shadow.len(), 1, "parent should have a shadow");
+
+    let child = &parent.children[0];
+    assert!(
+        child.box_shadow.is_empty(),
+        "child should NOT inherit parent's box-shadow, got {:?}",
+        child.box_shadow
+    );
+}

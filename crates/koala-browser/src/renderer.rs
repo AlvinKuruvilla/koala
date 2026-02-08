@@ -179,6 +179,31 @@ impl Renderer {
     /// Execute a single display command.
     fn execute_command(&mut self, command: &DisplayCommand) {
         match command {
+            DisplayCommand::DrawBoxShadow {
+                border_box_x,
+                border_box_y,
+                border_box_width,
+                border_box_height,
+                offset_x,
+                offset_y,
+                blur_radius,
+                spread_radius,
+                color,
+                inset,
+            } => {
+                self.draw_box_shadow(
+                    *border_box_x,
+                    *border_box_y,
+                    *border_box_width,
+                    *border_box_height,
+                    *offset_x,
+                    *offset_y,
+                    *blur_radius,
+                    *spread_radius,
+                    color,
+                    *inset,
+                );
+            }
             DisplayCommand::FillRect {
                 x,
                 y,
@@ -412,6 +437,238 @@ impl Renderer {
 
             // Advance cursor
             cursor_x += metrics.advance_width;
+        }
+    }
+
+    /// Draw a box shadow (outer or inset).
+    ///
+    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    ///
+    /// Uses layered concentric rectangles with linearly decreasing alpha to
+    /// approximate blur. This is a visual approximation, not true Gaussian blur.
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
+    fn draw_box_shadow(
+        &mut self,
+        border_box_x: f32,
+        border_box_y: f32,
+        border_box_width: f32,
+        border_box_height: f32,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        color: &ColorValue,
+        inset: bool,
+    ) {
+        if inset {
+            self.draw_inset_shadow(
+                border_box_x,
+                border_box_y,
+                border_box_width,
+                border_box_height,
+                offset_x,
+                offset_y,
+                blur_radius,
+                spread_radius,
+                color,
+            );
+        } else {
+            self.draw_outer_shadow(
+                border_box_x,
+                border_box_y,
+                border_box_width,
+                border_box_height,
+                offset_x,
+                offset_y,
+                blur_radius,
+                spread_radius,
+                color,
+            );
+        }
+    }
+
+    /// Draw an outer box shadow.
+    ///
+    /// The shadow rect = border-box expanded by spread, offset, and blur.
+    /// Pixels inside the border box are skipped (shadow is outside only).
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
+    fn draw_outer_shadow(
+        &mut self,
+        border_box_x: f32,
+        border_box_y: f32,
+        border_box_width: f32,
+        border_box_height: f32,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        color: &ColorValue,
+    ) {
+        // Shadow rect = border-box + spread + offset
+        let shadow_x = border_box_x + offset_x - spread_radius;
+        let shadow_y = border_box_y + offset_y - spread_radius;
+        let shadow_w = border_box_width + 2.0 * spread_radius;
+        let shadow_h = border_box_height + 2.0 * spread_radius;
+
+        let layers = if blur_radius > 0.0 {
+            blur_radius.ceil() as u32
+        } else {
+            1
+        };
+
+        let base_alpha = f32::from(color.a) / 255.0;
+
+        for layer in 0..layers {
+            let expand = if layers > 1 {
+                layer as f32
+            } else {
+                0.0
+            };
+            // Alpha decreases linearly with each expanding layer
+            let layer_alpha = if layers > 1 {
+                base_alpha * (1.0 - (layer as f32 / layers as f32))
+            } else {
+                base_alpha
+            };
+
+            let alpha_u8 = (layer_alpha * 255.0) as u8;
+            if alpha_u8 == 0 {
+                continue;
+            }
+
+            let lx = (shadow_x - expand) as i32;
+            let ly = (shadow_y - expand) as i32;
+            let lw = (shadow_w + 2.0 * expand) as u32;
+            let lh = (shadow_h + 2.0 * expand) as u32;
+
+            let fg = Rgba([color.r, color.g, color.b, alpha_u8]);
+
+            // Border box bounds (pixels inside are skipped for outer shadow)
+            let bb_left = border_box_x as i32;
+            let bb_top = border_box_y as i32;
+            let bb_right = (border_box_x + border_box_width) as i32;
+            let bb_bottom = (border_box_y + border_box_height) as i32;
+
+            for dy in 0..lh {
+                for dx in 0..lw {
+                    let px = lx + dx as i32;
+                    let py = ly + dy as i32;
+
+                    // Skip pixels inside the border box (shadow is outside only)
+                    if px >= bb_left && px < bb_right && py >= bb_top && py < bb_bottom {
+                        continue;
+                    }
+
+                    if px >= 0
+                        && py >= 0
+                        && (px as u32) < self.width
+                        && (py as u32) < self.height
+                        && self.is_visible(px, py)
+                    {
+                        let bg = *self.buffer.get_pixel(px as u32, py as u32);
+                        let blended = alpha_blend(fg, bg, alpha_u8);
+                        self.buffer.put_pixel(px as u32, py as u32, blended);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw an inset box shadow.
+    ///
+    /// The shadow region = inside the border box but outside the inner rect
+    /// (contracted by spread + offset).
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
+    fn draw_inset_shadow(
+        &mut self,
+        border_box_x: f32,
+        border_box_y: f32,
+        border_box_width: f32,
+        border_box_height: f32,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        color: &ColorValue,
+    ) {
+        // Inner rect = border-box shrunk by spread, shifted by offset
+        let inner_x = border_box_x + offset_x + spread_radius;
+        let inner_y = border_box_y + offset_y + spread_radius;
+        let inner_w = border_box_width - 2.0 * spread_radius;
+        let inner_h = border_box_height - 2.0 * spread_radius;
+
+        let layers = if blur_radius > 0.0 {
+            blur_radius.ceil() as u32
+        } else {
+            1
+        };
+
+        let base_alpha = f32::from(color.a) / 255.0;
+
+        let bb_left = border_box_x as i32;
+        let bb_top = border_box_y as i32;
+        let bb_right = (border_box_x + border_box_width) as i32;
+        let bb_bottom = (border_box_y + border_box_height) as i32;
+
+        for layer in 0..layers {
+            let shrink = if layers > 1 {
+                layer as f32
+            } else {
+                0.0
+            };
+            let layer_alpha = if layers > 1 {
+                base_alpha * (1.0 - (layer as f32 / layers as f32))
+            } else {
+                base_alpha
+            };
+
+            let alpha_u8 = (layer_alpha * 255.0) as u8;
+            if alpha_u8 == 0 {
+                continue;
+            }
+
+            let il = (inner_x + shrink) as i32;
+            let it = (inner_y + shrink) as i32;
+            let ir = ((inner_x + inner_w) - shrink) as i32;
+            let ib = ((inner_y + inner_h) - shrink) as i32;
+
+            let fg = Rgba([color.r, color.g, color.b, alpha_u8]);
+
+            // Paint pixels inside border box but outside the inner rect
+            for py in bb_top..bb_bottom {
+                for px in bb_left..bb_right {
+                    // Skip pixels inside the inner rect (no shadow there)
+                    if px >= il && px < ir && py >= it && py < ib {
+                        continue;
+                    }
+
+                    if px >= 0
+                        && py >= 0
+                        && (px as u32) < self.width
+                        && (py as u32) < self.height
+                        && self.is_visible(px, py)
+                    {
+                        let bg = *self.buffer.get_pixel(px as u32, py as u32);
+                        let blended = alpha_blend(fg, bg, alpha_u8);
+                        self.buffer.put_pixel(px as u32, py as u32, blended);
+                    }
+                }
+            }
         }
     }
 

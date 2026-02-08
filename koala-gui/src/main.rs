@@ -1088,6 +1088,58 @@ impl BrowserApp {
             egui::vec2(dims.content.width, dims.content.height),
         );
 
+        // Compute border-box rect (used for shadows and background)
+        let border_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                origin.x + dims.content.x - dims.padding.left - dims.border.left,
+                origin.y + dims.content.y - dims.padding.top - dims.border.top,
+            ),
+            egui::vec2(
+                dims.content.width
+                    + dims.padding.left
+                    + dims.padding.right
+                    + dims.border.left
+                    + dims.border.right,
+                dims.content.height
+                    + dims.padding.top
+                    + dims.padding.bottom
+                    + dims.border.top
+                    + dims.border.bottom,
+            ),
+        );
+
+        // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+        //
+        // Outer shadows are painted before the background.
+        // Painted in reverse order (last in list = furthest back).
+        for shadow in layout_box.box_shadow.iter().rev() {
+            if !shadow.inset {
+                let shadow_color =
+                    egui::Color32::from_rgba_unmultiplied(
+                        shadow.color.r,
+                        shadow.color.g,
+                        shadow.color.b,
+                        shadow.color.a,
+                    );
+                let shadow_rect = border_rect
+                    .expand(shadow.spread_radius)
+                    .translate(egui::vec2(shadow.offset_x, shadow.offset_y));
+                if shadow.blur_radius > 0.0 {
+                    // Approximate blur with multiple expanding translucent layers
+                    let layers = shadow.blur_radius.ceil() as u32;
+                    for layer in 0..layers {
+                        let expand = layer as f32;
+                        let alpha_frac = 1.0 - (layer as f32 / layers as f32);
+                        let layer_color = shadow_color.linear_multiply(alpha_frac);
+                        let layer_rect = shadow_rect.expand(expand);
+                        let _ = ui.painter().rect_filled(layer_rect, 0.0, layer_color);
+                    }
+                } else {
+                    let _ = ui.painter().rect_filled(shadow_rect, 0.0, shadow_color);
+                }
+            }
+        }
+
         // Paint background if this element has one
         // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
         //
@@ -1097,25 +1149,6 @@ impl BrowserApp {
             && let Some(ref bg) = s.background_color
         {
             let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
-            // Paint at the border box (content + padding + border)
-            let border_rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    origin.x + dims.content.x - dims.padding.left - dims.border.left,
-                    origin.y + dims.content.y - dims.padding.top - dims.border.top,
-                ),
-                egui::vec2(
-                    dims.content.width
-                        + dims.padding.left
-                        + dims.padding.right
-                        + dims.border.left
-                        + dims.border.right,
-                    dims.content.height
-                        + dims.padding.top
-                        + dims.padding.bottom
-                        + dims.border.top
-                        + dims.border.bottom,
-                ),
-            );
             let _ = ui.painter().rect_filled(border_rect, 0.0, bg_color);
         }
 

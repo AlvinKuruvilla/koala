@@ -390,6 +390,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: no"
         opacity: None,
 
+        // [§ 6.1 box-shadow](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+        // "Inherited: no"
+        box_shadow: None,
+
         // Source order tracking for cascade resolution (not inherited, per-element)
         margin_top_source_order: None,
         margin_right_source_order: None,
