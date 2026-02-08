@@ -212,7 +212,7 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
                 // -webkit-flex and -webkit-box are legacy equivalents of flex.
                 // -webkit-inline-box is the legacy equivalent of inline-flex.
                 "-webkit-flex" | "-webkit-box" => return Some(DisplayValue::flex()),
-                "-webkit-inline-box" => return Some(DisplayValue::inline_block()),
+                "-webkit-inline-box" | "inline-flex" => return Some(DisplayValue::inline_block()),
 
                 // "none" is handled separately by is_display_none
                 "none" => return None,
