@@ -10,8 +10,8 @@ use std::cell::Cell;
 use koala_dom::{DomTree, NodeId, NodeType};
 
 use crate::style::computed::{
-    AlignItems, AlignSelf, FlexDirection, GridAutoFlow, GridLine, JustifyContent, ListStyleType,
-    TrackList,
+    AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
+    ListStyleType, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
     AutoLength, ColorValue, ComputedStyle, DisplayValue, InnerDisplayType, LengthValue,
@@ -528,6 +528,13 @@ pub struct LayoutBox {
     /// None = auto
     pub flex_basis: Option<AutoLength>,
 
+    /// [§ 5.2 'flex-wrap'](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
+    ///
+    /// "The flex-wrap property controls whether the flex container is
+    /// single-line or multi-line."
+    /// Initial: nowrap
+    pub flex_wrap: FlexWrap,
+
     // ===== Grid layout fields =====
 
     /// [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
@@ -597,6 +604,24 @@ pub struct LayoutBox {
     ///
     /// None means no clearance (clear: none).
     pub clear_side: Option<ClearSide>,
+
+    /// [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+    ///
+    /// "This property declares how white space inside the element is handled."
+    /// Initial: normal
+    pub white_space: WhiteSpace,
+
+    /// [§ 11.2 'visibility'](https://www.w3.org/TR/CSS2/visufx.html#visibility)
+    ///
+    /// "Invisible boxes still affect layout."
+    /// Initial: visible
+    pub visibility: Visibility,
+
+    /// [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+    ///
+    /// "Opacity specifies how to blend the offscreen rendering."
+    /// Initial: 1.0
+    pub opacity: f32,
 
     // ===== List marker fields =====
     /// [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
@@ -980,6 +1005,7 @@ impl LayoutBox {
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
+                    flex_wrap: FlexWrap::default(),
                     grid_template_columns: TrackList::default(),
                     grid_template_rows: TrackList::default(),
                     grid_auto_flow: GridAutoFlow::default(),
@@ -994,6 +1020,9 @@ impl LayoutBox {
                     box_sizing_border_box: false,
                     float_side: None,
                     clear_side: None,
+                    white_space: WhiteSpace::default(),
+                    visibility: Visibility::default(),
+                    opacity: 1.0,
                     list_style_type: None,
                     marker_text: None,
                 })
@@ -1094,6 +1123,15 @@ impl LayoutBox {
                 let flex_shrink = style.and_then(|s| s.flex_shrink).unwrap_or(1.0);
                 // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
                 let flex_basis = style.and_then(|s| s.flex_basis);
+                // [§ 5.2 'flex-wrap'](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
+                let flex_wrap = style.and_then(|s| s.flex_wrap).unwrap_or_default();
+
+                // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+                let white_space = style.and_then(|s| s.white_space).unwrap_or_default();
+                // [§ 11.2 'visibility'](https://www.w3.org/TR/CSS2/visufx.html#visibility)
+                let visibility = style.and_then(|s| s.visibility).unwrap_or_default();
+                // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+                let opacity = style.and_then(|s| s.opacity).unwrap_or(1.0);
 
                 // [§ 7.2 'grid-template-columns'/'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
                 let grid_template_columns = style
@@ -1306,6 +1344,7 @@ impl LayoutBox {
                     flex_grow,
                     flex_shrink,
                     flex_basis,
+                    flex_wrap,
                     grid_template_columns,
                     grid_template_rows,
                     grid_auto_flow,
@@ -1320,6 +1359,9 @@ impl LayoutBox {
                     box_sizing_border_box,
                     float_side,
                     clear_side,
+                    white_space,
+                    visibility,
+                    opacity,
                     list_style_type,
                     marker_text,
                 })
@@ -1381,6 +1423,7 @@ impl LayoutBox {
                     flex_grow: 0.0,
                     flex_shrink: 1.0,
                     flex_basis: None,
+                    flex_wrap: FlexWrap::default(),
                     grid_template_columns: TrackList::default(),
                     grid_template_rows: TrackList::default(),
                     grid_auto_flow: GridAutoFlow::default(),
@@ -1395,6 +1438,9 @@ impl LayoutBox {
                     box_sizing_border_box: false,
                     float_side: None,
                     clear_side: None,
+                    white_space: WhiteSpace::default(),
+                    visibility: Visibility::default(),
+                    opacity: 1.0,
                     list_style_type: None,
                     marker_text: None,
                 })
@@ -2822,6 +2868,7 @@ impl LayoutBox {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: None,
+            flex_wrap: FlexWrap::default(),
             grid_template_columns: TrackList::default(),
             grid_template_rows: TrackList::default(),
             grid_auto_flow: GridAutoFlow::default(),
@@ -2836,6 +2883,9 @@ impl LayoutBox {
             box_sizing_border_box: false,
             float_side: None,
             clear_side: None,
+            white_space: WhiteSpace::default(),
+            visibility: Visibility::default(),
+            opacity: 1.0,
             list_style_type: None,
             marker_text: None,
         }
@@ -2940,6 +2990,18 @@ impl LayoutBox {
         let mut inline_layout =
             InlineLayout::new(effective_width, self.dimensions.content.y, self.text_align);
         inline_layout.left_offset = left_offset;
+
+        // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+        //
+        // "This value collapses white space as for 'normal', but suppresses
+        // line breaks (text wrapping) within text."
+        //
+        // Set no_wrap when white-space is nowrap or pre (both suppress
+        // soft line breaks).
+        inline_layout.no_wrap = matches!(
+            self.white_space,
+            WhiteSpace::Nowrap | WhiteSpace::Pre
+        );
 
         // STEP 2: Recursively add all inline content to the inline layout.
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)

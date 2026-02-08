@@ -75,8 +75,8 @@ pub use selector::{
 };
 pub use style::ComputedStyle;
 pub use style::computed::{
-    AlignItems, AlignSelf, FlexDirection, GridAutoFlow, GridLine, JustifyContent, ListStyleType,
-    Overflow, TrackList, TrackSize,
+    AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
+    ListStyleType, Overflow, TrackList, TrackSize, Visibility, WhiteSpace,
 };
 pub use style::{
     AutoLength, BorderValue, ColorValue, DEFAULT_FONT_SIZE_PX, DisplayValue, InnerDisplayType,

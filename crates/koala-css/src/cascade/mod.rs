@@ -334,6 +334,9 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         flex_grow: None,
         flex_shrink: None,
         flex_basis: None,
+        // [§ 5.2 flex-wrap](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
+        // "Inherited: no"
+        flex_wrap: None,
 
         // [§ 7.2 grid-template-columns/rows](https://www.w3.org/TR/css-grid-1/#track-sizing)
         // [§ 7.6 grid-auto-flow](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
@@ -374,6 +377,18 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
         // "Inherited: no"
         box_sizing_border_box: None,
+
+        // [§ 16.6 white-space](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+        // "Inherited: yes"
+        white_space: parent.white_space,
+
+        // [§ 11.2 visibility](https://www.w3.org/TR/CSS2/visufx.html#visibility)
+        // "Inherited: yes"
+        visibility: parent.visibility,
+
+        // [§ 3.2 opacity](https://www.w3.org/TR/css-color-4/#transparency)
+        // "Inherited: no"
+        opacity: None,
 
         // Source order tracking for cascade resolution (not inherited, per-element)
         margin_top_source_order: None,

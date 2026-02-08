@@ -64,6 +64,25 @@ impl<'a> Painter<'a> {
         display_list: &mut DisplayList,
         parent_style: Option<&ComputedStyle>,
     ) {
+        // [§ 11.2 'visibility'](https://www.w3.org/TR/CSS2/visufx.html#visibility)
+        //
+        // "The 'visibility' property specifies whether the boxes generated
+        // by an element are rendered. Invisible boxes still affect layout.
+        // ...the box and its content are invisible."
+        //
+        // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+        //
+        // "If opacity is 0, the element is fully transparent (invisible)."
+        //
+        // NOTE: visibility is inherited, so child elements also get hidden
+        // unless they override with visibility: visible. We check both
+        // visibility and opacity: boxes that are hidden or fully transparent
+        // are skipped entirely (no background, border, or text drawn).
+        // Children are still visited because visibility inherits — a child
+        // could override back to visible.
+        let is_visible = layout_box.visibility == crate::style::computed::Visibility::Visible
+            && layout_box.opacity > 0.0;
+
         let dims = &layout_box.dimensions;
 
         // Get style for this box if it has a node
@@ -83,7 +102,11 @@ impl<'a> Painter<'a> {
 
         // [CSS 2.1 Appendix E.2 Step 2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
         // "the background color of the element"
-        if let Some(style) = style {
+        //
+        // Only paint background/border/text if the box is visible.
+        if let Some(style) = style
+            && is_visible
+        {
             if let Some(bg) = &style.background_color {
                 // [CSS Backgrounds § 3.7](https://www.w3.org/TR/css-backgrounds-3/#background-painting-area)
                 //
@@ -142,73 +165,66 @@ impl<'a> Painter<'a> {
             });
         }
 
-        // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
-        // "the replaced content of replaced inline-level elements"
-        //
-        // If this is a replaced element (e.g., <img>), emit a DrawImage
-        // command using the content rect dimensions and src attribute.
-        if layout_box.is_replaced
-            && let Some(ref src) = layout_box.replaced_src
-        {
-            display_list.push(DisplayCommand::DrawImage {
-                x: dims.content.x,
-                y: dims.content.y,
-                width: dims.content.width,
-                height: dims.content.height,
-                src: src.clone(),
-            });
-        }
+        // Only paint content (images, text) if the box is visible.
+        if is_visible {
+            // [CSS 2.1 Appendix E.2 Step 5](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+            // "the replaced content of replaced inline-level elements"
+            if layout_box.is_replaced
+                && let Some(ref src) = layout_box.replaced_src
+            {
+                display_list.push(DisplayCommand::DrawImage {
+                    x: dims.content.x,
+                    y: dims.content.y,
+                    width: dims.content.width,
+                    height: dims.content.height,
+                    src: src.clone(),
+                });
+            }
 
-        // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
-        // "the element's text"
-        //
-        // If this box has line_boxes (i.e., it established an inline
-        // formatting context), paint text from the line box fragments.
-        // These fragments have correct positions computed by InlineLayout.
-        if !layout_box.line_boxes.is_empty() {
-            for line_box in &layout_box.line_boxes {
-                for fragment in &line_box.fragments {
-                    if let FragmentContent::Text(text_run) = &fragment.content {
-                        display_list.push(DisplayCommand::DrawText {
-                            x: fragment.bounds.x,
-                            y: fragment.bounds.y,
-                            text: text_run.text.clone(),
-                            font_size: text_run.font_size,
-                            color: text_run.color.clone(),
-                            font_weight: text_run.font_weight,
-                            font_style: text_run.font_style,
-                        });
+            // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+            // "the element's text"
+            if !layout_box.line_boxes.is_empty() {
+                for line_box in &layout_box.line_boxes {
+                    for fragment in &line_box.fragments {
+                        if let FragmentContent::Text(text_run) = &fragment.content {
+                            display_list.push(DisplayCommand::DrawText {
+                                x: fragment.bounds.x,
+                                y: fragment.bounds.y,
+                                text: text_run.text.clone(),
+                                font_size: text_run.font_size,
+                                color: text_run.color.clone(),
+                                font_weight: text_run.font_weight,
+                                font_style: text_run.font_style,
+                            });
+                        }
                     }
                 }
+            } else if let BoxType::AnonymousInline(text) = &layout_box.box_type {
+                let text_color = effective_style
+                    .and_then(|s| s.color.as_ref())
+                    .cloned()
+                    .unwrap_or(ColorValue::BLACK);
+
+                let font_size = effective_style
+                    .and_then(|s| s.font_size.as_ref())
+                    .map_or(16.0, |fs| fs.to_px() as f32);
+
+                let font_weight = effective_style.and_then(|s| s.font_weight).unwrap_or(400);
+
+                let font_style = effective_style
+                    .and_then(|s| s.font_style)
+                    .unwrap_or_default();
+
+                display_list.push(DisplayCommand::DrawText {
+                    x: dims.content.x,
+                    y: dims.content.y,
+                    text: text.clone(),
+                    font_size,
+                    color: text_color,
+                    font_weight,
+                    font_style,
+                });
             }
-        } else if let BoxType::AnonymousInline(text) = &layout_box.box_type {
-            // Fallback for AnonymousInline boxes that are NOT part of an
-            // inline formatting context (e.g., text directly in a block
-            // whose height was computed by calculate_block_height STEP 2).
-            let text_color = effective_style
-                .and_then(|s| s.color.as_ref())
-                .cloned()
-                .unwrap_or(ColorValue::BLACK);
-
-            let font_size = effective_style
-                .and_then(|s| s.font_size.as_ref())
-                .map_or(16.0, |fs| fs.to_px() as f32);
-
-            let font_weight = effective_style.and_then(|s| s.font_weight).unwrap_or(400);
-
-            let font_style = effective_style
-                .and_then(|s| s.font_style)
-                .unwrap_or_default();
-
-            display_list.push(DisplayCommand::DrawText {
-                x: dims.content.x,
-                y: dims.content.y,
-                text: text.clone(),
-                font_size,
-                color: text_color,
-                font_weight,
-                font_style,
-            });
         }
 
         // [CSS 2.1 Appendix E.2 Step 4](https://www.w3.org/TR/CSS2/zindex.html#painting-order)

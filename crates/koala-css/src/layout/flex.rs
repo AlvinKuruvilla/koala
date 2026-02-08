@@ -1,20 +1,21 @@
-//! CSS Flexbox Layout Algorithm (MVP).
+//! CSS Flexbox Layout Algorithm.
 //!
 //! [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
 //!
-//! This module implements a minimal viable subset of CSS Flexbox:
+//! This module implements CSS Flexbox:
 //! - `flex-direction: row` (horizontal main axis)
 //! - `flex-grow` / `flex-shrink` distribution (§ 9.7)
 //! - `flex-basis` (definite length or auto)
+//! - `flex` shorthand (§ 7)
+//! - `flex-wrap` (§ 5.2) — single-line and multi-line
 //! - `justify-content` (5 keywords)
 //! - `align-items` / `align-self` cross-axis alignment (§ 8.3)
 //! - No margin collapsing between flex items
 //!
-//! Not yet implemented: column direction, flex-wrap, align-content,
-//! order, inline-flex, flex shorthand.
+//! Not yet implemented: column direction, align-content, order, inline-flex.
 
 use crate::style::AutoLength;
-use crate::style::computed::{AlignItems, AlignSelf, JustifyContent};
+use crate::style::computed::{AlignItems, AlignSelf, FlexWrap, JustifyContent};
 
 use super::box_model::Rect;
 use super::inline::FontMetrics;
@@ -192,148 +193,218 @@ pub fn layout_flex(
         });
     }
 
-    // STEP 4 (spec step 6 / § 9.7): Resolve flexible lengths.
+    // STEP 4 (§ 9.3): Collect flex items into flex lines.
+    //
+    // [§ 9.3 Main Size Determination](https://www.w3.org/TR/css-flexbox-1/#algo-line-break)
+    //
+    // "If the flex container is single-line, collect all the flex items
+    // into a single flex line."
+    //
+    // "Otherwise, starting from the first uncollected item, collect
+    // consecutive items one by one until the first time that the next
+    // collected item would not fit into the flex container's inner main
+    // size (or until a forced break is encountered, see § 10 Fragmenting
+    // Flex Layout). If the very first uncollected item wouldn't fit,
+    // collect just it into the line."
+    //
+    // "For this step, the size of a flex item is its outer hypothetical
+    // main size."
+    //
+    // "Repeat until all flex items have been collected into flex lines."
     #[cfg(feature = "layout-trace")]
     {
         let m: u8 = 0;
         eprintln!(
-            "[FLEX] after step 3 (measures done), stack=0x{:x}",
-            &m as *const u8 as usize
-        );
-    }
-    resolve_flexible_lengths(&mut items, available_main);
-
-    // STEP 5 (spec step 12): Compute justify-content offsets.
-    let total_target: f32 = items
-        .iter()
-        .map(|item| item.target_size + item.outer_main)
-        .sum();
-    let free_space = (available_main - total_target).max(0.0);
-    let (initial_offset, gap) =
-        compute_justify_offsets(container.justify_content, free_space, items.len());
-
-    // STEP 6 (spec step 7): Layout each child ONCE with resolved main size.
-    //
-    // [§ 9.5 Cross Sizing](https://www.w3.org/TR/css-flexbox-1/#algo-cross-item)
-    //
-    // Each child is laid out with its target main size as the containing
-    // block width, and unconstrained cross size.
-    //
-    // [§ 9.3 Main Size Determination](https://www.w3.org/TR/css-flexbox-1/#algo-main-container)
-    //
-    // The resolved flex lengths override the item's intrinsic/specified
-    // width. We set the child's width to the target size so that
-    // calculate_block_width() uses it as a definite length.
-    let mut current_x = content_box.x + initial_offset;
-
-    #[cfg(feature = "layout-trace")]
-    {
-        let m: u8 = 0;
-        eprintln!(
-            "[FLEX] before step 6 (child layout), stack=0x{:x}",
+            "[FLEX] after step 3 (measures done), flex_wrap={:?}, stack=0x{:x}",
+            container.flex_wrap,
             &m as *const u8 as usize
         );
     }
 
-    for (item_idx, item) in items.iter().enumerate() {
-        let child = &mut container.children[item.index];
+    let lines: Vec<Vec<usize>> = if container.flex_wrap == FlexWrap::Nowrap {
+        // "If the flex container is single-line, collect all the flex items
+        // into a single flex line."
+        vec![(0..items.len()).collect()]
+    } else {
+        // "Starting from the first uncollected item, collect consecutive
+        // items one by one until the first time that the next collected
+        // item would not fit into the flex container's inner main size."
+        let mut lines = Vec::new();
+        let mut line: Vec<usize> = Vec::new();
+        let mut line_main = 0.0_f32;
 
-        // Override the child's width with the resolved flex main size.
-        // [§ 9.7](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
-        //
-        // "Set each item's used main size to its target main size."
-        //
-        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
-        //
-        // If the child uses border-box, add padding+border back to the
-        // content-box target_size so that calculate_block_width() correctly
-        // converts it back. For content-box children, use as-is.
-        let width_for_layout = if child.box_sizing_border_box {
-            let rp = child.padding.resolve(viewport);
-            let rb = child.border_width.resolve(viewport);
-            item.target_size + rp.left + rp.right + rb.left + rb.right
-        } else {
-            item.target_size
-        };
-        child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
-            f64::from(width_for_layout),
-        )));
+        for (i, item) in items.iter().enumerate() {
+            // "For this step, the size of a flex item is its outer
+            // hypothetical main size."
+            let item_main = item.hypothetical_size + item.outer_main;
 
-        let child_containing = Rect {
-            x: current_x,
-            y: content_box.y,
-            width: item.target_size,
-            height: f32::MAX, // unconstrained cross size
-        };
-
-        #[cfg(feature = "layout-trace")]
-        eprintln!(
-            "[FLEX] STEP 6: laying out child {item_idx}, display={:?}/{:?}, {} grandchildren",
-            child.display.outer,
-            child.display.inner,
-            child.children.len()
-        );
-        child.layout(child_containing, viewport, font_metrics, child_abs_cb);
-        #[cfg(feature = "layout-trace")]
-        eprintln!("[FLEX] STEP 6: child {item_idx} layout complete");
-
-        current_x += child.dimensions.margin_box().width;
-        if item_idx < items.len() - 1 {
-            current_x += gap;
+            // "If the very first uncollected item wouldn't fit, collect
+            // just it into the line."
+            // (The `!line.is_empty()` guard ensures we always accept at
+            // least one item per line.)
+            if !line.is_empty() && line_main + item_main > available_main {
+                lines.push(line);
+                line = Vec::new();
+                line_main = 0.0;
+            }
+            line.push(i);
+            line_main += item_main;
         }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        // "Repeat until all flex items have been collected into flex lines."
+        lines
+    };
+
+    // STEP 5 (§ 9.7): Resolve flexible lengths for each line.
+    // STEP 6 (§ 9.5): Determine cross sizes and lay out children.
+    //
+    // [§ 9.7 Resolving Flexible Lengths](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
+    //
+    // Each flex line is processed independently: resolve flexible lengths,
+    // compute justify-content offsets, then layout each child with its
+    // resolved target main size.
+    let mut current_y = content_box.y;
+    let mut line_cross_sizes: Vec<f32> = Vec::new();
+    let mut item_to_line: Vec<usize> = vec![0; items.len()];
+
+    for (line_idx, line_item_indices) in lines.iter().enumerate() {
+        // Build a temporary sub-slice for resolve_flexible_lengths
+        let mut line_items: Vec<FlexItem> = line_item_indices
+            .iter()
+            .map(|&i| FlexItem {
+                index: items[i].index,
+                base_size: items[i].base_size,
+                hypothetical_size: items[i].hypothetical_size,
+                grow: items[i].grow,
+                shrink: items[i].shrink,
+                target_size: 0.0,
+                frozen: false,
+                outer_main: items[i].outer_main,
+            })
+            .collect();
+
+        for &i in line_item_indices {
+            item_to_line[i] = line_idx;
+        }
+
+        // § 9.7: Resolve flexible lengths for this line.
+        resolve_flexible_lengths(&mut line_items, available_main);
+
+        // Compute justify-content offsets for this line.
+        let total_target: f32 = line_items
+            .iter()
+            .map(|item| item.target_size + item.outer_main)
+            .sum();
+        let free_space = (available_main - total_target).max(0.0);
+        let (initial_offset, gap) =
+            compute_justify_offsets(container.justify_content, free_space, line_items.len());
+
+        // Layout each child on this line.
+        let mut current_x = content_box.x + initial_offset;
+        let mut line_cross_size = 0.0_f32;
+
+        for (item_idx, line_item) in line_items.iter().enumerate() {
+            let child = &mut container.children[line_item.index];
+
+            // [§ 9.7](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
+            //
+            // "Set each item's used main size to its target main size."
+            let width_for_layout = if child.box_sizing_border_box {
+                let rp = child.padding.resolve(viewport);
+                let rb = child.border_width.resolve(viewport);
+                line_item.target_size + rp.left + rp.right + rb.left + rb.right
+            } else {
+                line_item.target_size
+            };
+            child.width = Some(AutoLength::Length(crate::style::LengthValue::Px(
+                f64::from(width_for_layout),
+            )));
+
+            let child_containing = Rect {
+                x: current_x,
+                y: current_y,
+                width: line_item.target_size,
+                height: f32::MAX,
+            };
+
+            #[cfg(feature = "layout-trace")]
+            eprintln!(
+                "[FLEX] line {line_idx} item {item_idx}: laying out child, display={:?}/{:?}",
+                child.display.outer, child.display.inner
+            );
+            child.layout(child_containing, viewport, font_metrics, child_abs_cb);
+
+            current_x += child.dimensions.margin_box().width;
+            if item_idx < line_items.len() - 1 {
+                current_x += gap;
+            }
+
+            // Track the tallest item on this line for cross-axis sizing
+            let child_cross = child.dimensions.margin_box().height;
+            line_cross_size = line_cross_size.max(child_cross);
+        }
+
+        line_cross_sizes.push(line_cross_size);
+        current_y += line_cross_size;
     }
 
-    // STEP 7 (spec step 14): Container height.
+    // STEP 7 (§ 9.9): Determine the flex container's used cross size.
     //
     // [§ 9.9 Cross Size Determination](https://www.w3.org/TR/css-flexbox-1/#algo-cross-container)
     //
-    // "If the cross size property is a definite size, use that; otherwise,
-    // use the largest of the flex lines' cross sizes."
+    // "If the cross size property is a definite size, use that, clamped by
+    // the used min and max cross sizes of the flex container."
+    //
+    // "Otherwise, use the sum of the flex lines' cross sizes, clamped by
+    // the used min and max cross sizes of the flex container."
     if let Some(AutoLength::Length(ref l)) = container.height {
         #[allow(clippy::cast_possible_truncation)]
         {
             container.dimensions.content.height =
-                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height)) as f32;
+                l.to_px_with_viewport(f64::from(viewport.width), f64::from(viewport.height))
+                    as f32;
         }
     } else {
-        // Auto height: max of in-flow children's margin-box heights.
-        // Absolute/fixed children do not contribute to the container's
-        // auto height.
-        let max_height = container
-            .children
-            .iter()
-            .filter(|c| {
-                !matches!(
-                    c.position_type,
-                    PositionType::Absolute | PositionType::Fixed
-                )
-            })
-            .map(|c| c.dimensions.margin_box().height)
-            .fold(0.0_f32, f32::max);
-        container.dimensions.content.height = max_height;
+        // Auto cross size: sum of all flex lines' cross sizes.
+        container.dimensions.content.height = line_cross_sizes.iter().sum();
     }
 
-    // STEP 8 (spec § 9.6): Cross-axis alignment.
+    // [§ 9.4 Cross Size Determination](https://www.w3.org/TR/css-flexbox-1/#algo-cross-line)
+    //
+    // "If the flex container is single-line and has a definite cross size,
+    // the cross size of the flex line is the flex container's inner cross
+    // size."
+    //
+    // For single-line containers with a definite height, the line cross
+    // size used for alignment must be the container's content height,
+    // not the max child height.
+    if lines.len() == 1 && container.height.is_some() {
+        line_cross_sizes[0] = container.dimensions.content.height;
+    }
+
+    // STEP 8 (§ 9.6): Cross-axis alignment per line.
     //
     // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
     //
     // "The align-items property sets the default alignment for all of the
     // flex container's items, including anonymous flex items."
-    //
-    // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
-    //
-    // "align-self allows this default alignment to be overridden for
-    // individual flex items."
-    let line_cross_size = container.dimensions.content.height;
     let container_align_items = container.align_items;
 
-    for item in &items {
+    // Compute the cumulative y-offset for each line start
+    let mut line_y_offsets: Vec<f32> = Vec::with_capacity(lines.len());
+    let mut y_accum = 0.0_f32;
+    for &cross in &line_cross_sizes {
+        line_y_offsets.push(y_accum);
+        y_accum += cross;
+    }
+
+    for (i, item) in items.iter().enumerate() {
+        let line_idx = item_to_line[i];
+        let line_cross_size = line_cross_sizes[line_idx];
         let child = &mut container.children[item.index];
 
-        // [§ 8.3](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
-        //
-        // "If a flex item's align-self is auto, it computes to the value
-        // of align-items on its parent."
         let alignment = match child.align_self {
             AlignSelf::Auto => container_align_items,
             AlignSelf::FlexStart => AlignItems::FlexStart,
@@ -346,32 +417,17 @@ pub fn layout_flex(
         let child_margin_box_height = child.dimensions.margin_box().height;
 
         match alignment {
-            // "The cross-start margin edge of the flex item is placed flush
-            // with the cross-start edge of the line."
-            // This is the default position from layout — no adjustment needed.
             AlignItems::FlexStart | AlignItems::Baseline => {}
-
-            // "The cross-end margin edge of the flex item is placed flush
-            // with the cross-end edge of the line."
             AlignItems::FlexEnd => {
                 let offset = line_cross_size - child_margin_box_height;
                 child.dimensions.content.y += offset;
             }
-
-            // "The flex item's margin box is centered in the cross axis
-            // within the line."
             AlignItems::Center => {
                 let offset = (line_cross_size - child_margin_box_height) / 2.0;
                 child.dimensions.content.y += offset;
             }
-
-            // "If the cross size property of the flex item computes to auto,
-            // and neither of the cross-axis margins are auto, the flex item
-            // is stretched."
             AlignItems::Stretch => {
                 if child.height.is_none() {
-                    // Compute the stretched cross size: line cross size minus
-                    // the child's cross-axis margins, borders, and padding.
                     let stretched_height = line_cross_size
                         - child.dimensions.margin.top
                         - child.dimensions.margin.bottom
@@ -388,11 +444,6 @@ pub fn layout_flex(
     }
 
     // STEP 9: Layout absolutely positioned children.
-    // [§ 4.1 Absolutely-Positioned Flex Children](https://www.w3.org/TR/css-flexbox-1/#abspos-items)
-    //
-    // "An absolutely-positioned child of a flex container does not
-    // participate in flex layout." They are positioned after flex
-    // layout completes.
     container.layout_absolute_children(viewport, font_metrics, child_abs_cb);
 }
 

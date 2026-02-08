@@ -332,6 +332,12 @@ pub struct InlineLayout {
     /// Horizontal offset from the content box left edge caused by left
     /// floats. Fragment x positions are shifted by this amount.
     pub left_offset: f32,
+
+    /// [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+    ///
+    /// When true, suppresses soft line breaks (text wrapping).
+    /// Set when `white-space` is `nowrap` or `pre`.
+    pub no_wrap: bool,
 }
 
 impl InlineLayout {
@@ -347,6 +353,7 @@ impl InlineLayout {
             current_line_max_height: 0.0,
             text_align,
             left_offset: 0.0,
+            no_wrap: false,
         }
     }
 
@@ -390,8 +397,16 @@ impl InlineLayout {
         // "When an inline box exceeds the width of a line box, it is split
         // into several boxes and these boxes are distributed across several
         // line boxes."
-        let fits_on_current_line =
-            self.current_x + text_width <= self.available_width || self.current_x == 0.0;
+        // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+        //
+        // "This value collapses white space as for 'normal', but suppresses
+        // line breaks (text wrapping) within text."
+        //
+        // When no_wrap is true, text always fits on the current line
+        // (no soft wrapping occurs).
+        let fits_on_current_line = self.no_wrap
+            || self.current_x + text_width <= self.available_width
+            || self.current_x == 0.0;
 
         if !fits_on_current_line {
             // STEP 3: Handle line breaking.
