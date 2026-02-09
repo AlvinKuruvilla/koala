@@ -1,4 +1,4 @@
-//! High-level browser API for the Koala browser.
+//! Document loading and rendering pipeline for the Koala renderer.
 //!
 //! # Scope
 //!

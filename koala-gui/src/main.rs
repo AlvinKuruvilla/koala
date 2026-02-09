@@ -1,6 +1,6 @@
-//! Koala Browser GUI - egui-based browser interface
+//! Koala development GUI — egui-based renderer inspector
 //!
-//! Run with: cargo run --bin koala
+//! Run with: cargo run --bin koala-gui
 //!
 //! Debug features:
 //! - F12: Toggle debug panel
@@ -29,31 +29,31 @@ use koala_html::print_tree;
 
 use theme::{ColorPalette, Theme};
 
-/// Koala Browser - A from-scratch web browser built for learning
+/// Koala GUI — development debugging interface for the Koala renderer
 #[derive(Parser, Debug)]
-#[command(name = "koala")]
+#[command(name = "koala-gui")]
 #[command(author, version, about, long_about = None)]
 #[command(after_help = r#"EXAMPLES:
-    # Open browser GUI
-    koala
+    # Open development GUI
+    koala-gui
 
-    # Open browser with a file
-    koala ./index.html
+    # Open GUI with a file
+    koala-gui ./index.html
 
     # Headless mode: print DOM tree
-    koala -H https://example.com
+    koala-gui -H https://example.com
 
     # Headless mode: print layout tree
-    koala -H --layout https://example.com
+    koala-gui -H --layout https://example.com
 
     # Take a screenshot
-    koala -S screenshot.png https://example.com
+    koala-gui -S screenshot.png https://example.com
 
     # Screenshot with custom viewport
-    koala -S output.png --width 1920 --height 1080 https://example.com
+    koala-gui -S output.png --width 1920 --height 1080 https://example.com
 
     # Parse inline HTML
-    koala --html '<h1>Test</h1>'
+    koala-gui --html '<h1>Test</h1>'
 "#)]
 struct Cli {
     /// Path to HTML file or URL to open
@@ -286,7 +286,7 @@ fn run_gui(initial_url: Option<String>) -> anyhow::Result<()> {
     };
 
     eframe::run_native(
-        "Koala Browser",
+        "Koala (Dev)",
         options,
         Box::new(move |cc| Ok(Box::new(BrowserApp::new(&cc.egui_ctx, initial_url)))),
     )
@@ -399,7 +399,7 @@ impl BrowserApp {
             page: None,
             debug_panel_open: false,
             debug_tab: DebugTab::Dom,
-            status_message: "Welcome to Koala Browser".to_string(),
+            status_message: "Welcome to Koala".to_string(),
             theme,
             palette: theme.palette(),
             css_warnings_logged: RefCell::new(HashSet::new()),
@@ -527,7 +527,7 @@ impl BrowserApp {
     fn go_home(&mut self) {
         self.page = None;
         self.url_input.clear();
-        self.status_message = "Welcome to Koala Browser".to_string();
+        self.status_message = "Welcome to Koala".to_string();
         println!("[Koala GUI] Returned to home");
     }
 
@@ -919,7 +919,7 @@ impl BrowserApp {
             ui.add_space(16.0);
 
             let _ = ui.heading(
-                egui::RichText::new("Koala Browser")
+                egui::RichText::new("Koala")
                     .size(36.0)
                     .color(self.palette.text_primary)
                     .strong(),
@@ -927,7 +927,7 @@ impl BrowserApp {
             ui.add_space(8.0);
 
             let _ = ui.label(
-                egui::RichText::new("A from-scratch browser built for learning")
+                egui::RichText::new("Fast, lightweight HTML-to-image renderer")
                     .size(15.0)
                     .color(self.palette.text_secondary),
             );

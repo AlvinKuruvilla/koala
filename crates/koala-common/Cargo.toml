@@ -3,7 +3,7 @@ name = "koala-common"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Common utilities for the Koala browser"
+description = "Shared utilities for the Koala renderer"
 
 [dependencies]
 base64 = "0.22.1"

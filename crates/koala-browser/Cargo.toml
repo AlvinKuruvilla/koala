@@ -3,7 +3,7 @@ name = "koala-browser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "High-level browser API for the Koala browser"
+description = "Document loading and rendering pipeline for the Koala renderer"
 
 [dependencies]
 koala-common.workspace = true

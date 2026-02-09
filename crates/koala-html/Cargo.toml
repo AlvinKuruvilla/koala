@@ -3,7 +3,7 @@ name = "koala-html"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "HTML tokenizer and parser for the Koala browser"
+description = "WHATWG-compliant HTML tokenizer and parser for the Koala renderer"
 
 [dependencies]
 koala-common.workspace = true

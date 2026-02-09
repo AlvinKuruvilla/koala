@@ -18,34 +18,34 @@ cargo test                          # Run all tests
 cargo test -p koala-html            # Test specific crate
 cargo test test_name                # Run a specific test
 
-# Run the GUI browser
-cargo run --bin koala
+# Render HTML to images (primary binary)
+cargo run --bin koala -- <file.html>
+cargo run --bin koala -- --html '<h1>Test</h1>'
 
-# Run the CLI tool
-cargo run --bin koala-cli -- <file.html>
-cargo run --bin koala-cli -- --html '<h1>Test</h1>'
+# Run the development GUI
+cargo run --bin koala-gui
 
 # Lint
 cargo clippy --workspace
 cargo fmt --check
 ```
 
-## GUI Debugging
+## Development GUI
 
-The GUI (`koala`) has built-in debugging features:
+The development GUI (`koala-gui`) has built-in debugging features:
 - **F12**: Toggle debug panel showing DOM tree, tokens, CSS, computed styles, and source
 - **Terminal logging**: All state changes print to stdout with `[Koala GUI]` prefix
 - Debug panel tabs: DOM | Tokens | CSS | Styles | Source
 
 ## Project Overview
 
-A from-scratch web browser implementation in Rust, built for learning and understanding.
+A fast, lightweight HTML-to-image renderer in Rust with CSS 2.1 compliant layout.
 
 ## Philosophy
 
-### The Spec is the Bible
+### Spec-Driven Correctness
 
-This project follows the [WHATWG HTML Living Standard](https://html.spec.whatwg.org/) religiously. The code should read like a synthesized spec-driven implementation.
+This project follows the [WHATWG HTML Living Standard](https://html.spec.whatwg.org/) precisely. Rendering fidelity depends on correct spec implementation, so the code should read like a synthesized spec-driven implementation.
 
 #### Spec Commenting Requirements
 
@@ -139,12 +139,12 @@ When implementing new algorithms:
 - Don't paraphrase the spec when you can quote it
 - Don't skip documenting branches just because they're not implemented yet
 
-### Earn the Understanding
+### Correctness over Speed
 
-This is a learning project. The goal is depth over speed. When implementing:
+Rendering fidelity matters more than development velocity. When implementing:
 
-- Understand *why* the spec says what it says (often backwards compatibility)
-- Implement things yourself before reaching for libraries (except where unreasonable, like JS engines)
+- Follow the spec precisely — deviations cause subtle layout bugs
+- Implement from the spec before reaching for libraries (except where unreasonable, like JS engines)
 - Use `todo!()` liberally for unimplemented paths — it's better than wrong behavior
 
 ### Incremental Progress over Completeness
@@ -167,8 +167,8 @@ koala/
 │   ├── koala-html/       # HTML tokenizer and parser (WHATWG spec)
 │   ├── koala-css/        # CSS tokenizer, parser, selector, cascade
 │   └── koala-browser/    # High-level browser API
-├── koala-cli/            # CLI tool for parsing/debugging
-├── koala-gui/            # egui-based GUI browser
+├── koala-cli/            # Primary binary: HTML-to-image renderer
+├── koala-gui/            # Development GUI (egui-based renderer inspector)
 └── res/                  # Test HTML files
 ```
 
@@ -182,7 +182,7 @@ koala-css          (depends on koala-common, koala-dom)
     ↑
 koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css)
     ↑
-koala-cli/koala-gui (depends on koala-common, koala-browser, etc.)
+koala/koala-gui     (depends on koala-common, koala-browser, etc.)
 ```
 
 **Data Flow:**
@@ -198,35 +198,36 @@ CSS String  → CSSTokenizer  → Tokens → CSSParser  → Stylesheet
 
 The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) traversal. Parent, child, and sibling relationships are stored as indices, avoiding borrow checker issues.
 
-### Current Status
+### Current Capabilities
 
-- **Tokenizer**: Partial — handles DOCTYPE, tags, attributes, comments, basic tag/attribute parsing, RCDATA/RAWTEXT states, character references (named + numeric, § 13.2.5.72-80, all 2,231 named entities). Missing: script data states
-- **Parser**: Basic tree construction working — handles Initial, BeforeHtml, BeforeHead, InHead, AfterHead, InBody, Text, AfterBody, AfterAfterBody modes. CSS combinator matching works. Missing: table parsing, form elements, foster parenting, adoption agency algorithm
-- **DOM**: Arena-based tree with Node, Element, Text, Comment types. O(1) parent/sibling traversal.
-- **CSS**: Tokenizer, parser, selector matching (including combinators), cascade, and computed styles working
-- **GUI**: egui-based browser with URL bar, navigation, content rendering, and debug panel (F12)
-- **Rendering**: Basic — renders headings, paragraphs, text nodes with computed styles. Missing: full layout engine, styled text (bold/italic fonts)
+- **HTML Parsing**: WHATWG-compliant tokenizer and tree builder — DOCTYPE, tags, attributes, comments, RCDATA/RAWTEXT, character references (all 2,231 named entities), table/form insertion modes
+- **CSS Engine**: Tokenizer, parser, selector matching (type/class/ID/combinators/attribute selectors), cascade, computed styles, CSS variables, shorthand expansion
+- **Layout**: Block (CSS 2.1 § 9-10), inline formatting context, flexbox, grid, table, inline-block, margin collapsing, replaced elements (`<img>`), overflow clipping
+- **Rendering**: Headless PNG/JPG/BMP output via software renderer — text (bold/italic/decoration), backgrounds, borders (with radius), box shadows, images
+- **Development GUI**: egui-based inspector with URL bar, navigation, debug panel (F12), theme toggle
 
 ### Dependencies
 
-- **egui/eframe** — Cross-platform GUI framework
+- **fontdue** — Font rasterization and text measurement
+- **image** — Image encoding (PNG, JPG, etc.)
+- **egui/eframe** — Cross-platform GUI framework (development GUI)
 - **serde** — Serialization for computed styles
 - **strum/strum_macros** — Enum utilities for tokenizer states
 - **anyhow** — Error handling
-- **Boa** (planned) — JavaScript engine
+- **Boa** — JavaScript engine
 
 ## Debugging Layout Issues
 
 ### Layout Trace Feature Flag
 
-Verbose layout tracing is built into `koala-css` and `koala-cli` behind a cargo feature flag. Enable it to print detailed step-by-step trace of layout, flex, inline, and measure operations:
+Verbose layout tracing is built into `koala-css` and the `koala` binary behind a cargo feature flag. Enable it to print detailed step-by-step trace of layout, flex, inline, and measure operations:
 
 ```bash
-# Run CLI with layout tracing enabled
-cargo run --bin koala-cli --features layout-trace -- --screenshot out.png https://example.com
+# Run with layout tracing enabled
+cargo run --bin koala --features layout-trace -- --screenshot out.png https://example.com
 
 # Capture trace to file for analysis
-cargo run --bin koala-cli --features layout-trace -- --screenshot out.png https://example.com 2> /tmp/trace.txt
+cargo run --bin koala --features layout-trace -- --screenshot out.png https://example.com 2> /tmp/trace.txt
 
 # Filter trace by subsystem
 grep '\[FLEX\]' /tmp/trace.txt      # Flex layout steps
@@ -253,7 +254,7 @@ quit
 EOF
 
 # Run under lldb
-lldb -s /tmp/lldb_cmds target/debug/koala-cli
+lldb -s /tmp/lldb_cmds target/debug/koala
 ```
 
 This gives the definitive backtrace at the crash point, showing exactly which function chain caused the overflow.

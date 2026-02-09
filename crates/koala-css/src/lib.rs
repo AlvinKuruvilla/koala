@@ -1,4 +1,4 @@
-//! CSS tokenizer, parser, selector matching, cascade, and style computation for the Koala browser.
+//! CSS tokenizer, parser, selector matching, cascade, and style computation for the Koala renderer.
 //!
 //! # Scope
 //!

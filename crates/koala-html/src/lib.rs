@@ -1,4 +1,4 @@
-//! HTML tokenizer and parser for the Koala browser.
+//! HTML tokenizer and parser for the Koala renderer.
 //!
 //! # Scope
 //!

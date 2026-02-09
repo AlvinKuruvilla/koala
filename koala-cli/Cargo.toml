@@ -3,10 +3,10 @@ name = "koala-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Command-line interface for the Koala browser"
+description = "Fast, lightweight HTML-to-image renderer in Rust"
 
 [[bin]]
-name = "koala-cli"
+name = "koala"
 path = "src/main.rs"
 
 [features]

@@ -3,7 +3,7 @@ name = "koala-dom"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "DOM tree implementation for the Koala browser"
+description = "Arena-based DOM tree for the Koala renderer"
 
 [dependencies]
 

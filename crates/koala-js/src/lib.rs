@@ -1,4 +1,4 @@
-//! JavaScript engine integration for the Koala browser.
+//! JavaScript engine integration for the Koala renderer.
 //!
 //! Uses [Boa](https://boajs.dev/) as the JavaScript engine.
 //!

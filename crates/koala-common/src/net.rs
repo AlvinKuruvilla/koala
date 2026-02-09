@@ -1,4 +1,4 @@
-//! HTTP fetch utilities for the Koala browser.
+//! HTTP fetch utilities for the Koala renderer.
 //!
 //! Provides simple blocking HTTP GET wrappers used by the document loader,
 //! stylesheet fetcher, and image loader.

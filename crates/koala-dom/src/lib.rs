@@ -1,4 +1,4 @@
-//! DOM tree implementation for the Koala browser.
+//! DOM tree implementation for the Koala renderer.
 //!
 //! This crate provides an arena-based DOM tree structure following the
 //! [DOM Living Standard](https://dom.spec.whatwg.org/).

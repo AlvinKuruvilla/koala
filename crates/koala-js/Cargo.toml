@@ -3,7 +3,7 @@ name = "koala-js"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "JavaScript engine integration for the Koala browser"
+description = "JavaScript engine integration for the Koala renderer"
 
 [dependencies]
 koala-dom.workspace = true

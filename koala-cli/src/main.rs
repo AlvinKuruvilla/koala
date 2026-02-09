@@ -1,6 +1,6 @@
-//! Koala Browser CLI
+//! Koala — fast, lightweight HTML-to-image renderer
 //!
-//! A headless browser for testing and debugging.
+//! Renders HTML/CSS to images with CSS 2.1 compliant layout.
 
 use anyhow::Result;
 use clap::Parser;
@@ -12,32 +12,32 @@ use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 
-/// Koala Browser CLI - A headless browser for testing and debugging
+/// Koala — fast, lightweight HTML-to-image renderer
 #[derive(Parser, Debug)]
-#[command(name = "koala-cli")]
+#[command(name = "koala")]
 #[command(author, version, about, long_about = None)]
 #[command(group = clap::ArgGroup::new("input").required(true))]
 #[command(after_help = r#"EXAMPLES:
     # Parse a local file and show DOM tree
-    koala-cli ./index.html
+    koala ./index.html
 
     # Fetch a URL and show DOM tree
-    koala-cli https://example.com
+    koala https://example.com
 
     # Show layout tree for debugging CSS
-    koala-cli --layout https://example.com
+    koala --layout https://example.com
 
     # Parse inline HTML
-    koala-cli --html '<html><body><h1>Test</h1></body></html>'
+    koala --html '<html><body><h1>Test</h1></body></html>'
 
     # Parse inline HTML and show layout
-    koala-cli --html '<div style="margin: auto; width: 50vw">Centered</div>' --layout
+    koala --html '<div style="margin: auto; width: 50vw">Centered</div>' --layout
 
     # Take a screenshot of a webpage
-    koala-cli -S screenshot.png https://example.com
+    koala -S screenshot.png https://example.com
 
     # Screenshot with custom viewport size
-    koala-cli --screenshot output.png --width 1920 --height 1080 https://example.com
+    koala --screenshot output.png --width 1920 --height 1080 https://example.com
 "#)]
 struct Cli {
     /// Path to HTML file or URL to fetch and parse

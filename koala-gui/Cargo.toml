@@ -3,10 +3,10 @@ name = "koala-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GUI browser application for the Koala browser"
+description = "Development GUI for the Koala HTML renderer"
 
 [[bin]]
-name = "koala"
+name = "koala-gui"
 path = "src/main.rs"
 
 [dependencies]
