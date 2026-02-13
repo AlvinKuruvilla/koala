@@ -174,11 +174,11 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
                 // [§ 2.4 Combination Display Keywords]
                 // "inline-block: This value causes an element to generate an inline-level
                 // block container."
-                "inline-block" => return Some(DisplayValue::inline_block()),
+                "inline-block" | "-webkit-inline-box" | "inline-flex" => return Some(DisplayValue::inline_block()),
 
                 // [§ 2.2 Inner Display Layout Models]
                 // "flex: The element generates a principal flex container box."
-                "flex" => return Some(DisplayValue::flex()),
+                "flex" | "-webkit-flex" | "-webkit-box" => return Some(DisplayValue::flex()),
 
                 // "grid: The element generates a principal grid container box."
                 "grid" => return Some(DisplayValue::grid()),
@@ -207,12 +207,6 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
                 | "table-column-group" | "table-column" | "table-cell" | "table-caption" => {
                     return Some(DisplayValue::block());
                 }
-
-                // Vendor-prefixed display values.
-                // -webkit-flex and -webkit-box are legacy equivalents of flex.
-                // -webkit-inline-box is the legacy equivalent of inline-flex.
-                "-webkit-flex" | "-webkit-box" => return Some(DisplayValue::flex()),
-                "-webkit-inline-box" | "inline-flex" => return Some(DisplayValue::inline_block()),
 
                 // "none" is handled separately by is_display_none
                 "none" => return None,

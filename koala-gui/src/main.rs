@@ -1042,6 +1042,11 @@ impl BrowserApp {
     }
 
     /// Render a layout box using absolute positioning based on computed dimensions
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     fn render_layout_box_absolute(
         &self,
         ui: &mut egui::Ui,
@@ -1288,21 +1293,21 @@ impl BrowserApp {
                             let right_x = text_pos.x + fragment.bounds.width;
 
                             if td.underline {
-                                let ly = text_pos.y + text_run.font_size * 0.9;
+                                let ly = text_run.font_size.mul_add(0.9, text_pos.y);
                                 let _ = ui.painter().line_segment(
                                     [egui::pos2(left_x, ly), egui::pos2(right_x, ly)],
                                     stroke,
                                 );
                             }
                             if td.line_through {
-                                let ly = text_pos.y + text_run.font_size * 0.55;
+                                let ly = text_run.font_size.mul_add(0.55, text_pos.y);
                                 let _ = ui.painter().line_segment(
                                     [egui::pos2(left_x, ly), egui::pos2(right_x, ly)],
                                     stroke,
                                 );
                             }
                             if td.overline {
-                                let ly = text_pos.y + text_run.font_size * 0.1;
+                                let ly = text_run.font_size.mul_add(0.1, text_pos.y);
                                 let _ = ui.painter().line_segment(
                                     [egui::pos2(left_x, ly), egui::pos2(right_x, ly)],
                                     stroke,

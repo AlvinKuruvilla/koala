@@ -407,14 +407,6 @@ pub fn layout_flex(
     // flex container's items, including anonymous flex items."
     let container_align_items = container.align_items;
 
-    // Compute the cumulative y-offset for each line start
-    let mut line_y_offsets: Vec<f32> = Vec::with_capacity(lines.len());
-    let mut y_accum = 0.0_f32;
-    for &cross in &line_cross_sizes {
-        line_y_offsets.push(y_accum);
-        y_accum += cross;
-    }
-
     for (i, item) in items.iter().enumerate() {
         let line_idx = item_to_line[i];
         let line_cross_size = line_cross_sizes[line_idx];

@@ -401,6 +401,7 @@ impl InlineLayout {
     ///
     /// "When an inline box exceeds the width of a line box, it is split into
     /// several boxes and these boxes are distributed across several line boxes."
+    #[allow(clippy::too_many_arguments)]
     pub fn add_text(
         &mut self,
         text: &str,

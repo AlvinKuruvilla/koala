@@ -65,7 +65,7 @@ impl LengthValue {
             // [§ 5.1.2 Viewport-percentage lengths](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths)
             // Viewport units require viewport dimensions - return 0 as fallback.
             // The layout engine should use to_px_with_viewport() instead.
-            Self::Vw(_) | Self::Vh(_) => 0.0,
+            Self::Vw(_) | Self::Vh(_) |
             // [§ 4.3 Percentages](https://www.w3.org/TR/css-values-4/#percentages)
             // Percentages require containing block dimensions - return 0 as fallback.
             // The layout engine should use to_px_with_containing_block() instead.

@@ -265,7 +265,7 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
 
         // [§ 3.3 font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
         // "Inherited: yes"
-        font_style: parent.font_style.clone(),
+        font_style: parent.font_style,
 
         // [§ 4.2 line-height](https://www.w3.org/TR/css-inline-3/#line-height-property)
         // "Inherited: yes"
@@ -277,11 +277,11 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
 
         // [§ 16.2 text-align](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
         // "Inherited: yes"
-        text_align: parent.text_align.clone(),
+        text_align: parent.text_align,
 
         // [§ 3.1 list-style-type](https://www.w3.org/TR/css-lists-3/#list-style-type)
         // "Inherited: yes"
-        list_style_type: parent.list_style_type.clone(),
+        list_style_type: parent.list_style_type,
 
         // [§ 2 Custom Properties](https://www.w3.org/TR/css-variables-1/#defining-variables)
         // "Inherited: yes"

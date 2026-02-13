@@ -397,22 +397,7 @@ impl HTMLParser {
             .iter()
             .rposition(|&id| self.get_tag_name(id) == Some("table"));
 
-        if let Some(table_pos) = last_table_pos {
-            let table_id = self.stack_of_open_elements[table_pos];
-
-            // STEP 2: "If last table has a parent node, then let adjusted
-            //          insertion location be before last table in its parent
-            //          node."
-            if let Some(parent_id) = self.tree.parent(table_id) {
-                (parent_id, Some(table_id))
-            } else {
-                // "Otherwise, let adjusted insertion location be inside the
-                //  element immediately above last table in the stack of open
-                //  elements."
-                let above_table = self.stack_of_open_elements[table_pos - 1];
-                (above_table, None)
-            }
-        } else {
+        let Some(table_pos) = last_table_pos else {
             // STEP 3: "If there is no last table element in the stack of open
             //          elements, then the adjusted insertion location is inside
             //          the first element in the stack of open elements (the html
@@ -422,8 +407,24 @@ impl HTMLParser {
                 .first()
                 .copied()
                 .unwrap_or(NodeId::ROOT);
-            (first, None)
-        }
+            return (first, None);
+        };
+
+        let table_id = self.stack_of_open_elements[table_pos];
+
+        // STEP 2: "If last table has a parent node, then let adjusted
+        //          insertion location be before last table in its parent
+        //          node."
+        self.tree.parent(table_id).map_or_else(
+            || {
+                // "Otherwise, let adjusted insertion location be inside the
+                //  element immediately above last table in the stack of open
+                //  elements."
+                let above_table = self.stack_of_open_elements[table_pos - 1];
+                (above_table, None)
+            },
+            |parent_id| (parent_id, Some(table_id)),
+        )
     }
 
     /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#appropriate-place-for-inserting-a-node)

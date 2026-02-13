@@ -56,10 +56,8 @@ fn collapse_two_margins(a: f32, b: f32) -> f32 {
 /// finalization.
 fn find_child_by_node_id(children: &mut [LayoutBox], target: NodeId) -> Option<&mut LayoutBox> {
     for child in children.iter_mut() {
-        if let BoxType::Principal(id) = child.box_type {
-            if id == target {
-                return Some(child);
-            }
+        if let BoxType::Principal(id) = child.box_type && id == target {
+            return Some(child);
         }
         if let Some(found) = find_child_by_node_id(&mut child.children, target) {
             return Some(found);
@@ -1427,7 +1425,7 @@ impl LayoutBox {
                     border_radius,
                     list_style_type,
                     marker_text,
-                    tag_name: Some(tag.clone()),
+                    tag_name: Some(tag),
                     colspan: data.attrs.get("colspan").and_then(|v| v.parse().ok()).unwrap_or(1),
                 })
             }
@@ -3698,7 +3696,6 @@ fn form_control_intrinsic_size(tag: &str, attrs: &HashMap<String, String>) -> (f
             }
         }
         "textarea" => (173.0, 38.0),
-        "select" => (173.0, 20.0),
         _ => (173.0, 20.0),
     }
 }

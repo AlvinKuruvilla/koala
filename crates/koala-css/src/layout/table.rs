@@ -45,7 +45,7 @@ struct TableRow {
     row_group_index: Option<usize>,
     /// Index of the `<tr>` within its row-group, or directly in the table.
     row_index: usize,
-    /// For each cell: (child_index_within_tr, colspan)
+    /// For each cell: (`child_index_within_tr`, colspan)
     cells: Vec<CellInfo>,
 }
 
@@ -179,6 +179,7 @@ pub fn layout_table(
     // 'table' or 'inline-table' element."
     //
     // If height is auto: sum of row heights + border-spacing.
+    #[allow(clippy::cast_precision_loss)]
     let total_border_spacing_y = if row_heights.is_empty() {
         0.0
     } else {
@@ -300,6 +301,7 @@ fn determine_column_count(rows: &[TableRow], container: &LayoutBox) -> usize {
 /// "Calculate the minimum and maximum width of each cell. ... For each
 /// column, determine a minimum and maximum column width from the cells
 /// that span only that column."
+#[allow(clippy::cast_precision_loss)]
 fn determine_column_widths(
     container: &LayoutBox,
     rows: &[TableRow],
@@ -464,6 +466,7 @@ fn layout_cells_and_measure_row_heights(
 ///
 /// "After the column widths have been calculated, cells are positioned
 /// from left to right in each row, with border-spacing between them."
+#[allow(clippy::too_many_arguments)]
 fn position_cells(
     container: &mut LayoutBox,
     rows: &[TableRow],
@@ -584,26 +587,26 @@ fn compute_column_offsets(column_widths: &[f32], start_x: f32) -> Vec<f32> {
 fn cell_span_width(column_widths: &[f32], col_start: usize, span: usize) -> f32 {
     let col_end = (col_start + span).min(column_widths.len());
     let mut width: f32 = 0.0;
-    for i in col_start..col_end {
-        width += column_widths[i];
+    for col_width in &column_widths[col_start..col_end] {
+        width += col_width;
     }
     // Add border-spacing between spanned columns (span-1 gaps).
+    #[allow(clippy::cast_precision_loss)]
     if span > 1 {
         width += BORDER_SPACING * (span - 1) as f32;
     }
     width
 }
 
-/// Get an immutable reference to the `<tr>` LayoutBox for a given row.
+/// Get an immutable reference to the `<tr>` `LayoutBox` for a given row.
 fn get_tr<'a>(container: &'a LayoutBox, row: &TableRow) -> &'a LayoutBox {
-    if let Some(group_idx) = row.row_group_index {
-        &container.children[group_idx].children[row.row_index]
-    } else {
-        &container.children[row.row_index]
-    }
+    row.row_group_index.map_or_else(
+        || &container.children[row.row_index],
+        |group_idx| &container.children[group_idx].children[row.row_index],
+    )
 }
 
-/// Get a mutable reference to the `<tr>` LayoutBox for a given row.
+/// Get a mutable reference to the `<tr>` `LayoutBox` for a given row.
 fn get_tr_mut<'a>(container: &'a mut LayoutBox, row: &TableRow) -> &'a mut LayoutBox {
     if let Some(group_idx) = row.row_group_index {
         &mut container.children[group_idx].children[row.row_index]

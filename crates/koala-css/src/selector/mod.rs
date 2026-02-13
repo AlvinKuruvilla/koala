@@ -1012,7 +1012,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     match pseudo_lower.as_str() {
                         // Structural pseudo-classes that affect static rendering
                         "root" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Root))
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Root));
                         }
                         "first-child" => current_compound
                             .push(SimpleSelector::PseudoClass(PseudoClass::FirstChild)),
@@ -1025,15 +1025,15 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                         "only-child" => current_compound
                             .push(SimpleSelector::PseudoClass(PseudoClass::OnlyChild)),
                         "empty" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Empty))
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Empty));
                         }
                         "link" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Link))
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Link));
                         }
                         "disabled" => current_compound
                             .push(SimpleSelector::PseudoClass(PseudoClass::Disabled)),
                         "enabled" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Enabled))
+                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Enabled));
                         }
 
                         // Everything else: interactive states, legacy pseudo-elements

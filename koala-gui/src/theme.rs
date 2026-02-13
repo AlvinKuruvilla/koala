@@ -179,6 +179,7 @@ pub struct ColorPalette {
     /// Primary accent: links, focus indicators, active elements.
     pub accent: Color32,
     /// Accent hover state.
+    #[allow(dead_code)]
     pub accent_hover: Color32,
     /// Accent at low opacity: selection backgrounds, active tab fill.
     pub accent_muted: Color32,

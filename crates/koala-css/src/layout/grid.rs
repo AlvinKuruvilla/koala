@@ -3,13 +3,13 @@
 //! [§ 12 Grid Sizing](https://www.w3.org/TR/css-grid-1/#layout-algorithm)
 //!
 //! This module implements a minimal viable subset of CSS Grid Layout:
-//! - `grid-template-columns` / `grid-template-rows` (px, fr, auto, repeat())
+//! - `grid-template-columns` / `grid-template-rows` (px, fr, auto, `repeat()`)
 //! - `gap` / `row-gap` / `column-gap`
 //! - Explicit placement via `grid-column` / `grid-row` (line numbers, span)
 //! - Auto-placement in row-major or column-major order (§ 8.5)
 //!
 //! Not yet implemented: grid-template-areas, grid-auto-rows/columns, subgrid,
-//! minmax(), auto-fill/auto-fit, alignment properties.
+//! `minmax()`, auto-fill/auto-fit, alignment properties.
 
 use crate::style::computed::{GridAutoFlow, GridLine, TrackSize};
 use crate::style::{AutoLength, LengthValue};
@@ -39,6 +39,7 @@ struct GridItem {
 ///
 /// This function is called from `LayoutBox::layout()` when the box has
 /// `display.inner == InnerDisplayType::Grid`.
+#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
 pub fn layout_grid(
     container: &mut LayoutBox,
     containing_block: Rect,
@@ -246,6 +247,7 @@ pub fn layout_grid(
 /// [§ 8.5 Grid Item Placement Algorithm](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
 ///
 /// Place all grid items, handling both explicit and auto placement.
+#[allow(clippy::too_many_lines)]
 fn place_grid_items(
     container: &LayoutBox,
     in_flow_indices: &[usize],
@@ -423,6 +425,12 @@ fn place_grid_items(
 /// - `GridLine::Line(n)` where n > 0 → n - 1 (convert 1-based to 0-based)
 /// - `GridLine::Line(n)` where n < 0 → count from end
 /// - `GridLine::Auto` / `GridLine::Span(_)` → None (not definite)
+#[allow(
+    clippy::missing_const_for_fn,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap
+)]
 fn resolve_definite_line(line: GridLine, track_count: usize) -> Option<usize> {
     match line {
         GridLine::Line(n) if n > 0 => Some((n - 1) as usize),
@@ -441,17 +449,19 @@ fn resolve_definite_line(line: GridLine, track_count: usize) -> Option<usize> {
 }
 
 /// Resolve the end of a span given a start position.
+#[allow(clippy::missing_const_for_fn, clippy::cast_sign_loss)]
 fn resolve_span_end(line: GridLine, start: usize, _track_count: usize) -> usize {
     match line {
         GridLine::Span(n) => start + n as usize,
-        GridLine::Auto => start + 1, // default span is 1
-        GridLine::Line(_) => start + 1, // shouldn't reach here, fallback
+        // Default span is 1; GridLine::Line(_) shouldn't reach here, fallback.
+        GridLine::Auto | GridLine::Line(_) => start + 1,
     }
 }
 
 /// Determine the span of a grid item from its start/end line values.
 ///
 /// Default span is 1 if neither specifies a span.
+#[allow(clippy::missing_const_for_fn, clippy::cast_sign_loss)]
 fn resolve_item_span(start: GridLine, end: GridLine) -> usize {
     // If end is Span(n), use that.
     if let GridLine::Span(n) = end {
@@ -519,7 +529,7 @@ fn mark_occupied(
 /// 1. Fixed tracks → use specified size.
 /// 2. Auto tracks → max-content of items in that column.
 /// 3. Fr tracks → distribute remaining space proportionally.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
 fn resolve_track_sizes(
     template: &[TrackSize],
     num_tracks: usize,
@@ -640,6 +650,7 @@ fn compute_track_offsets(sizes: &[f32], gap: f32, start: f32) -> Vec<f32> {
 }
 
 /// Compute the total size of a span of tracks including gaps between them.
+#[allow(clippy::cast_precision_loss)]
 fn track_span_size(sizes: &[f32], start: usize, end: usize, gap: f32) -> f32 {
     if start >= end || start >= sizes.len() {
         return 0.0;
@@ -647,5 +658,5 @@ fn track_span_size(sizes: &[f32], start: usize, end: usize, gap: f32) -> f32 {
     let end = end.min(sizes.len());
     let track_sum: f32 = sizes[start..end].iter().sum();
     let num_gaps = (end - start).saturating_sub(1);
-    track_sum + gap * num_gaps as f32
+    gap.mul_add(num_gaps as f32, track_sum)
 }

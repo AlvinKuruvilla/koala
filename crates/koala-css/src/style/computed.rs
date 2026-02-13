@@ -1240,7 +1240,7 @@ impl ComputedStyle {
                         "row-reverse" => self.flex_direction = Some(FlexDirection::RowReverse),
                         "column" => self.flex_direction = Some(FlexDirection::Column),
                         "column-reverse" => {
-                            self.flex_direction = Some(FlexDirection::ColumnReverse)
+                            self.flex_direction = Some(FlexDirection::ColumnReverse);
                         }
                         _ => {}
                     }
@@ -1256,7 +1256,7 @@ impl ComputedStyle {
                         "flex-end" => self.justify_content = Some(JustifyContent::FlexEnd),
                         "center" => self.justify_content = Some(JustifyContent::Center),
                         "space-between" => {
-                            self.justify_content = Some(JustifyContent::SpaceBetween)
+                            self.justify_content = Some(JustifyContent::SpaceBetween);
                         }
                         "space-around" => self.justify_content = Some(JustifyContent::SpaceAround),
                         _ => {}
@@ -1568,6 +1568,7 @@ impl ComputedStyle {
                 self.apply_border_radius_shorthand(values);
             }
             // [§ 5.1 'border-top-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-left-radius)
+            #[allow(clippy::cast_possible_truncation)]
             "border-top-left-radius" => {
                 if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
                     let resolved = self.resolve_length(len).to_px() as f32;
@@ -1576,6 +1577,7 @@ impl ComputedStyle {
                 }
             }
             // [§ 5.2 'border-top-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-right-radius)
+            #[allow(clippy::cast_possible_truncation)]
             "border-top-right-radius" => {
                 if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
                     let resolved = self.resolve_length(len).to_px() as f32;
@@ -1584,6 +1586,7 @@ impl ComputedStyle {
                 }
             }
             // [§ 5.3 'border-bottom-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-right-radius)
+            #[allow(clippy::cast_possible_truncation)]
             "border-bottom-right-radius" => {
                 if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
                     let resolved = self.resolve_length(len).to_px() as f32;
@@ -1592,6 +1595,7 @@ impl ComputedStyle {
                 }
             }
             // [§ 5.4 'border-bottom-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-left-radius)
+            #[allow(clippy::cast_possible_truncation)]
             "border-bottom-left-radius" => {
                 if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
                     let resolved = self.resolve_length(len).to_px() as f32;
@@ -1725,7 +1729,7 @@ impl ComputedStyle {
 
     /// [§ 2.3 Resolving Dependency Cycles](https://www.w3.org/TR/css-variables-1/#cycles)
     ///
-    /// "Custom properties resolve any var() functions in their values at
+    /// "Custom properties resolve any `var()` functions in their values at
     /// computed-value time, which occurs before the value is inherited."
     ///
     /// Resolve all `var()` references within custom property values.
@@ -2051,28 +2055,28 @@ impl ComputedStyle {
 
         match styles.len() {
             1 => {
-                self.ensure_border_top().style = styles[0].clone();
-                self.ensure_border_right().style = styles[0].clone();
-                self.ensure_border_bottom().style = styles[0].clone();
-                self.ensure_border_left().style = styles[0].clone();
+                self.ensure_border_top().style.clone_from(&styles[0]);
+                self.ensure_border_right().style.clone_from(&styles[0]);
+                self.ensure_border_bottom().style.clone_from(&styles[0]);
+                self.ensure_border_left().style.clone_from(&styles[0]);
             }
             2 => {
-                self.ensure_border_top().style = styles[0].clone();
-                self.ensure_border_bottom().style = styles[0].clone();
-                self.ensure_border_right().style = styles[1].clone();
-                self.ensure_border_left().style = styles[1].clone();
+                self.ensure_border_top().style.clone_from(&styles[0]);
+                self.ensure_border_bottom().style.clone_from(&styles[0]);
+                self.ensure_border_right().style.clone_from(&styles[1]);
+                self.ensure_border_left().style.clone_from(&styles[1]);
             }
             3 => {
-                self.ensure_border_top().style = styles[0].clone();
-                self.ensure_border_right().style = styles[1].clone();
-                self.ensure_border_left().style = styles[1].clone();
-                self.ensure_border_bottom().style = styles[2].clone();
+                self.ensure_border_top().style.clone_from(&styles[0]);
+                self.ensure_border_right().style.clone_from(&styles[1]);
+                self.ensure_border_left().style.clone_from(&styles[1]);
+                self.ensure_border_bottom().style.clone_from(&styles[2]);
             }
             4 => {
-                self.ensure_border_top().style = styles[0].clone();
-                self.ensure_border_right().style = styles[1].clone();
-                self.ensure_border_bottom().style = styles[2].clone();
-                self.ensure_border_left().style = styles[3].clone();
+                self.ensure_border_top().style.clone_from(&styles[0]);
+                self.ensure_border_right().style.clone_from(&styles[1]);
+                self.ensure_border_bottom().style.clone_from(&styles[2]);
+                self.ensure_border_left().style.clone_from(&styles[3]);
             }
             _ => {}
         }
@@ -2121,20 +2125,20 @@ impl ComputedStyle {
         // "caption | icon | menu | message-box | small-caption | status-bar"
         // These set all font sub-properties to system-specific values.
         // We ignore them for now (the property just doesn't apply).
-        if tokens.len() == 1 {
-            if let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[0] {
-                let lower = ident.to_ascii_lowercase();
-                if matches!(
-                    lower.as_str(),
-                    "caption"
-                        | "icon"
-                        | "menu"
-                        | "message-box"
-                        | "small-caption"
-                        | "status-bar"
-                ) {
-                    return;
-                }
+        if tokens.len() == 1
+            && let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[0]
+        {
+            let lower = ident.to_ascii_lowercase();
+            if matches!(
+                lower.as_str(),
+                "caption"
+                    | "icon"
+                    | "menu"
+                    | "message-box"
+                    | "small-caption"
+                    | "status-bar"
+            ) {
+                return;
             }
         }
 
@@ -2170,8 +2174,7 @@ impl ComputedStyle {
                     && matches!(lower.as_str(), "bold" | "bolder" | "lighter")
                 {
                     parsed_weight = Some(match lower.as_str() {
-                        "bold" => 700,
-                        "bolder" => 700,
+                        "bold" | "bolder" => 700,
                         "lighter" => 300,
                         _ => unreachable!(),
                     });
@@ -2187,14 +2190,14 @@ impl ComputedStyle {
                 }
             }
             // Check if this is a numeric font-weight (100–900)
-            if parsed_weight.is_none() {
-                if let ComponentValue::Token(CSSToken::Number { value, .. }) = tokens[i] {
-                    let w = *value as u16;
-                    if (1..=1000).contains(&w) {
-                        parsed_weight = Some(w);
-                        i += 1;
-                        continue;
-                    }
+            if parsed_weight.is_none()
+                && let ComponentValue::Token(CSSToken::Number { value, .. }) = tokens[i]
+            {
+                let w = *value as u16;
+                if (1..=1000).contains(&w) {
+                    parsed_weight = Some(w);
+                    i += 1;
+                    continue;
                 }
             }
             // Not a font-style or font-weight — must be font-size
@@ -2218,30 +2221,30 @@ impl ComputedStyle {
         // "The optional '/' and 'line-height' can be used to set the
         // line height"
         let mut parsed_line_height = None;
-        if i < tokens.len() {
-            if let ComponentValue::Token(CSSToken::Delim('/')) = tokens[i] {
-                i += 1;
-                if i < tokens.len() {
-                    // line-height can be a number, length, or "normal"
-                    match tokens[i] {
-                        ComponentValue::Token(CSSToken::Number { value, .. }) => {
-                            parsed_line_height = Some(*value);
-                            i += 1;
-                        }
-                        ComponentValue::Token(CSSToken::Dimension { value, unit, .. })
-                            if unit.eq_ignore_ascii_case("px") =>
-                        {
-                            parsed_line_height = Some(*value / 16.0);
-                            i += 1;
-                        }
-                        ComponentValue::Token(CSSToken::Ident(ident))
-                            if ident.eq_ignore_ascii_case("normal") =>
-                        {
-                            // "normal" line-height — leave as None (initial value)
-                            i += 1;
-                        }
-                        _ => {}
+        if i < tokens.len()
+            && matches!(tokens[i], ComponentValue::Token(CSSToken::Delim('/')))
+        {
+            i += 1;
+            if i < tokens.len() {
+                // line-height can be a number, length, or "normal"
+                match tokens[i] {
+                    ComponentValue::Token(CSSToken::Number { value, .. }) => {
+                        parsed_line_height = Some(*value);
+                        i += 1;
                     }
+                    ComponentValue::Token(CSSToken::Dimension { value, unit, .. })
+                        if unit.eq_ignore_ascii_case("px") =>
+                    {
+                        parsed_line_height = Some(*value / 16.0);
+                        i += 1;
+                    }
+                    ComponentValue::Token(CSSToken::Ident(ident))
+                        if ident.eq_ignore_ascii_case("normal") =>
+                    {
+                        // "normal" line-height — leave as None (initial value)
+                        i += 1;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2387,7 +2390,6 @@ impl ComputedStyle {
                 && let Some(c) = parse_single_color(v)
             {
                 color = Some(c);
-                continue;
             }
         }
 
@@ -2574,14 +2576,13 @@ impl ComputedStyle {
                 }
                 // "repeat(3, 100px)"
                 ComponentValue::Function { name, value } => {
-                    if name.eq_ignore_ascii_case("repeat") {
-                        if let Some(expanded) = self.parse_repeat_function(value) {
-                            sizes.extend(expanded);
-                        }
+                    if name.eq_ignore_ascii_case("repeat")
+                        && let Some(expanded) = self.parse_repeat_function(value)
+                    {
+                        sizes.extend(expanded);
                     }
                 }
-                // Skip whitespace
-                ComponentValue::Token(CSSToken::Whitespace) => {}
+                // Skip whitespace and unrecognized tokens
                 _ => {}
             }
         }
@@ -2595,7 +2596,7 @@ impl ComputedStyle {
 
     /// [§ 7.5 repeat()](https://www.w3.org/TR/css-grid-1/#funcdef-repeat)
     ///
-    /// "The repeat() notation represents a repeated fragment of the track
+    /// "The `repeat()` notation represents a repeated fragment of the track
     /// list, allowing a large number of columns or rows that exhibit a
     /// recurring pattern to be written in a more compact form."
     ///
@@ -2610,6 +2611,7 @@ impl ComputedStyle {
         for arg in args {
             match arg {
                 // The repeat count
+                #[allow(clippy::cast_sign_loss)]
                 ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })
                     if count.is_none() && *n > 0 =>
                 {
@@ -2638,7 +2640,7 @@ impl ComputedStyle {
                 {
                     track_sizes.push(TrackSize::Auto);
                 }
-                ComponentValue::Token(CSSToken::Whitespace) => {}
+                // Skip whitespace and unrecognized tokens
                 _ => {}
             }
         }
@@ -2682,10 +2684,10 @@ impl ComputedStyle {
             if lower == "span" {
                 if let Some(ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })) =
                     tokens.get(1)
+                    && *n > 0
                 {
-                    if *n > 0 {
-                        return Some(GridLine::Span(*n as u32));
-                    }
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    return Some(GridLine::Span(*n as u32));
                 }
                 return None;
             }
@@ -2694,11 +2696,10 @@ impl ComputedStyle {
         // <integer> (line number)
         if let Some(ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })) =
             tokens.first()
+            && *n != 0
         {
-            if *n != 0 {
-                #[allow(clippy::cast_possible_truncation)]
-                return Some(GridLine::Line(*n as i32));
-            }
+            #[allow(clippy::cast_possible_truncation)]
+            return Some(GridLine::Line(*n as i32));
         }
 
         None
@@ -2718,18 +2719,18 @@ impl ComputedStyle {
             .iter()
             .position(|v| matches!(v, ComponentValue::Token(CSSToken::Delim('/'))));
 
-        match slash_pos {
-            Some(pos) => {
-                let start = Self::parse_grid_line(&values[..pos]);
-                let end = Self::parse_grid_line(&values[pos + 1..]);
-                (start, end)
-            }
-            None => {
+        slash_pos.map_or_else(
+            || {
                 // No `/` — start only, end defaults to Auto
                 let start = Self::parse_grid_line(values);
                 (start, None)
-            }
-        }
+            },
+            |pos| {
+                let start = Self::parse_grid_line(&values[..pos]);
+                let end = Self::parse_grid_line(&values[pos + 1..]);
+                (start, end)
+            },
+        )
     }
 
     /// [§ 7.1.1 Basic Values of flex](https://www.w3.org/TR/css-flexbox-1/#flex-common)
@@ -2766,38 +2767,38 @@ impl ComputedStyle {
         }
 
         // Check for keyword values
-        if tokens.len() == 1 {
-            if let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[0] {
-                match ident.to_ascii_lowercase().as_str() {
-                    // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
-                    //
-                    // "Equivalent to flex: 0 0 auto."
-                    "none" => {
-                        self.flex_grow = Some(0.0);
-                        self.flex_shrink = Some(0.0);
-                        self.flex_basis = Some(AutoLength::Auto);
-                        return;
-                    }
-                    // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
-                    //
-                    // "Equivalent to flex: 1 1 auto."
-                    "auto" => {
-                        self.flex_grow = Some(1.0);
-                        self.flex_shrink = Some(1.0);
-                        self.flex_basis = Some(AutoLength::Auto);
-                        return;
-                    }
-                    // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
-                    //
-                    // "Equivalent to flex: 0 1 auto."
-                    "initial" => {
-                        self.flex_grow = Some(0.0);
-                        self.flex_shrink = Some(1.0);
-                        self.flex_basis = Some(AutoLength::Auto);
-                        return;
-                    }
-                    _ => return,
+        if tokens.len() == 1
+            && let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[0]
+        {
+            match ident.to_ascii_lowercase().as_str() {
+                // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
+                //
+                // "Equivalent to flex: 0 0 auto."
+                "none" => {
+                    self.flex_grow = Some(0.0);
+                    self.flex_shrink = Some(0.0);
+                    self.flex_basis = Some(AutoLength::Auto);
+                    return;
                 }
+                // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
+                //
+                // "Equivalent to flex: 1 1 auto."
+                "auto" => {
+                    self.flex_grow = Some(1.0);
+                    self.flex_shrink = Some(1.0);
+                    self.flex_basis = Some(AutoLength::Auto);
+                    return;
+                }
+                // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
+                //
+                // "Equivalent to flex: 0 1 auto."
+                "initial" => {
+                    self.flex_grow = Some(0.0);
+                    self.flex_shrink = Some(1.0);
+                    self.flex_basis = Some(AutoLength::Auto);
+                    return;
+                }
+                _ => return,
             }
         }
 
@@ -2815,8 +2816,9 @@ impl ComputedStyle {
                 ComponentValue::Token(CSSToken::Number { value, .. }) => {
                     numbers.push(*value as f32);
                 }
-                ComponentValue::Token(CSSToken::Dimension { .. })
-                | ComponentValue::Token(CSSToken::Percentage { .. }) => {
+                ComponentValue::Token(
+                    CSSToken::Dimension { .. } | CSSToken::Percentage { .. },
+                ) => {
                     if let Some(auto_len) = parse_single_auto_length(token) {
                         basis = Some(self.resolve_auto_length(auto_len));
                     }
@@ -2852,8 +2854,8 @@ impl ComputedStyle {
                 self.flex_grow = Some(numbers[0]);
                 self.flex_shrink = Some(numbers[1]);
                 // Third number is 0 (unitless zero for flex-basis)
-                self.flex_basis =
-                    basis.or(Some(AutoLength::Length(LengthValue::Px(f64::from(numbers[2])))));
+                self.flex_basis = basis
+                    .or_else(|| Some(AutoLength::Length(LengthValue::Px(f64::from(numbers[2])))));
             }
             _ => {}
         }

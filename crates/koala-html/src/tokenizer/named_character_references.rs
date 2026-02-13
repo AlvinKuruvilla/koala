@@ -2288,6 +2288,7 @@ pub fn lookup_entity(name: &str) -> Option<&'static str> {
 /// any_entity_has_prefix("am")   // true (amp, amp;)
 /// any_entity_has_prefix("xyz")  // false
 /// ```
+#[must_use]
 pub fn any_entity_has_prefix(prefix: &str) -> bool {
     let names = &*SORTED_NAMES;
     // Binary search to find the insertion point for this prefix.

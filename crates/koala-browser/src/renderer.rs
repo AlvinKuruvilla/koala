@@ -262,6 +262,7 @@ impl Renderer {
     /// Check if a pixel is within all active clip rectangles.
     ///
     /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    #[allow(clippy::cast_precision_loss)]
     fn is_visible(&self, px: i32, py: i32) -> bool {
         let fx = px as f32;
         let fy = py as f32;
@@ -280,7 +281,9 @@ impl Renderer {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        clippy::many_single_char_names,
     )]
     fn fill_rect(
         &mut self,
@@ -327,7 +330,7 @@ impl Renderer {
                     if r > 0.0 && fx < r && fy < r {
                         let cx = r;
                         let cy = r;
-                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        let dist_sq = (fx - cx).mul_add(fx - cx, (fy - cy) * (fy - cy));
                         if dist_sq > r * r {
                             continue;
                         }
@@ -338,7 +341,7 @@ impl Renderer {
                     if r > 0.0 && fx >= fw - r && fy < r {
                         let cx = fw - r;
                         let cy = r;
-                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        let dist_sq = (fx - cx).mul_add(fx - cx, (fy - cy) * (fy - cy));
                         if dist_sq > r * r {
                             continue;
                         }
@@ -349,7 +352,7 @@ impl Renderer {
                     if r > 0.0 && fx < r && fy >= fh - r {
                         let cx = r;
                         let cy = fh - r;
-                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        let dist_sq = (fx - cx).mul_add(fx - cx, (fy - cy) * (fy - cy));
                         if dist_sq > r * r {
                             continue;
                         }
@@ -360,7 +363,7 @@ impl Renderer {
                     if r > 0.0 && fx >= fw - r && fy >= fh - r {
                         let cx = fw - r;
                         let cy = fh - r;
-                        let dist_sq = (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy);
+                        let dist_sq = (fx - cx).mul_add(fx - cx, (fy - cy) * (fy - cy));
                         if dist_sq > r * r {
                             continue;
                         }
@@ -444,7 +447,7 @@ impl Renderer {
         clippy::too_many_arguments,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
+        clippy::cast_possible_wrap,
     )]
     fn draw_text(
         &mut self,
@@ -536,17 +539,17 @@ impl Renderer {
 
             if text_decoration.underline {
                 // Underline: just below the baseline.
-                let line_y = y + font_size * 0.9;
+                let line_y = font_size.mul_add(0.9, y);
                 self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
             if text_decoration.line_through {
                 // Line-through: through the middle of the text.
-                let line_y = y + font_size * 0.55;
+                let line_y = font_size.mul_add(0.55, y);
                 self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
             if text_decoration.overline {
                 // Overline: at the top of the text.
-                let line_y = y + font_size * 0.1;
+                let line_y = font_size.mul_add(0.1, y);
                 self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
         }
@@ -612,7 +615,8 @@ impl Renderer {
         clippy::too_many_arguments,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
     )]
     fn draw_outer_shadow(
         &mut self,
@@ -629,8 +633,8 @@ impl Renderer {
         // Shadow rect = border-box + spread + offset
         let shadow_x = border_box_x + offset_x - spread_radius;
         let shadow_y = border_box_y + offset_y - spread_radius;
-        let shadow_w = border_box_width + 2.0 * spread_radius;
-        let shadow_h = border_box_height + 2.0 * spread_radius;
+        let shadow_w = spread_radius.mul_add(2.0, border_box_width);
+        let shadow_h = spread_radius.mul_add(2.0, border_box_height);
 
         let layers = if blur_radius > 0.0 {
             blur_radius.ceil() as u32
@@ -660,8 +664,8 @@ impl Renderer {
 
             let lx = (shadow_x - expand) as i32;
             let ly = (shadow_y - expand) as i32;
-            let lw = (shadow_w + 2.0 * expand) as u32;
-            let lh = (shadow_h + 2.0 * expand) as u32;
+            let lw = expand.mul_add(2.0, shadow_w) as u32;
+            let lh = expand.mul_add(2.0, shadow_h) as u32;
 
             let fg = Rgba([color.r, color.g, color.b, alpha_u8]);
 
@@ -704,7 +708,8 @@ impl Renderer {
         clippy::too_many_arguments,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
     )]
     fn draw_inset_shadow(
         &mut self,
@@ -721,8 +726,8 @@ impl Renderer {
         // Inner rect = border-box shrunk by spread, shifted by offset
         let inner_x = border_box_x + offset_x + spread_radius;
         let inner_y = border_box_y + offset_y + spread_radius;
-        let inner_w = border_box_width - 2.0 * spread_radius;
-        let inner_h = border_box_height - 2.0 * spread_radius;
+        let inner_w = spread_radius.mul_add(-2.0, border_box_width);
+        let inner_h = spread_radius.mul_add(-2.0, border_box_height);
 
         let layers = if blur_radius > 0.0 {
             blur_radius.ceil() as u32
