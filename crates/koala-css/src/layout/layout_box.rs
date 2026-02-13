@@ -141,6 +141,19 @@ fn layout_inline_content(
                     font_metrics,
                 );
             }
+            // [§ 4.5.27 The br element](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
+            //
+            // "The br element represents a line break."
+            //
+            // [§ 15.3.8 Phrasing content](https://html.spec.whatwg.org/multipage/rendering.html#phrasing-content-3)
+            //
+            // "br { display-outside: newline; }"
+            // "A newline forced by a br element must act as a line break."
+            BoxType::Principal(_)
+                if child.tag_name.as_deref() == Some("br") =>
+            {
+                inline_layout.add_line_break(inherited_font_size, font_metrics);
+            }
             BoxType::Principal(node_id)
                 if child.display.outer == OuterDisplayType::Inline
                     && child.display.inner == InnerDisplayType::FlowRoot =>
@@ -1440,11 +1453,27 @@ impl LayoutBox {
             // "A text run is the most basic inline-level content, consisting of a
             // contiguous sequence of text."
             NodeType::Text(text) => {
+                // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+                //
+                // Check the parent element's white-space property to determine
+                // whether whitespace should be preserved or collapsed.
+                let parent_white_space = tree.parent(node_id).and_then(|pid| {
+                    styles.get(&pid).and_then(|s| s.white_space)
+                }).unwrap_or_default();
+
+                let preserve_whitespace = matches!(
+                    parent_white_space,
+                    WhiteSpace::Pre | WhiteSpace::PreWrap
+                );
+
                 // [§ 4.3.1 White Space Phase I](https://www.w3.org/TR/css-text-3/#white-space-phase-1)
                 //
-                // Skip whitespace-only text nodes as they don't generate visible boxes.
-                // NOTE: Full implementation would handle white-space property.
-                if text.trim().is_empty() {
+                // "For white-space values 'normal' and 'nowrap', any sequence
+                // of collapsible white space is collapsed."
+                //
+                // Skip whitespace-only text nodes when white-space collapses.
+                // When white-space preserves (pre, pre-wrap), keep them.
+                if !preserve_whitespace && text.trim().is_empty() {
                     return None;
                 }
                 Some(Self {
@@ -3130,6 +3159,16 @@ impl LayoutBox {
         inline_layout.no_wrap = matches!(
             self.white_space,
             WhiteSpace::Nowrap | WhiteSpace::Pre
+        );
+
+        // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+        //
+        // "If 'white-space' is set to 'pre', 'pre-wrap', or 'pre-line',
+        // newline characters are preserved (not collapsed) and force line
+        // breaks."
+        inline_layout.preserve_newlines = matches!(
+            self.white_space,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
         );
 
         // STEP 2: Recursively add all inline content to the inline layout.

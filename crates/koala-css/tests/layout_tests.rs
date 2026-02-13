@@ -3798,3 +3798,222 @@ fn test_text_decoration_on_layout_box() {
         "LayoutBox should not have underline"
     );
 }
+
+// ---------------------------------------------------------------------------
+// <br> element tests
+//
+// [§ 4.5.27 The br element](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
+//
+// "The br element represents a line break."
+// ---------------------------------------------------------------------------
+
+/// [§ 4.5.27](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
+///
+/// A `<br>` between two text runs should produce two separate line boxes.
+#[test]
+fn test_br_creates_line_break() {
+    let root = layout_html("<p>Line one<br>Line two</p>");
+    // Document > html > body > p
+    let p = box_at_depth(&root, 3);
+
+    assert!(
+        p.line_boxes.len() >= 2,
+        "<br> should produce at least 2 line boxes, got {}",
+        p.line_boxes.len()
+    );
+
+    // First line should contain "Line one"
+    let line1_text: String = p.line_boxes[0]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.content {
+            FragmentContent::Text(run) => Some(run.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        line1_text.contains("Line one"),
+        "First line should contain 'Line one', got '{line1_text}'"
+    );
+
+    // Second line should contain "Line two"
+    let line2_text: String = p.line_boxes[1]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.content {
+            FragmentContent::Text(run) => Some(run.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        line2_text.contains("Line two"),
+        "Second line should contain 'Line two', got '{line2_text}'"
+    );
+
+    // Second line should start below the first
+    assert!(
+        p.line_boxes[1].bounds.y > p.line_boxes[0].bounds.y,
+        "Line 2 y ({}) should be below line 1 y ({})",
+        p.line_boxes[1].bounds.y,
+        p.line_boxes[0].bounds.y
+    );
+}
+
+/// [§ 4.5.27](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
+///
+/// A double `<br><br>` should produce a visible blank line (3 line boxes:
+/// text, empty strut, text).
+#[test]
+fn test_double_br_creates_blank_line() {
+    let root = layout_html("<p>Above<br><br>Below</p>");
+    let p = box_at_depth(&root, 3);
+
+    assert!(
+        p.line_boxes.len() >= 3,
+        "<br><br> should produce at least 3 line boxes, got {}",
+        p.line_boxes.len()
+    );
+
+    // The middle line box (from the second <br>) should have a strut height
+    // but no visible text content.
+    let middle_text: String = p.line_boxes[1]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.content {
+            FragmentContent::Text(run) if !run.text.is_empty() => Some(run.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        middle_text.is_empty(),
+        "Middle line (blank from <br>) should have no visible text, got '{middle_text}'"
+    );
+}
+
+/// [§ 4.5.27](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
+///
+/// A leading `<br>` before text should push text to the second line.
+#[test]
+fn test_br_at_start_of_paragraph() {
+    let root = layout_html("<p><br>After break</p>");
+    let p = box_at_depth(&root, 3);
+
+    assert!(
+        p.line_boxes.len() >= 2,
+        "Leading <br> should produce at least 2 line boxes, got {}",
+        p.line_boxes.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// white-space: pre tests
+//
+// [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+//
+// "This value prevents user agents from collapsing sequences of white
+// space. Lines are only broken at preserved newline characters."
+// ---------------------------------------------------------------------------
+
+/// [§ 16.6](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+///
+/// Newlines inside a `<pre>` element should produce separate line boxes.
+#[test]
+fn test_pre_preserves_newlines() {
+    let root = layout_html("<pre>line one\nline two\nline three</pre>");
+    // Document > html > body > pre
+    let pre = box_at_depth(&root, 3);
+
+    assert!(
+        pre.line_boxes.len() >= 3,
+        "<pre> with 2 newlines should produce at least 3 line boxes, got {}",
+        pre.line_boxes.len()
+    );
+
+    let texts: Vec<String> = pre
+        .line_boxes
+        .iter()
+        .flat_map(|lb| lb.fragments.iter())
+        .filter_map(|f| match &f.content {
+            FragmentContent::Text(run) if !run.text.is_empty() => Some(run.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("line one")),
+        "Should contain 'line one', got {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("line two")),
+        "Should contain 'line two', got {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("line three")),
+        "Should contain 'line three', got {texts:?}"
+    );
+}
+
+/// [§ 16.6](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+///
+/// Leading spaces in `<pre>` should be preserved (indentation).
+#[test]
+fn test_pre_preserves_indentation() {
+    let root = layout_html("<pre>no indent\n    indented</pre>");
+    let pre = box_at_depth(&root, 3);
+
+    assert!(
+        pre.line_boxes.len() >= 2,
+        "Should have at least 2 lines, got {}",
+        pre.line_boxes.len()
+    );
+
+    // The second line's text should start with spaces (indentation preserved).
+    let line2_text: String = pre.line_boxes[1]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.content {
+            FragmentContent::Text(run) => Some(run.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        line2_text.starts_with("    "),
+        "Second line should preserve leading spaces, got '{line2_text}'"
+    );
+}
+
+/// [§ 16.6](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+///
+/// `white-space: pre` via CSS (not just `<pre>` element) should also
+/// preserve newlines.
+#[test]
+fn test_whitespace_pre_via_css() {
+    let root = layout_html(
+        "<style>div { white-space: pre; }</style><div>first\nsecond</div>",
+    );
+    // Document > html > body > div
+    let div = box_at_depth(&root, 3);
+
+    assert!(
+        div.line_boxes.len() >= 2,
+        "white-space: pre div with newline should have at least 2 lines, got {}",
+        div.line_boxes.len()
+    );
+}
+
+/// [§ 16.6](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+///
+/// Without `white-space: pre`, newlines should be collapsed (treated as
+/// spaces per normal whitespace handling).
+#[test]
+fn test_normal_whitespace_collapses_newlines() {
+    let root = layout_html("<p>no break here</p>");
+    let p = box_at_depth(&root, 3);
+
+    // With normal white-space, a short text should produce exactly 1 line.
+    assert_eq!(
+        p.line_boxes.len(),
+        1,
+        "Normal text without wrapping should be 1 line, got {}",
+        p.line_boxes.len()
+    );
+}

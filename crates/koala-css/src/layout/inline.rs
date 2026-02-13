@@ -367,6 +367,16 @@ pub struct InlineLayout {
     /// When true, suppresses soft line breaks (text wrapping).
     /// Set when `white-space` is `nowrap` or `pre`.
     pub no_wrap: bool,
+
+    /// [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+    ///
+    /// "This value prevents user agents from collapsing sequences of white
+    /// space. Lines are only broken at preserved newline characters."
+    ///
+    /// When true, newline characters (`\n`) in text force line breaks instead
+    /// of being collapsed. Set when `white-space` is `pre`, `pre-wrap`, or
+    /// `pre-line`.
+    pub preserve_newlines: bool,
 }
 
 impl InlineLayout {
@@ -389,6 +399,7 @@ impl InlineLayout {
             start_x,
             left_offset: 0.0,
             no_wrap: false,
+            preserve_newlines: false,
         }
     }
 
@@ -412,6 +423,51 @@ impl InlineLayout {
         text_decoration: TextDecorationLine,
         font_metrics: &dyn FontMetrics,
     ) {
+        // STEP 0: Handle preserved newlines.
+        // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+        //
+        // "If 'white-space' is set to 'pre', 'pre-wrap', or 'pre-line',
+        // line breaks are forced at preserved newline characters."
+        //
+        // [§ 4.1.1 Phase I: Collapsing and Transformation](https://www.w3.org/TR/css-text-3/#white-space-phase-1)
+        //
+        // "A preserved newline forces a line break."
+        if self.preserve_newlines
+            && let Some(nl_pos) = text.find('\n')
+        {
+                // Place text before the newline on the current line.
+                let before = &text[..nl_pos];
+                if !before.is_empty() {
+                    let lh = font_metrics.line_height(font_size);
+                    self.place_text_fragment(
+                        before,
+                        font_size,
+                        lh,
+                        color,
+                        font_weight,
+                        font_style,
+                        text_decoration,
+                        font_metrics,
+                    );
+                }
+                // Force line break at the newline character.
+                self.force_line_break(font_size, font_metrics);
+                // Continue with text after the newline.
+                let after = &text[nl_pos + 1..];
+                if !after.is_empty() {
+                    self.add_text(
+                        after,
+                        font_size,
+                        color,
+                        font_weight,
+                        font_style,
+                        text_decoration,
+                        font_metrics,
+                    );
+                }
+                return;
+        }
+
         // STEP 1: Measure the text width.
         // [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
         //
@@ -745,6 +801,74 @@ impl InlineLayout {
         // Content placed after this call will start after the right edge
         // decoration of the inline box.
         self.current_x += right_mbp;
+    }
+
+    /// [§ 15.3.8 The br element](https://html.spec.whatwg.org/multipage/rendering.html#the-br-element)
+    ///
+    /// "The br element represents a line break."
+    ///
+    /// [§ 4.5.27 The br element](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
+    ///
+    /// "The br element represents a line break. ...must cause a line break
+    /// to occur in the inline formatting context."
+    ///
+    /// Forces a line break at the current position. If the current line is
+    /// empty, a strut-height line box is created so the break produces
+    /// visible vertical space.
+    pub fn add_line_break(&mut self, font_size: f32, font_metrics: &dyn FontMetrics) {
+        self.force_line_break(font_size, font_metrics);
+    }
+
+    /// Force a line break, ensuring visible vertical space even on an empty
+    /// line.
+    ///
+    /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
+    ///
+    /// "On a block container element whose content is composed of inline-level
+    /// elements, 'line-height' specifies the minimal height of line boxes
+    /// within the element."
+    ///
+    /// Even if no text has been placed on the current line, the line break
+    /// must advance by at least one line-height (the "strut"). This ensures
+    /// `<br>` and preserved newlines produce visible vertical space.
+    fn force_line_break(&mut self, font_size: f32, font_metrics: &dyn FontMetrics) {
+        let line_height = font_metrics.line_height(font_size);
+        if line_height > self.current_line_max_height {
+            self.current_line_max_height = line_height;
+        }
+
+        if self.current_line_fragments.is_empty() {
+            // [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading)
+            //
+            // "The minimum height consists of a minimum height above the
+            // baseline and a minimum depth below it, exactly as if each line
+            // box starts with a zero-width inline box with the element's font
+            // and line height properties."
+            //
+            // Create a zero-width strut fragment so finish_line() generates
+            // a line box with the proper height.
+            let fragment = LineFragment {
+                bounds: Rect {
+                    x: self.start_x + self.left_offset + self.current_x,
+                    y: self.current_y,
+                    width: 0.0,
+                    height: line_height,
+                },
+                content: FragmentContent::Text(TextRun {
+                    text: String::new(),
+                    width: 0.0,
+                    font_size,
+                    color: ColorValue::BLACK,
+                    font_weight: 400,
+                    font_style: FontStyle::Normal,
+                    text_decoration: TextDecorationLine::default(),
+                }),
+                vertical_align: VerticalAlign::Baseline,
+            };
+            self.current_line_fragments.push(fragment);
+        }
+
+        self.finish_line();
     }
 
     /// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
