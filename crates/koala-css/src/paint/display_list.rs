@@ -83,6 +83,10 @@ pub enum DisplayCommand {
         height: f32,
         /// The `src` attribute value, used as lookup key for image data.
         src: String,
+        /// [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+        ///
+        /// Opacity multiplier for the image (0.0 = fully transparent, 1.0 = fully opaque).
+        opacity: f32,
     },
 
     /// Draw text at a position.

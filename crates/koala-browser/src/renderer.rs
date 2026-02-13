@@ -221,8 +221,9 @@ impl Renderer {
                 width,
                 height,
                 src,
+                opacity,
             } => {
-                self.draw_image(src, *x, *y, *width, *height);
+                self.draw_image(src, *x, *y, *width, *height, *opacity);
             }
             DisplayCommand::DrawText {
                 x,
@@ -384,7 +385,7 @@ impl Renderer {
         clippy::cast_sign_loss,
         clippy::cast_possible_wrap
     )]
-    fn draw_image(&mut self, src: &str, x: f32, y: f32, width: f32, height: f32) {
+    fn draw_image(&mut self, src: &str, x: f32, y: f32, width: f32, height: f32, opacity: f32) {
         let Some(img) = self.images.get(src) else {
             return;
         };
@@ -426,16 +427,21 @@ impl Renderer {
                 let sb = img.rgba_data()[src_idx + 2];
                 let sa = img.rgba_data()[src_idx + 3];
 
-                if sa == 0 {
+                // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+                //
+                // Multiply the source pixel alpha by the element's opacity.
+                let effective_alpha = (f32::from(sa) * opacity) as u8;
+
+                if effective_alpha == 0 {
                     continue;
                 }
 
-                let fg = Rgba([sr, sg, sb, sa]);
-                if sa == 255 {
+                let fg = Rgba([sr, sg, sb, effective_alpha]);
+                if effective_alpha == 255 {
                     self.buffer.put_pixel(px as u32, py as u32, fg);
                 } else {
                     let bg = *self.buffer.get_pixel(px as u32, py as u32);
-                    let blended = alpha_blend(fg, bg, sa);
+                    let blended = alpha_blend(fg, bg, effective_alpha);
                     self.buffer.put_pixel(px as u32, py as u32, blended);
                 }
             }

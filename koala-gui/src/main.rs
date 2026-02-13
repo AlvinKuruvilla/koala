@@ -1113,18 +1113,26 @@ impl BrowserApp {
             ),
         );
 
+        // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+        //
+        // "opacity is applied to the element as a whole, including its
+        // contents, rather than being applied to each descendant individually."
+        let opacity = layout_box.opacity;
+
         // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
         //
         // Outer shadows are painted before the background.
         // Painted in reverse order (last in list = furthest back).
         for shadow in layout_box.box_shadow.iter().rev() {
             if !shadow.inset {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let shadow_alpha = (f32::from(shadow.color.a) * opacity) as u8;
                 let shadow_color =
                     egui::Color32::from_rgba_unmultiplied(
                         shadow.color.r,
                         shadow.color.g,
                         shadow.color.b,
-                        shadow.color.a,
+                        shadow_alpha,
                     );
                 let shadow_rect = border_rect
                     .expand(shadow.spread_radius)
@@ -1167,7 +1175,9 @@ impl BrowserApp {
         if let Some(s) = style
             && let Some(ref bg) = s.background_color
         {
-            let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg.a);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let bg_alpha = (f32::from(bg.a) * opacity) as u8;
+            let bg_color = egui::Color32::from_rgba_unmultiplied(bg.r, bg.g, bg.b, bg_alpha);
             let br = &layout_box.border_radius;
             let rounding = egui::Rounding {
                 nw: br.top_left,
@@ -1221,9 +1231,15 @@ impl BrowserApp {
             });
             let img_rect = content_rect;
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+            //
+            // Apply opacity via the tint color's alpha channel.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let img_alpha = (255.0 * opacity) as u8;
+            let tint = egui::Color32::from_rgba_unmultiplied(255, 255, 255, img_alpha);
             let _ = ui
                 .painter()
-                .image(texture.id(), img_rect, uv, egui::Color32::WHITE);
+                .image(texture.id(), img_rect, uv, tint);
         }
 
         // Determine text formatting from style
@@ -1241,8 +1257,21 @@ impl BrowserApp {
         );
 
         let text_color = style.and_then(|s| s.color.as_ref()).map_or_else(
-            || ui.visuals().text_color(),
-            |c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a),
+            || {
+                let base = ui.visuals().text_color();
+                if opacity >= 1.0 {
+                    base
+                } else {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let a = (f32::from(base.a()) * opacity) as u8;
+                    egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), a)
+                }
+            },
+            |c| {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let a = (f32::from(c.a) * opacity) as u8;
+                egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, a)
+            },
         );
 
         // Render text content.
@@ -1256,10 +1285,13 @@ impl BrowserApp {
                     if let koala_css::layout::inline::FragmentContent::Text(text_run) =
                         &fragment.content
                     {
-                        let frag_color = egui::Color32::from_rgb(
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let text_alpha = (f32::from(text_run.color.a) * opacity) as u8;
+                        let frag_color = egui::Color32::from_rgba_unmultiplied(
                             text_run.color.r,
                             text_run.color.g,
                             text_run.color.b,
+                            text_alpha,
                         );
                         let text_pos =
                             egui::pos2(origin.x + fragment.bounds.x, origin.y + fragment.bounds.y);

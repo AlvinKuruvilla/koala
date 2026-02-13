@@ -15,7 +15,29 @@ use crate::style::ComputedStyle;
 use crate::style::BorderRadius;
 use crate::{BoxType, LayoutBox};
 
+use crate::ColorValue;
+
 use super::{DisplayCommand, DisplayList};
+
+/// Apply opacity to a color by multiplying its alpha channel.
+///
+/// [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+///
+/// "opacity is applied to the element as a whole, including its
+/// contents, rather than being applied to each descendant individually."
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn apply_opacity(color: &ColorValue, opacity: f32) -> ColorValue {
+    if opacity >= 1.0 {
+        return color.clone();
+    }
+    let adjusted_alpha = (f32::from(color.a) * opacity) as u8;
+    ColorValue {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: adjusted_alpha,
+    }
+}
 
 /// Painter that generates a display list from a layout tree.
 ///
@@ -129,6 +151,8 @@ impl<'a> Painter<'a> {
             //
             // Painted in reverse order: last shadow in the list is painted first
             // (furthest back), first shadow is painted last (on top).
+            let opacity = layout_box.opacity;
+
             for shadow in layout_box.box_shadow.iter().rev() {
                 if !shadow.inset {
                     display_list.push(DisplayCommand::DrawBoxShadow {
@@ -140,7 +164,7 @@ impl<'a> Painter<'a> {
                         offset_y: shadow.offset_y,
                         blur_radius: shadow.blur_radius,
                         spread_radius: shadow.spread_radius,
-                        color: shadow.color.clone(),
+                        color: apply_opacity(&shadow.color, opacity),
                         inset: false,
                     });
                 }
@@ -152,7 +176,7 @@ impl<'a> Painter<'a> {
                     y: border_box_y,
                     width: border_box_width,
                     height: border_box_height,
-                    color: bg.clone(),
+                    color: apply_opacity(bg, opacity),
                     border_radius: layout_box.border_radius,
                 });
             }
@@ -166,6 +190,7 @@ impl<'a> Painter<'a> {
                 padding_width,
                 padding_height,
                 display_list,
+                opacity,
             );
 
             // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
@@ -184,7 +209,7 @@ impl<'a> Painter<'a> {
                         offset_y: shadow.offset_y,
                         blur_radius: shadow.blur_radius,
                         spread_radius: shadow.spread_radius,
-                        color: shadow.color.clone(),
+                        color: apply_opacity(&shadow.color, opacity),
                         inset: true,
                     });
                 }
@@ -219,12 +244,14 @@ impl<'a> Painter<'a> {
                     width: dims.content.width,
                     height: dims.content.height,
                     src: src.clone(),
+                    opacity: layout_box.opacity,
                 });
             }
 
             // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
             // "the element's text"
             if !layout_box.line_boxes.is_empty() {
+                let opacity = layout_box.opacity;
                 for line_box in &layout_box.line_boxes {
                     for fragment in &line_box.fragments {
                         if let FragmentContent::Text(text_run) = &fragment.content {
@@ -233,7 +260,7 @@ impl<'a> Painter<'a> {
                                 y: fragment.bounds.y,
                                 text: text_run.text.clone(),
                                 font_size: text_run.font_size,
-                                color: text_run.color.clone(),
+                                color: apply_opacity(&text_run.color, opacity),
                                 font_weight: text_run.font_weight,
                                 font_style: text_run.font_style,
                                 text_decoration: text_run.text_decoration,
@@ -290,7 +317,7 @@ impl<'a> Painter<'a> {
     /// Borders are drawn outside the padding box. For simplicity, we draw solid
     /// rectangles for each border side (ignoring border-style for now — all styles
     /// render as solid).
-    #[allow(clippy::cast_possible_truncation, clippy::unused_self)]
+    #[allow(clippy::cast_possible_truncation, clippy::unused_self, clippy::too_many_arguments)]
     fn paint_borders(
         &self,
         style: &ComputedStyle,
@@ -299,6 +326,7 @@ impl<'a> Painter<'a> {
         padding_width: f32,
         padding_height: f32,
         display_list: &mut DisplayList,
+        opacity: f32,
     ) {
         // Get border widths (default to 0 if not set)
         let top_width = style
@@ -327,7 +355,7 @@ impl<'a> Painter<'a> {
                 y: padding_y - top_width,
                 width: padding_width + left_width + right_width,
                 height: top_width,
-                color: border.color.clone(),
+                color: apply_opacity(&border.color, opacity),
                 border_radius: BorderRadius::default(),
             });
         }
@@ -341,7 +369,7 @@ impl<'a> Painter<'a> {
                 y: padding_y + padding_height,
                 width: padding_width + left_width + right_width,
                 height: bottom_width,
-                color: border.color.clone(),
+                color: apply_opacity(&border.color, opacity),
                 border_radius: BorderRadius::default(),
             });
         }
@@ -355,7 +383,7 @@ impl<'a> Painter<'a> {
                 y: padding_y,
                 width: left_width,
                 height: padding_height,
-                color: border.color.clone(),
+                color: apply_opacity(&border.color, opacity),
                 border_radius: BorderRadius::default(),
             });
         }
@@ -369,7 +397,7 @@ impl<'a> Painter<'a> {
                 y: padding_y,
                 width: right_width,
                 height: padding_height,
-                color: border.color.clone(),
+                color: apply_opacity(&border.color, opacity),
                 border_radius: BorderRadius::default(),
             });
         }

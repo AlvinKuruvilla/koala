@@ -110,6 +110,17 @@ blockquote, figure {
     margin-right: 40px;
 }
 
+/* [§ 15.3.5 Grouping content](https://html.spec.whatwg.org/multipage/rendering.html#grouping-content) */
+/* "hr { ... border-style: inset; border-width: 1px; margin-block-start: 0.5em; margin-block-end: 0.5em; }" */
+hr {
+    border-style: inset;
+    border-width: 1px;
+    margin-block-start: 0.5em;
+    margin-block-end: 0.5em;
+    overflow: hidden;
+    color: gray;
+}
+
 /* [§ 15.3.7 Lists](https://html.spec.whatwg.org/multipage/rendering.html#lists) */
 
 /* "ol, ul, menu { ... margin-block-start: 1em; margin-block-end: 1em; padding-inline-start: 40px; }" */
@@ -148,6 +159,24 @@ b, strong {
 /* "i, cite, em, var, dfn { font-style: italic; }" */
 em, i, cite, dfn, var {
     font-style: italic;
+}
+
+/* [§ 15.3.5 Grouping content](https://html.spec.whatwg.org/multipage/rendering.html#grouping-content) */
+/* "pre, listing, xmp { ... white-space: pre; }" */
+pre, listing, xmp {
+    white-space: pre;
+}
+
+/* [§ 15.3.8 Text-level semantics](https://html.spec.whatwg.org/multipage/rendering.html#text-level-semantics) */
+/* "code, kbd, samp, tt { font-family: monospace; }" */
+code, kbd, samp, tt {
+    font-family: monospace;
+}
+
+/* "pre { ... font-family: monospace; }" */
+/* NOTE: pre gets both white-space: pre (above) and monospace font */
+pre {
+    font-family: monospace;
 }
 
 /* "a:any-link { color: -internal-link; text-decoration: underline; }" */
