@@ -322,8 +322,11 @@ fn is_stylesheet_link(data: &ElementData) -> bool {
 ///
 /// # Errors
 ///
-/// Returns an error if the stylesheet cannot be fetched.
-pub fn fetch_external_stylesheet(href: &str, base_url: Option<&str>) -> Result<String, String> {
+/// Returns a [`koala_common::net::FetchError`] if the stylesheet cannot be fetched.
+pub fn fetch_external_stylesheet(
+    href: &str,
+    base_url: Option<&str>,
+) -> Result<String, koala_common::net::FetchError> {
     // [§ 4.2.4.3](https://html.spec.whatwg.org/multipage/semantics.html#link-type-stylesheet)
     //
     // STEP 1: "Let options be the result of creating link options from element."

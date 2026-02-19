@@ -119,7 +119,7 @@ fn main() -> Result<()> {
     let doc = if let Some(html_string) = cli.html {
         parse_html_string(&html_string)
     } else if let Some(path) = cli.path {
-        load_document(&path).map_err(|e| anyhow::anyhow!("{}", e))?
+        load_document(&path)?
     } else {
         // clap should prevent this, but just in case
         anyhow::bail!("Either a file/URL path or --html must be provided");

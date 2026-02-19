@@ -116,7 +116,7 @@ fn load_doc(cli: &Cli) -> anyhow::Result<LoadedDocument> {
     if let Some(ref html_string) = cli.html {
         Ok(parse_html_string(html_string))
     } else if let Some(ref path) = cli.path {
-        load_document(path).map_err(|e| anyhow::anyhow!("{}", e))
+        Ok(load_document(path)?)
     } else {
         anyhow::bail!("Headless/screenshot mode requires a file path, URL, or --html")
     }

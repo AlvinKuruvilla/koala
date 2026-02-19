@@ -19,6 +19,47 @@ use koala_common::image::LoadedImage;
 use koala_common::warning::warn_once;
 use std::fs;
 
+/// Error type for image fetch and decode operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ImageError {
+    /// Image bytes could not be fetched (network, data-URL, or file error).
+    #[error(transparent)]
+    Fetch(#[from] koala_common::net::FetchError),
+
+    /// A local file could not be read.
+    #[error("failed to read '{path}': {source}")]
+    FileRead {
+        /// The resolved filesystem path.
+        path: String,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// SVG parsing failed.
+    #[error("failed to parse SVG: {0}")]
+    SvgParse(#[source] usvg::Error),
+
+    /// The SVG document has zero-size dimensions.
+    #[error("SVG has zero-size dimensions")]
+    SvgZeroSize,
+
+    /// Could not allocate a pixmap for SVG rasterization.
+    #[error("failed to allocate pixmap for SVG")]
+    PixmapAllocation,
+
+    /// Raster image decoding failed (PNG, JPEG, GIF, WebP, etc.).
+    #[error("could not decode image: {0}")]
+    RasterDecode(#[source] image::ImageError),
+
+    /// No decoder is available for the detected image format.
+    #[error("no decoder available for format {format:?}")]
+    UnsupportedFormat {
+        /// The detected image format.
+        format: ImageFormat,
+    },
+}
+
 /// Detected image format.
 ///
 /// Only two variants are needed: the `image` crate handles raster sub-format
@@ -126,8 +167,8 @@ pub trait ImageDecoder {
     ///
     /// # Errors
     ///
-    /// Returns an error string if the bytes cannot be decoded by this decoder.
-    fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, String>;
+    /// Returns an [`ImageError`] if the bytes cannot be decoded by this decoder.
+    fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, ImageError>;
 }
 
 /// Decodes SVG images via usvg → resvg rasterization.
@@ -143,19 +184,18 @@ impl ImageDecoder for SvgDecoder {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, String> {
+    fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, ImageError> {
         let opts = usvg::Options::default();
-        let tree =
-            usvg::Tree::from_data(bytes, &opts).map_err(|e| format!("failed to parse SVG: {e}"))?;
+        let tree = usvg::Tree::from_data(bytes, &opts).map_err(ImageError::SvgParse)?;
 
         let size = tree.size();
         let (w, h) = (size.width() as u32, size.height() as u32);
         if w == 0 || h == 0 {
-            return Err("SVG has zero-size dimensions".to_string());
+            return Err(ImageError::SvgZeroSize);
         }
 
-        let mut pixmap = tiny_skia::Pixmap::new(w, h)
-            .ok_or_else(|| "failed to allocate pixmap for SVG".to_string())?;
+        let mut pixmap =
+            tiny_skia::Pixmap::new(w, h).ok_or(ImageError::PixmapAllocation)?;
 
         resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
 
@@ -175,9 +215,9 @@ impl ImageDecoder for RasterDecoder {
         format == ImageFormat::Raster
     }
 
-    fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, String> {
+    fn decode(&self, bytes: &[u8]) -> Result<LoadedImage, ImageError> {
         let dynamic_img =
-            image::load_from_memory(bytes).map_err(|e| format!("could not decode image ({e})"))?;
+            image::load_from_memory(bytes).map_err(ImageError::RasterDecode)?;
         let rgba = dynamic_img.to_rgba8();
         let (w, h) = rgba.dimensions();
         Ok(LoadedImage::new(w, h, rgba.into_raw()))
@@ -191,15 +231,18 @@ impl ImageDecoder for RasterDecoder {
 ///
 /// # Errors
 ///
-/// Returns an error string if the fetch fails (network error, file not found,
+/// Returns an [`ImageError`] if the fetch fails (network error, file not found,
 /// or invalid data URL).
-pub fn fetch_image_bytes(resolved_url: &str) -> Result<Vec<u8>, String> {
+pub fn fetch_image_bytes(resolved_url: &str) -> Result<Vec<u8>, ImageError> {
     if resolved_url.starts_with("http://") || resolved_url.starts_with("https://") {
-        koala_common::net::fetch_bytes(resolved_url)
+        Ok(koala_common::net::fetch_bytes(resolved_url)?)
     } else if resolved_url.starts_with("data:") {
-        koala_common::net::fetch_bytes_from_data_url(resolved_url)
+        Ok(koala_common::net::fetch_bytes_from_data_url(resolved_url)?)
     } else {
-        fs::read(resolved_url).map_err(|e| format!("failed to read '{resolved_url}': {e}"))
+        fs::read(resolved_url).map_err(|e| ImageError::FileRead {
+            path: resolved_url.to_string(),
+            source: e,
+        })
     }
 }
 
@@ -226,14 +269,14 @@ impl ImageLoaderPipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error string if no decoder supports the detected format or
+    /// Returns an [`ImageError`] if no decoder supports the detected format or
     /// if decoding fails.
     pub fn decode(
         &self,
         bytes: &[u8],
         path_for_ext: &str,
         resolved_url: &str,
-    ) -> Result<LoadedImage, String> {
+    ) -> Result<LoadedImage, ImageError> {
         let format = detect_format(path_for_ext, resolved_url, bytes);
 
         for decoder in &self.decoders {
@@ -242,7 +285,7 @@ impl ImageLoaderPipeline {
             }
         }
 
-        Err(format!("no decoder available for format {format:?}"))
+        Err(ImageError::UnsupportedFormat { format })
     }
 }
 

@@ -85,24 +85,22 @@ pub struct LoadedDocument {
 }
 
 /// Error type for document loading.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum LoadError {
-    /// Failed to read file
-    FileError(String),
-    /// Failed to fetch URL
-    NetworkError(String),
-}
+    /// Failed to read a local file.
+    #[error("failed to read '{path}': {source}")]
+    FileRead {
+        /// The filesystem path that could not be read.
+        path: String,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
 
-impl std::fmt::Display for LoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::FileError(msg) => write!(f, "File error: {msg}"),
-            Self::NetworkError(msg) => write!(f, "Network error: {msg}"),
-        }
-    }
+    /// Failed to fetch a URL.
+    #[error(transparent)]
+    Fetch(#[from] koala_common::net::FetchError),
 }
-
-impl std::error::Error for LoadError {}
 
 /// Load a document from a file path or URL.
 ///
@@ -120,17 +118,19 @@ impl std::error::Error for LoadError {}
 ///
 /// # Errors
 ///
-/// Returns [`LoadError::FileError`] if the path is a local file that cannot
-/// be read, or [`LoadError::NetworkError`] if it is a URL that cannot be
+/// Returns [`LoadError::FileRead`] if the path is a local file that cannot
+/// be read, or [`LoadError::Fetch`] if it is a URL that cannot be
 /// fetched.
 pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     // Fetch or read the HTML source
     let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
-        let text = koala_common::net::fetch_text(path).map_err(LoadError::NetworkError)?;
+        let text = koala_common::net::fetch_text(path)?;
         (text, Some(path))
     } else {
-        let content = fs::read_to_string(path)
-            .map_err(|e| LoadError::FileError(format!("Failed to read '{path}': {e}")))?;
+        let content = fs::read_to_string(path).map_err(|e| LoadError::FileRead {
+            path: path.to_string(),
+            source: e,
+        })?;
         (content, None)
     };
 

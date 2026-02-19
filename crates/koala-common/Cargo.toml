@@ -8,6 +8,7 @@ description = "Shared utilities for the Koala renderer"
 [dependencies]
 base64 = "0.22.1"
 reqwest.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

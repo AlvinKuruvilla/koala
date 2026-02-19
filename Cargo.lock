@@ -2601,6 +2601,7 @@ dependencies = [
  "koala-html",
  "koala-js",
  "resvg",
+ "thiserror 2.0.17",
  "tiny-skia",
  "usvg",
 ]
@@ -2625,6 +2626,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "reqwest",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
