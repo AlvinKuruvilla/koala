@@ -258,10 +258,15 @@ fn place_grid_items(
 ) -> Vec<GridItem> {
     let mut items = Vec::with_capacity(in_flow_indices.len());
 
-    // Occupancy grid: tracks which cells are occupied.
-    // Grows dynamically as items are placed.
+    // Occupancy grid tracks which cells are currently occupied.
+    // Both dimensions grow dynamically through `grow_occupancy_to`
+    // as items are placed: explicit placements that reach past the
+    // existing track count create implicit tracks per CSS Grid
+    // § 7.2, and auto-placement uses the up-to-date width when
+    // deciding where to wrap.
     let initial_rows = num_explicit_rows.max(1);
-    let mut occupancy: Vec<Vec<bool>> = vec![vec![false; num_cols]; initial_rows];
+    let mut current_num_cols = num_cols;
+    let mut occupancy: Vec<Vec<bool>> = vec![vec![false; current_num_cols]; initial_rows];
 
     // STEP 1: Place explicitly positioned items first.
     //
@@ -271,19 +276,26 @@ fn place_grid_items(
     // position. Grow the implicit grid as needed."
     for &idx in in_flow_indices {
         let child = &container.children[idx];
-        let col_start = resolve_definite_line(child.grid_column_start, num_cols);
-        let col_end = resolve_definite_line(child.grid_column_end, num_cols);
+        let col_start = resolve_definite_line(child.grid_column_start, current_num_cols);
+        let col_end = resolve_definite_line(child.grid_column_end, current_num_cols);
         let row_start = resolve_definite_line(child.grid_row_start, occupancy.len());
         let row_end = resolve_definite_line(child.grid_row_end, occupancy.len());
 
         if let (Some(cs), Some(rs)) = (col_start, row_start) {
-            let ce = col_end.unwrap_or_else(|| resolve_span_end(child.grid_column_end, cs, num_cols));
-            let re = row_end.unwrap_or_else(|| resolve_span_end(child.grid_row_end, rs, occupancy.len()));
+            let ce = col_end
+                .unwrap_or_else(|| resolve_span_end(child.grid_column_end, cs, current_num_cols));
+            let re = row_end
+                .unwrap_or_else(|| resolve_span_end(child.grid_row_end, rs, occupancy.len()));
 
-            // Grow occupancy grid if needed.
-            grow_occupancy(&mut occupancy, re, num_cols);
+            // Grow in both dimensions. `ce` may exceed
+            // `current_num_cols` when the author used a
+            // `grid-column` value that reaches past the explicit
+            // grid (e.g. `span 2` on a default 1-column grid).
+            if ce > current_num_cols {
+                current_num_cols = ce;
+            }
+            grow_occupancy_to(&mut occupancy, re, current_num_cols);
 
-            // Mark cells as occupied.
             mark_occupied(&mut occupancy, cs, ce, rs, re);
 
             items.push(GridItem {
@@ -322,15 +334,22 @@ fn place_grid_items(
         let row_span = resolve_item_span(child.grid_row_start, child.grid_row_end);
 
         // Check if item has a definite column but not a definite row.
-        let definite_col = resolve_definite_line(child.grid_column_start, num_cols);
+        let definite_col = resolve_definite_line(child.grid_column_start, current_num_cols);
 
         if let Some(cs) = definite_col {
             // Item has definite column: scan rows to find space.
             let ce = cs + col_span;
+            // Extend the implicit grid horizontally if this item's
+            // span reaches past the current column count. Without
+            // this the `is_area_free` / `mark_occupied` slice
+            // operations below panic.
+            if ce > current_num_cols {
+                current_num_cols = ce;
+            }
             let mut r = 0;
             loop {
                 let re = r + row_span;
-                grow_occupancy(&mut occupancy, re, num_cols);
+                grow_occupancy_to(&mut occupancy, re, current_num_cols);
                 if is_area_free(&occupancy, cs, ce, r, re) {
                     mark_occupied(&mut occupancy, cs, ce, r, re);
                     items.push(GridItem {
@@ -348,14 +367,25 @@ fn place_grid_items(
             }
         } else {
             // Fully auto-placed: scan from cursor.
+            //
+            // Auto-placed items with a `col_span` wider than the
+            // grid's column count would otherwise loop forever in
+            // the `ce <= num_cols` / `cursor_col + col_span >
+            // num_cols` pair of checks — the cursor would advance,
+            // never find room, and never grow the grid either.
+            // Grow the implicit column count up front so the
+            // item always has somewhere to land.
+            if col_span > current_num_cols {
+                current_num_cols = col_span;
+            }
             match auto_flow {
                 GridAutoFlow::Row => {
                     loop {
                         let ce = cursor_col + col_span;
                         let re = cursor_row + row_span;
 
-                        if ce <= num_cols {
-                            grow_occupancy(&mut occupancy, re, num_cols);
+                        if ce <= current_num_cols {
+                            grow_occupancy_to(&mut occupancy, re, current_num_cols);
                             if is_area_free(&occupancy, cursor_col, ce, cursor_row, re) {
                                 mark_occupied(&mut occupancy, cursor_col, ce, cursor_row, re);
                                 items.push(GridItem {
@@ -373,7 +403,7 @@ fn place_grid_items(
 
                         // Advance cursor.
                         cursor_col += 1;
-                        if cursor_col + col_span > num_cols {
+                        if cursor_col + col_span > current_num_cols {
                             cursor_col = 0;
                             cursor_row += 1;
                         }
@@ -384,8 +414,10 @@ fn place_grid_items(
                         let ce = cursor_col + col_span;
                         let re = cursor_row + row_span;
 
-                        grow_occupancy(&mut occupancy, re, num_cols);
-                        if ce <= num_cols && is_area_free(&occupancy, cursor_col, ce, cursor_row, re) {
+                        grow_occupancy_to(&mut occupancy, re, current_num_cols);
+                        if ce <= current_num_cols
+                            && is_area_free(&occupancy, cursor_col, ce, cursor_row, re)
+                        {
                             mark_occupied(&mut occupancy, cursor_col, ce, cursor_row, re);
                             items.push(GridItem {
                                 child_index: idx,
@@ -404,7 +436,7 @@ fn place_grid_items(
                         if cursor_row + row_span > occupancy.len() + 1 {
                             cursor_row = 0;
                             cursor_col += 1;
-                            if cursor_col >= num_cols {
+                            if cursor_col >= current_num_cols {
                                 cursor_col = 0;
                                 // Need more rows
                                 cursor_row = occupancy.len();
@@ -483,10 +515,40 @@ fn resolve_item_span(start: GridLine, end: GridLine) -> usize {
     1
 }
 
-/// Grow the occupancy grid to have at least `min_rows` rows.
-fn grow_occupancy(occupancy: &mut Vec<Vec<bool>>, min_rows: usize, num_cols: usize) {
+/// Grow the occupancy grid to at least `min_rows` × `min_cols`.
+///
+/// [§ 7.1 The Explicit Grid](https://www.w3.org/TR/css-grid-1/#explicit-grids)
+/// [§ 7.2 The Implicit Grid](https://www.w3.org/TR/css-grid-1/#implicit-grids)
+///
+/// "When grid items are positioned outside of these bounds, the
+/// grid container generates implicit grid tracks by adding implicit
+/// grid lines to the grid."
+///
+/// Historically this helper only grew rows (the `num_cols` argument
+/// was the width of *new* rows, not a minimum for existing ones),
+/// which meant any item whose explicit `col_end` exceeded the
+/// container's `num_cols` would trigger a slice panic inside
+/// `is_area_free` or `mark_occupied`. The common case on real pages
+/// is a grid with no `grid-template-columns` (defaulting to a single
+/// column) that contains items using `grid-column: span 2` or
+/// `grid-column: 1 / 3` — overleaf.com hits this.
+///
+/// Now we widen existing rows too, creating implicit columns on
+/// demand. Callers that need `num_cols` to reflect the grown width
+/// should read it back from the widened rows, or track it
+/// themselves alongside this call.
+fn grow_occupancy_to(occupancy: &mut Vec<Vec<bool>>, min_rows: usize, min_cols: usize) {
+    // Widen every existing row to the new minimum column count.
+    // No-op when `min_cols` hasn't grown.
+    for row in occupancy.iter_mut() {
+        if row.len() < min_cols {
+            row.resize(min_cols, false);
+        }
+    }
+    // Append new rows at the new width so the whole grid stays
+    // rectangular.
     while occupancy.len() < min_rows {
-        occupancy.push(vec![false; num_cols]);
+        occupancy.push(vec![false; min_cols]);
     }
 }
 

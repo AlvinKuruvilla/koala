@@ -2472,6 +2472,58 @@ fn test_input_checkbox_intrinsic_size() {
 // [§ 12 Grid Sizing](https://www.w3.org/TR/css-grid-1/#layout-algorithm)
 // ===========================================================================
 
+/// Regression test for a slice-out-of-bounds panic in
+/// `is_area_free` / `mark_occupied`. A default 1-column grid
+/// containing an item that spans beyond the explicit column
+/// count used to panic with
+/// "range end index 2 out of range for slice of length 1"
+/// because the occupancy grid only grew in the row dimension.
+/// Per CSS Grid § 7.2 the implicit grid must grow in either
+/// direction when items overflow, so the occupancy grid widens
+/// existing rows now. The test just has to lay out without
+/// panicking — exact placement is verified by the other
+/// auto-placement tests.
+#[test]
+fn test_grid_item_overflowing_explicit_columns_does_not_panic() {
+    let root = layout_html(
+        "<html><head><style>\
+         .grid { display: grid; }\
+         .span2 { grid-column: 1 / 3; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='span2'>wide</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    assert_eq!(grid.display.inner, InnerDisplayType::Grid);
+    assert_eq!(grid.children.len(), 1);
+}
+
+/// Same regression, via `span` keyword rather than an explicit
+/// end line. `grid-column: span 2` on a single-column grid
+/// previously panicked identically because the auto-placement
+/// cursor would try to slice past the end of a 1-wide occupancy
+/// row. The implicit grid now widens to accommodate.
+#[test]
+fn test_grid_auto_placed_span_wider_than_grid_does_not_panic() {
+    let root = layout_html(
+        "<html><head><style>\
+         .grid { display: grid; }\
+         .wide { grid-column: span 2; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='wide'>item</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    assert_eq!(grid.display.inner, InnerDisplayType::Grid);
+    assert_eq!(grid.children.len(), 1);
+}
+
 /// `display: grid` produces a grid container with the correct display value.
 #[test]
 fn test_grid_container_recognized() {
