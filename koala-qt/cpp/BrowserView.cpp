@@ -6,11 +6,12 @@
 // difference is invisible and keeping the format identical avoids a
 // per-scanline conversion.
 //
-// Scanline copy: we could construct a non-owning `QImage` that
-// references the `rust::Vec<uint8_t>` bytes directly, but then the
-// Vec would need to outlive the QImage (which includes spans where
-// Qt keeps an internal copy for DPR scaling). A one-time memcpy into
-// a self-owning QImage is cheap and removes the lifetime coupling.
+// Threading: the render pipeline runs on a dedicated Rust worker
+// thread inside `BrowserPage`. This widget only sees it through two
+// non-blocking cxx calls (`request_render` and `try_take_render_result`).
+// Frame delivery uses a `QTimer` polling at ~60 Hz rather than an
+// event-driven callback because that keeps the bridge surface small
+// and avoids marshalling callbacks across the Rust/C++ boundary.
 
 #include "BrowserView.h"
 
@@ -18,6 +19,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -25,94 +27,118 @@
 
 namespace koala {
 
+namespace {
+// ~60 Hz poll. Adds at most ~16 ms between a frame finishing on the
+// worker and reaching the screen. For a ~180 ms rasterize that's
+// imperceptible; for much faster rasterizes (future GPU backend) we
+// should switch to event-driven delivery.
+constexpr int kPollIntervalMs = 16;
+}
+
 BrowserView::BrowserView(QWidget* parent)
     : QWidget(parent)
     , m_page(new_browser_page())
 {
-    // A background colour lands underneath the rendered content
-    // during the brief window before the first render completes.
     setAutoFillBackground(true);
     auto pal = palette();
     pal.setColor(QPalette::Window, Qt::white);
     setPalette(pal);
+
+    m_poll_timer = new QTimer(this);
+    m_poll_timer->setInterval(kPollIntervalMs);
+    connect(m_poll_timer, &QTimer::timeout, this, &BrowserView::poll_render_result);
+    m_poll_timer->start();
 }
 
 void BrowserView::load_landing_page()
 {
     m_page->load_landing_page();
-    re_render();
+    request_render();
 }
 
 void BrowserView::load_html(QString const& html)
 {
     auto const utf8 = html.toUtf8();
-    m_page->load_html(rust::Str(utf8.constData(), static_cast<size_t>(utf8.size())));
-    re_render();
+    m_page->load_html(rust::Str(utf8.constData(), static_cast<std::size_t>(utf8.size())));
+    request_render();
 }
 
 void BrowserView::reload_current()
 {
-    re_render();
+    request_render();
 }
 
 void BrowserView::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter painter(this);
+    // Fill the whole widget with the background first so any area
+    // the cached frame doesn't cover (the new strip revealed during
+    // a resize-larger, for example) shows cleanly instead of
+    // garbage.
+    painter.fillRect(rect(), Qt::white);
     if (m_image.isNull()) {
-        painter.fillRect(rect(), Qt::white);
         return;
     }
+    // Draw the cached frame at its natural size (no stretch). During
+    // an active resize the frame may not fill the widget — that's
+    // fine, the debounced `m_resize_debounce` timer posts a fresh
+    // render shortly after the drag pauses.
     painter.drawImage(QPoint(0, 0), m_image);
 }
 
 void BrowserView::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    re_render();
+    // Post a render on every resize event. The worker coalesces
+    // queued jobs so intermediate sizes never actually hit the
+    // rasterizer — we end up with one render per worker cycle
+    // (~180 ms for the landing page), which is slow but gives
+    // the user live content updates during a drag instead of a
+    // frozen frame. The real fix is a faster rasterizer; until
+    // then this is the least-bad trade-off.
+    request_render();
 }
 
-void BrowserView::re_render()
+void BrowserView::request_render()
 {
-    // Bail out cheaply for degenerate sizes. Qt calls `resizeEvent`
-    // with zero-sized geometries during tab creation and teardown.
     if (width() <= 0 || height() <= 0) {
-        m_image = QImage();
-        update();
         return;
     }
 
-    // Render at physical pixels so HiDPI displays get crisp output.
-    // We tag the resulting `QImage` with the same ratio so Qt draws
-    // it at the logical widget size.
     qreal const dpr = devicePixelRatioF();
     int const physical_w = std::max(1, static_cast<int>(std::round(width() * dpr)));
     int const physical_h = std::max(1, static_cast<int>(std::round(height() * dpr)));
 
-    rust::Vec<std::uint8_t> pixels = m_page->render_to_rgba(
+    m_page->request_render(
         static_cast<std::uint32_t>(physical_w),
         static_cast<std::uint32_t>(physical_h));
+}
 
-    auto const expected = static_cast<std::size_t>(physical_w)
-        * static_cast<std::size_t>(physical_h) * 4;
-    if (pixels.size() != expected) {
-        // Pipeline returned a buffer that doesn't match the requested
-        // size — bail rather than paint garbage. This only happens if
-        // the Rust side hit an error path we haven't surfaced yet.
-        m_image = QImage();
-        update();
+void BrowserView::poll_render_result()
+{
+    auto const result = m_page->try_take_render_result();
+    if (result.pixels.size() == 0) {
         return;
     }
 
-    QImage image(physical_w, physical_h, QImage::Format_RGBA8888);
-    // `QImage::scanLine` stride (`bytesPerLine`) may be >4*w on some
-    // platforms due to alignment; copy row by row to be safe even
-    // though the current Qt builds use exactly 4*w.
-    std::size_t const src_stride = static_cast<std::size_t>(physical_w) * 4;
-    for (int y = 0; y < physical_h; ++y) {
-        auto* dst = image.scanLine(y);
-        std::memcpy(dst, pixels.data() + static_cast<std::size_t>(y) * src_stride, src_stride);
+    auto const w = static_cast<int>(result.width);
+    auto const h = static_cast<int>(result.height);
+    auto const expected = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4;
+    if (result.pixels.size() != expected) {
+        // Malformed frame — skip rather than paint garbage.
+        return;
     }
-    image.setDevicePixelRatio(dpr);
+
+    QImage image(w, h, QImage::Format_RGBA8888);
+    std::size_t const src_stride = static_cast<std::size_t>(w) * 4;
+    for (int y = 0; y < h; ++y) {
+        auto* dst = image.scanLine(y);
+        std::memcpy(
+            dst,
+            result.pixels.data() + static_cast<std::size_t>(y) * src_stride,
+            src_stride);
+    }
+    image.setDevicePixelRatio(devicePixelRatioF());
     m_image = std::move(image);
     update();
 }
