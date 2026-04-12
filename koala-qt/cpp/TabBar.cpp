@@ -10,9 +10,19 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
+
+namespace {
+// ~12 fps rotation. Each tick advances the angle by 30° so a full
+// revolution takes ~1 second — matching the Chrome/Safari loading
+// spinner cadence. Any faster and the motion distracts; any slower
+// and the user wonders if the browser is stuck.
+constexpr int kSpinnerIntervalMs = 80;
+constexpr int kSpinnerStepDegrees = 30;
+}
 
 namespace koala {
 
@@ -165,6 +175,13 @@ TabWidget::TabWidget(QWidget* parent)
         m_stacked_widget->setCurrentIndex(m_tab_bar->currentIndex());
         m_stacked_widget->blockSignals(false);
     });
+
+    // Spinner animation timer. Starts only while at least one tab
+    // is in `m_loading_tabs`, stops as soon as the set is empty, so
+    // idle tabs don't keep a timer running for nothing.
+    m_spinner_timer = new QTimer(this);
+    m_spinner_timer->setInterval(kSpinnerIntervalMs);
+    connect(m_spinner_timer, &QTimer::timeout, this, &TabWidget::tick_spinner);
 }
 
 Tab* TabWidget::current_tab() const
@@ -185,6 +202,30 @@ void TabWidget::add_tab(QWidget* widget, QString const& label)
     }
     m_tab_bar->setCurrentIndex(bar_index);
     update_tab_layout();
+
+    // Wire the tab's load signals to the spinner bookkeeping. We
+    // only do this for `Tab` instances; any other widget added to
+    // the tab container (e.g. a settings page) just won't get a
+    // spinner.
+    if (auto* tab = qobject_cast<Tab*>(widget)) {
+        connect(tab, &Tab::tabLoadStarted, this, [this, tab]() {
+            m_loading_tabs.insert(tab);
+            if (!m_spinner_timer->isActive()) {
+                m_spinner_timer->start();
+            }
+            paint_spinner_on(tab);
+        });
+        connect(tab, &Tab::tabLoadFinished, this, [this, tab]() {
+            m_loading_tabs.remove(tab);
+            if (m_loading_tabs.isEmpty()) {
+                m_spinner_timer->stop();
+            }
+            int const idx = m_stacked_widget->indexOf(tab);
+            if (idx >= 0) {
+                m_tab_bar->setTabIcon(idx, QIcon());
+            }
+        });
+    }
 }
 
 void TabWidget::remove_tab(int index)
@@ -195,6 +236,14 @@ void TabWidget::remove_tab(int index)
 
     auto* widget = m_stacked_widget->widget(index);
     m_stacked_widget->removeWidget(widget);
+    // If the tab was in the loading set, drop it so the spinner
+    // timer can stop when the set empties.
+    if (auto* tab = qobject_cast<Tab*>(widget)) {
+        m_loading_tabs.remove(tab);
+        if (m_loading_tabs.isEmpty()) {
+            m_spinner_timer->stop();
+        }
+    }
     if (widget != nullptr) {
         widget->deleteLater();
     }
@@ -236,6 +285,26 @@ void TabWidget::update_tab_layout()
     int const button_width = m_new_tab_button->sizeHint().width();
     int const available_for_tabs = width() - button_width;
     m_tab_bar->set_available_width(available_for_tabs);
+}
+
+void TabWidget::tick_spinner()
+{
+    // Wrap at 360 so the angle value stays small; cosmetically it
+    // doesn't matter where it wraps.
+    m_spinner_angle = (m_spinner_angle + kSpinnerStepDegrees) % 360;
+    for (Tab* tab : m_loading_tabs) {
+        paint_spinner_on(tab);
+    }
+}
+
+void TabWidget::paint_spinner_on(Tab* tab)
+{
+    int const idx = m_stacked_widget->indexOf(tab);
+    if (idx < 0) {
+        return;
+    }
+    auto const color = palette().color(QPalette::WindowText);
+    m_tab_bar->setTabIcon(idx, icons::spinner(color, m_spinner_angle));
 }
 
 }

@@ -44,12 +44,37 @@ public slots:
     // matching the behaviour of ⌘L / Ctrl+L in mainstream browsers.
     void focus_location_edit();
 
+signals:
+    // Emitted when this tab enters the loading state (first load
+    // request became in-flight). `TabWidget` listens for this to
+    // start showing a spinner on this tab's bar entry.
+    void tabLoadStarted();
+
+    // Emitted when the last in-flight load for this tab completes.
+    // `TabWidget` listens for this to clear the spinner.
+    void tabLoadFinished();
+
+private slots:
+    // Wired to `BrowserView::loadStarted`. Increments an in-flight
+    // load counter and emits `tabLoadStarted` when the counter
+    // leaves zero. The counter prevents overlapping navigations
+    // from making the spinner flicker on/off.
+    void on_load_started();
+
+    // Wired to `BrowserView::loadFinished`. Decrements the counter
+    // and emits `tabLoadFinished` when it hits zero.
+    void on_load_finished();
+
 private:
     void build_toolbar();
 
     QToolBar* m_toolbar { nullptr };
     LocationEdit* m_location_edit { nullptr };
     BrowserView* m_view { nullptr };
+    // Count of in-flight loads. Debounces the `tabLoadStarted` /
+    // `tabLoadFinished` signal pair across overlapping navigations
+    // so the tab spinner doesn't flicker on/off.
+    int m_active_loads { 0 };
 
     QAction* m_back_action { nullptr };
     QAction* m_forward_action { nullptr };

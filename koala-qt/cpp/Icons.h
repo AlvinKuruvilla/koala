@@ -40,4 +40,11 @@ QIcon home(QColor const& color);
 // Plus sign (New Tab button).
 QIcon plus(QColor const& color);
 
+// Rotating three-quarter-circle spinner for loading tabs. `angle_degrees`
+// is the rotation offset — the caller (`TabWidget::tick_spinner`) advances
+// it on a timer to animate the spin. Drawn with the same stroke weight
+// and stroke colour conventions as the other chrome icons so it fits
+// into a `QTabBar` icon slot alongside them.
+QIcon spinner(QColor const& color, int angle_degrees);
+
 }

@@ -39,6 +39,9 @@ Tab::Tab(QWidget* parent)
     m_view = new BrowserView(this);
     m_view->load_landing_page();
     layout->addWidget(m_view, /*stretch=*/1);
+
+    connect(m_view, &BrowserView::loadStarted, this, &Tab::on_load_started);
+    connect(m_view, &BrowserView::loadFinished, this, &Tab::on_load_finished);
 }
 
 QString Tab::url_text() const
@@ -90,6 +93,21 @@ void Tab::focus_location_edit()
 {
     m_location_edit->setFocus(Qt::ShortcutFocusReason);
     m_location_edit->selectAll();
+}
+
+void Tab::on_load_started()
+{
+    if (m_active_loads++ == 0) {
+        emit tabLoadStarted();
+    }
+}
+
+void Tab::on_load_finished()
+{
+    if (--m_active_loads <= 0) {
+        m_active_loads = 0;
+        emit tabLoadFinished();
+    }
 }
 
 void Tab::build_toolbar()

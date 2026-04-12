@@ -24,6 +24,7 @@
 #pragma once
 
 #include <QPointer>
+#include <QSet>
 #include <QSize>
 #include <QStackedWidget>
 #include <QTabBar>
@@ -33,6 +34,7 @@
 class QEvent;
 class QMouseEvent;
 class QResizeEvent;
+class QTimer;
 
 namespace koala {
 
@@ -106,16 +108,32 @@ protected:
     bool event(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
+private slots:
+    // Advances the spinner rotation angle and repaints the tab icon
+    // for every tab currently in `m_loading_tabs`. Fired by
+    // `m_spinner_timer` while at least one tab is loading.
+    void tick_spinner();
+
 private:
     // Recomputes the horizontal space available to the tab bar itself
     // (window width minus the new-tab button) and pushes it into
     // `TabBar::set_available_width`.
     void update_tab_layout();
 
+    // Repaints `tab`'s bar icon at the current spinner angle.
+    void paint_spinner_on(Tab* tab);
+
     TabBar* m_tab_bar { nullptr };
     QStackedWidget* m_stacked_widget { nullptr };
     QToolButton* m_new_tab_button { nullptr };
     QWidget* m_tab_bar_row { nullptr };
+
+    // One shared timer + angle for the whole window — all loading
+    // tabs rotate in lockstep, which matches how Chrome behaves and
+    // avoids proliferating per-tab QTimers.
+    QTimer* m_spinner_timer { nullptr };
+    int m_spinner_angle { 0 };
+    QSet<Tab*> m_loading_tabs;
 };
 
 }

@@ -178,4 +178,25 @@ QIcon plus(QColor const& color)
     return QIcon(pixmap);
 }
 
+QIcon spinner(QColor const& color, int angle_degrees)
+{
+    // 270° arc inside the same inset rectangle the `reload` icon
+    // uses, minus the arrowhead. `drawArc` takes 1/16° units; a
+    // negative span sweeps clockwise from the start angle. The
+    // caller advances `angle_degrees` on a timer to animate the
+    // rotation.
+    auto pixmap = blank_pixmap();
+    QPainter p(&pixmap);
+    configure_painter(p, color, /*stroke_width=*/3.0);
+
+    qreal const pad = kRasterSize * 0.22;
+    QRectF const rect(pad, pad, kRasterSize - 2 * pad, kRasterSize - 2 * pad);
+
+    int const start_angle = angle_degrees * 16;
+    int const sweep = -270 * 16;
+    p.drawArc(rect, start_angle, sweep);
+
+    return QIcon(pixmap);
+}
+
 }
