@@ -203,10 +203,10 @@ void TabWidget::add_tab(QWidget* widget, QString const& label)
     m_tab_bar->setCurrentIndex(bar_index);
     update_tab_layout();
 
-    // Wire the tab's load signals to the spinner bookkeeping. We
-    // only do this for `Tab` instances; any other widget added to
-    // the tab container (e.g. a settings page) just won't get a
-    // spinner.
+    // Wire the tab's load + title signals. We only do this for
+    // `Tab` instances; any other widget added to the tab
+    // container (e.g. a settings page) just won't get a spinner
+    // or an auto-updating label.
     if (auto* tab = qobject_cast<Tab*>(widget)) {
         connect(tab, &Tab::tabLoadStarted, this, [this, tab]() {
             m_loading_tabs.insert(tab);
@@ -224,6 +224,18 @@ void TabWidget::add_tab(QWidget* widget, QString const& label)
             if (idx >= 0) {
                 m_tab_bar->setTabIcon(idx, QIcon());
             }
+        });
+        connect(tab, &Tab::tabTitleChanged, this, [this, tab](QString const& title) {
+            int const idx = m_stacked_widget->indexOf(tab);
+            if (idx < 0) {
+                return;
+            }
+            // Fall back to the default label when the document
+            // has no title — avoids the tab going blank on
+            // untitled pages.
+            m_tab_bar->setTabText(
+                idx,
+                title.isEmpty() ? QStringLiteral("New Tab") : title);
         });
     }
 }

@@ -60,6 +60,12 @@ void BrowserView::load_html(QString const& html)
 {
     auto const utf8 = html.toUtf8();
     m_page->load_html(rust::Str(utf8.constData(), static_cast<std::size_t>(utf8.size())));
+    // Synchronous load: the new title is available immediately,
+    // no worker round trip needed.
+    {
+        rust::String title = m_page->current_title();
+        emit titleChanged(QString::fromUtf8(title.data(), static_cast<int>(title.size())));
+    }
     request_render();
 }
 
@@ -84,6 +90,30 @@ void BrowserView::reload_current()
     } else {
         request_render();
     }
+}
+
+void BrowserView::go_back()
+{
+    if (m_page->go_back()) {
+        emit loadStarted();
+    }
+}
+
+void BrowserView::go_forward()
+{
+    if (m_page->go_forward()) {
+        emit loadStarted();
+    }
+}
+
+bool BrowserView::can_go_back() const
+{
+    return m_page->can_go_back();
+}
+
+bool BrowserView::can_go_forward() const
+{
+    return m_page->can_go_forward();
 }
 
 void BrowserView::paintEvent(QPaintEvent* /*event*/)
@@ -142,6 +172,10 @@ void BrowserView::poll_render_result()
     auto const load_update = m_page->try_take_load_result();
     if (load_update.state_swapped) {
         request_render();
+        {
+        rust::String title = m_page->current_title();
+        emit titleChanged(QString::fromUtf8(title.data(), static_cast<int>(title.size())));
+    }
     }
     if (load_update.load_finished) {
         emit loadFinished();

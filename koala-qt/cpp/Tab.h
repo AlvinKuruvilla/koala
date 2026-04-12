@@ -54,6 +54,12 @@ signals:
     // `TabWidget` listens for this to clear the spinner.
     void tabLoadFinished();
 
+    // Forwards `BrowserView::titleChanged` for the `TabWidget` to
+    // use as the tab bar label. Empty string when the current
+    // document has no `<title>` — callers should fall back to a
+    // default like "New Tab" in that case.
+    void tabTitleChanged(QString const& title);
+
 private slots:
     // Wired to `BrowserView::loadStarted`. Increments an in-flight
     // load counter and emits `tabLoadStarted` when the counter
@@ -62,8 +68,17 @@ private slots:
     void on_load_started();
 
     // Wired to `BrowserView::loadFinished`. Decrements the counter
-    // and emits `tabLoadFinished` when it hits zero.
+    // and emits `tabLoadFinished` when it hits zero. Also refreshes
+    // the Back/Forward action enabled state so the toolbar reflects
+    // the new history position.
     void on_load_finished();
+
+private:
+    // Refreshes the enabled state of the Back and Forward toolbar
+    // actions from `BrowserView::can_go_back` /
+    // `can_go_forward`. Called after every `go_back` / `go_forward`
+    // / `on_load_finished` so the chrome tracks the history stack.
+    void update_history_actions();
 
 private:
     void build_toolbar();

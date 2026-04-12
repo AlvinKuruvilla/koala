@@ -76,6 +76,30 @@ pub mod ffi {
         /// is nothing to re-fetch.
         fn reload_current_url(self: &BrowserPage) -> bool;
 
+        /// Navigate one step back in the per-tab history stack,
+        /// queueing a load for the previous URL. Returns `true`
+        /// when a back-navigation was issued (there was an earlier
+        /// entry), `false` otherwise.
+        fn go_back(self: &mut BrowserPage) -> bool;
+
+        /// Navigate one step forward in the per-tab history stack.
+        /// Returns `true` when a forward navigation was issued.
+        fn go_forward(self: &mut BrowserPage) -> bool;
+
+        /// Whether `go_back` would do anything. Drives the Back
+        /// toolbar action's enabled state.
+        fn can_go_back(self: &BrowserPage) -> bool;
+
+        /// Whether `go_forward` would do anything. Drives the
+        /// Forward toolbar action's enabled state.
+        fn can_go_forward(self: &BrowserPage) -> bool;
+
+        /// The current document's `<title>` text, or an empty
+        /// string when there is no current document or its title
+        /// element is empty. Read by `BrowserView` after every
+        /// load to update the tab label.
+        fn current_title(self: &BrowserPage) -> String;
+
         /// Non-blocking check for a completed URL load. See the
         /// `LoadPollResult` docs for the meaning of the two flags.
         fn try_take_load_result(self: &mut BrowserPage) -> LoadPollResult;

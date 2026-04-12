@@ -51,6 +51,19 @@ public:
     // Reload action.
     void reload_current();
 
+    // Navigate one step back / forward in the per-tab history
+    // stack. Returns immediately; the actual content appears once
+    // the loader worker finishes the re-fetch. Wired to the Tab
+    // toolbar's Back / Forward actions.
+    void go_back();
+    void go_forward();
+
+    // Queries used by `Tab` to enable/disable the toolbar
+    // Back/Forward actions after every load. Both forward directly
+    // into `BrowserPage`.
+    bool can_go_back() const;
+    bool can_go_forward() const;
+
 signals:
     // Emitted once when the view hands a load request off to the
     // loader worker (either via `load_url` or a successful
@@ -62,6 +75,13 @@ signals:
     // finishes the request, whether the load succeeded or failed.
     // `Tab` listens for this to hide its progress indicator.
     void loadFinished();
+
+    // Emitted after a successful load (either async via the
+    // loader worker or synchronous via `load_html`) with the
+    // new document's `<title>` text. Empty string when the
+    // document has no `<title>` element. `TabWidget` listens
+    // for this to update the tab bar label.
+    void titleChanged(QString const& title);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

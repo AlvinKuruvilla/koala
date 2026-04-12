@@ -42,6 +42,7 @@ Tab::Tab(QWidget* parent)
 
     connect(m_view, &BrowserView::loadStarted, this, &Tab::on_load_started);
     connect(m_view, &BrowserView::loadFinished, this, &Tab::on_load_finished);
+    connect(m_view, &BrowserView::titleChanged, this, &Tab::tabTitleChanged);
 }
 
 QString Tab::url_text() const
@@ -51,14 +52,14 @@ QString Tab::url_text() const
 
 void Tab::go_back()
 {
-    // History navigation still needs a per-tab back/forward stack,
-    // which lands when URL navigation is wired up.
-    qInfo() << "Tab::go_back (stub)";
+    m_view->go_back();
+    update_history_actions();
 }
 
 void Tab::go_forward()
 {
-    qInfo() << "Tab::go_forward (stub)";
+    m_view->go_forward();
+    update_history_actions();
 }
 
 void Tab::reload()
@@ -108,6 +109,13 @@ void Tab::on_load_finished()
         m_active_loads = 0;
         emit tabLoadFinished();
     }
+    update_history_actions();
+}
+
+void Tab::update_history_actions()
+{
+    m_back_action->setEnabled(m_view->can_go_back());
+    m_forward_action->setEnabled(m_view->can_go_forward());
 }
 
 void Tab::build_toolbar()
@@ -136,6 +144,12 @@ void Tab::build_toolbar()
     m_home_action = m_toolbar->addAction(
         icons::home(icon_color),
         QStringLiteral("Home"));
+
+    // Back and Forward start disabled — there's no history until
+    // the user navigates somewhere. `update_history_actions` flips
+    // them on once `BrowserView::can_go_*` returns true.
+    m_back_action->setEnabled(false);
+    m_forward_action->setEnabled(false);
 
     connect(m_back_action, &QAction::triggered, this, &Tab::go_back);
     connect(m_forward_action, &QAction::triggered, this, &Tab::go_forward);

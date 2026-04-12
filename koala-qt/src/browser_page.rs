@@ -73,6 +73,10 @@ struct PageState {
     styles: std::collections::HashMap<NodeId, ComputedStyle>,
     layout_tree: LayoutBox,
     images: std::collections::HashMap<String, LoadedImage>,
+    // The document's `<title>` text content, trimmed. Empty when
+    // the document has no `<title>` element or its text is
+    // whitespace-only. Used to set the tab label.
+    title: String,
 }
 
 impl PageState {
@@ -81,13 +85,41 @@ impl PageState {
     /// parse-time debris. Returns `None` if the document produced
     /// no layout tree (happens only on pathological input).
     fn from_document(doc: LoadedDocument) -> Option<Self> {
+        let title = extract_title(&doc.dom);
         doc.layout_tree.map(|layout_tree| Self {
             dom: doc.dom,
             styles: doc.styles,
             layout_tree,
             images: doc.images,
+            title,
         })
     }
+}
+
+/// Walks the DOM for the first `<title>` element and returns its
+/// text content, trimmed. Returns an empty string when no `<title>`
+/// element is present. Matches the idiom koala-browser uses for
+/// `<script>` text extraction.
+fn extract_title(dom: &DomTree) -> String {
+    for node_id in dom.iter_all() {
+        let Some(element) = dom.as_element(node_id) else {
+            continue;
+        };
+        if !element.tag_name.eq_ignore_ascii_case("title") {
+            continue;
+        }
+        let mut text = String::new();
+        for child_id in dom.children(node_id) {
+            if let Some(child_text) = dom.as_text(*child_id) {
+                text.push_str(child_text);
+            }
+        }
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+    String::new()
 }
 
 /// A single render request sent from the GUI thread to the render worker.
@@ -97,17 +129,53 @@ struct RenderJob {
     height: u32,
 }
 
+/// Where a load request came from. Used by `try_take_load_result`
+/// to decide whether to push onto the history stack (fresh
+/// user-initiated navigation) or just swap state without touching
+/// history (Back/Forward re-fetching an entry that's already there).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoadSource {
+    UserNavigation,
+    HistoryNavigation,
+}
+
+/// A single entry in the per-tab history stack.
+///
+/// We need more than a flat `Vec<String>` because the built-in
+/// landing page is also a history entry the user can navigate back
+/// to — it lives in memory and has no URL. The enum lets `go_back`
+/// dispatch to either the loader worker (for `Url`) or a
+/// synchronous in-process render (for `Landing`).
+#[derive(Clone)]
+enum HistoryEntry {
+    Url(String),
+    Landing,
+}
+
 /// A single load request sent from the GUI thread to the loader worker.
 struct LoadRequest {
     url: String,
+    source: LoadSource,
 }
 
 /// The loader worker's reply. Carries either a new page state or an
 /// error message — the GUI thread swaps the state in on success and
 /// logs the error on failure.
+///
+/// `BrowserPage` also injects `Loaded` results directly into the
+/// channel from the GUI thread when the user hits Back/Forward onto
+/// a `HistoryEntry::Landing` entry, so the main poll loop handles
+/// both async and sync state changes through the same code path.
 enum LoadResult {
-    Loaded { url: String, state: Arc<PageState> },
-    Failed { url: String, error: String },
+    Loaded {
+        url: String,
+        source: LoadSource,
+        state: Arc<PageState>,
+    },
+    Failed {
+        url: String,
+        error: String,
+    },
 }
 
 pub struct BrowserPage {
@@ -121,6 +189,19 @@ pub struct BrowserPage {
     // `reload_current_url` to re-fetch the same address.
     current_url: Option<String>,
 
+    // Per-tab history stack. `history[history_index]` is the entry
+    // currently being displayed. Entries can be either URLs (loaded
+    // through the loader worker) or the built-in landing page, so
+    // a user can Back from their first navigated URL to the new-tab
+    // page the same way every mainstream browser allows.
+    //
+    // A fresh user navigation truncates everything after
+    // `history_index` before pushing the new entry, matching how
+    // real browsers drop the "forward" history when you navigate
+    // somewhere new from a back-stack position.
+    history: Vec<HistoryEntry>,
+    history_index: Option<usize>,
+
     // Channels to and from the render worker.
     render_job_tx: Sender<RenderJob>,
     render_result_rx: Receiver<RenderResult>,
@@ -129,6 +210,11 @@ pub struct BrowserPage {
     // Channels to and from the loader worker.
     load_request_tx: Sender<LoadRequest>,
     load_result_rx: Receiver<LoadResult>,
+    // Second sender on the same channel as `load_result_rx`, held
+    // by the GUI thread so `go_back` / `go_forward` can inject
+    // synthetic results when a history entry is the in-memory
+    // landing page rather than a URL the worker would fetch.
+    load_result_tx_main: Sender<LoadResult>,
     _load_worker: JoinHandle<()>,
 }
 
@@ -143,36 +229,53 @@ impl BrowserPage {
 
         let (load_request_tx, load_request_rx) = mpsc::channel::<LoadRequest>();
         let (load_result_tx, load_result_rx) = mpsc::channel::<LoadResult>();
+        let load_result_tx_for_worker = load_result_tx.clone();
         let load_worker = thread::Builder::new()
             .name("koala-qt-loader".to_owned())
-            .spawn(move || run_load_worker(&load_request_rx, &load_result_tx))
+            .spawn(move || run_load_worker(&load_request_rx, &load_result_tx_for_worker))
             .expect("failed to spawn koala-qt loader worker");
 
         Self {
             state: None,
             current_url: None,
+            history: Vec::new(),
+            history_index: None,
             render_job_tx,
             render_result_rx,
             _render_worker: render_worker,
             load_request_tx,
             load_result_rx,
+            load_result_tx_main: load_result_tx,
             _load_worker: load_worker,
         }
     }
 
     /// Parses `html` on the calling thread and replaces the current
-    /// page state synchronously. Used for the built-in landing page
-    /// and for any caller that already has the raw HTML in hand.
+    /// page state synchronously. Used for ad-hoc in-memory HTML
+    /// (tests, debugging) — clears the history stack because the
+    /// HTML has no identity the user could navigate back to.
     pub fn load_html(&mut self, html: &str) {
         self.state = PageState::from_document(parse_html_string(html)).map(Arc::new);
         self.current_url = None;
+        self.history.clear();
+        self.history_index = None;
     }
 
     /// Loads the built-in landing page (see `landing.rs`). Runs
     /// synchronously — no worker hop, since the HTML is already in
     /// memory and the parse is ~3 ms.
+    ///
+    /// Unlike `load_html`, this seeds the history stack with a
+    /// sentinel `HistoryEntry::Landing` so pressing Back from the
+    /// user's first fetched URL takes them back to the landing
+    /// page instead of hitting a disabled button.
     pub fn load_landing_page(&mut self) {
-        self.load_html(crate::landing::LANDING_HTML);
+        self.state =
+            PageState::from_document(parse_html_string(crate::landing::LANDING_HTML)).map(Arc::new);
+        self.current_url = None;
+        self.history.clear();
+        self.history.push(HistoryEntry::Landing);
+        self.history_index = Some(0);
     }
 
     /// Queues a URL load on the loader worker. Returns immediately;
@@ -184,6 +287,7 @@ impl BrowserPage {
     pub fn request_load(&self, url: &str) {
         let _ = self.load_request_tx.send(LoadRequest {
             url: url.to_owned(),
+            source: LoadSource::UserNavigation,
         });
     }
 
@@ -191,13 +295,109 @@ impl BrowserPage {
     /// `true` when a request was actually queued. `false` means
     /// the current page came from `load_html` / the built-in
     /// landing page and there is nothing to re-fetch.
+    ///
+    /// Reload is treated as a user navigation for history purposes:
+    /// it replaces the current entry without advancing the stack,
+    /// which happens naturally because `try_take_load_result`'s
+    /// truncate-then-push logic bottoms out at the same index.
     pub fn reload_current_url(&self) -> bool {
         let Some(url) = self.current_url.as_ref() else {
             return false;
         };
         self.load_request_tx
-            .send(LoadRequest { url: url.clone() })
+            .send(LoadRequest {
+                url: url.clone(),
+                source: LoadSource::UserNavigation,
+            })
             .is_ok()
+    }
+
+    /// Walks one step back in the history stack. Returns `true`
+    /// when a back-navigation was actually issued (either as an
+    /// async load request or a synthetic in-memory result for the
+    /// landing-page entry); `false` when there's nothing earlier
+    /// to navigate to.
+    pub fn go_back(&mut self) -> bool {
+        let Some(idx) = self.history_index else {
+            return false;
+        };
+        if idx == 0 {
+            return false;
+        }
+        let new_idx = idx - 1;
+        self.history_index = Some(new_idx);
+        self.navigate_to_entry(new_idx)
+    }
+
+    /// Walks one step forward in the history stack.
+    pub fn go_forward(&mut self) -> bool {
+        let Some(idx) = self.history_index else {
+            return false;
+        };
+        if idx + 1 >= self.history.len() {
+            return false;
+        }
+        let new_idx = idx + 1;
+        self.history_index = Some(new_idx);
+        self.navigate_to_entry(new_idx)
+    }
+
+    /// Dispatches on the history entry at `idx`: URLs go to the
+    /// loader worker for an async re-fetch, landing-page entries
+    /// are rendered synchronously on the calling thread and fed
+    /// back through the result channel as a synthetic
+    /// `LoadResult::Loaded` so the main poll loop picks them up
+    /// through the same code path as a worker result.
+    fn navigate_to_entry(&mut self, idx: usize) -> bool {
+        match self.history[idx].clone() {
+            HistoryEntry::Url(url) => self
+                .load_request_tx
+                .send(LoadRequest {
+                    url,
+                    source: LoadSource::HistoryNavigation,
+                })
+                .is_ok(),
+            HistoryEntry::Landing => {
+                let Some(state) =
+                    PageState::from_document(parse_html_string(crate::landing::LANDING_HTML))
+                        .map(Arc::new)
+                else {
+                    return false;
+                };
+                self.load_result_tx_main
+                    .send(LoadResult::Loaded {
+                        url: String::new(),
+                        source: LoadSource::HistoryNavigation,
+                        state,
+                    })
+                    .is_ok()
+            }
+        }
+    }
+
+    /// Whether there is an earlier entry to navigate back to.
+    /// Drives the Back toolbar action's enabled state.
+    pub fn can_go_back(&self) -> bool {
+        matches!(self.history_index, Some(i) if i > 0)
+    }
+
+    /// Whether there is a later entry to navigate forward to.
+    /// Drives the Forward toolbar action's enabled state.
+    pub fn can_go_forward(&self) -> bool {
+        match self.history_index {
+            Some(i) => i + 1 < self.history.len(),
+            None => false,
+        }
+    }
+
+    /// The current page's `<title>` text, or an empty string when
+    /// there is no current page or it has no title. Read by
+    /// `BrowserView` after every load to update the tab label.
+    pub fn current_title(&self) -> String {
+        self.state
+            .as_ref()
+            .map(|s| s.title.clone())
+            .unwrap_or_default()
     }
 
     /// Non-blocking check for a completed URL load. Both successful
@@ -205,9 +405,42 @@ impl BrowserPage {
     /// hide any spinner; only successes set `state_swapped = true`.
     pub fn try_take_load_result(&mut self) -> LoadPollResult {
         match self.load_result_rx.try_recv() {
-            Ok(LoadResult::Loaded { url, state }) => {
+            Ok(LoadResult::Loaded { url, source, state }) => {
                 self.state = Some(state);
-                self.current_url = Some(url);
+
+                match source {
+                    LoadSource::UserNavigation => {
+                        self.current_url = Some(url.clone());
+                        // Drop any "forward" entries past the
+                        // current position before pushing — a
+                        // fresh navigation from a back-stack
+                        // position replaces the tail.
+                        if let Some(idx) = self.history_index {
+                            self.history.truncate(idx + 1);
+                        }
+                        // A reload lands on the same URL we're
+                        // already displaying; avoid an infinitely
+                        // growing duplicate stack.
+                        let last_matches = matches!(
+                            self.history.last(),
+                            Some(HistoryEntry::Url(last)) if last == &url
+                        );
+                        if !last_matches {
+                            self.history.push(HistoryEntry::Url(url));
+                        }
+                        self.history_index = Some(self.history.len() - 1);
+                    }
+                    LoadSource::HistoryNavigation => {
+                        // `go_back` / `go_forward` already advanced
+                        // `history_index` when they queued the
+                        // request. For a URL entry, the fetched
+                        // URL is the new `current_url`; for the
+                        // synthetic landing-page result, `url` is
+                        // empty and there is no current URL.
+                        self.current_url = if url.is_empty() { None } else { Some(url) };
+                    }
+                }
+
                 LoadPollResult {
                     state_swapped: true,
                     load_finished: true,
@@ -292,19 +525,21 @@ fn run_load_worker(
     result_tx: &Sender<LoadResult>,
 ) {
     while let Ok(req) = request_rx.recv() {
-        let result = match load_document(&req.url) {
+        let LoadRequest { url, source } = req;
+        let result = match load_document(&url) {
             Ok(doc) => match PageState::from_document(doc) {
                 Some(state) => LoadResult::Loaded {
-                    url: req.url,
+                    url,
+                    source,
                     state: Arc::new(state),
                 },
                 None => LoadResult::Failed {
-                    url: req.url,
+                    url,
                     error: "document produced no layout tree".to_owned(),
                 },
             },
             Err(e) => LoadResult::Failed {
-                url: req.url,
+                url,
                 error: e.to_string(),
             },
         };

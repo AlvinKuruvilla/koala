@@ -141,13 +141,38 @@ void BrowserWindow::build_menu_bar()
     // History menu: back / forward / home.
     auto* history_menu = menuBar()->addMenu(QStringLiteral("&History"));
 
+    // Qt's `QKeySequence::Back` / `Forward` resolve to ⌘[ and ⌘]
+    // on macOS (the Safari convention) and Alt+Left / Alt+Right
+    // on everything else. Chrome and Firefox use ⌘←/⌘→ on macOS,
+    // which is what most users now expect. We bind *both*
+    // sequences on macOS: ⌘← fires the shortcut when focus is
+    // outside editable widgets, and ⌘[ is a fallback for when
+    // the URL bar has focus (QLineEdit swallows ⌘← as "cursor to
+    // start of line" before the shortcut gets a chance).
+    // Linux / Windows keep the Alt+arrow bindings from the
+    // standard key. Qt swaps `Meta` and `Ctrl` on macOS, so
+    // `Meta+Left` is Command+Left here.
     auto* back_action = new QAction(QStringLiteral("&Back"), this);
+#ifdef Q_OS_MACOS
+    back_action->setShortcuts({
+        QKeySequence(QStringLiteral("Meta+Left")),
+        QKeySequence(QStringLiteral("Meta+[")),
+    });
+#else
     back_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Back));
+#endif
     connect(back_action, &QAction::triggered, this, &BrowserWindow::back_current_tab);
     history_menu->addAction(back_action);
 
     auto* forward_action = new QAction(QStringLiteral("&Forward"), this);
+#ifdef Q_OS_MACOS
+    forward_action->setShortcuts({
+        QKeySequence(QStringLiteral("Meta+Right")),
+        QKeySequence(QStringLiteral("Meta+]")),
+    });
+#else
     forward_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Forward));
+#endif
     connect(forward_action, &QAction::triggered, this, &BrowserWindow::forward_current_tab);
     history_menu->addAction(forward_action);
 }
