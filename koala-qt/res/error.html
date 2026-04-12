@@ -1,124 +1,335 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Page couldn't load</title>
+<title>Render failure · Koala</title>
 <style>
+  :root {
+    --paper: #f7f5f0;
+    --ink: #1c1814;
+    --ink-muted: #6b6559;
+    --ink-faint: #a39c8c;
+    --rule: #d8d3c6;
+    --rule-soft: #e8e4d8;
+    --accent: #a85a28;
+    --accent-ink: #734021;
+    --accent-tint: #f5ebdf;
+
+    --serif: "PP Editorial New", "Reckless", "Iowan Old Style", "Apple Garamond", Georgia, serif;
+    --sans: "PP Neue Montreal", "Söhne", "Neue Haas Grotesk", -apple-system, "Helvetica Neue", sans-serif;
+    --mono: "Berkeley Mono", "JetBrains Mono", "SF Mono", "IBM Plex Mono", "Menlo", monospace;
+  }
+
   * { box-sizing: border-box; }
+
   html, body {
     margin: 0;
     padding: 0;
-    font-family: -apple-system, "SF Pro Display", "Inter", "Helvetica Neue", Arial, sans-serif;
-    background: #fafafa;
-    color: #0a0a0a;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap {
-    max-width: 680px;
+
+  .page {
+    max-width: 960px;
     margin: 0 auto;
-    padding: 144px 64px 80px;
+    padding: 96px 72px 72px;
   }
-  .eyebrow {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 700;
-    color: #dc2626;
-    letter-spacing: 1.8px;
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 64px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .wordmark {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+
+  .wordmark__name {
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    padding: 6px 14px;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 999px;
-    margin-bottom: 28px;
+    color: var(--ink);
+    margin: 0;
   }
-  h1 {
-    font-size: 44px;
-    font-weight: 700;
-    color: #0a0a0a;
-    line-height: 1.08;
-    letter-spacing: -1.5px;
+
+  .wordmark__version {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+
+  .status__dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 48px;
+    padding: 96px 0 72px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .hero__mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-top: 16px;
+  }
+
+  .hero__eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
     margin: 0 0 20px;
   }
-  .lead {
-    font-size: 17px;
+
+  .hero h1 {
+    font-family: var(--serif);
     font-weight: 400;
-    color: #525252;
+    font-style: italic;
+    font-size: 64px;
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    margin: 0 0 28px;
+    color: var(--ink);
+    max-width: 16ch;
+  }
+
+  .hero__lede {
+    font-size: 18px;
     line-height: 1.6;
-    letter-spacing: -0.15px;
-    margin: 0 0 64px;
+    color: var(--ink-muted);
+    margin: 0;
+    max-width: 54ch;
   }
-  .field {
-    margin-bottom: 28px;
+
+  .section {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 48px;
+    padding: 72px 0;
+    border-bottom: 1px solid var(--rule);
   }
-  .field-label {
-    display: block;
+
+  .section:last-child {
+    border-bottom: none;
+  }
+
+  .section__label {
+    font-family: var(--mono);
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1.5px;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #737373;
-    margin: 0 0 10px;
+    color: var(--ink-faint);
+    padding-top: 4px;
   }
-  .url {
-    display: block;
-    padding: 16px 20px;
-    background: #ffffff;
-    border: 1px solid #e5e5e5;
-    border-radius: 8px;
-    font-family: "SF Mono", "Menlo", "Consolas", monospace;
-    font-size: 13px;
-    font-weight: 500;
-    color: #0a0a0a;
-    letter-spacing: -0.1px;
+
+  .report {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .report__field {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 32px;
+    align-items: baseline;
+    padding: 24px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .report__field:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .report__key {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .report__value {
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--ink);
     word-break: break-all;
   }
-  .details {
+
+  .report__value--error {
     padding: 16px 20px;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 8px;
-    font-family: "SF Mono", "Menlo", "Consolas", monospace;
-    font-size: 13px;
-    font-weight: 500;
-    color: #991b1b;
-    line-height: 1.55;
-    letter-spacing: -0.1px;
+    background: var(--accent-tint);
+    border-left: 2px solid var(--accent);
+    color: var(--accent-ink);
+    border-radius: 2px;
     word-break: break-word;
   }
-  .hint {
-    margin: 64px 0 0;
-    padding-top: 24px;
-    border-top: 1px solid #e5e5e5;
-    font-size: 13px;
-    color: #737373;
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .step {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 24px;
+    align-items: baseline;
+    padding: 22px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .step:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .step__num {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+  }
+
+  .step__text {
+    font-size: 15px;
     line-height: 1.6;
+    color: var(--ink);
+    max-width: 58ch;
+  }
+
+  .step__text em {
+    font-family: var(--serif);
+    font-style: italic;
+    color: var(--ink-muted);
+  }
+
+  footer {
+    padding: 64px 0 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
   }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <span class="eyebrow">Error</span>
-    <h1>Can't display this page.</h1>
-    <p class="lead">
-      Koala couldn't render the requested page. The engine reported
-      the following while processing the response.
-    </p>
+  <div class="page">
 
-    <div class="field">
-      <span class="field-label">Requested URL</span>
-      <code class="url">{{url}}</code>
-    </div>
+    <header>
+      <div class="wordmark">
+        <p class="wordmark__name">Koala</p>
+        <span class="wordmark__version">v0.1.0</span>
+      </div>
+      <div class="status">
+        <span class="status__dot"></span>
+        Render halted
+      </div>
+    </header>
 
-    <div class="field">
-      <span class="field-label">Engine report</span>
-      <div class="details">{{message}}</div>
-    </div>
+    <section class="hero">
+      <div class="hero__mark">&sect; 00</div>
+      <div>
+        <p class="hero__eyebrow">Render failure</p>
+        <h1>The engine stopped before painting this page.</h1>
+        <p class="hero__lede">
+          Koala couldn't produce a display list for the requested
+          document. The renderer is conservative: when it encounters
+          a feature it doesn't yet implement, or input that violates
+          an invariant, it halts instead of drawing something wrong.
+        </p>
+      </div>
+    </section>
 
-    <p class="hint">
-      Check your network connection, verify the URL, or try reloading.
-      If the same page fails again, the renderer likely hit a feature
-      it doesn't yet support.
-    </p>
+    <section class="section">
+      <div class="section__label">&sect; 01 &nbsp; Report</div>
+      <div class="report">
+
+        <div class="report__field">
+          <div class="report__key">Requested</div>
+          <div class="report__value">{{url}}</div>
+        </div>
+
+        <div class="report__field">
+          <div class="report__key">Engine said</div>
+          <div class="report__value report__value--error">{{message}}</div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section__label">&sect; 02 &nbsp; Next</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step__num">01</div>
+          <div class="step__text">
+            Reload the page. Some failures are transient &mdash; an
+            incomplete fetch, a cache race, or a parser state the
+            engine hadn't anticipated.
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step__num">02</div>
+          <div class="step__text">
+            Double-check the address. A typo can land you somewhere
+            the server doesn't know how to serve.
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step__num">03</div>
+          <div class="step__text">
+            If the same page fails repeatedly, you've probably found
+            an engine gap. <em>Koala is young</em> &mdash; not every
+            CSS feature is wired up yet, and the renderer prefers
+            to halt over drawing something wrong.
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <footer>
+      Koala &middot; koala-css v0.1.0 &middot; Layout halted on main thread.
+    </footer>
+
   </div>
 </body>
 </html>

@@ -1,182 +1,351 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>New Tab</title>
+<title>New Tab · Koala</title>
 <style>
+  :root {
+    --paper: #f7f5f0;
+    --ink: #1c1814;
+    --ink-muted: #6b6559;
+    --ink-faint: #a39c8c;
+    --rule: #d8d3c6;
+    --rule-soft: #e8e4d8;
+    --accent: #a85a28;
+    --accent-ink: #734021;
+    --accent-tint: #f5ebdf;
+
+    --serif: "PP Editorial New", "Reckless", "Iowan Old Style", "Apple Garamond", Georgia, serif;
+    --sans: "PP Neue Montreal", "Söhne", "Neue Haas Grotesk", -apple-system, "Helvetica Neue", sans-serif;
+    --mono: "Berkeley Mono", "JetBrains Mono", "SF Mono", "IBM Plex Mono", "Menlo", monospace;
+  }
+
   * { box-sizing: border-box; }
+
   html, body {
     margin: 0;
     padding: 0;
-    font-family: -apple-system, "SF Pro Display", "Inter", "Helvetica Neue", Arial, sans-serif;
-    background: #fafafa;
-    color: #0a0a0a;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
   }
-  .wrap {
-    max-width: 800px;
+
+  .page {
+    max-width: 1080px;
     margin: 0 auto;
-    padding: 144px 64px 80px;
+    padding: 96px 72px 72px;
   }
-  .brand-row {
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 80px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .wordmark {
     display: flex;
     align-items: baseline;
     gap: 16px;
-    margin-bottom: 28px;
   }
-  .brand {
-    font-size: 13px;
-    font-weight: 700;
-    color: #0a0a0a;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-  }
-  .version {
-    font-size: 12px;
-    font-weight: 500;
-    color: #a3a3a3;
-    font-family: "SF Mono", "Menlo", "Consolas", monospace;
-    letter-spacing: 0.4px;
-  }
-  h1 {
-    font-size: 60px;
-    font-weight: 700;
-    color: #0a0a0a;
-    line-height: 1.02;
-    letter-spacing: -2.5px;
-    margin: 0 0 24px;
-  }
-  .lead {
-    font-size: 18px;
-    font-weight: 400;
-    color: #525252;
-    line-height: 1.55;
-    letter-spacing: -0.2px;
-    margin: 0 0 96px;
-    max-width: 580px;
-  }
-  .section {
-    margin-bottom: 72px;
-  }
-  .section-label {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1.8px;
-    text-transform: uppercase;
-    color: #737373;
-    margin: 0 0 28px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid #e5e5e5;
-  }
-  .features {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 48px;
-  }
-  .feature-num {
-    font-family: "SF Mono", "Menlo", "Consolas", monospace;
-    font-size: 11px;
-    font-weight: 600;
-    color: #a3a3a3;
-    letter-spacing: 0.8px;
-    margin: 0 0 14px;
-  }
-  .feature h2 {
-    font-size: 16px;
-    font-weight: 600;
-    color: #0a0a0a;
-    margin: 0 0 8px;
-    letter-spacing: -0.3px;
-  }
-  .feature p {
+
+  .wordmark__name {
     font-size: 14px;
-    font-weight: 400;
-    color: #525252;
-    line-height: 1.6;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink);
     margin: 0;
   }
-  .shortcut {
+
+  .wordmark__version {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+  }
+
+  .status {
     display: flex;
     align-items: center;
-    padding: 14px 0;
-    border-bottom: 1px solid #f5f5f5;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
   }
-  .shortcut:last-child {
+
+  .status__dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 48px;
+    padding: 120px 0 96px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .hero__mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-top: 18px;
+  }
+
+  .hero h1 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-style: italic;
+    font-size: 88px;
+    line-height: 0.98;
+    letter-spacing: -0.035em;
+    margin: 0 0 32px;
+    color: var(--ink);
+    max-width: 14ch;
+  }
+
+  .hero__tagline {
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-muted);
+    margin: 0;
+    max-width: 52ch;
+  }
+
+  .section {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 48px;
+    padding: 72px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .section:last-child {
     border-bottom: none;
   }
-  .shortcut .keys {
-    flex: 0 0 220px;
-    font-family: "SF Mono", "Menlo", "Consolas", monospace;
-    font-size: 13px;
-    font-weight: 600;
-    color: #0a0a0a;
-    letter-spacing: 0.3px;
+
+  .section__label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-top: 4px;
   }
-  .shortcut .desc {
-    flex: 1;
-    font-size: 14px;
-    color: #525252;
+
+  .capabilities {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .capability {
+    display: grid;
+    grid-template-columns: 48px 140px 1fr;
+    gap: 32px;
+    align-items: baseline;
+    padding: 32px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .capability:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .capability__index {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+  }
+
+  .capability__spec {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .capability__body h2 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 26px;
+    line-height: 1.15;
+    letter-spacing: -0.012em;
+    margin: 0 0 10px;
+    color: var(--ink);
+  }
+
+  .capability__body p {
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    margin: 0;
+    max-width: 54ch;
+  }
+
+  .bindings {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .binding {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 32px;
+    align-items: baseline;
+    padding: 18px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .binding:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .binding__keys {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+  }
+
+  .binding__desc {
+    font-size: 15px;
+    color: var(--ink-muted);
+  }
+
+  footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 64px 0 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+  }
+
+  footer .colophon {
+    max-width: 44ch;
   }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="brand-row">
-      <span class="brand">Koala</span>
-      <span class="version">v0.1.0</span>
-    </div>
-    <h1>A fast HTML renderer.</h1>
-    <p class="lead">
-      A spec-driven web engine written in Rust, with a native Qt
-      chrome modeled on Ladybird.
-    </p>
+  <div class="page">
 
-    <div class="section">
-      <p class="section-label">Engine</p>
-      <div class="features">
-        <div class="feature">
-          <p class="feature-num">01 &middot; CSS</p>
-          <h2>CSS 2.1 Layout</h2>
-          <p>Block, inline, flexbox, grid, and table formatting contexts implemented straight from the spec.</p>
-        </div>
-        <div class="feature">
-          <p class="feature-num">02 &middot; HTML</p>
-          <h2>WHATWG HTML</h2>
-          <p>Tokenizer and tree builder tracking the living standard, including all 2,231 named entities.</p>
-        </div>
-        <div class="feature">
-          <p class="feature-num">03 &middot; RUST</p>
-          <h2>Pure Rust Engine</h2>
-          <p>Rendering pipeline with no C++ on the engine side.</p>
-        </div>
+    <header>
+      <div class="wordmark">
+        <p class="wordmark__name">Koala</p>
+        <span class="wordmark__version">v0.1.0</span>
       </div>
-    </div>
+      <div class="status">
+        <span class="status__dot"></span>
+        Engine ready
+      </div>
+    </header>
 
-    <div class="section">
-      <p class="section-label">Shortcuts</p>
-      <div class="shortcuts">
-        <div class="shortcut">
-          <div class="keys">&#8984; T</div>
-          <div class="desc">New tab</div>
-        </div>
-        <div class="shortcut">
-          <div class="keys">&#8984; W</div>
-          <div class="desc">Close tab</div>
-        </div>
-        <div class="shortcut">
-          <div class="keys">&#8984; L</div>
-          <div class="desc">Focus URL bar</div>
-        </div>
-        <div class="shortcut">
-          <div class="keys">&#8984; R</div>
-          <div class="desc">Reload</div>
-        </div>
-        <div class="shortcut">
-          <div class="keys">&#8984; &larr; &nbsp; / &nbsp; &#8984; &rarr;</div>
-          <div class="desc">Back &middot; Forward</div>
-        </div>
+    <section class="hero">
+      <div class="hero__mark">&sect; 00</div>
+      <div>
+        <h1>A fast HTML renderer, from scratch.</h1>
+        <p class="hero__tagline">
+          A spec-driven web engine written in Rust, paired with a
+          native Qt chrome modeled on Ladybird. Built to read like
+          its own specification.
+        </p>
       </div>
-    </div>
+    </section>
+
+    <section class="section">
+      <div class="section__label">&sect; 01 &nbsp; Engine</div>
+      <div class="capabilities">
+
+        <div class="capability">
+          <div class="capability__index">01</div>
+          <div class="capability__spec">CSS 2.1</div>
+          <div class="capability__body">
+            <h2>Layout, from the spec up.</h2>
+            <p>Block, inline, flexbox, grid, and table formatting contexts implemented straight from CSS 2.1 and the Box Model Level 3 drafts.</p>
+          </div>
+        </div>
+
+        <div class="capability">
+          <div class="capability__index">02</div>
+          <div class="capability__spec">WHATWG HTML</div>
+          <div class="capability__body">
+            <h2>Tree construction tracking the living standard.</h2>
+            <p>A tokenizer and tree builder that match the WHATWG HTML parsing algorithm, including all 2,231 named character references.</p>
+          </div>
+        </div>
+
+        <div class="capability">
+          <div class="capability__index">03</div>
+          <div class="capability__spec">Pure Rust</div>
+          <div class="capability__body">
+            <h2>No C++ on the engine side.</h2>
+            <p>Rendering pipeline, text shaping, and image decoding all written in Rust. The Qt chrome sits across a single cxx bridge.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section__label">&sect; 02 &nbsp; Keybindings</div>
+      <div class="bindings">
+
+        <div class="binding">
+          <span class="binding__keys">&#8984; T</span>
+          <span class="binding__desc">Open a new tab</span>
+        </div>
+
+        <div class="binding">
+          <span class="binding__keys">&#8984; W</span>
+          <span class="binding__desc">Close the current tab</span>
+        </div>
+
+        <div class="binding">
+          <span class="binding__keys">&#8984; L</span>
+          <span class="binding__desc">Focus the address bar</span>
+        </div>
+
+        <div class="binding">
+          <span class="binding__keys">&#8984; R</span>
+          <span class="binding__desc">Reload the current page</span>
+        </div>
+
+        <div class="binding">
+          <span class="binding__keys">&#8984; &larr; &nbsp;/&nbsp; &#8984; &rarr;</span>
+          <span class="binding__desc">Navigate back and forward through history</span>
+        </div>
+
+      </div>
+    </section>
+
+    <footer>
+      <span class="colophon">
+        Set in PP Editorial New and PP Neue Montreal.
+        Rendered by koala-css.
+      </span>
+      <span>MIT &middot; 2024</span>
+    </footer>
+
   </div>
 </body>
 </html>
