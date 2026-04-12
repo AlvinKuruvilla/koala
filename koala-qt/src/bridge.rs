@@ -28,23 +28,59 @@ pub mod ffi {
         pub pixels: Vec<u8>,
     }
 
+    /// Summary returned by `try_take_load_result`. The GUI side
+    /// uses `state_swapped` to decide whether to trigger a fresh
+    /// render, and `load_finished` to toggle any loading indicator
+    /// (success and failure both count as "finished" — the engine
+    /// is no longer working on that request).
+    pub struct LoadPollResult {
+        /// `true` when the loader worker delivered a new page
+        /// state on this poll (successful load only).
+        pub state_swapped: bool,
+        /// `true` when a load request completed (either with a new
+        /// state or with an error). `false` means no load event
+        /// was pending.
+        pub load_finished: bool,
+    }
+
     extern "Rust" {
         /// Opaque Rust type representing a single browser page's
-        /// engine state plus its dedicated render worker thread.
+        /// engine state plus its dedicated render and loader
+        /// worker threads.
         type BrowserPage;
 
-        /// Create a fresh `BrowserPage`. Spawns the worker thread.
+        /// Create a fresh `BrowserPage`. Spawns both worker threads.
         /// Called from `BrowserView`'s constructor.
         fn new_browser_page() -> Box<BrowserPage>;
 
         /// Replace the page's content with HTML parsed from `html`.
         /// Runs on the calling thread (typically the Qt GUI thread).
+        /// Used for the built-in landing page and any caller that
+        /// already has raw HTML in hand; for URL navigation use
+        /// `request_load` instead.
         fn load_html(self: &mut BrowserPage, html: &str);
 
         /// Replace the page's content with the built-in landing page.
         fn load_landing_page(self: &mut BrowserPage);
 
-        /// Queue a render job on the worker thread. Returns
+        /// Queue a URL load on the loader worker thread. Returns
+        /// immediately; the result lands in the result channel and
+        /// is picked up by `try_take_load_result`. Accepts
+        /// `http://`, `https://`, or filesystem paths.
+        fn request_load(self: &BrowserPage, url: &str);
+
+        /// Re-queue the most recently committed URL, if any. Called
+        /// by the Reload action. Returns `true` when a request was
+        /// actually queued; `false` when the current page came
+        /// from `load_html` or the built-in landing page and there
+        /// is nothing to re-fetch.
+        fn reload_current_url(self: &BrowserPage) -> bool;
+
+        /// Non-blocking check for a completed URL load. See the
+        /// `LoadPollResult` docs for the meaning of the two flags.
+        fn try_take_load_result(self: &mut BrowserPage) -> LoadPollResult;
+
+        /// Queue a render job on the render worker thread. Returns
         /// immediately. `width` / `height` are in device (physical)
         /// pixels.
         fn request_render(self: &BrowserPage, width: u32, height: u32);

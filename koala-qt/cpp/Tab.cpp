@@ -60,10 +60,9 @@ void Tab::go_forward()
 
 void Tab::reload()
 {
-    // Just re-runs the rendering pipeline at the current viewport
-    // size — useful while we're still debugging layout at different
-    // window dimensions. Replace with "re-fetch + re-parse" once URL
-    // navigation lands.
+    // If the current page came from a URL, the loader worker
+    // re-fetches it; otherwise this just re-renders at the
+    // current viewport size.
     m_view->reload_current();
 }
 
@@ -78,11 +77,13 @@ void Tab::navigate_to_url_bar_text()
     // LocationEdit's own returnPressed handler runs before this one
     // (it's connected first), so by the time we get here
     // `m_location_edit->url()` already reflects the sanitised input.
-    // TODO: actually fetch the URL and hand its HTML to
-    //       `m_view->load_html`. Needs a non-blocking loader so we
-    //       don't hitch the UI thread on slow connections.
-    qInfo() << "Tab::navigate_to_url_bar_text (stub) ->"
-            << m_location_edit->url().toString();
+    // Hand the URL off to the async loader; the viewport will
+    // repaint when the fetch + parse completes.
+    auto const url = m_location_edit->url();
+    if (url.isEmpty() || !url.isValid()) {
+        return;
+    }
+    m_view->load_url(url.toString());
 }
 
 void Tab::focus_location_edit()

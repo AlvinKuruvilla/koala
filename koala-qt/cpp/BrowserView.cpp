@@ -63,9 +63,27 @@ void BrowserView::load_html(QString const& html)
     request_render();
 }
 
+void BrowserView::load_url(QString const& url)
+{
+    auto const utf8 = url.toUtf8();
+    m_page->request_load(rust::Str(utf8.constData(), static_cast<std::size_t>(utf8.size())));
+    emit loadStarted();
+    // The loader worker runs asynchronously; `poll_render_result`
+    // will pick up the new page state and trigger a render (and
+    // emit `loadFinished`) once the fetch + parse completes.
+}
+
 void BrowserView::reload_current()
 {
-    request_render();
+    // Re-fetch the current URL via the loader worker when possible.
+    // For in-memory documents (landing page) `reload_current_url`
+    // returns false and we just re-render the existing state so
+    // Reload still has a visible effect.
+    if (m_page->reload_current_url()) {
+        emit loadStarted();
+    } else {
+        request_render();
+    }
 }
 
 void BrowserView::paintEvent(QPaintEvent* /*event*/)
@@ -116,6 +134,19 @@ void BrowserView::request_render()
 
 void BrowserView::poll_render_result()
 {
+    // First drain the loader worker. A completed load arrives as
+    // either `state_swapped=true` (new page ready — trigger a
+    // render) or `state_swapped=false, load_finished=true` (error
+    // case). Either way, `load_finished` lets us toggle off any
+    // loading indicator the Tab is showing.
+    auto const load_update = m_page->try_take_load_result();
+    if (load_update.state_swapped) {
+        request_render();
+    }
+    if (load_update.load_finished) {
+        emit loadFinished();
+    }
+
     auto const result = m_page->try_take_render_result();
     if (result.pixels.size() == 0) {
         return;

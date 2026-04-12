@@ -36,11 +36,32 @@ public:
     void load_landing_page();
 
     // Replace the page's content with raw HTML and queue a render.
+    // Synchronous — runs the parse on the calling (GUI) thread.
     void load_html(QString const& html);
 
-    // Queue a fresh render of the current content at the current
-    // widget size. Wired to the Tab toolbar's Reload action.
+    // Queue an async URL load on the loader worker thread. Returns
+    // immediately; the new page appears in the viewport once the
+    // loader worker finishes fetching and parsing, which is picked
+    // up by `poll_render_result`.
+    void load_url(QString const& url);
+
+    // Re-fetch the most recently navigated URL (async, via the
+    // loader worker). No-op when the current page is the landing
+    // page or any other in-memory HTML. Wired to the Tab toolbar's
+    // Reload action.
     void reload_current();
+
+signals:
+    // Emitted once when the view hands a load request off to the
+    // loader worker (either via `load_url` or a successful
+    // `reload_current` re-fetch). `Tab` listens for this to show
+    // its progress indicator.
+    void loadStarted();
+
+    // Emitted once per `loadStarted` when the loader worker
+    // finishes the request, whether the load succeeded or failed.
+    // `Tab` listens for this to hide its progress indicator.
+    void loadFinished();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
