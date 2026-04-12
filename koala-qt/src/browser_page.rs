@@ -12,33 +12,46 @@
 // move to a worker thread to keep the Qt event loop responsive.
 
 use koala_browser::css::{Painter, Rect, canvas_background};
-use koala_browser::renderer::Renderer;
-use koala_browser::{FontProvider, LoadedDocument, parse_html_string};
+use koala_browser::{
+    FontProvider, LoadedDocument, Renderer, RendererFonts, parse_html_string,
+};
+use std::sync::OnceLock;
+
+// Global, lazily-initialised font cache shared by every `BrowserPage`
+// in the process. Loading the four font variants from disk takes
+// ~250 ms on macOS; doing that once per tab (and per render!) was the
+// dominant cost of new-tab lag, so we load them exactly once and
+// clone the Arc handles into every renderer.
+fn cached_fonts() -> &'static RendererFonts {
+    static FONTS: OnceLock<RendererFonts> = OnceLock::new();
+    FONTS.get_or_init(RendererFonts::from_system)
+}
+
+// Font provider used for layout-time metrics (line height, glyph
+// advance). Different type from `RendererFonts` because koala-css's
+// `FontMetrics` trait is keyed on a single `fontdue::Font` handle and
+// `FontProvider` owns one internally. Still worth caching globally
+// since it hits the same system font files.
+fn cached_font_provider() -> &'static FontProvider {
+    static PROVIDER: OnceLock<FontProvider> = OnceLock::new();
+    PROVIDER.get_or_init(FontProvider::load)
+}
 
 pub struct BrowserPage {
-    // The currently-loaded document. Replaced wholesale on every
-    // navigation — koala-browser has no incremental re-parsing yet,
-    // and the landing page is small enough that a full re-parse is
-    // fast in practice.
-    document: LoadedDocument,
-
-    // System font provider, loaded once and reused across renders.
-    // Font loading hits disk and is noticeably slower than the rest
-    // of the pipeline, so we don't want to repeat it per-render.
-    font_provider: FontProvider,
+    // None until the first `load_html` / `load_landing_page` call.
+    // Starting empty avoids the ~5 ms cold cost of parsing "" through
+    // koala-browser (which spins up a full Boa JS runtime every time).
+    document: Option<LoadedDocument>,
 }
 
 impl BrowserPage {
     fn new() -> Self {
-        Self {
-            document: parse_html_string(""),
-            font_provider: FontProvider::load(),
-        }
+        Self { document: None }
     }
 
     /// Replaces the current document with one parsed from `html`.
     pub fn load_html(&mut self, html: &str) {
-        self.document = parse_html_string(html);
+        self.document = Some(parse_html_string(html));
     }
 
     /// Loads the built-in landing page (see `landing.rs`).
@@ -60,7 +73,14 @@ impl BrowserPage {
             return Vec::new();
         }
 
-        let Some(layout_tree) = self.document.layout_tree.as_ref() else {
+        // No content loaded yet → return a blank white buffer. Happens
+        // in the brief window between `BrowserView` construction and
+        // the first `load_landing_page` call.
+        let Some(document) = self.document.as_ref() else {
+            return vec![255; (width as usize) * (height as usize) * 4];
+        };
+
+        let Some(layout_tree) = document.layout_tree.as_ref() else {
             return vec![255; (width as usize) * (height as usize) * 4];
         };
 
@@ -75,29 +95,34 @@ impl BrowserPage {
             height: height as f32,
         };
         let mut layout = layout_tree.clone();
-        let font_metrics = self.font_provider.metrics();
+        let font_metrics = cached_font_provider().metrics();
         layout.layout(viewport, viewport, &*font_metrics, viewport);
 
         // Paint: turn the laid-out box tree into a display list of
         // fill/stroke/draw-text/draw-image commands.
-        let painter = Painter::new(&self.document.styles);
+        let painter = Painter::new(&document.styles);
         let display_list = painter.paint(&layout);
 
         // Rasterise: execute the display list into an RGBA buffer.
-        // Renderer loads its own fonts internally per-instance; that's
-        // a known inefficiency to revisit when we cache renders.
-        let mut renderer = Renderer::new(width, height, self.document.images.clone());
+        // Fonts come from the process-wide cache so `new_with_fonts`
+        // just clones a few `Arc` handles — no disk I/O in the hot
+        // path.
+        let mut renderer = Renderer::new_with_fonts(
+            width,
+            height,
+            document.images.clone(),
+            cached_fonts().clone(),
+        );
 
         // Propagate the canvas background (CSS 2.1 § 14.2) so regions
         // of the viewport not covered by painted content still show
         // the html/body background colour instead of Renderer's
         // default white fill.
-        if let Some(bg) = canvas_background(&self.document.dom, &self.document.styles) {
+        if let Some(bg) = canvas_background(&document.dom, &document.styles) {
             renderer.set_canvas_background(bg);
         }
 
         renderer.render(&display_list);
-
         renderer.rgba_bytes().to_vec()
     }
 }
