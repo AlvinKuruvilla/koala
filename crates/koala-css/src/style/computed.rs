@@ -1722,7 +1722,21 @@ impl ComputedStyle {
                 self.parse_font_shorthand(values);
             }
             unknown => {
-                warn_once("CSS", &format!("unknown property '{unknown}'"));
+                // [§ 4.1.1 Declarations](https://www.w3.org/TR/css-syntax-3/#consume-declaration)
+                //
+                // "If any property is unknown, the entire declaration must be
+                // ignored."
+                //
+                // The vendor-prefix policy lives in
+                // [`crate::vendor_prefixes`]. Category-2 extensions
+                // (vendor-only, no CSS spec) are dropped silently
+                // there; everything else — including category-1
+                // legacy prefixes like `-webkit-border-radius` that
+                // have standard counterparts — falls through to the
+                // warning below so author typos stay visible.
+                if !crate::vendor_prefixes::is_silent_vendor_property(unknown) {
+                    warn_once("CSS", &format!("unknown property '{unknown}'"));
+                }
             }
         }
     }

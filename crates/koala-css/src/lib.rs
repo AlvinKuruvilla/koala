@@ -60,6 +60,10 @@ pub mod style;
 pub mod tokenizer;
 /// User-agent stylesheet per [WHATWG HTML § 15 Rendering](https://html.spec.whatwg.org/multipage/rendering.html).
 pub mod ua_stylesheet;
+/// Explicit policy for vendor-prefixed properties the engine
+/// silently ignores. See the module doc for the three-category
+/// classification and why each entry is listed.
+pub mod vendor_prefixes;
 
 // Re-exports for convenience
 pub use backgrounds::canvas_background;
