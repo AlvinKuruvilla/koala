@@ -1,6 +1,10 @@
 # Rust
 /target
 
+# Local scratch / reference clones (e.g. upstream sources we consult
+# but don't redistribute). Project-scoped per CLAUDE.md conventions.
+/tmp
+
 # Swift
 KoalaBrowser/.build/
 KoalaBrowser/.swiftpm/

@@ -22,6 +22,9 @@ cargo test test_name                # Run a specific test
 cargo run --bin koala -- <file.html>
 cargo run --bin koala -- --html '<h1>Test</h1>'
 
+# Run the Qt browser UI
+cargo run --bin koala-qt
+
 # Run the development GUI
 cargo run --bin koala-gui
 
@@ -29,6 +32,19 @@ cargo run --bin koala-gui
 cargo clippy --workspace
 cargo fmt --check
 ```
+
+## Qt Browser UI
+
+`koala-qt` is a Ladybird-modeled Qt6 browser chrome with a cxx bridge to the
+`koala-browser` engine. The Qt widget layer is in `koala-qt/cpp/`
+(`BrowserWindow`, `TabWidget`, `Tab`, `LocationEdit`, `BrowserView`), and the
+Rust side (`koala-qt/src/`) hosts the engine plus the bridge. Each new tab
+renders the landing page from `koala-qt/res/landing.html` via the viewport
+widget.
+
+Requires Qt6 (Homebrew: `brew install qt`). The build script discovers Qt via
+`qmake6` and compiles the C++ sources through `cxx-build`, running `moc` on
+Q_OBJECT-bearing headers.
 
 ## Development GUI
 
@@ -168,6 +184,7 @@ koala/
 │   ├── koala-css/        # CSS tokenizer, parser, selector, cascade
 │   └── koala-browser/    # High-level browser API
 ├── koala-cli/            # Primary binary: HTML-to-image renderer
+├── koala-qt/             # Qt browser UI (cxx bridge to koala-browser)
 ├── koala-gui/            # Development GUI (egui-based renderer inspector)
 └── res/                  # Test HTML files
 ```
@@ -182,7 +199,9 @@ koala-css          (depends on koala-common, koala-dom)
     ↑
 koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css)
     ↑
-koala/koala-gui     (depends on koala-common, koala-browser, etc.)
+koala-qt           (depends on koala-browser via `cxx`; widget layer in C++)
+koala-cli          (depends on koala-browser)
+koala/koala-gui    (depends on koala-common, koala-browser, etc.)
 ```
 
 **Data Flow:**

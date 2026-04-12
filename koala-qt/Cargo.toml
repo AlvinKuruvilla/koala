@@ -1,0 +1,23 @@
+[package]
+name = "koala-qt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Qt-based browser UI for koala, modeled on Ladybird's widget layout"
+
+[[bin]]
+name = "koala-qt"
+path = "src/main.rs"
+
+[dependencies]
+cxx = "1.0"
+koala-browser.workspace = true
+
+[build-dependencies]
+cxx-build = "1.0"
+
+[lints.rust]
+# cxx generates unsafe FFI blocks; allow at crate level.
+unsafe_code = "allow"
+# The C++ shim layer is documented in its own headers; Rust surface is small.
+missing_docs = "allow"

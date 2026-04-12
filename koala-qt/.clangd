@@ -1,0 +1,25 @@
+# clangd configuration for koala-qt.
+#
+# clangd does not run cargo or build.rs, so it has no visibility into
+# the Qt framework header paths and C++ standard we configure in
+# build.rs. This file repeats them so diagnostics line up with what
+# the real build sees.
+#
+# The `rust/cxx.h` header is vendored into `cpp/rust/cxx.h` and picked
+# up via the `-Icpp` flag below. At real build time cxx-build generates
+# an identical copy into OUT_DIR/cxxbridge/include and passes that path
+# first, so the vendored copy is only used by clangd.
+#
+# macOS / Homebrew Qt 6.11 paths are hard-coded. If you use a different
+# Qt install, edit the paths here to match `qmake6 -query QT_INSTALL_LIBS`.
+
+CompileFlags:
+  Add:
+    - -xc++
+    - -std=c++20
+    - -Icpp
+    - -I/opt/homebrew/lib/QtCore.framework/Headers
+    - -I/opt/homebrew/lib/QtGui.framework/Headers
+    - -I/opt/homebrew/lib/QtWidgets.framework/Headers
+    - -F/opt/homebrew/lib
+    - -Wno-unused-parameter

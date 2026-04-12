@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>New Tab</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    background: #faf7f2;
+    color: #1c1917;
+  }
+  .hero {
+    padding: 96px 64px 56px;
+    text-align: center;
+    background: #fff8eb;
+    border-bottom: 1px solid #f5e6c2;
+  }
+  .hero h1 {
+    margin: 0 0 16px;
+    font-size: 72px;
+    font-weight: bold;
+    color: #b45309;
+    letter-spacing: -2px;
+  }
+  .hero p {
+    margin: 0;
+    font-size: 20px;
+    color: #78716c;
+  }
+  .cards {
+    display: flex;
+    gap: 24px;
+    padding: 48px 64px;
+    justify-content: center;
+  }
+  .card {
+    flex: 1;
+    max-width: 260px;
+    padding: 24px 28px;
+    background: #ffffff;
+    border: 1px solid #e7e5e4;
+    border-radius: 12px;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 18px;
+    color: #1c1917;
+  }
+  .card p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #57534e;
+  }
+  .shortcuts {
+    padding: 16px 64px 56px;
+    text-align: center;
+    color: #78716c;
+    font-size: 14px;
+  }
+  .shortcuts kbd {
+    padding: 2px 8px;
+    margin: 0 6px;
+    border: 1px solid #d6d3d1;
+    border-radius: 4px;
+    background: #f5f5f4;
+    color: #1c1917;
+    font-size: 12px;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+  <section class="hero">
+    <h1>Koala</h1>
+    <p>A fast, spec-driven HTML renderer in Rust</p>
+  </section>
+  <div class="cards">
+    <div class="card">
+      <h2>CSS 2.1 layout</h2>
+      <p>Block, inline, flexbox, grid, and table layout implemented straight from the spec.</p>
+    </div>
+    <div class="card">
+      <h2>WHATWG HTML</h2>
+      <p>Tokenizer and tree builder tracking the living standard, including all 2,231 named entities.</p>
+    </div>
+    <div class="card">
+      <h2>Rust-first</h2>
+      <p>Pure-Rust rendering pipeline with no C++ dependencies on the engine side.</p>
+    </div>
+  </div>
+  <p class="shortcuts">
+    <kbd>Cmd+T</kbd> new tab
+    <kbd>Cmd+W</kbd> close tab
+    <kbd>Cmd+L</kbd> focus URL bar
+    <kbd>Cmd+R</kbd> reload
+  </p>
+</body>
+</html>
