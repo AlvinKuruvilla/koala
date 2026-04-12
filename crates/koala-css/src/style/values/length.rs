@@ -33,6 +33,11 @@ pub enum LengthValue {
     /// "A <percentage> value is denoted by <percentage>, and consists of a
     /// <number> immediately followed by a percent sign '%'."
     Percent(f64),
+    /// [§ 6.1.1 Font-relative lengths](https://www.w3.org/TR/css-values-4/#font-relative-lengths)
+    /// "Equal to the used advance measure of the '0' glyph. In cases where
+    /// it is impossible or impractical to determine the measure of the '0'
+    /// glyph, it must be assumed to be 0.5em wide."
+    Ch(f64),
     // TODO: Implement additional length units:
     //
     // STEP 1: Add rem unit
@@ -70,6 +75,7 @@ impl LengthValue {
             // Percentages require containing block dimensions - return 0 as fallback.
             // The layout engine should use to_px_with_containing_block() instead.
             Self::Percent(_) => 0.0,
+            Self::Ch(ch) => *ch * DEFAULT_FONT_SIZE_PX * 0.5,
         }
     }
 
@@ -91,6 +97,7 @@ impl LengthValue {
             // Percentages require containing block — return 0 as fallback.
             // Use to_px_with_containing_block() when containing block is available.
             Self::Percent(_) => 0.0,
+            Self::Ch(ch) => *ch * DEFAULT_FONT_SIZE_PX * 0.5,
         }
     }
 
@@ -117,6 +124,7 @@ impl LengthValue {
             Self::Vw(vw) => *vw * viewport_width / 100.0,
             Self::Vh(vh) => *vh * viewport_height / 100.0,
             Self::Percent(pct) => *pct * cb_dimension / 100.0,
+            Self::Ch(ch) => *ch * DEFAULT_FONT_SIZE_PX * 0.5,
         }
     }
 }
@@ -196,6 +204,8 @@ pub fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
                 Some(LengthValue::Px(*value))
             } else if unit.eq_ignore_ascii_case("em") {
                 Some(LengthValue::Em(*value))
+            } else if unit.eq_ignore_ascii_case("ch") {
+                Some(LengthValue::Ch(*value))
             } else if unit.eq_ignore_ascii_case("vw") {
                 Some(LengthValue::Vw(*value))
             } else if unit.eq_ignore_ascii_case("vh") {

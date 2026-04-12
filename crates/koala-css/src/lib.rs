@@ -86,6 +86,7 @@ pub use style::{
     AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, DEFAULT_FONT_SIZE_PX,
     DisplayValue, InnerDisplayType, LengthValue, OuterDisplayType,
 };
+pub use style::values::parse_single_length;
 pub use tokenizer::{CSSToken, CSSTokenizer};
 
 // Re-export resolve_url from koala-common for backwards compatibility.

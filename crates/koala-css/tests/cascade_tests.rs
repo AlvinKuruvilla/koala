@@ -274,6 +274,9 @@ fn test_border_parsing() {
         koala_css::LengthValue::Percent(_) => {
             panic!("Expected border width in Px, got Percent (should have been resolved)")
         }
+        koala_css::LengthValue::Ch(_) => {
+            panic!("Expected border width in Px, got Ch (should have been resolved)")
+        }
     }
     assert_eq!(border.style, "solid");
     assert_eq!(border.color.r, 0xdd);
