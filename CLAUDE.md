@@ -25,9 +25,6 @@ cargo run --bin koala -- --html '<h1>Test</h1>'
 # Run the Qt browser UI
 cargo run --bin koala-qt
 
-# Run the development GUI
-cargo run --bin koala-gui
-
 # Lint
 cargo clippy --workspace
 cargo fmt --check
@@ -45,13 +42,6 @@ widget.
 Requires Qt6 (Homebrew: `brew install qt`). The build script discovers Qt via
 `qmake6` and compiles the C++ sources through `cxx-build`, running `moc` on
 Q_OBJECT-bearing headers.
-
-## Development GUI
-
-The development GUI (`koala-gui`) has built-in debugging features:
-- **F12**: Toggle debug panel showing DOM tree, tokens, CSS, computed styles, and source
-- **Terminal logging**: All state changes print to stdout with `[Koala GUI]` prefix
-- Debug panel tabs: DOM | Tokens | CSS | Styles | Source
 
 ## Project Overview
 
@@ -185,7 +175,6 @@ koala/
 │   └── koala-browser/    # High-level browser API
 ├── koala-cli/            # Primary binary: HTML-to-image renderer
 ├── koala-qt/             # Qt browser UI (cxx bridge to koala-browser)
-├── koala-gui/            # Development GUI (egui-based renderer inspector)
 └── res/                  # Test HTML files
 ```
 
@@ -201,7 +190,6 @@ koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css)
     ↑
 koala-qt           (depends on koala-browser via `cxx`; widget layer in C++)
 koala-cli          (depends on koala-browser)
-koala/koala-gui    (depends on koala-common, koala-browser, etc.)
 ```
 
 **Data Flow:**
