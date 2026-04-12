@@ -7,7 +7,7 @@ use clap::Parser;
 use koala_browser::{
     FontProvider, LoadedDocument, load_document, parse_html_string, renderer::Renderer,
 };
-use koala_css::{LayoutBox, Painter};
+use koala_css::{DisplayListBuilder, LayoutBox};
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
@@ -169,8 +169,8 @@ fn take_screenshot(
     layout.layout(viewport, viewport, &*font_metrics, viewport);
 
     // Paint: generate display list from layout tree
-    let painter = Painter::new(&doc.styles);
-    let display_list = painter.paint(&layout);
+    let builder = DisplayListBuilder::new(&doc.styles);
+    let display_list = builder.build(&layout);
 
     // Render: execute display list to pixels
     let mut renderer = Renderer::new(width, height, doc.images.clone());

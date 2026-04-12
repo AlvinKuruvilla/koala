@@ -11,7 +11,7 @@
 // page. When we wire up real URL navigation the render call should
 // move to a worker thread to keep the Qt event loop responsive.
 
-use koala_browser::css::{Painter, Rect, canvas_background};
+use koala_browser::css::{DisplayListBuilder, Rect, canvas_background};
 use koala_browser::{
     FontProvider, LoadedDocument, Renderer, RendererFonts, parse_html_string,
 };
@@ -100,8 +100,8 @@ impl BrowserPage {
 
         // Paint: turn the laid-out box tree into a display list of
         // fill/stroke/draw-text/draw-image commands.
-        let painter = Painter::new(&document.styles);
-        let display_list = painter.paint(&layout);
+        let builder = DisplayListBuilder::new(&document.styles);
+        let display_list = builder.build(&layout);
 
         // Rasterise: execute the display list into an RGBA buffer.
         // Fonts come from the process-wide cache so `new_with_fonts`

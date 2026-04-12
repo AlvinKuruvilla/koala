@@ -1,9 +1,12 @@
-//! Painter - generates display list from layout tree
+//! `DisplayListBuilder` — walks a layout tree and produces a `DisplayList`
+//! of drawing commands in the correct painting order (back to front).
 //!
 //! [CSS 2.1 Appendix E.2 Painting order](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
 //!
-//! The painter walks the layout tree and generates drawing commands in the
-//! correct painting order (back to front).
+//! The type used to be called `Painter`, which clashed with the role a
+//! lower-level "pixel painter" (Ladybird-style `LibGfx::Painter`) would
+//! play one layer down. This module's job is to *build* a display list,
+//! not to touch pixels — hence the current name.
 
 use std::collections::HashMap;
 
@@ -39,32 +42,33 @@ fn apply_opacity(color: &ColorValue, opacity: f32) -> ColorValue {
     }
 }
 
-/// Painter that generates a display list from a layout tree.
+/// Builds a `DisplayList` from a styled layout tree.
 ///
 /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
 ///
-/// The painter implements the CSS painting order algorithm, which determines
-/// what gets drawn and in what order.
-pub struct Painter<'a> {
+/// Implements the CSS painting-order algorithm: for each stacking
+/// context, backgrounds → borders → descendants → outline, with
+/// positioned and z-indexed children sequenced per spec.
+pub struct DisplayListBuilder<'a> {
     /// Computed styles for each node, used to get colors, fonts, etc.
     styles: &'a HashMap<NodeId, ComputedStyle>,
 }
 
-impl<'a> Painter<'a> {
-    /// Create a new painter with access to computed styles.
+impl<'a> DisplayListBuilder<'a> {
+    /// Create a new builder with access to computed styles.
     #[must_use]
     pub const fn new(styles: &'a HashMap<NodeId, ComputedStyle>) -> Self {
         Self { styles }
     }
 
-    /// Paint a layout tree and return the display list.
+    /// Walk the layout tree and return a complete `DisplayList`.
     ///
     /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
     ///
-    /// This is the main entry point for painting. It walks the layout tree
-    /// and generates all drawing commands in the correct order.
+    /// This is the main entry point. It produces every drawing command
+    /// the tree needs, in the correct back-to-front painting order.
     #[must_use]
-    pub fn paint(&self, layout: &LayoutBox) -> DisplayList {
+    pub fn build(&self, layout: &LayoutBox) -> DisplayList {
         let mut display_list = DisplayList::new();
         self.paint_box(layout, &mut display_list, None);
         display_list

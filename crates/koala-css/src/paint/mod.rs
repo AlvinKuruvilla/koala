@@ -22,7 +22,7 @@
 //! - Correct z-order painting per CSS 2.1 Appendix E
 
 mod display_list;
-mod painter;
+mod display_list_builder;
 
 pub use display_list::{DisplayCommand, DisplayList};
-pub use painter::Painter;
+pub use display_list_builder::DisplayListBuilder;

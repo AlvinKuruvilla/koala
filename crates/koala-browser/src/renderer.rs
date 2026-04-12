@@ -236,7 +236,7 @@ impl Renderer {
     /// Execute a display list, drawing all commands to the pixel buffer.
     ///
     /// Commands are executed in order (back to front), which is the correct
-    /// painting order established by the Painter.
+    /// painting order established by `DisplayListBuilder`.
     pub fn render(&mut self, display_list: &DisplayList) {
         for command in display_list.commands() {
             self.execute_command(command);

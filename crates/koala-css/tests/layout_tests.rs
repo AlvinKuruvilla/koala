@@ -2098,7 +2098,7 @@ fn test_ol_start_attribute() {
 /// Helper: parse HTML, build layout + styles, paint, and return the display list.
 fn paint_html(html: &str) -> koala_css::DisplayList {
     use koala_css::cascade::compute_styles;
-    use koala_css::{CSSParser, CSSTokenizer, Painter, Stylesheet};
+    use koala_css::{CSSParser, CSSTokenizer, DisplayListBuilder, Stylesheet};
     use std::collections::HashMap;
 
     let mut tokenizer = koala_html::HTMLTokenizer::new(html.to_string());
@@ -2131,8 +2131,8 @@ fn paint_html(html: &str) -> koala_css::DisplayList {
     };
     layout_tree.layout(viewport, viewport, &ApproximateFontMetrics, viewport);
 
-    let painter = Painter::new(&styles);
-    painter.paint(&layout_tree)
+    let builder = DisplayListBuilder::new(&styles);
+    builder.build(&layout_tree)
 }
 
 #[test]
