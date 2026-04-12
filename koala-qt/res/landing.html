@@ -4,98 +4,179 @@
 <meta charset="utf-8">
 <title>New Tab</title>
 <style>
+  * { box-sizing: border-box; }
   html, body {
     margin: 0;
     padding: 0;
-    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
-    background: #faf7f2;
-    color: #1c1917;
+    font-family: -apple-system, "SF Pro Display", "Inter", "Helvetica Neue", Arial, sans-serif;
+    background: #fafafa;
+    color: #0a0a0a;
+    -webkit-font-smoothing: antialiased;
   }
-  .hero {
-    padding: 96px 64px 56px;
-    text-align: center;
-    background: #fff8eb;
-    border-bottom: 1px solid #f5e6c2;
+  .wrap {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 144px 64px 80px;
   }
-  .hero h1 {
-    margin: 0 0 16px;
-    font-size: 72px;
-    font-weight: bold;
-    color: #b45309;
-    letter-spacing: -2px;
-  }
-  .hero p {
-    margin: 0;
-    font-size: 20px;
-    color: #78716c;
-  }
-  .cards {
+  .brand-row {
     display: flex;
-    gap: 24px;
-    padding: 48px 64px;
-    justify-content: center;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 28px;
   }
-  .card {
-    flex: 1;
-    max-width: 260px;
-    padding: 24px 28px;
-    background: #ffffff;
-    border: 1px solid #e7e5e4;
-    border-radius: 12px;
+  .brand {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0a0a0a;
+    letter-spacing: 2px;
+    text-transform: uppercase;
   }
-  .card h2 {
-    margin: 0 0 10px;
-    font-size: 18px;
-    color: #1c1917;
-  }
-  .card p {
-    margin: 0;
-    font-size: 14px;
-    line-height: 1.55;
-    color: #57534e;
-  }
-  .shortcuts {
-    padding: 16px 64px 56px;
-    text-align: center;
-    color: #78716c;
-    font-size: 14px;
-  }
-  .shortcuts kbd {
-    padding: 2px 8px;
-    margin: 0 6px;
-    border: 1px solid #d6d3d1;
-    border-radius: 4px;
-    background: #f5f5f4;
-    color: #1c1917;
+  .version {
     font-size: 12px;
-    font-weight: bold;
+    font-weight: 500;
+    color: #a3a3a3;
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    letter-spacing: 0.4px;
+  }
+  h1 {
+    font-size: 60px;
+    font-weight: 700;
+    color: #0a0a0a;
+    line-height: 1.02;
+    letter-spacing: -2.5px;
+    margin: 0 0 24px;
+  }
+  .lead {
+    font-size: 18px;
+    font-weight: 400;
+    color: #525252;
+    line-height: 1.55;
+    letter-spacing: -0.2px;
+    margin: 0 0 96px;
+    max-width: 580px;
+  }
+  .section {
+    margin-bottom: 72px;
+  }
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: #737373;
+    margin: 0 0 28px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #e5e5e5;
+  }
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 48px;
+  }
+  .feature-num {
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #a3a3a3;
+    letter-spacing: 0.8px;
+    margin: 0 0 14px;
+  }
+  .feature h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0a0a0a;
+    margin: 0 0 8px;
+    letter-spacing: -0.3px;
+  }
+  .feature p {
+    font-size: 14px;
+    font-weight: 400;
+    color: #525252;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .shortcut {
+    display: flex;
+    align-items: center;
+    padding: 14px 0;
+    border-bottom: 1px solid #f5f5f5;
+  }
+  .shortcut:last-child {
+    border-bottom: none;
+  }
+  .shortcut .keys {
+    flex: 0 0 220px;
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: #0a0a0a;
+    letter-spacing: 0.3px;
+  }
+  .shortcut .desc {
+    flex: 1;
+    font-size: 14px;
+    color: #525252;
   }
 </style>
 </head>
 <body>
-  <section class="hero">
-    <h1>Koala</h1>
-    <p>A fast, spec-driven HTML renderer in Rust</p>
-  </section>
-  <div class="cards">
-    <div class="card">
-      <h2>CSS 2.1 layout</h2>
-      <p>Block, inline, flexbox, grid, and table layout implemented straight from the spec.</p>
+  <div class="wrap">
+    <div class="brand-row">
+      <span class="brand">Koala</span>
+      <span class="version">v0.1.0</span>
     </div>
-    <div class="card">
-      <h2>WHATWG HTML</h2>
-      <p>Tokenizer and tree builder tracking the living standard, including all 2,231 named entities.</p>
+    <h1>A fast HTML renderer.</h1>
+    <p class="lead">
+      A spec-driven web engine written in Rust, with a native Qt
+      chrome modeled on Ladybird.
+    </p>
+
+    <div class="section">
+      <p class="section-label">Engine</p>
+      <div class="features">
+        <div class="feature">
+          <p class="feature-num">01 &middot; CSS</p>
+          <h2>CSS 2.1 Layout</h2>
+          <p>Block, inline, flexbox, grid, and table formatting contexts implemented straight from the spec.</p>
+        </div>
+        <div class="feature">
+          <p class="feature-num">02 &middot; HTML</p>
+          <h2>WHATWG HTML</h2>
+          <p>Tokenizer and tree builder tracking the living standard, including all 2,231 named entities.</p>
+        </div>
+        <div class="feature">
+          <p class="feature-num">03 &middot; RUST</p>
+          <h2>Pure Rust Engine</h2>
+          <p>Rendering pipeline with no C++ on the engine side.</p>
+        </div>
+      </div>
     </div>
-    <div class="card">
-      <h2>Rust-first</h2>
-      <p>Pure-Rust rendering pipeline with no C++ dependencies on the engine side.</p>
+
+    <div class="section">
+      <p class="section-label">Shortcuts</p>
+      <div class="shortcuts">
+        <div class="shortcut">
+          <div class="keys">&#8984; T</div>
+          <div class="desc">New tab</div>
+        </div>
+        <div class="shortcut">
+          <div class="keys">&#8984; W</div>
+          <div class="desc">Close tab</div>
+        </div>
+        <div class="shortcut">
+          <div class="keys">&#8984; L</div>
+          <div class="desc">Focus URL bar</div>
+        </div>
+        <div class="shortcut">
+          <div class="keys">&#8984; R</div>
+          <div class="desc">Reload</div>
+        </div>
+        <div class="shortcut">
+          <div class="keys">&#8984; &larr; &nbsp; / &nbsp; &#8984; &rarr;</div>
+          <div class="desc">Back &middot; Forward</div>
+        </div>
+      </div>
     </div>
   </div>
-  <p class="shortcuts">
-    <kbd>Cmd+T</kbd> new tab
-    <kbd>Cmd+W</kbd> close tab
-    <kbd>Cmd+L</kbd> focus URL bar
-    <kbd>Cmd+R</kbd> reload
-  </p>
 </body>
 </html>
