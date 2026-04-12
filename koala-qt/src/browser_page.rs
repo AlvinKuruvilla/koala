@@ -29,6 +29,8 @@
 // `parse_html_string` / `load_document` and drop the interpreter
 // immediately after.
 
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -158,24 +160,21 @@ struct LoadRequest {
     source: LoadSource,
 }
 
-/// The loader worker's reply. Carries either a new page state or an
-/// error message — the GUI thread swaps the state in on success and
-/// logs the error on failure.
+/// The loader worker's reply. Always carries a successful
+/// `PageState` — load failures (HTTP errors, parse errors, caught
+/// panics) are turned into an error-page `PageState` by the loader
+/// worker itself, so the GUI thread only ever has to handle one
+/// code path.
 ///
-/// `BrowserPage` also injects `Loaded` results directly into the
-/// channel from the GUI thread when the user hits Back/Forward onto
-/// a `HistoryEntry::Landing` entry, so the main poll loop handles
-/// both async and sync state changes through the same code path.
-enum LoadResult {
-    Loaded {
-        url: String,
-        source: LoadSource,
-        state: Arc<PageState>,
-    },
-    Failed {
-        url: String,
-        error: String,
-    },
+/// `BrowserPage` also injects results directly into the channel
+/// from the GUI thread when the user hits Back/Forward onto a
+/// `HistoryEntry::Landing` entry, or when the render worker
+/// catches a panic and we need to swap state to the error page
+/// without going through the loader.
+struct LoadResult {
+    url: String,
+    source: LoadSource,
+    state: Arc<PageState>,
 }
 
 pub struct BrowserPage {
@@ -365,7 +364,7 @@ impl BrowserPage {
                     return false;
                 };
                 self.load_result_tx_main
-                    .send(LoadResult::Loaded {
+                    .send(LoadResult {
                         url: String::new(),
                         source: LoadSource::HistoryNavigation,
                         state,
@@ -400,63 +399,55 @@ impl BrowserPage {
             .unwrap_or_default()
     }
 
-    /// Non-blocking check for a completed URL load. Both successful
-    /// and failed loads set `load_finished = true` so the GUI can
-    /// hide any spinner; only successes set `state_swapped = true`.
+    /// Non-blocking check for a completed URL load. The loader
+    /// always produces a valid `PageState` (failures are turned
+    /// into an error page inside the worker), so every received
+    /// result counts as both `state_swapped` and `load_finished`.
     pub fn try_take_load_result(&mut self) -> LoadPollResult {
-        match self.load_result_rx.try_recv() {
-            Ok(LoadResult::Loaded { url, source, state }) => {
-                self.state = Some(state);
-
-                match source {
-                    LoadSource::UserNavigation => {
-                        self.current_url = Some(url.clone());
-                        // Drop any "forward" entries past the
-                        // current position before pushing — a
-                        // fresh navigation from a back-stack
-                        // position replaces the tail.
-                        if let Some(idx) = self.history_index {
-                            self.history.truncate(idx + 1);
-                        }
-                        // A reload lands on the same URL we're
-                        // already displaying; avoid an infinitely
-                        // growing duplicate stack.
-                        let last_matches = matches!(
-                            self.history.last(),
-                            Some(HistoryEntry::Url(last)) if last == &url
-                        );
-                        if !last_matches {
-                            self.history.push(HistoryEntry::Url(url));
-                        }
-                        self.history_index = Some(self.history.len() - 1);
-                    }
-                    LoadSource::HistoryNavigation => {
-                        // `go_back` / `go_forward` already advanced
-                        // `history_index` when they queued the
-                        // request. For a URL entry, the fetched
-                        // URL is the new `current_url`; for the
-                        // synthetic landing-page result, `url` is
-                        // empty and there is no current URL.
-                        self.current_url = if url.is_empty() { None } else { Some(url) };
-                    }
-                }
-
-                LoadPollResult {
-                    state_swapped: true,
-                    load_finished: true,
-                }
-            }
-            Ok(LoadResult::Failed { url, error }) => {
-                eprintln!("[koala-qt] load failed for {url}: {error}");
-                LoadPollResult {
-                    state_swapped: false,
-                    load_finished: true,
-                }
-            }
-            Err(_) => LoadPollResult {
+        let Ok(LoadResult { url, source, state }) = self.load_result_rx.try_recv() else {
+            return LoadPollResult {
                 state_swapped: false,
                 load_finished: false,
-            },
+            };
+        };
+
+        self.state = Some(state);
+
+        match source {
+            LoadSource::UserNavigation => {
+                self.current_url = Some(url.clone());
+                // Drop any "forward" entries past the current
+                // position before pushing — a fresh navigation
+                // from a back-stack position replaces the tail.
+                if let Some(idx) = self.history_index {
+                    self.history.truncate(idx + 1);
+                }
+                // A reload lands on the same URL we're already
+                // displaying; avoid an infinitely growing
+                // duplicate stack.
+                let last_matches = matches!(
+                    self.history.last(),
+                    Some(HistoryEntry::Url(last)) if last == &url
+                );
+                if !last_matches {
+                    self.history.push(HistoryEntry::Url(url));
+                }
+                self.history_index = Some(self.history.len() - 1);
+            }
+            LoadSource::HistoryNavigation => {
+                // `go_back` / `go_forward` already advanced
+                // `history_index` when they queued the request.
+                // For a URL entry, the fetched URL is the new
+                // `current_url`; for the synthetic landing-page
+                // result, `url` is empty and there is no current
+                // URL.
+                self.current_url = if url.is_empty() { None } else { Some(url) };
+            }
+        }
+
+        LoadPollResult {
+            state_swapped: true,
+            load_finished: true,
         }
     }
 
@@ -481,12 +472,65 @@ impl BrowserPage {
     /// Non-blocking check for a finished frame. Returns an empty
     /// `RenderResult` (`pixels.len() == 0`) when no frame is ready.
     /// Intended to be called from a Qt timer slot at ~60 Hz.
+    ///
+    /// When the render worker caught a panic while rasterising
+    /// the current page (e.g. a slice out-of-bounds in the grid
+    /// layout code on a real-world site), the worker sends back a
+    /// result with `error` populated and no pixels. We handle
+    /// that case right here on the main thread by synthesising an
+    /// error-page `PageState` and injecting it through the load
+    /// channel, so the next poll tick swaps state and schedules a
+    /// fresh render of the built-in error template. The C++
+    /// caller always sees either a real frame or an empty
+    /// placeholder — it never has to know about engine panics.
     pub fn try_take_render_result(&self) -> RenderResult {
-        self.render_result_rx.try_recv().unwrap_or(RenderResult {
+        let result = self.render_result_rx.try_recv().unwrap_or(RenderResult {
             width: 0,
             height: 0,
             pixels: Vec::new(),
-        })
+            error: String::new(),
+        });
+
+        if !result.error.is_empty() {
+            self.install_engine_error(&result.error);
+            return RenderResult {
+                width: 0,
+                height: 0,
+                pixels: Vec::new(),
+                error: String::new(),
+            };
+        }
+
+        result
+    }
+
+    /// Builds the error page for the currently-displayed URL and
+    /// injects it into the load result channel. The main poll loop
+    /// then picks it up on its next tick and runs it through the
+    /// normal `try_take_load_result` code path, which swaps the
+    /// `state` and emits `titleChanged` / `loadFinished` for free.
+    ///
+    /// Marks the injection as `HistoryNavigation` so the existing
+    /// history stack is left alone — the failing URL was already
+    /// pushed (if it came from a user navigation) before the
+    /// render worker took over, and we just want to replace the
+    /// content shown at that entry.
+    fn install_engine_error(&self, message: &str) {
+        let url = self.current_url.clone().unwrap_or_default();
+        let error_html = crate::error_page::render(&url, message);
+        let Some(state) = PageState::from_document(parse_html_string(&error_html)).map(Arc::new)
+        else {
+            // The error template itself failed to parse. We have
+            // nothing sensible to show, so drop on the floor and
+            // let the GUI keep whatever was last painted.
+            eprintln!("[koala-qt] error template failed to parse; engine error was: {message}");
+            return;
+        };
+        let _ = self.load_result_tx_main.send(LoadResult {
+            url,
+            source: LoadSource::HistoryNavigation,
+            state,
+        });
     }
 }
 
@@ -503,13 +547,86 @@ fn run_render_worker(
         while let Ok(newer) = job_rx.try_recv() {
             latest = newer;
         }
-        let pixels = render_state(&latest.state, latest.width, latest.height);
-        if result_tx
-            .send(RenderResult {
+
+        let attempt = catch_unwind(AssertUnwindSafe(|| {
+            render_state(&latest.state, latest.width, latest.height)
+        }));
+
+        let result = match attempt {
+            Ok(pixels) => RenderResult {
                 width: latest.width,
                 height: latest.height,
                 pixels,
-            })
+                error: String::new(),
+            },
+            Err(payload) => {
+                let message = panic_message(&payload);
+                eprintln!("[koala-qt] render panicked: {message}");
+                RenderResult {
+                    width: latest.width,
+                    height: latest.height,
+                    pixels: Vec::new(),
+                    error: message,
+                }
+            }
+        };
+
+        if result_tx.send(result).is_err() {
+            break;
+        }
+    }
+}
+
+/// Best-effort extraction of a human-readable message from a
+/// panic payload. `catch_unwind` hands us a `Box<dyn Any>`, so we
+/// try the two concrete types the standard library uses before
+/// falling back to a placeholder.
+fn panic_message(payload: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_owned()
+    } else {
+        "engine panicked (no message)".to_owned()
+    }
+}
+
+/// Loader-worker entry point. Fetches each requested URL via
+/// `koala_browser::load_document` (blocking HTTP on this thread
+/// only) and turns the resulting document into an `Arc<PageState>`.
+///
+/// The fetch + parse runs inside `catch_unwind` so a panic in
+/// any of koala-browser's dependencies (HTML parser, CSS parser,
+/// cascade, image decoder) doesn't kill the worker thread. On
+/// failure — whether from an HTTP error, an empty layout tree,
+/// or a caught panic — we build an error `PageState` from the
+/// built-in template and return it as a successful `Loaded`
+/// result, preserving the original `source` so the history stack
+/// behaves the same way as it would for a real page.
+fn run_load_worker(
+    request_rx: &Receiver<LoadRequest>,
+    result_tx: &Sender<LoadResult>,
+) {
+    while let Ok(req) = request_rx.recv() {
+        let LoadRequest { url, source } = req;
+
+        let attempt = catch_unwind(AssertUnwindSafe(|| load_document(&url)));
+
+        let state = match attempt {
+            Ok(Ok(doc)) => match PageState::from_document(doc) {
+                Some(state) => Arc::new(state),
+                None => error_state(&url, "document produced no layout tree"),
+            },
+            Ok(Err(e)) => error_state(&url, &e.to_string()),
+            Err(payload) => {
+                let message = panic_message(&payload);
+                eprintln!("[koala-qt] loader panicked for {url}: {message}");
+                error_state(&url, &message)
+            }
+        };
+
+        if result_tx
+            .send(LoadResult { url, source, state })
             .is_err()
         {
             break;
@@ -517,36 +634,26 @@ fn run_render_worker(
     }
 }
 
-/// Loader-worker entry point. Fetches each requested URL via
-/// `koala_browser::load_document` (blocking HTTP on this thread
-/// only) and turns the resulting document into an `Arc<PageState>`.
-fn run_load_worker(
-    request_rx: &Receiver<LoadRequest>,
-    result_tx: &Sender<LoadResult>,
-) {
-    while let Ok(req) = request_rx.recv() {
-        let LoadRequest { url, source } = req;
-        let result = match load_document(&url) {
-            Ok(doc) => match PageState::from_document(doc) {
-                Some(state) => LoadResult::Loaded {
-                    url,
-                    source,
-                    state: Arc::new(state),
-                },
-                None => LoadResult::Failed {
-                    url,
-                    error: "document produced no layout tree".to_owned(),
-                },
-            },
-            Err(e) => LoadResult::Failed {
-                url,
-                error: e.to_string(),
-            },
-        };
-        if result_tx.send(result).is_err() {
-            break;
-        }
+/// Builds an `Arc<PageState>` from the built-in error template for
+/// the given URL and error message. Falls back to a minimal
+/// hard-coded page when the template itself fails to parse — if
+/// that ever happens it means koala-css is broken enough that the
+/// error page can't even be used, which we handle by showing a
+/// plain-text message.
+fn error_state(url: &str, message: &str) -> Arc<PageState> {
+    let html = crate::error_page::render(url, message);
+    if let Some(state) = PageState::from_document(parse_html_string(&html)) {
+        return Arc::new(state);
     }
+    // Last-resort fallback: a trivial page the layout engine
+    // cannot plausibly choke on.
+    let fallback = parse_html_string(
+        "<!doctype html><html><body><h1>Page couldn't load</h1></body></html>",
+    );
+    Arc::new(
+        PageState::from_document(fallback)
+            .expect("trivial fallback HTML must produce a layout tree"),
+    )
 }
 
 /// The full layout → paint → rasterize pipeline, taking a borrowed

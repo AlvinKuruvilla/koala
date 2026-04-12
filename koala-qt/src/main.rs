@@ -8,6 +8,7 @@
 
 mod bridge;
 mod browser_page;
+mod error_page;
 mod landing;
 
 fn main() -> std::process::ExitCode {

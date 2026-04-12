@@ -160,9 +160,11 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/bridge.rs");
     println!("cargo:rerun-if-changed=cpp/koala_window.h");
-    // `include_str!` on `res/landing.html` should cause rustc to emit
-    // it as a dependency automatically, but we've seen cargo's
-    // incremental detection miss the change in practice. Declare it
-    // explicitly here so a plain HTML edit always triggers a rebuild.
+    // `include_str!` on the template files should cause rustc to
+    // emit them as dependencies automatically, but we've seen
+    // cargo's incremental detection miss the change in practice.
+    // Declare them explicitly here so plain HTML edits always
+    // trigger a rebuild.
     println!("cargo:rerun-if-changed=res/landing.html");
+    println!("cargo:rerun-if-changed=res/error.html");
 }

@@ -22,10 +22,19 @@ pub mod ffi {
     /// the stated `width`×`height`. An empty `pixels` vector means
     /// "no new frame is ready" — `BrowserView` polls this from a
     /// QTimer and skips empty results.
+    ///
+    /// `error` is populated when the render worker caught a panic
+    /// while trying to rasterise the page. The Rust side of
+    /// `try_take_render_result` handles this case internally by
+    /// swapping the current page for the built-in error template
+    /// and scheduling a fresh render; the C++ caller never sees
+    /// the error payload and only knows that no paintable frame
+    /// arrived on this tick.
     pub struct RenderResult {
         pub width: u32,
         pub height: u32,
         pub pixels: Vec<u8>,
+        pub error: String,
     }
 
     /// Summary returned by `try_take_load_result`. The GUI side

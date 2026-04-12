@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Page couldn't load</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, "SF Pro Display", "Inter", "Helvetica Neue", Arial, sans-serif;
+    background: #fafafa;
+    color: #0a0a0a;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 144px 64px 80px;
+  }
+  .eyebrow {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    color: #dc2626;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 999px;
+    margin-bottom: 28px;
+  }
+  h1 {
+    font-size: 44px;
+    font-weight: 700;
+    color: #0a0a0a;
+    line-height: 1.08;
+    letter-spacing: -1.5px;
+    margin: 0 0 20px;
+  }
+  .lead {
+    font-size: 17px;
+    font-weight: 400;
+    color: #525252;
+    line-height: 1.6;
+    letter-spacing: -0.15px;
+    margin: 0 0 64px;
+  }
+  .field {
+    margin-bottom: 28px;
+  }
+  .field-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #737373;
+    margin: 0 0 10px;
+  }
+  .url {
+    display: block;
+    padding: 16px 20px;
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: #0a0a0a;
+    letter-spacing: -0.1px;
+    word-break: break-all;
+  }
+  .details {
+    padding: 16px 20px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: #991b1b;
+    line-height: 1.55;
+    letter-spacing: -0.1px;
+    word-break: break-word;
+  }
+  .hint {
+    margin: 64px 0 0;
+    padding-top: 24px;
+    border-top: 1px solid #e5e5e5;
+    font-size: 13px;
+    color: #737373;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="eyebrow">Error</span>
+    <h1>Can't display this page.</h1>
+    <p class="lead">
+      Koala couldn't render the requested page. The engine reported
+      the following while processing the response.
+    </p>
+
+    <div class="field">
+      <span class="field-label">Requested URL</span>
+      <code class="url">{{url}}</code>
+    </div>
+
+    <div class="field">
+      <span class="field-label">Engine report</span>
+      <div class="details">{{message}}</div>
+    </div>
+
+    <p class="hint">
+      Check your network connection, verify the URL, or try reloading.
+      If the same page fails again, the renderer likely hit a feature
+      it doesn't yet support.
+    </p>
+  </div>
+</body>
+</html>
