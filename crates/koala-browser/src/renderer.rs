@@ -177,6 +177,38 @@ impl Renderer {
         }
     }
 
+    /// Returns the raw RGBA pixel buffer as a byte slice.
+    ///
+    /// The layout is 4 bytes per pixel (R, G, B, A), row-major, with
+    /// exactly `width * 4` bytes per row and no padding. This is the
+    /// format most native APIs expect (`QImage::Format_RGBA8888`,
+    /// `CGBitmapContext` with `kCGImageAlphaLast`, WebGPU `Rgba8Unorm`),
+    /// which is why we expose the buffer directly instead of forcing
+    /// callers to go through `save()` + a decoder round-trip.
+    #[must_use]
+    pub fn rgba_bytes(&self) -> &[u8] {
+        self.buffer.as_raw()
+    }
+
+    /// Fill the entire pixel buffer with a single colour.
+    ///
+    /// [§ 14.2 The canvas background and the HTML `<body>` element](https://www.w3.org/TR/CSS2/colors.html#background)
+    ///
+    /// "The background of the root element becomes the canvas
+    /// background and its background painting area extends to cover
+    /// the entire canvas."
+    ///
+    /// The renderer starts with the default white fill. Callers that
+    /// know the canvas background (via [`koala_css::canvas_background`])
+    /// should call this before [`render`](Self::render) to replace the
+    /// default, so content that doesn't span the viewport (for example
+    /// a body that is shorter than the window) shows the correct
+    /// background underneath.
+    pub fn set_canvas_background(&mut self, color: ColorValue) {
+        let pixel = Rgba([color.r, color.g, color.b, color.a]);
+        self.buffer = ImageBuffer::from_pixel(self.width, self.height, pixel);
+    }
+
     /// Execute a single display command.
     fn execute_command(&mut self, command: &DisplayCommand) {
         match command {
