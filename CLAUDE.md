@@ -168,11 +168,12 @@ Focus on what you're working on *now*. Don't try to implement everything in one 
 ```
 koala/
 ├── crates/
-│   ├── koala-common/     # Shared utilities (warnings, error types)
+│   ├── koala-common/     # Shared utilities (URL, fetching, image types)
 │   ├── koala-dom/        # Arena-based DOM tree with parent/sibling links
 │   ├── koala-html/       # HTML tokenizer and parser (WHATWG spec)
-│   ├── koala-css/        # CSS tokenizer, parser, selector, cascade
-│   └── koala-browser/    # High-level browser API
+│   ├── koala-css/        # CSS parser, cascade, layout engine, paint, values
+│   ├── koala-js/         # Boa-backed JavaScript runtime
+│   └── koala-browser/    # Document pipeline + software renderer
 ├── koala-cli/            # Primary binary: HTML-to-image renderer
 ├── koala-qt/             # Qt browser UI (cxx bridge to koala-browser)
 └── res/                  # Test HTML files
@@ -180,13 +181,14 @@ koala/
 
 **Crate Dependencies:**
 ```
-koala-common       (no deps - shared utilities)
+koala-common       (no deps — shared utilities)
 koala-dom          (no deps)
+koala-js           (no deps — Boa-backed JS runtime)
     ↑
 koala-html         (depends on koala-dom)
 koala-css          (depends on koala-common, koala-dom)
     ↑
-koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css)
+koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css, koala-js)
     ↑
 koala-qt           (depends on koala-browser via `cxx`; widget layer in C++)
 koala-cli          (depends on koala-browser)
@@ -211,16 +213,17 @@ The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) travers
 - **CSS Engine**: Tokenizer, parser, selector matching (type/class/ID/combinators/attribute selectors), cascade, computed styles, CSS variables, shorthand expansion
 - **Layout**: Block (CSS 2.1 § 9-10), inline formatting context, flexbox, grid, table, inline-block, margin collapsing, replaced elements (`<img>`), overflow clipping
 - **Rendering**: Headless PNG/JPG/BMP output via software renderer — text (bold/italic/decoration), backgrounds, borders (with radius), box shadows, images
-- **Development GUI**: egui-based inspector with URL bar, navigation, debug panel (F12), theme toggle
+- **Qt Browser UI**: `koala-qt` — Ladybird-modeled QMainWindow/QTabWidget/LocationEdit/BrowserView shell over a cxx bridge into koala-browser, with OS-standard keyboard shortcuts and a landing page served from `koala-qt/res/landing.html`
 
 ### Dependencies
 
 - **fontdue** — Font rasterization and text measurement
 - **image** — Image encoding (PNG, JPG, etc.)
-- **egui/eframe** — Cross-platform GUI framework (development GUI)
+- **cxx** — Rust ↔ C++ bridge used by `koala-qt`
 - **serde** — Serialization for computed styles
 - **strum/strum_macros** — Enum utilities for tokenizer states
-- **anyhow** — Error handling
+- **thiserror** — Typed error enums at I/O boundaries
+- **anyhow** — Error context for the rasterizer (`Renderer::save`)
 - **Boa** — JavaScript engine
 
 ## Debugging Layout Issues
