@@ -25,6 +25,8 @@ pub use koala_dom as dom;
 pub use koala_html as html;
 pub use koala_js as js;
 
+pub use renderer::{Renderer, RendererFonts};
+
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
 
@@ -334,7 +336,7 @@ fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
 /// the first font that loads successfully, or None if no font is found.
 #[must_use]
 pub fn load_system_font() -> Option<fontdue::Font> {
-    renderer::Renderer::load_system_font()
+    Renderer::load_system_font()
 }
 
 /// Create a [`FontMetrics`](koala_css::FontMetrics) provider, using real
@@ -375,7 +377,7 @@ impl FontProvider {
     #[must_use]
     pub fn load() -> Self {
         Self {
-            font: renderer::Renderer::load_system_font(),
+            font: Renderer::load_system_font(),
         }
     }
 
