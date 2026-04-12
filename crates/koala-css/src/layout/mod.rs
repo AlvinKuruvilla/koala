@@ -35,16 +35,19 @@ pub mod stacking;
 pub mod table;
 pub mod values;
 
-// Re-exports for convenience
+// Re-exports for convenience.
+pub use crate::style::values::{
+    ClearSide, FloatSide, FontStyle, PositionType, TextAlign, TextDecorationLine,
+};
 pub use box_model::{BoxDimensions, EdgeSizes, Rect};
-pub use float::{ClearSide, FloatContext, FloatSide};
+pub use float::FloatContext;
 pub use formatting_context::{BlockFormattingContext, InlineFormattingContext};
 pub use inline::{
-    ApproximateFontMetrics, FontMetrics, FontStyle, FragmentContent, InlineLayout, LineBox,
-    LineFragment, TextAlign, TextDecorationLine, TextRun, VerticalAlign,
+    ApproximateFontMetrics, FontMetrics, FragmentContent, InlineLayout, LineBox, LineFragment,
+    TextRun, VerticalAlign,
 };
 pub use layout_box::{BoxType, LayoutBox};
-pub use positioned::{BoxOffsets, PositionType, PositionedLayout};
+pub use positioned::{BoxOffsets, PositionedLayout};
 pub use stacking::{StackingContext, ZIndex};
 pub use table::TableLayout;
 pub use values::{AutoEdgeSizes, AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};

@@ -17,10 +17,11 @@
 use crate::style::{AutoLength, LengthValue};
 use crate::style::computed::{AlignItems, AlignSelf, FlexWrap, JustifyContent};
 
+use crate::style::values::PositionType;
+
 use super::box_model::Rect;
 use super::inline::FontMetrics;
 use super::layout_box::LayoutBox;
-use super::positioned::PositionType;
 use super::values::UnresolvedAutoEdgeSizes;
 
 /// Per-item data collected during flex layout.

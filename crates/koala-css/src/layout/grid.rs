@@ -15,9 +15,10 @@ use crate::style::computed::{GridAutoFlow, GridLine, TrackSize};
 use crate::style::{AutoLength, LengthValue};
 
 use super::box_model::Rect;
+use crate::style::values::PositionType;
+
 use super::inline::FontMetrics;
 use super::layout_box::LayoutBox;
-use super::positioned::PositionType;
 
 /// 0-based grid position for an item.
 struct GridPosition {

@@ -18,8 +18,9 @@
 use anyhow::Result;
 use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
-use koala_css::layout::inline::TextDecorationLine;
-use koala_css::{BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle};
+use koala_css::{
+    BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle, TextDecorationLine,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

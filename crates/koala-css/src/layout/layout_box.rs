@@ -18,13 +18,15 @@ use crate::style::{
     InnerDisplayType, LengthValue, OuterDisplayType,
 };
 
+use crate::style::values::{
+    ClearSide, FloatSide, FontStyle, PositionType, TextAlign, TextDecorationLine,
+};
+
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
-use super::float::{ClearSide, FloatContext, FloatSide};
-use super::inline::{
-    FontMetrics, FontStyle, FragmentContent, InlineLayout, LineBox, TextAlign, TextDecorationLine,
-};
-use super::positioned::{BoxOffsets, PositionType, PositionedLayout};
+use super::float::FloatContext;
+use super::inline::{FontMetrics, FragmentContent, InlineLayout, LineBox};
+use super::positioned::{BoxOffsets, PositionedLayout};
 use super::values::{AutoOr, UnresolvedAutoEdgeSizes, UnresolvedEdgeSizes};
 
 #[cfg(feature = "layout-trace")]

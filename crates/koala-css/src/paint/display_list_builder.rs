@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use koala_dom::NodeId;
 
 use crate::layout::inline::FragmentContent;
-use crate::layout::positioned::PositionType;
 use crate::style::ComputedStyle;
+use crate::style::values::PositionType;
 use crate::style::BorderRadius;
 use crate::{BoxType, LayoutBox};
 

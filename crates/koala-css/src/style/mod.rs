@@ -10,11 +10,14 @@
 pub mod computed;
 mod display;
 pub mod substitute;
-mod values;
+pub(crate) mod values;
 mod writing_mode;
 
 // Re-export all public types
 pub use computed::ComputedStyle;
 pub use display::{DisplayValue, InnerDisplayType, OuterDisplayType};
-pub use values::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, DEFAULT_FONT_SIZE_PX, LengthValue};
+pub use values::{
+    AutoLength, BorderRadius, BorderValue, BoxShadow, ClearSide, ColorValue, DEFAULT_FONT_SIZE_PX,
+    FloatSide, FontStyle, LengthValue, PositionType, TextAlign, TextDecorationLine,
+};
 pub use writing_mode::{PhysicalSide, WritingMode};

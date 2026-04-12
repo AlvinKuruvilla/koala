@@ -6,8 +6,8 @@
 //! drawing commands needed to render a page, in the correct z-order.
 
 use crate::ColorValue;
-use crate::layout::inline::{FontStyle, TextDecorationLine};
 use crate::style::BorderRadius;
+use crate::style::values::{FontStyle, TextDecorationLine};
 
 /// A single drawing command.
 ///

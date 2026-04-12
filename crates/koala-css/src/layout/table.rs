@@ -15,9 +15,10 @@
 use crate::style::{AutoLength, LengthValue};
 
 use super::box_model::Rect;
+use crate::style::values::PositionType;
+
 use super::inline::FontMetrics;
 use super::layout_box::LayoutBox;
-use super::positioned::PositionType;
 
 /// [§ 17.6.1 The separated borders model](https://www.w3.org/TR/CSS2/tables.html#separated-borders)
 ///

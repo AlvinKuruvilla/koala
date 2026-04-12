@@ -1,9 +1,29 @@
-//! CSS Font value parsing
+//! CSS Font value types and parsing.
 //!
 //! [CSS Fonts Module Level 4](https://www.w3.org/TR/css-fonts-4/)
 
+use serde::Serialize;
+
 use crate::parser::ComponentValue;
 use crate::tokenizer::CSSToken;
+
+/// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+///
+/// "The 'font-style' property allows italic or oblique faces to be selected."
+///
+/// "normal — Selects a face that is classified as a normal face."
+/// "italic — Selects a font that is labeled as an italic face."
+/// "oblique — Selects a font that is labeled as an oblique face."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum FontStyle {
+    /// "Selects a face that is classified as a normal face."
+    #[default]
+    Normal,
+    /// "Selects a font that is labeled as an italic face."
+    Italic,
+    /// "Selects a font that is labeled as an oblique face."
+    Oblique,
+}
 
 /// Parse font-family value.
 #[must_use]

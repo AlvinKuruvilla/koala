@@ -7,11 +7,11 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::layout::float::{ClearSide, FloatSide};
-use crate::layout::inline::{FontStyle, TextAlign, TextDecorationLine};
-use crate::layout::positioned::PositionType;
 use crate::parser::{ComponentValue, Declaration};
 use crate::style::substitute::{contains_var, substitute_var};
+use crate::style::values::{
+    ClearSide, FloatSide, FontStyle, PositionType, TextAlign, TextDecorationLine,
+};
 use crate::tokenizer::CSSToken;
 use crate::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
