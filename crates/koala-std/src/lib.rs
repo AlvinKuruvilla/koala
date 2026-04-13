@@ -66,5 +66,5 @@
 #![allow(unsafe_code)]
 
 extern crate alloc;
-
+pub mod vec;
 mod raw_vec;

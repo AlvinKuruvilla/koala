@@ -38,13 +38,11 @@ use alloc::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 /// Owns `cap * size_of::<T>()` bytes of heap storage, properly aligned
 /// for `T`, or nothing at all when either `cap == 0` or `T` is a
 /// zero-sized type. See the module-level documentation for invariants.
-// `dead_code` is allowed on this scaffold commit because no collection
-// wrapper is using `RawVec` yet; commit #3 (`Vec<T>`) removes the need
-// for this allowance. `redundant_pub_crate` fires because the
-// containing module is private, but we keep `pub(crate)` as an
-// intentional contract: once a wrapper exists, the items are accessed
-// from a sibling module and this visibility is genuinely required.
-#[allow(dead_code)]
+///
+/// `redundant_pub_crate` fires here because the containing module is
+/// private, but we keep `pub(crate)` as an intentional visibility
+/// contract: `Vec<T>` in the sibling `vec` module accesses these
+/// items, and the visibility is genuinely required for that.
 #[allow(clippy::redundant_pub_crate)]
 pub(crate) struct RawVec<T> {
     ptr: NonNull<T>,
@@ -52,7 +50,6 @@ pub(crate) struct RawVec<T> {
     _marker: PhantomData<T>,
 }
 
-#[allow(dead_code)]
 #[allow(clippy::redundant_pub_crate)]
 impl<T> RawVec<T> {
     /// Minimum capacity on first grow.
@@ -70,6 +67,10 @@ impl<T> RawVec<T> {
     /// For zero-sized `T`, the capacity is set to `usize::MAX` because
     /// a ZST collection can logically hold the entire address space's
     /// worth of elements without ever allocating.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
     pub(crate) const fn new() -> Self {
         let cap = if size_of::<T>() == 0 {
             usize::MAX
@@ -89,6 +90,13 @@ impl<T> RawVec<T> {
     /// is already `usize::MAX` regardless of `requested`. For `T` with
     /// nonzero size and `requested == 0`, this also does not allocate
     /// and returns the same value as `new()`.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1) — a single call into the allocator, no per-element work.
+    /// The allocator itself may internally do variable work to satisfy
+    /// the request, but that cost is outside this function's accounting.
+    #[allow(dead_code)] // will be consumed by Vec::with_capacity in v1.1
     pub(crate) fn with_capacity(requested: usize) -> Self {
         if size_of::<T>() == 0 || requested == 0 {
             return Self::new();
@@ -121,11 +129,19 @@ impl<T> RawVec<T> {
     /// must never be dereferenced past the initialized portion of the
     /// collection — `RawVec` does not know where that boundary is,
     /// which is why element counting lives in the wrapper.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
     pub(crate) const fn ptr(&self) -> NonNull<T> {
         self.ptr
     }
 
     /// Returns the current capacity in elements.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
     pub(crate) const fn capacity(&self) -> usize {
         self.cap
     }
@@ -138,6 +154,16 @@ impl<T> RawVec<T> {
     /// The debug assertion below catches accidental misuse; in release
     /// builds the function will still produce nonsense capacities for
     /// ZSTs, so callers are responsible for checking.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case, where *n* is the current capacity — a
+    /// standard `realloc` that has to move the allocation copies every
+    /// existing element. *O*(1) best case when the allocator extends
+    /// the allocation in place (which `realloc` may do if the
+    /// following address range is free). Amortized *O*(1) per element
+    /// across a sequence of `grow` calls because the capacity doubles
+    /// each time.
     pub(crate) fn grow(&mut self) {
         debug_assert!(
             size_of::<T>() != 0,
