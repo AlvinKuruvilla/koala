@@ -53,7 +53,10 @@
 //! drop-ordering get explicit dedicated tests, because those are the
 //! corners where hand-rolled collections most commonly break.
 
-#![no_std]
+// koala-std is `no_std` when used as a library, but the built-in Rust
+// test harness pulls in `std` for `#[test]`, so we conditionally disable
+// `no_std` under `cfg(test)`. Production consumers never see `std`.
+#![cfg_attr(not(test), no_std)]
 // koala-std is intentionally unsafe-heavy — every collection type in this
 // crate is built on raw pointers and manual allocation. The workspace-wide
 // `unsafe_code = "deny"` lint is overridden here because denying unsafe
@@ -63,3 +66,5 @@
 #![allow(unsafe_code)]
 
 extern crate alloc;
+
+mod raw_vec;
