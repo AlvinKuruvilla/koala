@@ -6,6 +6,7 @@ members = [
     "crates/koala-html",
     "crates/koala-css",
     "crates/koala-js",
+    "crates/koala-std",
     "crates/koala-browser",
     "koala-cli",
     "koala-qt",
@@ -24,6 +25,7 @@ koala-dom = { path = "crates/koala-dom" }
 koala-html = { path = "crates/koala-html" }
 koala-css = { path = "crates/koala-css" }
 koala-js = { path = "crates/koala-js" }
+koala-std = { path = "crates/koala-std" }
 koala-browser = { path = "crates/koala-browser" }
 
 # External dependencies
