@@ -876,7 +876,15 @@ impl ComputedStyle {
             //
             // 'text-decoration' is a shorthand that, in its simplest form,
             // sets text-decoration-line (style and color are later additions).
-            "text-decoration" | "text-decoration-line" => {
+            //
+            // '-webkit-text-decoration' is the legacy WebKit prefix for the
+            // same property. The unprefixed form is the CSS Text Decoration
+            // Level 3 standard and has been cross-browser for years, so the
+            // prefix is a pure alias — accept it and route to the same code
+            // path. This implements the category-1 note in
+            // [`crate::vendor_prefixes`] about aliasing legacy prefixes whose
+            // standard counterpart we already support.
+            "text-decoration" | "text-decoration-line" | "-webkit-text-decoration" => {
                 let mut result = TextDecorationLine::default();
                 let mut found_none = false;
                 for val in values {
@@ -897,6 +905,57 @@ impl ComputedStyle {
                     self.text_decoration_line = Some(result);
                 }
             }
+            // [§ 3.2 'appearance'](https://www.w3.org/TR/css-ui-4/#appearance-switching)
+            //
+            // "The appearance property allows authors to change the style of
+            //  user interface elements so that they look like those of the
+            //  user's host operating system, or to remove a UI element's
+            //  default styling altogether with the value 'none'."
+            //
+            // TODO: real implementation pending form-control rendering.
+            //
+            // Rendering form controls (checkboxes, radio buttons, selects,
+            // text inputs, buttons) as actual painted widgets is a planned
+            // feature that has not landed yet — see `SESSION.md` under
+            // "Native form control rendering" for the current gap. Until
+            // that work is done, form elements lay out from their HTML
+            // structural boxes with UA-stylesheet defaults and nothing
+            // platform-shaped ever reaches the display list, so there is
+            // no native look for `appearance: auto` to request or for
+            // `appearance: none` to suppress. Every value of `appearance`
+            // is therefore a *temporary* no-op, not a deliberate one.
+            //
+            // Accepting the declaration here (instead of falling through
+            // to the unknown-property path) keeps real sites from flooding
+            // stderr every time they write `appearance: none` to flatten a
+            // custom-styled button. The `-webkit-appearance` alias is
+            // handled in the same arm because it is the legacy prefix for
+            // this exact property.
+            //
+            // When form-control rendering lands, this arm must be replaced
+            // with code that actually inspects the keyword and switches
+            // rendering paths; dropping the value on the floor is only
+            // defensible while the feature is missing.
+            #[allow(
+                clippy::match_same_arms,
+                reason = "the spec citation in the arm above documents a \
+                          different property; merging would lose context"
+            )]
+            "appearance" | "-webkit-appearance" => {}
+            // [§ 2 'text-size-adjust'](https://drafts.csswg.org/css-size-adjust/#adjustment-control)
+            //
+            // "On platforms that automatically inflate text in response to
+            //  small viewports, this property controls the magnitude of that
+            //  inflation. On all other platforms, it has no effect."
+            //
+            // Koala renders at a fixed desktop viewport supplied by the
+            // caller (default 1280x720) and never performs automatic text
+            // inflation. Both the standard `text-size-adjust` and the legacy
+            // `-webkit-text-size-adjust` compute to a no-op for us, matching
+            // every desktop browser's behaviour. Accepted here so real sites
+            // that set `text-size-adjust: 100%` in a mobile-friendly reset
+            // do not trip the unknown-property warning.
+            "text-size-adjust" | "-webkit-text-size-adjust" => {}
             // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
             //
             // "Value: left | right | center | justify | inherit"

@@ -52,3 +52,21 @@ polish the look.
   slice out-of-bounds when rendering overleaf.com. Worked
   around by catching panics in the render worker (task #12);
   the actual bug in the grid formatting context is still open.
+
+- **Native form control rendering** — `<input>`, `<select>`,
+  `<textarea>`, `<button>`, and friends currently lay out from
+  their HTML structural boxes with UA-stylesheet defaults; no
+  widgets get painted. Consequence: checkboxes, radio buttons,
+  dropdowns, and text fields look wrong (or invisible) in
+  screenshots of any real site with a form. The `appearance`
+  / `-webkit-appearance` arm in `computed.rs` is a *temporary*
+  no-op tied to this gap — when form-control rendering lands,
+  that arm must be replaced with real keyword handling.
+
+  This work is also the natural home for the semantic state an
+  agent API needs to expose (`checked`, `selected`, `value`,
+  `disabled`), so it should land alongside or just after the
+  render-tree-as-typed-API work rather than before. Painting
+  controls is the easy part; the state model and event plumbing
+  (which depends on JS being wired through the DOM) is where
+  the real complexity lives.

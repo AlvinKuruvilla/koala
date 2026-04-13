@@ -4069,3 +4069,117 @@ fn test_normal_whitespace_collapses_newlines() {
         p.line_boxes.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// WebKit vendor-prefix aliases and no-op properties
+//
+// Real-world stylesheets routinely set `-webkit-text-decoration`,
+// `-webkit-appearance`, and `-webkit-text-size-adjust` alongside their
+// modern counterparts. We accept the prefixed forms (and their unprefixed
+// standards where applicable) without falling through to the unknown-
+// property warning path. These tests pin down that behaviour.
+// ---------------------------------------------------------------------------
+
+/// `-webkit-text-decoration: underline` should behave identically to the
+/// unprefixed `text-decoration: underline` — both route to the same arm
+/// in the style computation, so the resulting `TextRun` carries the
+/// underline flag.
+#[test]
+fn test_webkit_text_decoration_alias_underline() {
+    let root = layout_html(
+        "<style>span { -webkit-text-decoration: underline; }</style>\
+         <p><span>Underlined via prefix</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty(), "should have text runs");
+
+    let run = &runs[0];
+    assert!(
+        run.text_decoration.underline,
+        "-webkit-text-decoration: underline should alias to \
+         text-decoration: underline and set underline=true, got {:?}",
+        run.text_decoration
+    );
+}
+
+/// `-webkit-text-decoration: line-through` aliases to `text-decoration:
+/// line-through` and sets the `line_through` flag on the resulting run.
+/// Locks in that the alias is not a partial implementation.
+#[test]
+fn test_webkit_text_decoration_alias_line_through() {
+    let root = layout_html(
+        "<style>.del { -webkit-text-decoration: line-through; }</style>\
+         <p><span class='del'>Deleted via prefix</span></p>",
+    );
+    let body = box_at_depth(&root, 2);
+    let runs = collect_text_runs(body);
+    assert!(!runs.is_empty());
+
+    let run = &runs[0];
+    assert!(
+        run.text_decoration.line_through,
+        "-webkit-text-decoration: line-through should set line_through=true, \
+         got {:?}",
+        run.text_decoration
+    );
+}
+
+/// `appearance: none` and `-webkit-appearance: none` both parse and apply
+/// cleanly without disturbing the surrounding layout. Koala does not render
+/// native form controls, so every value computes to a no-op — the test
+/// verifies the declaration is accepted (no panic, no warning path) and
+/// that sibling properties on the same element still take effect.
+#[test]
+fn test_appearance_and_webkit_appearance_are_noops() {
+    let root = layout_html(
+        "<style>\
+            button { \
+                appearance: none; \
+                -webkit-appearance: none; \
+                width: 200px; \
+                height: 40px; \
+            }\
+         </style>\
+         <button>Click</button>",
+    );
+    let button = box_at_depth(&root, 3);
+
+    // The no-op arms must not swallow the declaration block; the adjacent
+    // width/height should still reach the button box.
+    assert_eq!(
+        button.dimensions.content.width, 200.0,
+        "appearance: none should not interfere with sibling width; got {}",
+        button.dimensions.content.width
+    );
+    assert_eq!(
+        button.dimensions.content.height, 40.0,
+        "appearance: none should not interfere with sibling height; got {}",
+        button.dimensions.content.height
+    );
+}
+
+/// `text-size-adjust: 100%` and `-webkit-text-size-adjust: 100%` are mobile
+/// text-inflation controls that have no effect on desktop. Both forms must
+/// parse as no-ops without emitting an unknown-property warning, and must
+/// not interfere with sibling declarations in the same block.
+#[test]
+fn test_text_size_adjust_and_webkit_text_size_adjust_are_noops() {
+    let root = layout_html(
+        "<style>\
+            body { \
+                text-size-adjust: 100%; \
+                -webkit-text-size-adjust: 100%; \
+            }\
+            p { width: 300px; }\
+         </style>\
+         <p>Readable on desktop</p>",
+    );
+    let p = box_at_depth(&root, 3);
+
+    assert_eq!(
+        p.dimensions.content.width, 300.0,
+        "text-size-adjust no-op should not interfere with sibling width; got {}",
+        p.dimensions.content.width
+    );
+}
