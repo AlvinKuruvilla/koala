@@ -96,7 +96,6 @@ impl<T> RawVec<T> {
     /// *O*(1) — a single call into the allocator, no per-element work.
     /// The allocator itself may internally do variable work to satisfy
     /// the request, but that cost is outside this function's accounting.
-    #[allow(dead_code)] // will be consumed by Vec::with_capacity in v1.1
     pub(crate) fn with_capacity(requested: usize) -> Self {
         if size_of::<T>() == 0 || requested == 0 {
             return Self::new();

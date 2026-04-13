@@ -376,6 +376,84 @@ make the call sound. When a future reader changes surrounding code
 and needs to ask "is this still safe?", the comment tells them
 which invariants to re-check.
 
+## Considered and rejected — `CowVec<T>` / O(1) clone
+
+Discussed and deliberately passed over on 2026-04-13. Recording
+the reasoning so future sessions don't re-litigate without new
+information.
+
+### The idea
+
+A separate type `CowVec<T>` that wraps `Arc<Vec<T>>` internally.
+`clone` is O(1) — just an atomic refcount bump. Mutation methods
+(`push`, `pop`, `insert`, etc.) do a "make unique" check: if the
+`Arc`'s strong count is > 1, deep-clone the inner `Vec<T>` (O(*n*)
+at that point), then mutate. This is what Swift's `Array` does,
+and what Qt's `QVector` did pre-6. Genuinely O(1) clone for
+read-mostly workloads.
+
+### Why it has no home in `koala-std` — today or in any current
+### milestone
+
+1. **No profile-justified bottleneck exists.** The clone cost
+   that would motivate it — `LayoutBox::clone` in the rendering
+   pipeline — is measured at 30µs per render in
+   `rasterizer-future-work.md`. That's 0.017% of a typical
+   render's 180ms budget. Optimizing it is optimizing noise.
+
+2. **The arena allocator (milestone 3) solves the same problem
+   strictly better.** `BumpAllocator`-backed layout boxes make
+   the "clone-then-mutate layout tree per render" pattern
+   disappear entirely: you allocate into a scratch arena, render,
+   and reset the arena. O(1) bulk invalidation, no refcount
+   machinery, no CoW branch on every mutation, no "did `push`
+   secretly copy 10k elements" surprise. Strictly better for this
+   use case, already on the roadmap, already profile-justified.
+
+3. **CoW's downsides are real at the wrong moments.** A `push`
+   that *sometimes* allocates O(*n*) bytes silently breaks the
+   amortized O(1) contract that calling code depends on. The
+   "clone and mutate both" pattern pays the O(*n*) cost twice
+   with no savings, and is common enough that the benefit case
+   isn't a clean win. Every mutation method grows an atomic load
+   that isn't free even on uncontended paths.
+
+### When to revisit
+
+If — and only if — profiling shows that clone-then-read-mostly is
+a meaningful cost in Koala's hot path, AND the arena allocator
+doesn't address it, AND there is no simpler solution. All three
+conditions must hold. "Interesting pattern, might be useful
+someday" is not sufficient — that bar is how scope creep happens.
+
+Until then, `Rc<Vec<T>>` (from `std`) is the escape hatch for any
+code that genuinely wants O(1) clone at the cost of shared
+ownership. It is a one-line solution that already exists and
+doesn't require building a type.
+
+### Persistent vectors — permanently out of scope
+
+HAMT-backed persistent vectors (Clojure's `PersistentVector`,
+Rust's `im` and `rpds` crates) give O(1) clone and O(log *n*)
+mutation via structural sharing. They are a genuinely different
+data structure, not a variation on `Vec`. They are also
+**permanently out of scope for `koala-std`** because:
+
+- Iteration is 2-4× slower than a flat `Vec` due to pointer
+  chasing through the trie — and Koala's workloads (HTML
+  tokenizing, CSS cascade, layout traversal, rendering) are
+  almost entirely "build a buffer and walk it sequentially,"
+  which is the pattern persistent vectors handle *worst*.
+- The memory overhead per node is cache-unfriendly.
+- They are not a drop-in replacement for anything that expects
+  `&[T]` semantics.
+
+If we ever need functional-style immutable updates with
+structural sharing, pull in `im` as an external dependency (a
+deliberate, named exception to the build-from-scratch philosophy
+because the data structure is a research-grade artifact, not a
+"read the spec and translate" exercise). Do not rebuild it.
+
 ## Interesting sidebar — parallel drop
 
 Mentioned for future reference; not on any milestone roadmap.

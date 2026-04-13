@@ -5,6 +5,8 @@
 //! `RawVec<T>` helper which owns the allocation and tracks capacity;
 //! `Vec<T>` adds the element count on top.
 
+use core::fmt;
+use core::hash::{Hash, Hasher};
 use core::ops::{Deref, DerefMut};
 use core::ptr;
 use core::slice;
@@ -52,10 +54,6 @@ impl<T> Vec<T> {
     /// *O*(1).
     #[inline]
     #[must_use]
-    // `Default` lands in commit #4 alongside the rest of the trait
-    // impls. `new_without_default` is suppressed until then to keep
-    // this commit scoped to docs rather than API surface.
-    #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             buf: RawVec::new(),
@@ -358,6 +356,227 @@ impl<T> DerefMut for Vec<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
         self.as_mut_slice()
+    }
+}
+
+/// Creates an empty `Vec<T>`. Equivalent to [`Vec::new`] — no
+/// allocation, no elements.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let v: Vec<i32> = Vec::default();
+/// assert!(v.is_empty());
+/// assert_eq!(v.capacity(), 0);
+/// ```
+impl<T> Default for Vec<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Formats the vector as `[elem0, elem1, ...]` by delegating to the
+/// slice's [`Debug`](fmt::Debug) impl.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// v.push(3);
+/// assert_eq!(format!("{:?}", v), "[1, 2, 3]");
+/// ```
+impl<T: fmt::Debug> fmt::Debug for Vec<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_slice(), f)
+    }
+}
+
+/// Two `Vec<T>` compare equal when they have the same length and
+/// all corresponding elements compare equal. Delegates to the slice
+/// `PartialEq` impl, which short-circuits on length mismatch.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut a = Vec::new();
+/// a.push(1);
+/// a.push(2);
+///
+/// let mut b = Vec::new();
+/// b.push(1);
+/// b.push(2);
+///
+/// assert_eq!(a, b);
+///
+/// b.push(3);
+/// assert_ne!(a, b);
+/// ```
+impl<T: PartialEq> PartialEq for Vec<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+/// `Vec<T>` inherits `Eq` whenever `T: Eq` — the relation is
+/// reflexive, symmetric, and transitive by the slice's `Eq` impl.
+impl<T: Eq> Eq for Vec<T> {}
+
+/// Hashes the vector by delegating to the slice's [`Hash`] impl,
+/// which feeds the length into the hasher first and then each
+/// element in order. The length prefix is what distinguishes
+/// `[1, 2]` concatenated with `[3]` from `[1, 2, 3]` — without it,
+/// `Hash` would collide on nested structures.
+impl<T: Hash> Hash for Vec<T> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Hash::hash(self.as_slice(), state);
+    }
+}
+
+/// Clones the vector by pre-allocating a backing of the same
+/// capacity as the source's length and element-wise cloning into
+/// it.
+///
+/// # Panic safety
+///
+/// If an element's `Clone` impl panics part-way through the loop,
+/// the partially-built vector is dropped during unwinding. Each
+/// successful clone is committed via `push`, which increments the
+/// running `len` before the next clone is attempted — so the new
+/// vector's `len` always reflects the number of elements actually
+/// initialized, and `Vec::drop` will correctly run `drop_in_place`
+/// on exactly those elements. No manual scope guard is needed;
+/// continuously maintaining the invariant is the lighter and more
+/// common form of panic safety for this kind of loop.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// v.push(3);
+///
+/// let w = v.clone();
+/// assert_eq!(v, w);
+/// ```
+///
+/// # Time complexity
+///
+/// *O*(*n*) where *n* is the source vector's length, plus the
+/// cost of one allocation. Because we pre-allocate exactly
+/// `self.len()` slots, the `push` loop never triggers a `grow`.
+impl<T: Clone> Clone for Vec<T> {
+    fn clone(&self) -> Self {
+        let mut new = Self {
+            buf: RawVec::with_capacity(self.len),
+            len: 0,
+        };
+        for item in self {
+            new.push(item.clone());
+        }
+        new
+    }
+}
+
+/// Collects elements from an iterator into a new `Vec<T>`,
+/// pre-allocating based on the iterator's `size_hint` lower bound.
+///
+/// If the iterator yields more elements than the lower bound
+/// promised, `push` will grow the backing allocation as normal —
+/// the pre-allocation is a hint, not a contract. The lower bound
+/// (rather than the upper bound) is used because an iterator may
+/// report an unbounded or dishonest upper bound that would make
+/// `with_capacity` over-commit or OOM.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let v: Vec<i32> = (1..=3).collect();
+/// assert_eq!(v.as_slice(), &[1, 2, 3]);
+/// ```
+///
+/// # Time complexity
+///
+/// *O*(*n*) where *n* is the number of elements yielded, plus the
+/// cost of any grows when the iterator exceeds the pre-allocated
+/// capacity.
+impl<T> FromIterator<T> for Vec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let (lower, _) = iter.size_hint();
+        let mut v = Self {
+            buf: RawVec::with_capacity(lower),
+            len: 0,
+        };
+        for item in iter {
+            v.push(item);
+        }
+        v
+    }
+}
+
+/// Allows `for x in &vec` — yields shared references to each
+/// element in order, delegating to the slice iterator.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// v.push(3);
+///
+/// let mut sum = 0;
+/// for x in &v {
+///     sum += x;
+/// }
+/// assert_eq!(sum, 6);
+/// ```
+impl<'a, T> IntoIterator for &'a Vec<T> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// Allows `for x in &mut vec` — yields exclusive references to each
+/// element in order, delegating to the slice iterator.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// v.push(3);
+///
+/// for x in &mut v {
+///     *x *= 10;
+/// }
+/// assert_eq!(v.as_slice(), &[10, 20, 30]);
+/// ```
+impl<'a, T> IntoIterator for &'a mut Vec<T> {
+    type Item = &'a mut T;
+    type IntoIter = slice::IterMut<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
