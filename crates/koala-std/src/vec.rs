@@ -5,7 +5,9 @@
 //! `RawVec<T>` helper which owns the allocation and tracks capacity;
 //! `Vec<T>` adds the element count on top.
 
+use core::ops::{Deref, DerefMut};
 use core::ptr;
+use core::slice;
 
 use crate::raw_vec::RawVec;
 
@@ -132,6 +134,74 @@ impl<T> Vec<T> {
         self.buf.capacity()
     }
 
+    /// Returns a shared slice over the vector's initialized elements.
+    ///
+    /// This is the inherent method that backs the [`Deref`] impl —
+    /// `&*vec` and `vec.as_slice()` produce the same `&[T]`. Calling
+    /// it explicitly is occasionally useful when a future `Vec`-
+    /// specific method would otherwise shadow a slice method of the
+    /// same name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// let s: &[i32] = v.as_slice();
+    /// assert_eq!(s, &[1, 2, 3]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1). Returns a reference to the existing allocation with
+    /// no per-element work.
+    #[inline]
+    #[must_use]
+    pub const fn as_slice(&self) -> &[T] {
+        // SAFETY: slots `[0, self.len)` contain initialized values of
+        // `T` by the struct invariant, and `self.buf.ptr()` is
+        // aligned to `align_of::<T>()` (including the ZST /
+        // zero-length case where it is `NonNull::dangling()`, which
+        // is explicitly documented as a valid source for slices that
+        // read zero bytes — either because `self.len == 0` or
+        // because `T` is a ZST). We return a shared reference, so no
+        // mutation happens through it.
+        unsafe { slice::from_raw_parts(self.buf.ptr().as_ptr(), self.len) }
+    }
+
+    /// Returns an exclusive slice over the vector's initialized
+    /// elements.
+    ///
+    /// This is the inherent method that backs the [`DerefMut`] impl.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// let s: &mut [i32] = v.as_mut_slice();
+    /// s[0] = 10;
+    /// assert_eq!(v.as_slice(), &[10, 2, 3]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
+    #[inline]
+    #[must_use]
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: identical to `as_slice`, plus we have exclusive
+        // access through `&mut self`, so the returned `&mut [T]`
+        // does not alias any other reference.
+        unsafe { slice::from_raw_parts_mut(self.buf.ptr().as_ptr(), self.len) }
+    }
+
     /// Appends an element to the back of the vector.
     ///
     /// If the current length equals the capacity, the backing
@@ -215,25 +285,30 @@ impl<T> Vec<T> {
 
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
-        // Drops each initialized element in forward order (index 0,
-        // 1, 2, ...). The backing allocation itself is released by
-        // `RawVec`'s own `Drop`, so this impl only handles elements.
+        // Drops each initialized element in forward order. The
+        // backing allocation is released by `RawVec`'s own `Drop`
+        // after this method returns, so we only handle the elements.
         //
-        // NOT panic-safe: if an element destructor panics part-way
-        // through `drop_in_place`, the remaining elements leak. The
-        // panic-safe version using a scope guard lands in commit #4
-        // alongside the trait impls; this known limitation is
-        // recorded here until then.
+        // Panic safety: `ptr::drop_in_place` on a `*mut [T]` uses
+        // compiler-generated drop glue that handles single-element
+        // panics internally — if one element's destructor panics,
+        // the unwinding machinery still drops the remaining elements
+        // via an implicit scope guard. A second panic during that
+        // cleanup triggers the standard Rust double-panic abort,
+        // which is unfixable by any user code and not specific to
+        // this impl. This matches `std::vec::Vec`'s Drop exactly;
+        // no manual scope guard is required here.
         //
         // SAFETY: slots `[0, self.len)` contain initialized values of
         // `T` by the struct's invariant. `slice_from_raw_parts_mut`
         // builds a raw `*mut [T]` (not a reference) pointing at them,
         // which is exactly what `drop_in_place` wants — using the
         // reference-returning `from_raw_parts_mut` here would
-        // materialize a `&mut [T]` that has stricter validity rules
-        // than we need and that clippy rightly flags as suspicious.
-        // `drop_in_place` then runs each element's destructor. We
-        // have exclusive access through `&mut self`, so no aliasing.
+        // materialize a `&mut [T]` that imposes stricter validity
+        // rules than we actually need. `drop_in_place` then runs
+        // each element's destructor via the compiler-generated drop
+        // glue. We have exclusive access through `&mut self`, so no
+        // aliasing concerns.
         unsafe {
             ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
                 self.buf.ptr().as_ptr(),
@@ -242,3 +317,47 @@ impl<T> Drop for Vec<T> {
         }
     }
 }
+/// `Vec<T>` dereferences to `[T]` — auto-deref coercion makes every
+/// slice method available on a `Vec<T>` for free.
+///
+/// Concretely, this unlocks `iter`, `get`, `first`, `last`,
+/// `binary_search`, `contains`, `windows`, `chunks`, indexing,
+/// formatting helpers, and everything else in `impl [T]`. That's
+/// why `Vec<T>`'s inherent impl stays small — everything that
+/// applies to an arbitrary slice lives on `[T]` and is borrowed
+/// through this coercion.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(3);
+/// v.push(1);
+/// v.push(2);
+///
+/// // All of these come from `impl [T]`, not `impl Vec<T>`:
+/// assert_eq!(v.first(), Some(&3));
+/// assert_eq!(v.last(), Some(&2));
+/// let sum: i32 = v.iter().sum();
+/// assert_eq!(sum, 6);
+/// ```
+impl<T> Deref for Vec<T> {
+    type Target = [T];
+
+    #[inline]
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+/// Mutable counterpart to the [`Deref`] impl. Unlocks the `_mut`
+/// slice methods (`iter_mut`, `get_mut`, `sort`, `reverse`, etc.)
+/// and mutable indexing.
+impl<T> DerefMut for Vec<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
