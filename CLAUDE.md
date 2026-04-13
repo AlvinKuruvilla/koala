@@ -145,6 +145,74 @@ When implementing new algorithms:
 - Don't paraphrase the spec when you can quote it
 - Don't skip documenting branches just because they're not implemented yet
 
+### Documentation Conventions for Non-Spec Crates
+
+The Spec-Driven Correctness rules above apply to crates implementing
+web specs (`koala-html`, `koala-css`, `koala-dom`, `koala-browser`,
+future `koala-font` / `koala-shape`). Crates that are *not* spec
+implementations follow different doc conventions — there is no
+`§` section number to cite, no quoted standard text.
+
+The canonical example is `koala-std` (Koala's hand-rolled `no_std` +
+`alloc` foundation library). Its documentation conventions are
+captured in full in `project-memory/koala-std-vec-design.md` under
+"Doc-comment conventions (applies to all of koala-std)". The short
+version that should also apply to any future non-spec crate:
+
+1. **Every public API gets at least one meaningful doc-test.**
+   "Meaningful" means the doc-test makes at least one assertion,
+   and that assertion would fail if the method's contract were
+   broken. A doc-test that just calls a method with no assertion
+   is noise and should be removed.
+
+2. **Every public method gets a `# Time complexity` section**,
+   proportional to the method's actual complexity:
+   - Trivial `O(1)` gets one line: `*O*(1).`
+   - Amortized or bounded non-trivial gets one paragraph naming
+     the cost source and distinguishing amortized from worst case.
+   - Genuinely variable gets one paragraph naming the `n` and the
+     cost source.
+
+   Use italicized big-O (`*O*(1)`, `*O*(*n*)`) to match std's
+   formatting.
+
+3. **Mirror `std`'s section headings** (`# Examples`, `# Panics`,
+   `# Errors`, `# Safety`, `# Time complexity`) but do not copy
+   `std`'s verbose multi-example sections, `#[stable]` /
+   `#[unstable]` attributes, or historical version notes — those
+   exist for `std`'s external-stability audience, which
+   koala-std does not have.
+
+4. **Trivial getters (`len`, `is_empty`, `capacity`) get one-line
+   doc comments plus `# Time complexity`**. Don't over-document
+   obvious wrappers.
+
+5. **Every `unsafe` block gets a preceding `// SAFETY:` comment**
+   that states exactly which invariant the caller is relying on
+   — not a restatement of what the code does.
+
+6. **Doc-tests must import local types explicitly.** Use the
+   hidden-line `#` prefix to keep the import out of rendered
+   docs:
+   ```rust
+   /// ```
+   /// # use koala_std::vec::Vec;
+   /// let mut v = Vec::new();
+   /// v.push(1);
+   /// assert_eq!(v.len(), 1);
+   /// ```
+   ```
+
+7. **Edge cases (ZST-specific behavior, `Drop` correctness, panic
+   paths) belong in unit tests, not doc-tests.** Doc-tests are
+   for the normal API contract; unit tests are for the corners
+   that would make doc-tests weird or untestable.
+
+The literate-programming principles from the global `~/.claude/
+CLAUDE.md` still apply to all crates: explain the *why* not the
+*what*, short plain section headers, no banner dividers, avoid
+over-documenting trivial wrappers.
+
 ### Correctness over Speed
 
 Rendering fidelity matters more than development velocity. When implementing:

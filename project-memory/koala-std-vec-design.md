@@ -220,6 +220,162 @@ Rationale for only one deviation:
   `std` has explicitly chosen to stabilize eventually — it's
   borrowed, not novel.
 
+## Doc-comment conventions (applies to all of koala-std)
+
+`koala-std` is *not* spec-driven, so the "Spec-Driven Correctness"
+section of the project `CLAUDE.md` does not apply here. There is no
+WHATWG / CSS document to cite, no `§` section numbers, no quoted
+spec language. Instead, doc comments for `koala-std` follow the
+conventions below, which are essentially "copy `std`'s doc structure,
+minus the parts tied to `std`'s external-audience stability
+guarantees."
+
+### Structure — mirror std's headings
+
+Every public method with non-trivial behavior gets some subset of
+the following rustdoc sections, in this order:
+
+1. A one-sentence summary (the first line, renders as the item's
+   short description in the module index).
+2. A short prose paragraph explaining *what* it does and, where
+   non-obvious, *why* — the literate-programming principle from
+   the global `CLAUDE.md`.
+3. `# Examples` — at least one doc-test (see below).
+4. `# Panics` — if the method can panic, list the conditions.
+5. `# Errors` — if the method returns `Result`, list the error
+   conditions.
+6. `# Safety` — if the method is `unsafe`, enumerate the invariants
+   the caller must uphold.
+7. `# Time complexity` — every public method (see below).
+
+Trivial getters (`len`, `is_empty`, `capacity`, pure field access)
+need only the one-sentence summary plus `# Time complexity` — no
+separate prose, no examples unless the getter has a non-obvious
+edge case (e.g., `capacity()` for a ZST returning `usize::MAX`).
+
+### Doc-tests — every public API gets at least one
+
+Every `pub fn`, `pub const fn`, and `pub struct` on a public type
+gets **at least one meaningful doc-test**. "Meaningful" has a
+specific definition:
+
+> A doc-test is meaningful if it makes at least one assertion,
+> and that assertion would fail if the method's contract were
+> broken.
+
+A doc-test that just calls `v.push(1)` with no assertion is noise.
+A doc-test that pushes then reads back via `len()` + `pop()` is
+meaningful — it exercises the contract end-to-end.
+
+**Import pattern.** Doc-tests run as independent binaries outside
+the crate, so they need to import the koala-std types explicitly.
+Use the hidden-line prefix `#` to keep the import out of the
+rendered output:
+
+```rust
+/// Appends an element to the back of the vector.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// assert_eq!(v.len(), 2);
+/// assert_eq!(v.pop(), Some(2));
+/// ```
+```
+
+The `# use koala_std::vec::Vec;` line compiles but does not appear
+in the generated docs.
+
+**Edge cases belong in unit tests, not doc-tests.** Two categories
+in particular:
+
+- **ZST-specific behavior.** `Vec<()>::with_capacity(1000).capacity()
+  == usize::MAX` is a real invariant but a weird-looking doc-test
+  that teaches nothing about the normal API. Put ZST assertions in
+  the unit-test module alongside the existing `raw_vec` ZST tests.
+- **`Drop` correctness.** You cannot meaningfully doc-test "does
+  not leak" because the test exits and the leak would be caught
+  by `miri`, not by `assert_eq!`. `Drop` gets prose + a
+  `miri`-targeted unit test (usually a `Vec<String>` that exits a
+  scope).
+
+### Time complexity — always present, proportional prose
+
+Every public method gets a `# Time complexity` section, even when
+the answer is trivially `O(1)`. Three tiers of prose:
+
+**Tier 1 — trivial and unconditional.** One line, no elaboration:
+
+```markdown
+# Time complexity
+*O*(1).
+```
+
+Applies to: `new`, `len`, `is_empty`, `capacity`, `pop`, `last`,
+`as_ptr`, `as_mut_ptr`.
+
+**Tier 2 — bounded but non-trivial.** One short paragraph naming
+the cost source and distinguishing amortized from worst case:
+
+```markdown
+# Time complexity
+*O*(1) amortized, *O*(*n*) worst case when the allocation grows.
+```
+
+Applies to: `push`, `extend`, `reserve`, `shrink_to_fit`.
+
+**Tier 3 — genuinely variable.** Name the `n`, name the cost source,
+keep it short:
+
+```markdown
+# Time complexity
+*O*(*n*) where *n* is `self.len() - index`, due to the shift of
+elements after the removed position.
+```
+
+Applies to: `insert`, `remove`, `retain`, `dedup`, `sort`.
+
+Use italicized big-O (`*O*(1)`, `*O*(*n*)`) to match std's
+formatting. The italics look odd in source but render correctly.
+
+### Things we deliberately do NOT copy from std's doc comments
+
+- **`#[stable]` / `#[unstable]` attributes** — rustc-internal, gated
+  behind `#![feature(staged_api)]`, cannot be used outside `std`.
+- **Multi-paragraph historical notes** ("This method was introduced
+  in Rust 1.X…"). `koala-std` has no external-stability audience.
+- **Multiple redundant examples** showing minor variations. One
+  meaningful example beats three near-duplicates.
+- **Links to external resources** via rustdoc intra-doc-link syntax
+  for types that don't exist in `koala-std` (e.g., `[Layout]` with
+  no qualifier). Use fully qualified paths — `alloc::alloc::Layout` —
+  so the link resolves.
+
+### Comments inside `unsafe` blocks
+
+Every `unsafe { ... }` block gets a preceding `// SAFETY:` comment
+that states **exactly which invariant the caller is relying on**,
+not a restatement of what the code does. Examples from the current
+`RawVec` code:
+
+```rust
+// SAFETY: `layout` has non-zero size because `T` is non-ZST and
+// `requested > 0`, both checked above. `alloc` may return null
+// on allocation failure; we handle that via `handle_alloc_error`
+// on the next line.
+let raw_ptr = unsafe { alloc(layout) };
+```
+
+This is more useful than `// SAFETY: calling alloc` because it
+names the two preconditions (non-zero layout, null handling) that
+make the call sound. When a future reader changes surrounding code
+and needs to ask "is this still safe?", the comment tells them
+which invariants to re-check.
+
 ## Interesting sidebar — parallel drop
 
 Mentioned for future reference; not on any milestone roadmap.
