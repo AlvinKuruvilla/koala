@@ -1,129 +1,99 @@
 # Koala
 
-A fast, lightweight HTML-to-image renderer in Rust.
+An experimental Rust browser engine, built from scratch — no WebKit, Blink, or Gecko. Koala is a research project exploring what a browser looks like when the primary consumer is an LLM agent, and the human UI is the viewport onto what the agent sees.
 
 ![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-## What is Koala?
+## The experiment
 
-Koala renders HTML and CSS to images without any browser dependency. It includes a from-scratch HTML parser, CSS engine, and layout engine — no WebKit, Blink, or Gecko. Give it HTML (a file, URL, or string) and get back a PNG.
+Every "AI that browses the web" product today runs Chromium in a box and pixel-scrapes it. The browser was designed for humans; agents kludge on top. It's slow, flaky, and hostile.
 
-## Use Cases
+Koala inverts that. The engine is being built to be driven by an agent, with a Qt shell as a window onto what the agent is doing.
 
-- **OG images** — Generate social preview cards from HTML templates
-- **Email previews** — Render HTML emails to image thumbnails
-- **Visual regression testing** — Screenshot pages for pixel-level diffing
-- **Serverless rendering** — No headless browser binary needed
+The long-term bets:
 
-## Quick Start
+- **The render tree as a typed API.** Agents consume structured layout — boxes, semantic roles, reading order — not screenshots. *"Click the primary action in the checkout form"* resolves through the layout tree, not pixel coordinates.
+- **Every page as an MCP-shaped tool.** The browser extracts a page's action surface (forms, links, buttons, regions) and hands it to an LLM as typed tools. Every site becomes a tool server for free.
+- **Deterministic, replayable sessions.** Agent runs are reproducible scripts of `(URL, DOM state, action, resulting render tree)`. Diffable, shareable, debuggable.
+- **Spec-faithful by construction.** The engine is a synthesized implementation of the WHATWG HTML standard and CSS 2.1+, with section numbers and spec text quoted inline next to the code. Correctness over velocity.
+
+**None of the agent API exists yet.** Koala today is an HTML/CSS engine, a CLI, and a Qt browser shell. This README describes the direction, not the current reality.
+
+## What works today
+
+- **HTML parsing** — WHATWG tokenizer and tree builder: DOCTYPE, tags, attributes, comments, RCDATA/RAWTEXT, all 2,231 named character references, tables, forms.
+- **CSS engine** — tokenizer, parser, selector matching (type/class/ID/combinator/attribute), cascade, computed styles, custom properties, shorthand expansion.
+- **Layout** — block (CSS 2.1 § 9–10), inline formatting context, flexbox, grid, tables, inline-block, margin collapsing, replaced elements (`<img>`), overflow clipping.
+- **Rendering** — software rasterizer producing PNG/JPG/BMP: text with font weight/style/decoration, backgrounds, borders with radius, box shadows, images.
+- **`koala-qt`** — Qt6 browser shell over a `cxx` bridge into the engine. Tabs, location bar, landing page.
+- **`koala` CLI** — parse HTML, dump DOM and layout trees, render any URL to a PNG.
+
+**Notable gaps:** no JavaScript execution wired through the DOM yet (Boa is integrated but idle), no media queries, no pseudo-elements, no floats, no absolute positioning, no animations, no agent API. Expect rough edges.
+
+## Try it
 
 ```bash
-# Render a URL to PNG
-koala -S output.png https://example.com
+# Render a URL to a PNG
+cargo run --bin koala -- -S out.png https://example.com
 
-# Render a local HTML file
-koala -S output.png ./page.html
+# Dump the DOM tree
+cargo run --bin koala -- https://example.com
 
-# Render inline HTML
-koala --html '<h1 style="color: red">Hello</h1>' -S output.png
+# Dump the computed layout tree (1280x720 viewport)
+cargo run --bin koala -- --layout https://example.com
 
-# Custom viewport size
-koala -S output.png --width 1920 --height 1080 https://example.com
+# Parse inline HTML
+cargo run --bin koala -- --html '<h1>Hello</h1>' --layout
+
+# Launch the Qt browser shell (requires Qt6 — `brew install qt` on macOS)
+cargo run --bin koala-qt
 ```
-
-## Installation
-
-```bash
-# From source
-cargo install --path koala-cli
-```
-
-## CSS Support
-
-| Supported | Not Yet |
-|-----------|---------|
-| Block layout (CSS 2.1 § 9-10) | Media queries |
-| Inline formatting context | Pseudo-elements (::before, ::after) |
-| Flexbox (CSS Flexbox Level 1) | Float layout |
-| Grid (CSS Grid Level 1) | Absolute/fixed positioning |
-| Table layout (CSS 2.1 § 17) | CSS animations/transitions |
-| Inline-block | @font-face |
-| Margin collapsing (§ 8.3.1) | |
-| Colors (hex, named, rgb) | |
-| Font weight/style/size | |
-| Text decoration | |
-| Border radius | |
-| Box shadow | |
-| Images (`<img>`) | |
-| External stylesheets | |
-| CSS variables (custom properties) | |
-| Overflow clipping | |
-| Viewport units (vw, vh) | |
-
-## Why not Puppeteer / wkhtmltoimage?
-
-| | Koala | Puppeteer | wkhtmltoimage |
-|---|---|---|---|
-| Binary size | ~10 MB | ~300 MB (Chromium) | ~50 MB (Qt WebKit) |
-| Cold start | Instant | 1-3s (browser launch) | 0.5-1s |
-| Runtime deps | None | Chrome/Chromium | Qt libraries |
-| Serverless-friendly | Yes | Requires layers/containers | Requires system libs |
-
-Koala trades full web compatibility for simplicity and speed. If you need JavaScript execution or pixel-perfect Chrome rendering, use Puppeteer. If you need fast, predictable HTML-to-image conversion with known CSS, use Koala.
 
 ## Architecture
 
 ```
-HTML string ──→ Tokenizer ──→ Parser ──→ DOM Tree
-                                            │
-CSS string  ──→ Tokenizer ──→ Parser ──→ Stylesheet
-                                            │
-                              Cascade ──→ Computed Styles
-                                            │
-                              Layout  ──→ Box Tree + Dimensions
-                                            │
-                              Paint   ──→ Display List
-                                            │
-                              Render  ──→ PNG
+HTML ──→ Tokenizer ──→ Parser ──→ DOM Tree
+                                      │
+CSS  ──→ Tokenizer ──→ Parser ──→ Stylesheet
+                                      │
+                        Cascade ──→ Computed Styles
+                                      │
+                        Layout  ──→ Box Tree
+                                      │
+                        Paint   ──→ Display List
+                                      │
+                        Raster  ──→ Pixels
 ```
-
-## Project Structure
 
 ```
 koala/
 ├── crates/
-│   ├── koala-common/     # Shared utilities (warnings, networking, URL resolution)
+│   ├── koala-common/     # Shared utilities (URL, fetching, images)
 │   ├── koala-dom/        # Arena-based DOM tree
-│   ├── koala-html/       # WHATWG-compliant HTML tokenizer and parser
-│   ├── koala-css/        # CSS tokenizer, parser, layout engine, and cascade
-│   ├── koala-js/         # JavaScript engine integration (Boa)
-│   └── koala-browser/    # Document loading and rendering pipeline
-├── koala-cli/            # Primary binary: HTML-to-image renderer
-├── koala-gui/            # Development GUI (egui-based renderer inspector)
-└── res/                  # Test HTML files and fonts
+│   ├── koala-html/       # WHATWG tokenizer and parser
+│   ├── koala-css/        # CSS parser, cascade, layout, paint
+│   ├── koala-js/         # Boa-backed JavaScript runtime
+│   └── koala-browser/    # Document pipeline + software rasterizer
+├── koala-cli/            # CLI: parse, inspect, screenshot
+├── koala-qt/             # Qt6 browser shell (cxx bridge)
+└── res/                  # Test HTML and fonts
 ```
+
+Every algorithm is implemented alongside its WHATWG or CSS section number, with the spec text quoted inline. See [`CLAUDE.md`](CLAUDE.md) for the project's spec-commenting conventions.
 
 ## Development
 
 ```bash
-# Build all crates
-cargo build
-
-# Run all tests
-cargo test
-
-# Render HTML to image (primary binary)
-cargo run --bin koala -- -S output.png https://example.com
-
-# Run the development GUI
-cargo run --bin koala-gui
-
-# Lint
+cargo build                                  # Build workspace
+cargo test                                   # Full test suite
+cargo test -p koala-css                      # Single crate
 cargo clippy --workspace
-```
+cargo fmt --check
 
-The development GUI (`koala-gui`) includes a debug panel (F12) showing DOM tree, tokens, CSS, computed styles, and HTML source.
+# Verbose layout tracing (block/inline/flex/grid/measure)
+cargo run --bin koala --features layout-trace -- -S out.png <url>
+```
 
 ## License
 
