@@ -10,6 +10,10 @@ description = "Hand-rolled no_std + alloc foundation library for Koala — learn
 [dev-dependencies]
 quickcheck = "1"
 quickcheck_macros = "1"
+# Correctness oracle for `koala_std::hash::FxHasher`. The differential
+# test in `tests/hash_fx_oracle.rs` verifies our FxHasher is bit-
+# identical to rustc-hash 2.x. Dev-only; never linked into the crate.
+rustc-hash = "2"
 
 [lints]
 workspace = true

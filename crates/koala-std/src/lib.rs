@@ -91,3 +91,5 @@ extern crate alloc;
 // `ArenaVec`) will consume it. Until then the whole module is
 // dead-code-allowed at the item level.
 mod raw_vec;
+
+pub mod hash;
