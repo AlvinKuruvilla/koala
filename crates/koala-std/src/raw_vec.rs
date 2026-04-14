@@ -178,9 +178,6 @@ impl<T> RawVec<T> {
             // `cap * 2` can overflow when `cap > usize::MAX / 2`. We
             // catch that here rather than relying on `Layout::array`
             // to surface it, because the error message is clearer.
-            // The `match` form reads more naturally than the clippy-
-            // nursery `map_or_else(capacity_overflow, identity)`
-            // suggestion, and the two compile identically.
             #[allow(clippy::option_if_let_else)]
             match self.cap.checked_mul(2) {
                 Some(n) => n,
@@ -188,34 +185,155 @@ impl<T> RawVec<T> {
             }
         };
 
-        // `Layout::array` enforces that the total byte size is
-        // ≤ `isize::MAX`, so this doubles as the "too-many-bytes"
-        // overflow check.
-        let Ok(new_layout) = Layout::array::<T>(new_cap) else {
+        self.reallocate_to(new_cap);
+    }
+
+    /// Ensure the backing allocation can hold at least `needed_cap`
+    /// elements. If growth is required, the new capacity is at
+    /// least `max(needed_cap, 2 * cap)` so that a sequence of
+    /// `reserve` calls with small increments still retains the
+    /// amortized *O*(1) push cost of the doubling strategy.
+    ///
+    /// For zero-sized `T` this is a no-op — the capacity is already
+    /// `usize::MAX` and any `needed_cap` is trivially satisfied.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case when growth is needed, *O*(1) when the
+    /// requested capacity is already satisfied. Amortized *O*(1) per
+    /// additional element across a sequence of `reserve` calls that
+    /// grow the capacity, for the same reason `grow` amortizes.
+    pub(crate) fn reserve(&mut self, needed_cap: usize) {
+        if size_of::<T>() == 0 || self.cap >= needed_cap {
+            return;
+        }
+
+        // Preserve the doubling amortization even when the caller
+        // asks for a small increment. Without this floor, a caller
+        // that does `reserve(len + 1)` on every push would defeat
+        // the amortization and fall back to *O*(*n*) per push.
+        let amortized = self
+            .cap
+            .checked_mul(2)
+            .unwrap_or(needed_cap)
+            .max(Self::MIN_NON_ZERO_CAP);
+        let target = needed_cap.max(amortized);
+
+        self.reallocate_to(target);
+    }
+
+    /// Ensure the backing allocation can hold at least `needed_cap`
+    /// elements, **without** the doubling amortization of
+    /// [`reserve`](Self::reserve). The resulting capacity is
+    /// exactly `needed_cap` (or the existing capacity, if already
+    /// larger).
+    ///
+    /// Prefer `reserve` unless you have a specific reason to avoid
+    /// over-allocation — a pattern of repeated `reserve_exact`
+    /// calls on a growing vector degrades to *O*(*n*) per push.
+    ///
+    /// For zero-sized `T` this is a no-op.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case when a reallocation is required, *O*(1)
+    /// when the requested capacity is already satisfied. **Not**
+    /// amortized — that's the whole point of the method.
+    pub(crate) fn reserve_exact(&mut self, needed_cap: usize) {
+        if size_of::<T>() == 0 || self.cap >= needed_cap {
+            return;
+        }
+        self.reallocate_to(needed_cap);
+    }
+
+    /// Shrink the backing allocation so its capacity is at most
+    /// `new_cap`. If the current capacity is already ≤ `new_cap`,
+    /// does nothing.
+    ///
+    /// When `new_cap == 0`, the allocation is fully deallocated and
+    /// the `RawVec` returns to the `NonNull::dangling` state that
+    /// [`new`](Self::new) would produce. Callers must have already
+    /// dropped (or moved out) any elements beyond `new_cap` —
+    /// `RawVec` does not track element initialization.
+    ///
+    /// For zero-sized `T` this is a no-op — the ZST sentinel
+    /// capacity of `usize::MAX` cannot be shrunk.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case due to the potential element copy during
+    /// the shrinking `realloc`; *O*(1) when no shrink is required.
+    pub(crate) fn shrink_to(&mut self, new_cap: usize) {
+        if size_of::<T>() == 0 || self.cap <= new_cap {
+            return;
+        }
+
+        if new_cap == 0 {
+            // Full deallocation. This is the only path that resets
+            // `self.ptr` to `NonNull::dangling()` — every other
+            // method either leaves `self.ptr` live or installs a
+            // new live pointer.
+            let old_layout = Layout::array::<T>(self.cap)
+                .expect("a layout that was valid on allocation is still valid on shrink_to(0)");
+
+            // SAFETY: `self.ptr` was allocated by the global
+            // allocator with exactly `old_layout`, and is still
+            // live because we have exclusive access through
+            // `&mut self`. After this call the old pointer is
+            // invalidated, which is fine because we immediately
+            // replace it with `NonNull::dangling()`.
+            unsafe {
+                dealloc(self.ptr.as_ptr().cast::<u8>(), old_layout);
+            }
+            self.ptr = NonNull::dangling();
+            self.cap = 0;
+            return;
+        }
+
+        self.reallocate_to(new_cap);
+    }
+
+    /// Shared worker for `grow`, `reserve`, `reserve_exact`, and
+    /// `shrink_to`. Reallocates the backing to exactly `target`
+    /// elements.
+    ///
+    /// Caller obligations:
+    ///
+    /// - `T` is not a zero-sized type (verified in the individual
+    ///   entry points; ZSTs never allocate).
+    /// - `target > 0` (`shrink_to(0)` handles dealloc separately
+    ///   rather than calling here).
+    /// - Any elements that will no longer fit in `target` slots
+    ///   have already been dropped or moved out — this function
+    ///   is about the allocation, not the initialization.
+    fn reallocate_to(&mut self, target: usize) {
+        // `Layout::array` enforces the `isize::MAX` byte cap, so
+        // this doubles as the "too-many-bytes" overflow check.
+        let Ok(new_layout) = Layout::array::<T>(target) else {
             capacity_overflow();
         };
 
         let new_ptr = if self.cap == 0 {
             // SAFETY: `new_layout` has non-zero size because `T` is
-            // non-ZST (checked at function entry) and `new_cap` is
-            // at least `MIN_NON_ZERO_CAP` (≥ 1).
+            // non-ZST (caller obligation) and `target > 0` (caller
+            // obligation).
             unsafe { alloc(new_layout) }
         } else {
-            // The old layout is whatever `Layout::array` produced for
-            // the current `self.cap`. Recomputing it is deterministic:
-            // the same type with the same element count always yields
-            // the same layout, and that layout was already accepted by
-            // the allocator on the previous allocation, so the
-            // recomputation cannot fail here.
+            // The old layout is whatever `Layout::array` produced
+            // for the current `self.cap`. Recomputing it is
+            // deterministic and cannot fail because the same
+            // computation already succeeded at the previous
+            // allocation site.
             let old_layout = Layout::array::<T>(self.cap)
-                .expect("a layout that was valid on allocation is still valid on grow");
+                .expect("a layout that was valid on allocation is still valid on reallocate");
 
-            // SAFETY: `self.ptr` was allocated by the global allocator
-            // with exactly `old_layout`, and is still live because we
-            // have exclusive access through `&mut self`. `new_layout`
-            // has the same alignment as `old_layout` (both come from
-            // `Layout::array::<T>`) and has non-zero size because `T`
-            // is non-ZST. `realloc` either returns a new pointer and
+            // SAFETY: `self.ptr` was allocated by the global
+            // allocator with exactly `old_layout`, and is still
+            // live because we have exclusive access through
+            // `&mut self`. `new_layout` has the same alignment as
+            // `old_layout` (both come from `Layout::array::<T>`)
+            // and has non-zero size because `T` is non-ZST.
+            // `realloc` either returns a new pointer and
             // invalidates `self.ptr`, or returns null leaving
             // `self.ptr` intact — both cases are handled below.
             unsafe {
@@ -232,7 +350,7 @@ impl<T> RawVec<T> {
         };
 
         self.ptr = new_ptr;
-        self.cap = new_cap;
+        self.cap = target;
     }
 }
 

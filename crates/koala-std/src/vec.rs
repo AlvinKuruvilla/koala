@@ -61,6 +61,49 @@ impl<T> Vec<T> {
         }
     }
 
+    /// Constructs a new, empty `Vec<T>` with at least the specified
+    /// capacity pre-allocated.
+    ///
+    /// The vector can hold `capacity` elements without reallocating.
+    /// If `capacity` is zero, no allocation is performed. For
+    /// zero-sized types, no allocation is ever performed regardless
+    /// of the requested capacity; [`capacity`](Self::capacity) will
+    /// continue to report `usize::MAX`.
+    ///
+    /// # Panics
+    ///
+    /// Panics on capacity overflow — if the requested capacity
+    /// times `size_of::<T>()` would exceed `isize::MAX` bytes, or
+    /// if the global allocator fails to satisfy the allocation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v: Vec<i32> = Vec::with_capacity(10);
+    /// assert_eq!(v.len(), 0);
+    /// assert!(v.capacity() >= 10);
+    ///
+    /// // Ten pushes without a single reallocation:
+    /// for i in 0..10 {
+    ///     v.push(i);
+    /// }
+    /// assert!(v.capacity() >= 10);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1) — a single call into the allocator, no per-element
+    /// work.
+    #[inline]
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: RawVec::with_capacity(capacity),
+            len: 0,
+        }
+    }
+
     /// Returns the number of elements in the vector.
     ///
     /// # Examples
@@ -245,6 +288,175 @@ impl<T> Vec<T> {
             ptr::write(self.buf.ptr().as_ptr().add(self.len), value);
         }
         self.len += 1;
+    }
+
+    /// Appends an element if there is spare capacity, otherwise
+    /// returns the element back to the caller as `Err(value)`.
+    ///
+    /// This method **never allocates**, never grows the backing
+    /// storage, and never panics from allocation — it simply
+    /// declines to push if there is no room. Useful for hot paths
+    /// where the caller has pre-reserved capacity and wants to
+    /// prove that no allocation will happen on a given push.
+    ///
+    /// This is `koala-std`'s one deliberate API deviation from
+    /// `std::vec::Vec`. `std` has this method as
+    /// `Vec::push_within_capacity` behind the unstable
+    /// `vec_push_within_capacity` feature gate; `koala-std` ships
+    /// it stable because the stability question is about `std`'s
+    /// external-audience commitments, not the method's design.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(value)` — handing the original value back to
+    /// the caller — if `self.len() == self.capacity()` and there
+    /// is no room for the new element. No allocation is attempted
+    /// in the error case; the vector's state is completely
+    /// unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v: Vec<i32> = Vec::with_capacity(2);
+    ///
+    /// assert_eq!(v.push_within_capacity(1), Ok(()));
+    /// assert_eq!(v.push_within_capacity(2), Ok(()));
+    /// // Capacity is now exhausted; the third push is refused:
+    /// assert_eq!(v.push_within_capacity(3), Err(3));
+    /// assert_eq!(v.len(), 2);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1), always. No grow path means no amortization caveat.
+    #[inline]
+    pub const fn push_within_capacity(&mut self, value: T) -> Result<(), T> {
+        if self.len == self.buf.capacity() {
+            return Err(value);
+        }
+        // SAFETY: `self.len < self.buf.capacity()` by the branch
+        // above, so `ptr.add(self.len)` is in-bounds and points at
+        // uninitialized memory. Same reasoning as `push`.
+        unsafe {
+            ptr::write(self.buf.ptr().as_ptr().add(self.len), value);
+        }
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Reserves capacity for at least `additional` more elements to
+    /// be inserted into the vector, using the amortized doubling
+    /// strategy.
+    ///
+    /// After calling `reserve`, `capacity() >= len() + additional`.
+    /// A subsequent `push` is guaranteed not to reallocate until
+    /// `additional` more elements have been pushed.
+    ///
+    /// Prefer this over [`reserve_exact`](Self::reserve_exact)
+    /// unless you specifically want to avoid over-allocation —
+    /// the amortization matters for any vector that will continue
+    /// growing after the `reserve` call.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `len() + additional` overflows `usize` or if the
+    /// resulting byte size exceeds `isize::MAX`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v: Vec<i32> = Vec::new();
+    /// v.push(1);
+    /// v.reserve(10);
+    /// assert!(v.capacity() >= 11);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case where *n* is the current length, due to
+    /// the reallocation copy. *O*(1) when the existing capacity
+    /// already satisfies the request.
+    pub fn reserve(&mut self, additional: usize) {
+        let needed = self.len.checked_add(additional).unwrap_or_else(|| {
+            // Match RawVec's capacity_overflow behavior with an
+            // equally-informative message. The unwrap_or_else
+            // closure is `#[cold]`-equivalent by being rarely
+            // exercised; we don't need a separate marker function
+            // because `RawVec::reserve` never sees the overflow.
+            panic!("koala_std::Vec::reserve: len + additional overflows usize")
+        });
+        self.buf.reserve(needed);
+    }
+
+    /// Reserves capacity for at least `additional` more elements,
+    /// **without** the doubling amortization of
+    /// [`reserve`](Self::reserve). The resulting capacity is
+    /// exactly `len() + additional` (or the existing capacity, if
+    /// already larger).
+    ///
+    /// Prefer `reserve` for most use cases. `reserve_exact` is
+    /// useful when you know the final size precisely and want to
+    /// avoid the over-allocation, but a pattern of repeated
+    /// `reserve_exact` calls on a growing vector degrades to
+    /// *O*(*n*) per push.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `len() + additional` overflows `usize` or if the
+    /// resulting byte size exceeds `isize::MAX`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v: Vec<i32> = Vec::new();
+    /// v.push(1);
+    /// v.reserve_exact(10);
+    /// assert_eq!(v.capacity(), 11);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case. **Not** amortized — that is the whole
+    /// point of the method.
+    pub fn reserve_exact(&mut self, additional: usize) {
+        let needed = self.len.checked_add(additional).unwrap_or_else(|| {
+            panic!("koala_std::Vec::reserve_exact: len + additional overflows usize")
+        });
+        self.buf.reserve_exact(needed);
+    }
+
+    /// Shrinks the capacity of the vector to match the current
+    /// length, releasing any unused backing storage.
+    ///
+    /// For a fully-empty vector, this deallocates the backing
+    /// completely and returns the vector to its [`new`](Self::new)
+    /// state. For zero-sized types, this is a no-op — the ZST
+    /// sentinel capacity of `usize::MAX` cannot be shrunk.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v: Vec<i32> = Vec::with_capacity(100);
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// assert!(v.capacity() >= 100);
+    ///
+    /// v.shrink_to_fit();
+    /// assert_eq!(v.capacity(), 3);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) worst case, where *n* is the current length, due
+    /// to the potential reallocation copy. *O*(1) when the
+    /// allocator can shrink in place.
+    pub fn shrink_to_fit(&mut self) {
+        self.buf.shrink_to(self.len);
     }
 
     /// Removes the last element from the vector and returns it, or

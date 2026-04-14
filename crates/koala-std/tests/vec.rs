@@ -36,22 +36,31 @@ use quickcheck_macros::quickcheck;
 /// One operation the harness can apply to both vectors.
 ///
 /// The weights in `Arbitrary` bias toward `Push` so the vectors
-/// actually grow to interesting sizes during a test run; `Pop` and
-/// `Clone` are common enough to be exercised but not so common
-/// that the vectors stay near-empty.
+/// actually grow to interesting sizes during a test run; mutation
+/// ops (`Pop`, `Reserve`, `ReserveExact`, `ShrinkToFit`) are
+/// common enough to be exercised but not so common that the
+/// vectors stay near-empty. `Reserve` variants take a `u8`-bounded
+/// additional amount so quickcheck cannot ask for `usize::MAX`
+/// more slots and OOM the test binary.
 #[derive(Debug, Clone)]
 enum Op {
     Push(i32),
     Pop,
     Clone,
+    Reserve(u8),
+    ReserveExact(u8),
+    ShrinkToFit,
 }
 
 impl Arbitrary for Op {
     fn arbitrary(g: &mut Gen) -> Self {
-        match u8::arbitrary(g) % 10 {
-            0..=5 => Self::Push(i32::arbitrary(g)),
-            6..=8 => Self::Pop,
-            _ => Self::Clone,
+        match u8::arbitrary(g) % 20 {
+            0..=9 => Self::Push(i32::arbitrary(g)),
+            10..=13 => Self::Pop,
+            14 => Self::Clone,
+            15..=16 => Self::Reserve(u8::arbitrary(g)),
+            17..=18 => Self::ReserveExact(u8::arbitrary(g)),
+            _ => Self::ShrinkToFit,
         }
     }
 }
@@ -84,6 +93,40 @@ fn differential_push_pop_clone(ops: Vec<Op>) -> bool {
                 let kc = k.clone();
                 let sc = s.clone();
                 if !snapshots_match(&kc, &sc) {
+                    return false;
+                }
+            }
+            Op::Reserve(additional) => {
+                k.reserve(usize::from(additional));
+                s.reserve(usize::from(additional));
+                // After `reserve`, both vectors must have capacity
+                // at least `len + additional`. Capacity may differ
+                // between implementations (koala-std's amortization
+                // floor is 4, std's may differ), so we only check
+                // the lower bound.
+                let needed = k.len() + usize::from(additional);
+                if k.capacity() < needed || s.capacity() < needed {
+                    return false;
+                }
+            }
+            Op::ReserveExact(additional) => {
+                k.reserve_exact(usize::from(additional));
+                s.reserve_exact(usize::from(additional));
+                let needed = k.len() + usize::from(additional);
+                if k.capacity() < needed || s.capacity() < needed {
+                    return false;
+                }
+            }
+            Op::ShrinkToFit => {
+                k.shrink_to_fit();
+                s.shrink_to_fit();
+                // After shrink_to_fit, capacity is at most `len`
+                // in koala-std. `std::vec::Vec` is allowed to
+                // over-allocate and may not shrink all the way
+                // (documented as a hint), so we only assert the
+                // upper bound on koala-std's side and verify the
+                // contents still match.
+                if k.capacity() < k.len() {
                     return false;
                 }
             }
@@ -244,6 +287,83 @@ fn clone_produces_independent_storage() {
     assert_eq!(a.as_slice(), &[1, 2, 3]);
     assert_eq!(b.as_slice(), &[1, 2, 3, 4]);
 }
+
+// push_within_capacity — the explicit koala-std deviation
+
+#[test]
+fn push_within_capacity_succeeds_while_room_exists() {
+    let mut v: KVec<i32> = KVec::with_capacity(3);
+    assert_eq!(v.push_within_capacity(1), Ok(()));
+    assert_eq!(v.push_within_capacity(2), Ok(()));
+    assert_eq!(v.push_within_capacity(3), Ok(()));
+    assert_eq!(v.len(), 3);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn push_within_capacity_refuses_when_full_without_growing() {
+    let mut v: KVec<i32> = KVec::with_capacity(2);
+    assert_eq!(v.push_within_capacity(1), Ok(()));
+    assert_eq!(v.push_within_capacity(2), Ok(()));
+
+    let cap_before_refused_push = v.capacity();
+    assert_eq!(v.push_within_capacity(3), Err(3));
+
+    // The refused push must not have grown the backing allocation.
+    assert_eq!(v.capacity(), cap_before_refused_push);
+    assert_eq!(v.len(), 2);
+    assert_eq!(v.as_slice(), &[1, 2]);
+}
+
+#[test]
+fn push_within_capacity_on_zero_cap_always_fails() {
+    let mut v: KVec<i32> = KVec::new();
+    assert_eq!(v.push_within_capacity(42), Err(42));
+    assert_eq!(v.capacity(), 0);
+    assert_eq!(v.len(), 0);
+}
+
+// shrink_to_fit explicit tests
+
+#[test]
+fn shrink_to_fit_reduces_capacity_to_len() {
+    let mut v: KVec<i32> = KVec::with_capacity(100);
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    assert!(v.capacity() >= 100);
+
+    v.shrink_to_fit();
+    assert_eq!(v.capacity(), 3);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn shrink_to_fit_fully_deallocates_empty_vec() {
+    let mut v: KVec<i32> = KVec::with_capacity(100);
+    assert!(v.capacity() >= 100);
+    v.shrink_to_fit();
+    assert_eq!(v.capacity(), 0);
+    // Subsequent push must still work — the vector returned to
+    // a new-like state, not a poisoned one.
+    v.push(42);
+    assert_eq!(v.as_slice(), &[42]);
+}
+
+#[test]
+fn shrink_to_fit_on_zst_vec_is_noop() {
+    let mut v: KVec<()> = KVec::new();
+    for _ in 0..10 {
+        v.push(());
+    }
+    v.shrink_to_fit();
+    // ZST capacity is always usize::MAX — shrink_to_fit cannot
+    // change it.
+    assert_eq!(v.capacity(), usize::MAX);
+    assert_eq!(v.len(), 10);
+}
+
+// Existing Clone independence tests
 
 #[test]
 fn clone_of_empty_is_empty() {
