@@ -424,6 +424,121 @@ fn shrink_to_fit_on_zst_vec_is_noop() {
     assert_eq!(v.len(), 10);
 }
 
+// IntoIterator — consuming iteration
+
+#[test]
+fn into_iter_yields_all_elements_forward() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+
+    let collected: Vec<i32> = v.into_iter().collect();
+    assert_eq!(collected, vec![1, 2, 3]);
+}
+
+#[test]
+fn into_iter_empty_vec_yields_none() {
+    let v: KVec<i32> = KVec::new();
+    let mut iter = v.into_iter();
+    assert_eq!(iter.next(), None);
+}
+
+#[test]
+fn into_iter_double_ended_from_both_sides() {
+    let mut v: KVec<i32> = KVec::new();
+    for i in 1..=6 {
+        v.push(i);
+    }
+
+    let mut iter = v.into_iter();
+    assert_eq!(iter.next(), Some(1));
+    assert_eq!(iter.next_back(), Some(6));
+    assert_eq!(iter.next(), Some(2));
+    assert_eq!(iter.next_back(), Some(5));
+    assert_eq!(iter.next(), Some(3));
+    assert_eq!(iter.next_back(), Some(4));
+    assert_eq!(iter.next(), None);
+    assert_eq!(iter.next_back(), None);
+}
+
+#[test]
+fn into_iter_exact_size_reports_correct_len() {
+    let mut v: KVec<i32> = KVec::new();
+    for i in 0..5 {
+        v.push(i);
+    }
+
+    let mut iter = v.into_iter();
+    assert_eq!(iter.len(), 5);
+    let _ = iter.next();
+    assert_eq!(iter.len(), 4);
+    let _ = iter.next_back();
+    assert_eq!(iter.len(), 3);
+}
+
+#[test]
+fn into_iter_drops_unconsumed_elements_on_early_drop() {
+    let log = Mutex::new(Vec::new());
+    {
+        let mut v: KVec<DropRecorder<'_>> = KVec::new();
+        for i in 0..5 {
+            v.push(DropRecorder { id: i, log: &log });
+        }
+        let mut iter = v.into_iter();
+        // Consume two from the front and one from the back. The
+        // `let _ = ...` wildcard pattern drops the yielded value
+        // at end of statement, unlike `let _name = ...` which
+        // would bind it to a local that lives until end of scope.
+        let _ = iter.next(); // drops id 0
+        let _ = iter.next(); // drops id 1
+        let _ = iter.next_back(); // drops id 4
+
+        // Verify the three consumed elements have already been
+        // dropped before we touch the iterator itself.
+        let drops_before_iter_drop: Vec<u32> = log
+            .lock()
+            .expect("drop log mutex is never contended or poisoned")
+            .clone();
+        assert_eq!(drops_before_iter_drop.as_slice(), &[0, 1, 4]);
+
+        // IntoIter still owns ids [2, 3] — dropping it here runs
+        // their destructors via the slice `drop_in_place` path.
+        drop(iter);
+        let drops_after_iter_drop: Vec<u32> = log
+            .lock()
+            .expect("drop log mutex is never contended or poisoned")
+            .clone();
+        assert_eq!(drops_after_iter_drop.as_slice(), &[0, 1, 4, 2, 3]);
+    }
+}
+
+// Extend / extend_from_slice
+
+#[test]
+fn extend_appends_iterator() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(1);
+    v.push(2);
+    v.extend(3..=5);
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn extend_from_slice_clones_each_element() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(1);
+    v.extend_from_slice(&[2, 3, 4]);
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn extend_from_slice_on_empty_vec() {
+    let mut v: KVec<i32> = KVec::new();
+    v.extend_from_slice(&[10, 20, 30]);
+    assert_eq!(v.as_slice(), &[10, 20, 30]);
+}
+
 // Element manipulation — drop correctness + panic edge cases
 
 #[test]

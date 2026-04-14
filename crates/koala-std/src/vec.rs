@@ -7,6 +7,7 @@
 
 use core::fmt;
 use core::hash::{Hash, Hasher};
+use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 use core::ptr;
 use core::slice;
@@ -908,6 +909,40 @@ impl<T> Vec<T> {
         // from the initialized range.
         Some(unsafe { ptr::read(self.buf.ptr().as_ptr().add(self.len)) })
     }
+
+    /// Clones the elements of `other` and appends them to `self`.
+    ///
+    /// Equivalent to `self.extend(other.iter().cloned())` but
+    /// spelled explicitly as an inherent method to match `std` and
+    /// to make the caller's intent unambiguous at the call site.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.extend_from_slice(&[3, 4, 5]);
+    /// assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*m*) where *m* is `other.len()`, plus the amortized
+    /// cost of any grows. Pre-reserves space for `other.len()`
+    /// elements via `reserve` before the clone loop so that the
+    /// entire append happens in a single reallocation (or zero,
+    /// if capacity was already sufficient).
+    pub fn extend_from_slice(&mut self, other: &[T])
+    where
+        T: Clone,
+    {
+        self.reserve(other.len());
+        for item in other {
+            self.push(item.clone());
+        }
+    }
 }
 
 impl<T> Drop for Vec<T> {
@@ -1206,6 +1241,212 @@ impl<'a, T> IntoIterator for &'a mut Vec<T> {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
+    }
+}
+
+/// A consuming iterator over the elements of a `Vec<T>`.
+///
+/// Produced by [`Vec::into_iter`] (the `IntoIterator` impl for
+/// owned `Vec<T>`, not the borrowing impl on `&Vec<T>`). Owns the
+/// vector's backing allocation — when the iterator is dropped,
+/// any unconsumed elements have their destructors run and then
+/// the backing is deallocated.
+///
+/// The iterator is implemented with two indices `start..end`
+/// pointing into the backing allocation. `next` yields element
+/// at `start` and increments; `next_back` decrements `end` and
+/// yields the element at the new `end`. Both ends can be consumed
+/// in any interleaving; `Drop` correctly handles the middle range
+/// that neither end reached.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// v.push(3);
+///
+/// let collected: std::vec::Vec<i32> = v.into_iter().collect();
+/// assert_eq!(collected, vec![1, 2, 3]);
+/// ```
+pub struct IntoIter<T> {
+    /// The backing allocation. `IntoIter` owns it exclusively once
+    /// the source `Vec<T>` has been consumed, and its `Drop`
+    /// handles deallocation.
+    buf: RawVec<T>,
+    /// Index of the next element to yield from the front.
+    /// `next` reads `buf.ptr()[start]` and increments.
+    start: usize,
+    /// One past the index of the next element to yield from the
+    /// back. `next_back` decrements first and then reads
+    /// `buf.ptr()[end]`.
+    end: usize,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        if self.start == self.end {
+            return None;
+        }
+        // SAFETY: `start < end <= buf.capacity()`, and slots
+        // `[start..end)` contain initialized values of `T` by the
+        // invariant `IntoIter` inherited from the source `Vec`.
+        // `ptr::read` moves the value out, leaving the slot at
+        // `start` logically uninitialized; incrementing `start`
+        // below excludes it from the "still initialized" range
+        // so `Drop` will not revisit it.
+        let item = unsafe { ptr::read(self.buf.ptr().as_ptr().add(self.start)) };
+        self.start += 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.end - self.start;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<T> {
+        if self.start == self.end {
+            return None;
+        }
+        self.end -= 1;
+        // SAFETY: after the decrement, `end` is the index of a
+        // slot that is still in the initialized range
+        // `[start..old_end)`. `ptr::read` moves the value out;
+        // further iteration will not revisit this slot because
+        // `end` has already been decremented past it.
+        let item = unsafe { ptr::read(self.buf.ptr().as_ptr().add(self.end)) };
+        Some(item)
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        // Drop any elements in the remaining `[start..end)` range
+        // that the caller did not consume. The backing allocation
+        // itself is released by `RawVec::drop` (which fires as a
+        // field drop after this method returns).
+        //
+        // Panic safety: same argument as `Vec::drop` — the
+        // compiler-generated drop glue on `*mut [T]` handles
+        // single-element panics via an implicit scope guard. A
+        // second panic during cleanup aborts per Rust's universal
+        // double-panic rule.
+        let unyielded = self.end - self.start;
+        if unyielded > 0 {
+            // SAFETY: slots `[start..end)` contain initialized
+            // values of `T`. We reconstruct a raw `*mut [T]` over
+            // them and hand it to `drop_in_place`; exclusive
+            // access via `&mut self` in `drop` rules out aliasing.
+            unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.buf.ptr().as_ptr().add(self.start),
+                    unyielded,
+                ));
+            }
+        }
+    }
+}
+
+/// Consuming `IntoIterator` impl — `for x in vec` moves ownership
+/// of each element out of the vector, dropping the backing
+/// allocation when the iterator is exhausted or dropped.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(String::from("a"));
+/// v.push(String::from("b"));
+/// v.push(String::from("c"));
+///
+/// // Consumes v; each String is moved out of the vector.
+/// for s in v {
+///     assert!(s.len() == 1);
+/// }
+/// ```
+impl<T> IntoIterator for Vec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self) -> IntoIter<T> {
+        // Wrap self in ManuallyDrop so its own Drop never runs —
+        // we need to transfer ownership of the backing buffer to
+        // IntoIter without the source's destructor tearing it
+        // down. A bitwise move of the RawVec field out of the
+        // ManuallyDrop leaves the source's copy logically
+        // uninitialized, but since the source is ManuallyDrop'd,
+        // no Drop will ever observe that state.
+        let me = ManuallyDrop::new(self);
+        let end = me.len;
+        // SAFETY: `me.buf` is a valid, initialized `RawVec<T>`
+        // that we are transferring ownership of to `IntoIter`.
+        // `ManuallyDrop` prevents the source from running its
+        // Drop, so there is no double-free of `buf`.
+        let buf = unsafe { ptr::read(&raw const me.buf) };
+        IntoIter {
+            buf,
+            start: 0,
+            end,
+        }
+    }
+}
+
+/// Extends the vector by appending every element yielded by the
+/// iterator, pre-reserving space based on the iterator's
+/// `size_hint` lower bound.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.push(2);
+/// v.extend(3..=5);
+/// assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+/// ```
+impl<T> Extend<T> for Vec<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        let iter = iter.into_iter();
+        let (lower, _) = iter.size_hint();
+        self.reserve(lower);
+        for item in iter {
+            self.push(item);
+        }
+    }
+}
+
+/// `Extend<&T>` for `Vec<T>` where `T: Clone` — lets
+/// `v.extend(&[1, 2, 3])` work by cloning each element from the
+/// reference iterator.
+///
+/// # Examples
+///
+/// ```
+/// # use koala_std::vec::Vec;
+/// let mut v = Vec::new();
+/// v.push(1);
+/// v.extend(&[2, 3, 4]);
+/// assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+/// ```
+impl<'a, T: Clone + 'a> Extend<&'a T> for Vec<T> {
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
+        let iter = iter.into_iter();
+        let (lower, _) = iter.size_hint();
+        self.reserve(lower);
+        for item in iter {
+            self.push(item.clone());
+        }
     }
 }
 
