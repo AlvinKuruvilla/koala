@@ -50,17 +50,36 @@ enum Op {
     Reserve(u8),
     ReserveExact(u8),
     ShrinkToFit,
+    Truncate(u8),
+    Clear,
+    /// `Insert(index_hint, value)` — the actual insert index is
+    /// `index_hint % (len + 1)` so we never panic from a random
+    /// index exceeding the current length.
+    Insert(u8, i32),
+    /// `Remove(index_hint)` — see Insert above; index is
+    /// `hint % len`, skipped when empty.
+    Remove(u8),
+    SwapRemove(u8),
+    RetainEven,
+    Dedup,
 }
 
 impl Arbitrary for Op {
     fn arbitrary(g: &mut Gen) -> Self {
-        match u8::arbitrary(g) % 20 {
-            0..=9 => Self::Push(i32::arbitrary(g)),
-            10..=13 => Self::Pop,
-            14 => Self::Clone,
-            15..=16 => Self::Reserve(u8::arbitrary(g)),
-            17..=18 => Self::ReserveExact(u8::arbitrary(g)),
-            _ => Self::ShrinkToFit,
+        match u8::arbitrary(g) % 32 {
+            0..=13 => Self::Push(i32::arbitrary(g)),
+            14..=17 => Self::Pop,
+            18 => Self::Clone,
+            19 => Self::Reserve(u8::arbitrary(g)),
+            20 => Self::ReserveExact(u8::arbitrary(g)),
+            21 => Self::ShrinkToFit,
+            22..=23 => Self::Truncate(u8::arbitrary(g)),
+            24 => Self::Clear,
+            25..=26 => Self::Insert(u8::arbitrary(g), i32::arbitrary(g)),
+            27..=28 => Self::Remove(u8::arbitrary(g)),
+            29 => Self::SwapRemove(u8::arbitrary(g)),
+            30 => Self::RetainEven,
+            _ => Self::Dedup,
         }
     }
 }
@@ -129,6 +148,48 @@ fn differential_push_pop_clone(ops: Vec<Op>) -> bool {
                 if k.capacity() < k.len() {
                     return false;
                 }
+            }
+            Op::Truncate(n) => {
+                let new_len = usize::from(n);
+                k.truncate(new_len);
+                s.truncate(new_len);
+            }
+            Op::Clear => {
+                k.clear();
+                s.clear();
+            }
+            Op::Insert(hint, value) => {
+                // Clamp the hint into a valid insert index
+                // (0..=len) to avoid panicking on random inputs.
+                let index = usize::from(hint) % (k.len() + 1);
+                k.insert(index, value);
+                s.insert(index, value);
+            }
+            Op::Remove(hint) => {
+                if k.is_empty() {
+                    continue;
+                }
+                let index = usize::from(hint) % k.len();
+                if k.remove(index) != s.remove(index) {
+                    return false;
+                }
+            }
+            Op::SwapRemove(hint) => {
+                if k.is_empty() {
+                    continue;
+                }
+                let index = usize::from(hint) % k.len();
+                if k.swap_remove(index) != s.swap_remove(index) {
+                    return false;
+                }
+            }
+            Op::RetainEven => {
+                k.retain(|&x| x % 2 == 0);
+                s.retain(|&x| x % 2 == 0);
+            }
+            Op::Dedup => {
+                k.dedup();
+                s.dedup();
             }
         }
         if !snapshots_match(&k, &s) {
@@ -361,6 +422,164 @@ fn shrink_to_fit_on_zst_vec_is_noop() {
     // change it.
     assert_eq!(v.capacity(), usize::MAX);
     assert_eq!(v.len(), 10);
+}
+
+// Element manipulation — drop correctness + panic edge cases
+
+#[test]
+fn truncate_drops_removed_elements() {
+    let log = Mutex::new(Vec::new());
+    {
+        let mut v: KVec<DropRecorder<'_>> = KVec::new();
+        for i in 0..5 {
+            v.push(DropRecorder { id: i, log: &log });
+        }
+        // Truncate to 2 — elements 2, 3, 4 should drop in that
+        // order (forward walk across `[new_len, old_len)`).
+        v.truncate(2);
+
+        let drops_so_far: Vec<u32> = log
+            .lock()
+            .expect("drop log mutex is never contended or poisoned")
+            .clone();
+        assert_eq!(drops_so_far.as_slice(), &[2, 3, 4]);
+        // Remaining elements will drop at end of scope.
+    }
+    let final_drops: Vec<u32> = log
+        .lock()
+        .expect("drop log mutex is never contended or poisoned")
+        .clone();
+    assert_eq!(final_drops.as_slice(), &[2, 3, 4, 0, 1]);
+}
+
+#[test]
+fn clear_drops_all_elements() {
+    let log = Mutex::new(Vec::new());
+    {
+        let mut v: KVec<DropRecorder<'_>> = KVec::new();
+        for i in 0..3 {
+            v.push(DropRecorder { id: i, log: &log });
+        }
+        v.clear();
+        assert!(v.is_empty());
+
+        let drops: Vec<u32> = log
+            .lock()
+            .expect("drop log mutex is never contended or poisoned")
+            .clone();
+        assert_eq!(drops.as_slice(), &[0, 1, 2]);
+        // Capacity should be unchanged after clear.
+        assert!(v.capacity() >= 3);
+    }
+}
+
+#[test]
+fn insert_at_beginning_middle_end() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(2);
+    v.push(4);
+
+    v.insert(0, 1); // beginning
+    assert_eq!(v.as_slice(), &[1, 2, 4]);
+
+    v.insert(2, 3); // middle
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+
+    v.insert(4, 5); // at len (equivalent to push)
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+}
+
+#[test]
+#[should_panic(expected = "insertion index")]
+fn insert_out_of_bounds_panics() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(1);
+    v.push(2);
+    // Valid range is 0..=2; index 3 is out of bounds.
+    v.insert(3, 99);
+}
+
+#[test]
+#[should_panic(expected = "removal index")]
+fn remove_out_of_bounds_panics() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(1);
+    let _ = v.remove(1);
+}
+
+#[test]
+fn swap_remove_last_element_does_not_copy() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    // Removing the last element is a special case — the swap
+    // is a no-op and the code should just pop.
+    let removed = v.swap_remove(2);
+    assert_eq!(removed, 30);
+    assert_eq!(v.as_slice(), &[10, 20]);
+}
+
+#[test]
+#[should_panic(expected = "swap_remove index")]
+fn swap_remove_out_of_bounds_panics() {
+    let mut v: KVec<i32> = KVec::new();
+    v.push(1);
+    let _ = v.swap_remove(1);
+}
+
+#[test]
+fn retain_drops_rejected_elements() {
+    let log = Mutex::new(Vec::new());
+    {
+        let mut v: KVec<DropRecorder<'_>> = KVec::new();
+        for i in 0..6 {
+            v.push(DropRecorder { id: i, log: &log });
+        }
+        // Keep evens, drop odds.
+        v.retain(|r| r.id % 2 == 0);
+        assert_eq!(v.len(), 3);
+
+        let drops_after_retain: Vec<u32> = log
+            .lock()
+            .expect("drop log mutex is never contended or poisoned")
+            .clone();
+        // Odd IDs (1, 3, 5) should have been dropped in the
+        // order they were encountered.
+        assert_eq!(drops_after_retain.as_slice(), &[1, 3, 5]);
+    }
+    // Remaining even elements drop at end of scope in forward
+    // order (they occupy positions [0, 1, 2] after compaction).
+    let final_drops: Vec<u32> = log
+        .lock()
+        .expect("drop log mutex is never contended or poisoned")
+        .clone();
+    assert_eq!(final_drops.as_slice(), &[1, 3, 5, 0, 2, 4]);
+}
+
+#[test]
+fn dedup_drops_consecutive_duplicates() {
+    let mut v: KVec<i32> = KVec::new();
+    for &x in &[1, 1, 2, 2, 2, 3, 1, 1] {
+        v.push(x);
+    }
+    v.dedup();
+    // Only consecutive runs collapse; the trailing 1 is kept
+    // because it is not adjacent to the opening 1s.
+    assert_eq!(v.as_slice(), &[1, 2, 3, 1]);
+}
+
+#[test]
+fn dedup_empty_and_single_element_vecs_are_noops() {
+    let mut empty: KVec<i32> = KVec::new();
+    empty.dedup();
+    assert_eq!(empty.len(), 0);
+
+    let mut single: KVec<i32> = KVec::new();
+    single.push(42);
+    single.dedup();
+    assert_eq!(single.as_slice(), &[42]);
 }
 
 // Existing Clone independence tests

@@ -428,6 +428,423 @@ impl<T> Vec<T> {
         self.buf.reserve_exact(needed);
     }
 
+    /// Shortens the vector, keeping the first `new_len` elements
+    /// and dropping the rest.
+    ///
+    /// If `new_len >= self.len()`, this is a no-op. The capacity
+    /// is left unchanged — call [`shrink_to_fit`](Self::shrink_to_fit)
+    /// afterwards if you want to release the tail storage.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// v.push(4);
+    /// v.push(5);
+    /// v.truncate(2);
+    /// assert_eq!(v.as_slice(), &[1, 2]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n* − *`new_len`*) — drops each removed element via its
+    /// destructor. *O*(1) when `new_len >= self.len()`.
+    pub fn truncate(&mut self, new_len: usize) {
+        if new_len >= self.len {
+            return;
+        }
+        let drop_count = self.len - new_len;
+        // Update `len` before dropping so that if a destructor
+        // panics, `Vec::drop` sees the truncated count and does
+        // not revisit already-dropped elements. The compiler-
+        // generated drop glue on `*mut [T]` handles single-element
+        // panics internally, same as our main `Drop` impl.
+        self.len = new_len;
+        // SAFETY: slots `[new_len, new_len + drop_count)` were
+        // initialized by the invariant before this call and have
+        // not been dropped yet. We have exclusive access via
+        // `&mut self`. `drop_in_place` on a `*mut [T]` walks the
+        // elements and runs each destructor; see the `Drop` impl
+        // for the panic-safety analysis.
+        unsafe {
+            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                self.buf.ptr().as_ptr().add(new_len),
+                drop_count,
+            ));
+        }
+    }
+
+    /// Removes all elements from the vector, dropping each one.
+    ///
+    /// Equivalent to `self.truncate(0)`. The capacity is left
+    /// unchanged; call [`shrink_to_fit`](Self::shrink_to_fit)
+    /// afterwards to release the backing storage.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// v.clear();
+    /// assert!(v.is_empty());
+    /// assert_eq!(v.len(), 0);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) — drops every element.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.truncate(0);
+    }
+
+    /// Inserts an element at position `index` within the vector,
+    /// shifting all elements after it to the right.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index > self.len()`. The bounds check matches
+    /// `std::vec::Vec::insert`: insertion at the current length
+    /// is permitted (equivalent to `push`) but one past is not.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(4);
+    /// v.insert(2, 3);
+    /// assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n* − *index*) — every element from `index` to the end
+    /// is shifted right by one. Worst case is inserting at index 0,
+    /// which shifts the entire vector.
+    pub fn insert(&mut self, index: usize, value: T) {
+        assert!(
+            index <= self.len,
+            "insertion index (is {index}) should be <= len (is {len})",
+            len = self.len,
+        );
+
+        if self.len == self.buf.capacity() {
+            self.buf.grow();
+        }
+
+        // SAFETY: after the conditional `grow`, `self.len <
+        // self.buf.capacity()`. The source range `[index, len)` is
+        // entirely within the initialized portion of the vector,
+        // and the destination `[index + 1, len + 1)` is within the
+        // allocation (bounded by the grown capacity). `ptr::copy`
+        // handles the overlapping source/dest correctly — unlike
+        // `copy_nonoverlapping`, which would be UB here.
+        unsafe {
+            let base = self.buf.ptr().as_ptr();
+            let src = base.add(index);
+            let shift_count = self.len - index;
+            if shift_count > 0 {
+                ptr::copy(src, src.add(1), shift_count);
+            }
+            // Write the new element into the now-uninitialized
+            // slot at `index`. `ptr::write` does not drop the
+            // previous contents, which is correct because we just
+            // shifted them out.
+            ptr::write(src, value);
+        }
+        self.len += 1;
+    }
+
+    /// Removes and returns the element at position `index`,
+    /// shifting all elements after it to the left.
+    ///
+    /// Preserves the order of remaining elements. If order is not
+    /// important, prefer [`swap_remove`](Self::swap_remove) for
+    /// its *O*(1) cost.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// v.push(4);
+    /// let removed = v.remove(1);
+    /// assert_eq!(removed, 2);
+    /// assert_eq!(v.as_slice(), &[1, 3, 4]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n* − *index*) — every element after `index` is
+    /// shifted left by one.
+    pub fn remove(&mut self, index: usize) -> T {
+        assert!(
+            index < self.len,
+            "removal index (is {index}) should be < len (is {len})",
+            len = self.len,
+        );
+
+        // SAFETY: `index < self.len`, so the read is within the
+        // initialized range. After reading, the slot at `index`
+        // is logically uninitialized until the subsequent
+        // `ptr::copy` overwrites it with the shifted tail.
+        // The shift moves `[index + 1, len)` into
+        // `[index, len - 1)`, preserving forward order.
+        unsafe {
+            let base = self.buf.ptr().as_ptr();
+            let removed = ptr::read(base.add(index));
+            let shift_count = self.len - index - 1;
+            if shift_count > 0 {
+                ptr::copy(base.add(index + 1), base.add(index), shift_count);
+            }
+            self.len -= 1;
+            removed
+        }
+    }
+
+    /// Removes and returns the element at position `index`,
+    /// replacing it with the last element of the vector.
+    ///
+    /// This is *O*(1) but does not preserve the order of remaining
+    /// elements. If the removed element is also the last element,
+    /// no swap occurs (it's just a `pop`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// v.push(4);
+    /// let removed = v.swap_remove(1);
+    /// assert_eq!(removed, 2);
+    /// // The last element took the removed element's place,
+    /// // disturbing the order of what remains:
+    /// assert_eq!(v.as_slice(), &[1, 4, 3]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1) — a single read, an optional single-element copy,
+    /// and a length decrement. Independent of the vector's size,
+    /// which is the whole reason to use this over `remove`.
+    pub fn swap_remove(&mut self, index: usize) -> T {
+        assert!(
+            index < self.len,
+            "swap_remove index (is {index}) should be < len (is {len})",
+            len = self.len,
+        );
+
+        let last = self.len - 1;
+        // SAFETY: both `index` and `last` are within the
+        // initialized range. The `ptr::read` logically moves
+        // the element at `index` out; if `index != last`, we
+        // then `ptr::copy_nonoverlapping` the last element into
+        // the vacated slot (disjoint source and destination).
+        // If `index == last`, we skip the copy because the
+        // element we read was already the last one. The length
+        // decrement excludes the slot from the initialized
+        // range, so `Vec::drop` will not revisit it.
+        unsafe {
+            let base = self.buf.ptr().as_ptr();
+            let removed = ptr::read(base.add(index));
+            if index != last {
+                ptr::copy_nonoverlapping(base.add(last), base.add(index), 1);
+            }
+            self.len = last;
+            removed
+        }
+    }
+
+    /// Retains only the elements for which the predicate returns
+    /// `true`, preserving order and dropping rejected elements in
+    /// place.
+    ///
+    /// # Panic safety
+    ///
+    /// If the predicate panics mid-scan, any elements that have
+    /// not yet been visited are **leaked** — their destructors
+    /// will not run, though the backing allocation will still be
+    /// released by `Vec::drop`. A fully-reclaiming panic-safe
+    /// version would require a `BackshiftOnDrop`-style guard that
+    /// moves the remaining tail into place during unwinding; this
+    /// is a future refinement that nothing in Koala currently
+    /// justifies. The partial leak is documented here so that
+    /// callers relying on destructor side effects know not to
+    /// panic inside a `retain` predicate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// for i in 0..6 {
+    ///     v.push(i);
+    /// }
+    /// v.retain(|&x| x % 2 == 0);
+    /// assert_eq!(v.as_slice(), &[0, 2, 4]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) — each element is visited exactly once, plus one
+    /// pointer copy per kept element that moved.
+    pub fn retain<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        let original_len = self.len;
+        // Detach the length so that a panic mid-loop leaves Vec in
+        // a valid (if partially-leaked) state. Elements in
+        // `[0..write)` are kept, elements in `[read..original_len)`
+        // are not yet visited, elements in `[write..read)` are in
+        // limbo from bitwise moves. Setting `self.len = write`
+        // after the loop restores normal accounting.
+        self.len = 0;
+
+        let base = self.buf.ptr().as_ptr();
+        let mut write = 0;
+        for read in 0..original_len {
+            // SAFETY: `read < original_len` and the element at
+            // `read` has not been moved or dropped in a previous
+            // iteration (the earlier iterations only touched
+            // positions `< read`).
+            let element_ref = unsafe { &*base.add(read) };
+
+            if predicate(element_ref) {
+                if read != write {
+                    // SAFETY: `write <= read` by construction and
+                    // both are within the allocation. The source
+                    // `[read]` is initialized (just verified via
+                    // `element_ref`), and the destination `[write]`
+                    // is in the "limbo" zone that we own but have
+                    // not read from.
+                    unsafe {
+                        ptr::copy_nonoverlapping(base.add(read), base.add(write), 1);
+                    }
+                }
+                write += 1;
+            } else {
+                // SAFETY: element at `read` was initialized and
+                // is no longer needed. `drop_in_place` runs its
+                // destructor; the slot at `read` becomes logically
+                // uninitialized, but we do not revisit it because
+                // `read` only increases.
+                unsafe {
+                    ptr::drop_in_place(base.add(read));
+                }
+            }
+        }
+
+        self.len = write;
+    }
+
+    /// Removes consecutive runs of equal elements, keeping the
+    /// first element of each run.
+    ///
+    /// Only adjacent duplicates are removed — this is the same
+    /// semantics as `std::vec::Vec::dedup` and as Unix `uniq`. If
+    /// you want to remove all duplicates (not just consecutive
+    /// ones), sort first and then call `dedup`.
+    ///
+    /// # Panic safety
+    ///
+    /// If `T::eq` panics mid-scan, the same "leak the unvisited
+    /// tail" behavior as [`retain`](Self::retain) applies.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::vec::Vec;
+    /// let mut v = Vec::new();
+    /// v.push(1);
+    /// v.push(1);
+    /// v.push(2);
+    /// v.push(3);
+    /// v.push(3);
+    /// v.push(3);
+    /// v.push(2);
+    /// v.dedup();
+    /// // Consecutive duplicates collapse, but non-adjacent
+    /// // repeats (the trailing 2) are preserved:
+    /// assert_eq!(v.as_slice(), &[1, 2, 3, 2]);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) — one forward pass, one equality check per pair
+    /// of adjacent elements, one move per kept element.
+    pub fn dedup(&mut self)
+    where
+        T: PartialEq,
+    {
+        if self.len <= 1 {
+            return;
+        }
+
+        let original_len = self.len;
+        // Same "detach len for panic safety" trick as `retain`.
+        self.len = 0;
+
+        let base = self.buf.ptr().as_ptr();
+        // First element is always kept; start writing at position 1.
+        let mut write = 1;
+
+        for read in 1..original_len {
+            // SAFETY: `write - 1` is within the kept prefix and
+            // holds a valid `T` (either the original first
+            // element, or an element we copied there). `read`
+            // is within the initialized range and has not been
+            // moved yet.
+            let (prev, cur) = unsafe { (&*base.add(write - 1), &*base.add(read)) };
+
+            if prev == cur {
+                // Duplicate: drop it.
+                // SAFETY: `read` is a valid initialized slot
+                // that we no longer need.
+                unsafe {
+                    ptr::drop_in_place(base.add(read));
+                }
+            } else {
+                // Not a duplicate: promote to the next kept slot.
+                if read != write {
+                    // SAFETY: source and destination are both
+                    // within the allocation and disjoint
+                    // (`write < read` when this branch runs).
+                    unsafe {
+                        ptr::copy_nonoverlapping(base.add(read), base.add(write), 1);
+                    }
+                }
+                write += 1;
+            }
+        }
+
+        self.len = write;
+    }
+
     /// Shrinks the capacity of the vector to match the current
     /// length, releasing any unused backing storage.
     ///
