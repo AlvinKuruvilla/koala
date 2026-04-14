@@ -1,16 +1,87 @@
 ---
 created: 2026-04-13
 area: koala-std::vec
-status: open — milestone 1 / v1.0 Vec in progress
+status: historical — Vec<T> was built across tasks #3–#8 and
+        then removed from the source tree on 2026-04-13 after a
+        retrospective. This doc is preserved as a design record
+        and because the sections on doc-comment conventions,
+        SmallVec/ThinVec/ArenaVec opportunities, parallel drop,
+        and CoW are still current for milestone 3.
 ---
 
-# koala-std `Vec<T>` design notes
+# koala-std `Vec<T>` design notes (historical)
 
-This document captures the design discussion that shaped `Vec<T>` in
-milestone 1 of `koala-std` — specifically the "easy first, then
-smarter" philosophy, where `std::Vec` is actually weak, which gaps
-are worth pursuing in later milestones, and which explicitly are
-not. See `koala-std-roadmap.md` for the overall crate direction.
+This document captures the design discussion that shaped `Vec<T>`
+across milestone 1's eight-commit implementation. `Vec<T>` itself
+has since been removed from the `koala-std` source tree — see the
+"Retrospective" section immediately below — but much of this
+document is still load-bearing for types that are still on the
+roadmap. In particular:
+
+- **The doc-comment conventions** (meaningful doc-tests, `# Time
+  complexity` sections, `std`-structure mirroring, `# use
+  koala_std::...` hidden-line import pattern, `// SAFETY:`
+  convention) still apply to every type `koala-std` ships. These
+  are project-wide rules codified during the `Vec<T>` work and
+  pointed to from `CLAUDE.md`.
+- **The "real opportunities" section** (`SmallVec`, `ThinVec`,
+  `ArenaVec`) is the current milestone-3 plan. Those three types
+  never depended on `Vec<T>` as a foundation and survive the
+  `Vec<T>` removal unchanged.
+- **The parallel-drop sidebar** and the **CoW sidebar** are
+  historical design decisions worth preserving so future sessions
+  don't re-litigate them.
+
+## Retrospective — why `Vec<T>` was removed on 2026-04-13
+
+After tasks #3 through #8 shipped a full v1.0 + v1.1 `Vec<T>` (79
+passing tests, clippy clean, miri-ready), an explicit scope
+retrospective found that the type did not earn its place in
+`koala-std`:
+
+1. **Zero production value in the Koala codebase.** A scan of
+   `koala-html`, `koala-css`, `koala-dom`, `koala-browser`,
+   `koala-js`, and the binaries on 2026-04-13 surfaced no
+   recurring `Vec` patterns that would benefit from a custom
+   method or type. Every Vec-shaped idiom in the existing code
+   was either `std`-idiomatic (`iter().position()`,
+   `filter().collect()`, `retain(pred)`) or a borrow-checker
+   workaround that a custom `Vec` cannot fix. See the scan
+   report in the conversation history.
+2. **Milestone-3 types don't depend on it.** `SmallVec<T, N>` has
+   its own inline `[MaybeUninit<T>; N]` storage. `ThinVec<T>`
+   stores length and capacity *inside the allocation header* —
+   a fundamentally different layout from `Vec<T>`'s
+   `{ptr, len, cap}` triple. `ArenaVec<T>` ties directly into
+   `BumpAllocator`. None of them inherit from or share code with
+   `Vec<T>`. The foundation they *do* share is `RawVec<T>`, which
+   is kept.
+3. **The learning did happen.** Writing `Vec<T>` taught
+   allocation/grow/drop patterns, ZST correctness, panic safety
+   reasoning, the `IntoIter<T>` + `DoubleEndedIterator` +
+   `ExactSizeIterator` + `Drop` dance for consuming iterators,
+   the invariant-maintenance flavor of panic safety in `Clone`,
+   the three-tier time-complexity convention, and a complete
+   quickcheck differential harness pattern. All of that is
+   captured in git history (commits `a65e9ff` through `021cfd2`)
+   and in the surviving `raw_vec.rs` source.
+
+**Decision**: `src/vec.rs` and `tests/vec.rs` were deleted.
+`raw_vec.rs` was kept as `pub(crate)` dead code with a clear
+comment that milestone-3 types will consume it. The historical
+Vec commits are left in git for reference.
+
+**Lesson for future types**: apply a stricter "does this unlock
+something we can't get another way?" filter before starting any
+new type that resembles a `std` type. The answer for `Box<T>`
+and `String` turned out to be "no" and both were dropped from
+the roadmap alongside `Vec<T>`. The answer for `HashMap<K, V>`
+is "yes" (it's genuinely algorithmic and has real Koala use
+cases). The answer for `SmallVec` / `ThinVec` / `ArenaVec` is
+"yes" (`std` doesn't ship them at all). Everything else is
+gated on that filter.
+
+## Original design discussion (preserved for context)
 
 ## The dumb-first philosophy
 

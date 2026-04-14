@@ -39,10 +39,17 @@ use alloc::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 /// for `T`, or nothing at all when either `cap == 0` or `T` is a
 /// zero-sized type. See the module-level documentation for invariants.
 ///
+/// `dead_code` is allowed because the milestone-1 `Vec<T>` that
+/// originally consumed `RawVec` was removed on 2026-04-13 after a
+/// scope retrospective (see `koala-std-roadmap.md`). The type stays
+/// as dead code in the crate because the milestone-3 vector types
+/// (`SmallVec`, `ThinVec`, `ArenaVec`) will consume it. Removing the
+/// allowance is the signal that those types have landed.
+///
 /// `redundant_pub_crate` fires here because the containing module is
 /// private, but we keep `pub(crate)` as an intentional visibility
-/// contract: `Vec<T>` in the sibling `vec` module accesses these
-/// items, and the visibility is genuinely required for that.
+/// contract for those future sibling-module consumers.
+#[allow(dead_code)]
 #[allow(clippy::redundant_pub_crate)]
 pub(crate) struct RawVec<T> {
     ptr: NonNull<T>,
@@ -50,6 +57,7 @@ pub(crate) struct RawVec<T> {
     _marker: PhantomData<T>,
 }
 
+#[allow(dead_code)]
 #[allow(clippy::redundant_pub_crate)]
 impl<T> RawVec<T> {
     /// Minimum capacity on first grow.

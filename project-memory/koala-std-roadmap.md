@@ -173,15 +173,16 @@ hierarchies with no benefit.
 - **Build posture**: `#![cfg_attr(not(test), no_std)]` +
   `extern crate alloc`, backed by `alloc::alloc::Global`. No custom
   allocator. No syscalls. No `std::` imports.
-- **Module layout mirrors `std`**: `koala_std::vec::Vec`,
-  `koala_std::boxed::Box`, `koala_std::string::String`,
-  `koala_std::collections::HashMap`, `koala_std::collections::HashSet`.
-  Easier differential testing and seeing where std actually puts
-  things is itself learning.
-- **Public API mirrors `std`** for milestone 1 — same method names,
-  same signatures, same semantics. Deviate only with a justified
-  reason documented in code. The full analysis of where to deviate
-  lives in `koala-std-vec-design.md`.
+- **Module layout mirrors `std`**: `koala_std::collections::HashMap`,
+  `koala_std::collections::HashSet`, and (milestone 2) the
+  browser-string family module. Easier differential testing and
+  seeing where std actually puts things is itself learning.
+- **Public API mirrors `std`** for each type where a `std`
+  counterpart exists — same method names, same signatures, same
+  semantics. Deviate only with a justified reason documented in
+  code. The full analysis lives in `koala-std-vec-design.md`
+  (kept under that name as a retrospective on the `Vec<T>`
+  experiment even though `Vec<T>` itself has been removed).
 - **Rust edition 2024**, MSRV = latest stable at crate-creation
   time. Bump forward aggressively — this is an experimental project
   not shipped to external consumers.
@@ -194,18 +195,32 @@ hierarchies with no benefit.
   entire crate's purpose impossible. Unsafe is reviewed via miri and
   differential testing, not via lint.
 
-## Milestone 1 — Foundations: owned heap storage
+## Milestone 1 — Foundations: hash-based collections
 
-**Question answered:** How does owned, unshared, heap-backed storage
-actually work in Rust?
+**Question answered:** How does a hash table actually work at the
+level of "open addressing, tombstones, load factor, hash function
+choice" — the one milestone-1 type whose design is genuinely
+algorithmic rather than a thin layer over the allocator.
 
 | Deliverable | Teaches |
 |---|---|
-| `Vec<T>` | Raw pointers, `GlobalAlloc`/`Layout`, `Drop` ordering, `Iterator`/`IntoIterator`, `Deref`/`DerefMut`, zero-sized types |
-| `Box<T>` | `Unique` ownership; nearly free after `Vec`'s allocator work |
-| `String` (UTF-8 validated) | Invariant preservation, byte-vs-char distinction, `Vec<u8>` layering |
-| `HashMap<K, V>` | Hash table internals, load factor, tombstones for deletion, hash function choice |
+| `HashMap<K, V>` | Hash table internals, load factor, tombstones for deletion, hash function choice, resize triggers |
 | `HashSet<T>` | Free wrapper over `HashMap<T, ()>` |
+
+The milestone-1 scope was originally much broader — it included
+`Vec<T>`, `Box<T>`, and `String`. After a retrospective on
+2026-04-13 (see "Considered and rejected" below) those three were
+dropped: `Box` and `String` never entered production scope, and
+`Vec<T>` was built for learning but deleted from the source tree
+after a scan of the Koala codebase confirmed it provided no
+production value and the milestone-3 types (`SmallVec`, `ThinVec`,
+`ArenaVec`) do not require it as a foundation.
+
+`RawVec<T>` — the private allocation primitive that backed
+`Vec<T>` — is kept as `pub(crate)` dead code in the crate because
+milestone-3 collection types will use it as a shared building
+block. The investment in `RawVec`'s allocation/grow/drop/ZST
+handling is reusable even though `Vec<T>` itself was not.
 
 ### Locked design decisions for milestone 1
 
@@ -217,18 +232,14 @@ actually work in Rust?
   rustc uses for internal maps). Not DoS-resistant but we don't
   need that for an internal container. SipHash is ~5× slower and
   out of scope. Tradeoff noted in a comment; no further discussion.
-- **`RawVec<T>` split**: `Vec<T>` is built on a private `RawVec<T>`
-  helper that owns the `ptr + cap + marker`, mirroring std's
-  architecture. `RawVec` will be reused by `String` (milestone 1)
-  and potentially `VecDeque` (milestone 3 if justified).
 
 ### Exit criteria (milestone 1)
 
-- Differential `quickcheck` vs `std` counterparts passes for every
-  public operation on every type.
+- Differential `quickcheck` vs `std::collections::HashMap` passes
+  for every public operation.
 - `miri` clean in CI (mandatory for unsafe-heavy code).
-- Explicit ZST tests for `Vec<()>`, `HashMap<(), ()>`, etc. — ZSTs
-  are where hand-rolled collections most commonly break.
+- Explicit ZST tests for `HashMap<(), V>` and `HashMap<K, ()>` —
+  ZSTs are where hand-rolled collections most commonly break.
 - Explicit drop-ordering tests using a drop-recorder type.
 
 ### Explicitly not in milestone 1
@@ -236,6 +247,86 @@ actually work in Rust?
 Anything shared (`Rc`), anything interior-mutable (`RefCell`),
 anything concurrent (`Arc`, `Mutex`), anything OS-dependent,
 multiple string types, arena allocator, extended collections.
+
+## Considered and rejected — milestone-1 types we decided not to build
+
+Locked 2026-04-13 after the post-Vec retrospective. Recording
+the reasoning so future sessions don't re-raise these without new
+information.
+
+### `Box<T>` — no learning, no production value
+
+A hand-rolled `Box<T>` would be roughly `{ ptr: NonNull<T>,
+_marker: PhantomData<T> }` with `alloc` in `new`, `dealloc` in
+`Drop`, and `Deref`/`DerefMut`. The allocation/deallocation
+pattern is a strict subset of what `RawVec<T>` already exercises,
+so there is no new skill to acquire. No milestone-2 or
+milestone-3 type depends on having a custom `Box` (they all use
+`std::rc::Rc` or `Arc` for shared ownership, or they are
+stack-allocated structs that wouldn't use `Box` anyway). There
+is no Koala-specific optimization that a custom `Box` would
+unlock — `std::Box<T>` is a solved problem and rebuilding it
+would be pure completionism.
+
+**Decision**: dropped from the roadmap entirely. `std::Box<T>`
+is fine wherever we need owned heap allocation.
+
+### `String` — the browser-string family doesn't need it
+
+A hand-rolled UTF-8-validated `String` is roughly `Vec<u8>` plus
+UTF-8 validation plus a few char-oriented methods. The
+validation is genuinely useful to write once, but it is not a
+project's worth of learning, and it is not something we would
+want to do "our way" because WHATWG's UTF-8 decoding algorithm
+is rigidly specified. The only real question is whether
+milestone 2's browser-grade string types (`FlyString`,
+`StringBuilder`, `Utf16String`) need it as a foundation, and
+they do not:
+
+- **`FlyString`** needs a refcounted immutable UTF-8 slice.
+  `std::rc::Rc<str>` already provides exactly that; what
+  `FlyString` adds is the *intern table*, which is a `HashMap`,
+  not a `String` extension.
+- **`StringBuilder`** is `Vec<u8>` (std's) with UTF-8-aware
+  append methods. No custom `String` needed.
+- **`Utf16String`** is `Vec<u16>` (std's) with surrogate-pair
+  handling. Its element type is `u16`, not `u8`, so a custom
+  UTF-8 `String` would not even be relevant.
+
+**Decision**: dropped from the roadmap entirely. The browser-
+string family in milestone 2 uses `std`'s `Vec<u8>` and
+`Vec<u16>` directly as backing storage.
+
+### `Vec<T>` — built for learning, removed retrospectively
+
+`Vec<T>` was built across tasks #3–#8 (milestone 1 core API plus
+v1.1 extensions). The code was correct, well-tested, and
+matched `std::vec::Vec` almost exactly. The retrospective found
+that:
+
+1. **Production value in the Koala codebase is zero.** A scan of
+   `koala-html`, `koala-css`, `koala-dom`, `koala-browser`,
+   `koala-js`, and the binaries on 2026-04-13 surfaced no
+   recurring `Vec` patterns that would benefit from a custom
+   method or type. Every Vec-shaped idiom in the existing code
+   is either `std`-idiomatic or a borrow-checker workaround that
+   a custom Vec cannot fix.
+2. **Milestone-3 types do not depend on it.** `SmallVec<T, N>`
+   has its own `[MaybeUninit<T>; N]` inline storage, `ThinVec<T>`
+   uses a different `{ptr} + header-stored metadata` layout, and
+   `ArenaVec<T>` ties directly into `BumpAllocator`. None of
+   them inherit from or share code with `Vec<T>`. The foundation
+   they do share is `RawVec<T>`, which is kept.
+3. **The learning did happen.** `RawVec<T>`'s allocation logic,
+   ZST handling, panic-safety reasoning for `Drop`, and the
+   `IntoIter<T>` + `DoubleEndedIterator` patterns were all
+   genuine new territory. They are captured in git history and
+   in the surviving `raw_vec.rs` source file.
+
+**Decision**: `Vec<T>` is deleted from the source tree. `RawVec<T>`
+stays as `pub(crate)` dead code until milestone 3 consumers
+arrive. The v1.0 and v1.1 Vec commits are preserved in git
+history for reference and as a learning artifact.
 
 ## Milestone 2 — Browser-grade string family
 
@@ -278,21 +369,33 @@ reasons and is phasing it out. We start clean.
 ## Milestone 3 — Arena allocator + extended collections
 
 **Question answered:** When does a custom allocator actually help,
-and what do less common collections teach beyond `Vec` and
-`HashMap`?
+and what do the browser-specific vector types teach beyond `std`'s
+`Vec` and `HashMap`?
 
-### Required deliverable
+### Required deliverables
 
 | Deliverable | Teaches |
 |---|---|
 | `BumpAllocator` / `Arena<T>` | Allocator design at its simplest; lifetime tying via `'arena`; when arenas beat `Global` |
+| `SmallVec<T, const N: usize>` | Inline storage with heap fallback; union-backed uninit arrays; why "match std's API" doesn't apply to types std doesn't have |
+| `ThinVec<T>` | Storing length and capacity at the allocation header so the outer struct is one pointer; the `nsTArray` pattern Firefox uses for empty-common DOM attribute lists |
+| `ArenaVec<T>` | Ties into `BumpAllocator` directly; never reallocates; O(1) bulk invalidation via arena reset |
 
-**Why arena is the headline feature:** every `LayoutBox` in
+**Why the arena is the headline feature:** every `LayoutBox` in
 `koala-css` currently allocates through `Global`. A bump allocator
 is both a real optimization target (per
 `rasterizer-future-work.md`) and a teachable allocator-design
 project without the complexity of a general-purpose allocator. High
 marginal value to the main project.
+
+**Why the three vector types live here instead of milestone 1:**
+they are where the real "improve on `std`" energy belongs. `std`
+does not ship `SmallVec`, `ThinVec`, or `ArenaVec` — these types
+cover workloads that `std::Vec<T>`'s single-layout design
+deliberately leaves on the table. They are the actual production-
+value types in the `koala-std` plan. Each of them is built
+directly on `RawVec<T>` (the milestone-1 allocation primitive
+that survived the `Vec<T>` removal) rather than on a full `Vec<T>`.
 
 ### Demand-driven stretch goals
 
@@ -378,5 +481,34 @@ IO trait family.
   panic-safe `Drop`, overflow detection at both `checked_mul` and
   `Layout::array` levels. 13 unit tests including explicit ZST
   drop-of-dangling-pointer and capacity-overflow tests.
-- Next: `Vec<T>` wrapper with `push`/`pop`/`Drop`/`Deref<[T]>`. See
-  `koala-std-vec-design.md` for the design decisions.
+- **Commits 3–8** (tasks #3–#8, `8050222` through `021cfd2`):
+  `Vec<T>` built across eight commits covering the v1.0 minimal
+  API, the full trait surface (`Debug` / `PartialEq` / `Eq` /
+  `Hash` / `Clone` / `Default` / `FromIterator` / `IntoIterator`),
+  a quickcheck differential harness, and the v1.1 extensions
+  (`with_capacity`, `reserve` family, `shrink_to_fit`,
+  `push_within_capacity`, `truncate` / `clear` / `insert` /
+  `remove` / `swap_remove` / `retain` / `dedup`, `extend` /
+  `extend_from_slice`, `IntoIter<T>` with `DoubleEndedIterator` /
+  `ExactSizeIterator` / `Drop`, and `IntoIterator for Vec<T>`).
+  Reached 79 passing tests (13 unit + 33 integration + 33
+  doc-tests), `miri` clean, clippy clean. Genuinely matched
+  `std::vec::Vec` for every public method shipped.
+
+### 2026-04-13 — Retrospective and `Vec<T>` removal
+
+After task #8 shipped, an explicit retrospective on the crate's
+scope found that `Vec<T>` had zero production value in Koala
+(see "Considered and rejected — `Vec<T>`" above) and that none
+of the milestone-3 types would use it as a foundation. `Box<T>`
+and `String` were reassessed at the same time and also dropped
+from the roadmap. The decision was to delete `Vec<T>` from the
+source tree while keeping `RawVec<T>` as a dead-code primitive
+for the milestone-3 consumers. The v1.0 and v1.1 Vec commits
+remain in git history as a learning artifact.
+
+- **Next**: milestone 1 revised to `HashMap<K, V>` +
+  `HashSet<T>` only. After that, milestone 3's `BumpAllocator`,
+  `SmallVec`, `ThinVec`, and `ArenaVec`. Milestone 2's browser-
+  string family lands between those, after `HashMap` exists
+  (because `FlyString`'s intern table needs it).
