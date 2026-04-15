@@ -84,12 +84,10 @@
 
 extern crate alloc;
 
-// `RawVec<T>` is the allocation primitive that originally backed
-// `Vec<T>` in milestone 1. `Vec<T>` itself was removed on 2026-04-13
-// after the scope retrospective, but `RawVec` stays as `pub(crate)`
-// because the milestone-3 vector types (`SmallVec`, `ThinVec`,
-// `ArenaVec`) will consume it. Until then the whole module is
-// dead-code-allowed at the item level.
-mod raw_vec;
+// Vec-family types. Milestone 1 ships nothing public here; the
+// `RawVec<T>` allocation primitive survives as `pub(crate)` so the
+// milestone-3 vector types can consume it unchanged. See
+// `vec/mod.rs` for the full rationale.
+mod vec;
 
 pub mod hash;
