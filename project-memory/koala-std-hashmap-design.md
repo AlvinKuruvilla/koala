@@ -17,7 +17,7 @@ history.
 
 ### In scope for v1
 
-- A hand-rolled `HashMap<K, V, H = FxHasher>` with Robin Hood hashing,
+- A hand-rolled `HashMap<K, V, S = FxBuildHasher>` with Robin Hood hashing,
   inline probe-length tracking, backshift deletion, a cached `u32` hash
   fragment per bucket, and a default 70% load factor.
 - `HashSet<T>` as a free wrapper over `HashMap<T, ()>`.
@@ -144,10 +144,11 @@ non-adversarial keys with minimal work. It's genuinely ~30 lines.
   case well enough and avoids the "surprise catastrophic collision
   when your input happens to cluster" failure mode.
 
-**Pluggability**: `HashMap<K, V, H = FxHasher>` accepts any `Hasher`.
-Callers who need DoS resistance for some reason can plug in
-`std::hash::DefaultHasher` or `siphasher::sip::SipHasher13` without any
-koala-std changes.
+**Pluggability**: `HashMap<K, V, S = FxBuildHasher>` accepts any
+`BuildHasher`. Callers who need DoS resistance for some reason can
+plug in `std::collections::hash_map::RandomState` or
+`std::hash::BuildHasherDefault<siphasher::sip::SipHasher13>` without
+any koala-std changes.
 
 ### 3. Load factor — 70%
 
@@ -294,10 +295,16 @@ same one the Vec scan established: the codebase uses `std::HashMap`
 idiomatically and doesn't work around missing methods. Respecting
 that means not inventing new ones.
 
-**Generic parameters**: `HashMap<K, V, H = FxHasher>`. `K` must
+**Generic parameters**: `HashMap<K, V, S = FxBuildHasher>`. `K` must
 implement `Hash + Eq`. `V` has no trait bounds beyond what's
-needed for specific operations (`Clone` for `.clone()`, etc.). `H`
-defaults to `FxHasher` but can be any `Hasher`.
+needed for specific operations (`Clone` for `.clone()`, etc.). `S`
+must implement `BuildHasher` (not `Hasher` — the map needs to
+produce a fresh hasher per key, which is what
+`BuildHasher::build_hasher` is for). Defaults to `FxBuildHasher`
+from Phase 1. Callers who need DoS resistance can plug in
+`std::collections::hash_map::RandomState` or
+`std::hash::BuildHasherDefault<siphasher::sip::SipHasher13>`
+without any koala-std changes.
 
 ## Research survey — what we looked at and what we learned
 
@@ -464,6 +471,293 @@ koala-std.** Fix it when the browser-string family (milestone 2) and
 see the motivation for those milestones includes a concrete current
 pain point.
 
+## Phase 2 struct design (locked 2026-04-14)
+
+Everything above this section is the *algorithmic* design — which
+hash table scheme, which hash function, which load factor, which
+deletion strategy. This section is the *struct-level* design — the
+exact Rust shapes we're committing to, the field semantics, the
+method surface, and the invariants. The implementation checklist
+below refers to this section rather than duplicating it.
+
+Module location: `koala_std::collections::raw_table` (private
+submodule of `collections/`, mirroring the
+`koala_std::vec::raw_vec` relationship to `vec/`).
+
+### The `Bucket<K, V>` layout
+
+```rust
+struct Bucket<K, V> {
+    raw_state: u8,
+    hash_fragment: u32,
+    entry: MaybeUninit<(K, V)>,
+}
+```
+
+**Field ordering and `repr`.** No `#[repr(C)]` — let the compiler
+auto-reorder for optimal packing. For every K/V pair in Koala's
+actual workload (all have `align_of(entry) >= 4`), auto-reorder
+and any fixed `repr(C)` ordering produce identical layouts. For
+pathological small cases like `<u8, u8>`, auto-reorder beats any
+fixed order (8 bytes vs. 12). The motivating case
+`Bucket<u64, u64>` = 24 bytes is pinned via a `const` size
+assertion in the Phase 2 tests, which catches any future rustc
+reordering change loudly without forcing a stable layout.
+
+**The `raw_state` field.** Named `raw_state` rather than `state`
+so the accessor method `.state()` is free. The byte encodes a
+`BucketState` per AK's scheme:
+
+- `0` = `Empty`
+- `1..=254` = `OccupiedInline(probe_length)`, where
+  `probe_length = raw_state - 1` (range 0..=253)
+- `255` = `OccupiedRecompute`
+
+**The `hash_fragment` field.** Cached low 32 bits of the full
+hash (`hash as u32`). The probe loop compares the fragment before
+calling `K::eq`, skipping full equality checks for keys that
+collide on `hash & mask` but differ above that. Only read when
+`raw_state != 0`; contents are undefined on empty slots (we don't
+bother to zero it — `raw_state` is the liveness marker).
+
+**The `entry` field.** `MaybeUninit<(K, V)>` — tuple form, not
+split into `(MaybeUninit<K>, MaybeUninit<V>)`. The API always
+writes and reads K and V together on insert and remove, so the
+split form's independent-init flexibility is never exercised.
+Uninitialized whenever `raw_state == 0`. `Bucket` has no `Drop` —
+destruction of the `(K, V)` is `RawTable::drop`'s responsibility.
+
+**No `Bucket` constructor.** `RawTable::with_capacity` allocates
+the bucket array via `alloc_zeroed`, which leaves every
+`raw_state` at 0 (= `Empty`) for free. There is no per-bucket
+initialization routine to call.
+
+### The `BucketState` enum
+
+```rust
+pub(super) enum BucketState {
+    /// This slot holds no entry. The `entry` field is
+    /// uninitialized and must not be read. Either the slot is
+    /// fresh from allocation and has never been used, or it
+    /// was vacated by a delete whose backshift chain
+    /// terminated here. The probe loop treats `Empty` as a
+    /// hard stop — a lookup that hits an empty slot concludes
+    /// that the key is not in the table.
+    Empty,
+
+    /// This slot holds a live `(K, V)` entry, and its probe
+    /// length fits in the inline 0..=253 range. The wrapped
+    /// `usize` is the probe length: the number of slots this
+    /// entry sits past its home position (`hash & mask`). A
+    /// probe length of 0 means the entry is exactly at its
+    /// home; 1 means one slot past its home; etc. This is the
+    /// common case — at 70% load factor with FxHash,
+    /// essentially every live bucket is `OccupiedInline`.
+    OccupiedInline(usize),
+
+    /// This slot holds a live `(K, V)` entry, but its probe
+    /// length exceeds 253 and cannot be encoded in the inline
+    /// byte range. Callers that need the probe length must
+    /// recompute it from the bucket index and the cached
+    /// `hash_fragment`:
+    ///
+    /// ```text
+    /// home_index   = (hash_fragment as usize) & mask
+    /// probe_length = (bucket_index - home_index) & mask
+    /// ```
+    ///
+    /// Using the 32-bit fragment is sufficient because `mask`
+    /// is always less than `2^32` in practice — a
+    /// `usize::MAX`-capacity `HashMap` is not a thing we
+    /// support. The `& mask` on `probe_length` handles the
+    /// case where the entry wrapped around the end of the
+    /// bucket array.
+    ///
+    /// This variant is pathological: a Robin Hood table at
+    /// 70% load with FxHash essentially never produces probe
+    /// chains longer than 253. The sentinel exists to keep
+    /// the inline encoding's byte budget honest under
+    /// degenerate input, not as an expected branch.
+    OccupiedRecompute,
+}
+```
+
+### `Bucket` method surface
+
+```rust
+impl<K, V> Bucket<K, V> {
+    /// Typed view of `raw_state`. Every caller that needs to
+    /// distinguish empty / inline / recompute goes through
+    /// this accessor rather than matching on the raw byte.
+    fn state(&self) -> BucketState;
+
+    /// Fast path for the probe loop: reads `raw_state`
+    /// directly and compares to 0. Compiles to one `cmp` +
+    /// `jne` instead of constructing a `BucketState` value.
+    fn is_empty(&self) -> bool;
+}
+```
+
+There are intentionally no setter methods. Writes to `raw_state`
+happen inline in the probe loop where the probe-length encoding
+is already being computed, and adding a `set_state(BucketState)`
+wrapper would either require re-encoding the enum back into a
+byte or adding a parallel `set_raw_state(u8)` that duplicates
+the raw field write. Neither is better than just writing to the
+field.
+
+### The `RawTable<K, V>` structure
+
+```rust
+struct RawTable<K, V> {
+    buckets: NonNull<Bucket<K, V>>,
+    capacity: usize,
+    len: usize,
+    _marker: PhantomData<(K, V)>,
+}
+```
+
+**`buckets`**: raw pointer to the start of a contiguous array of
+`capacity` buckets. `NonNull` (not `*mut`) so the type has a
+non-null niche and so `NonNull::dangling()` gives us a
+well-aligned sentinel for the `capacity == 0` case. Same pattern
+as `RawVec` at `vec/raw_vec.rs:56`.
+
+**`capacity`**: always either 0 or a power of two ≥ 8. Enforced
+by `with_capacity` and `grow_to`. It is the count of bucket
+slots in the backing array, not the count of live entries.
+
+**`len`** (renamed from the checklist's earlier `used`): number
+of live entries — buckets where `raw_state != 0`. Incremented on
+insert, decremented on remove. Drives load-factor-based growth:
+when `len * 100 >= capacity * 70`, the next insert triggers
+`grow_to(capacity * 2)`. Named `len` so it pairs naturally with
+`capacity` and matches `std::HashMap::len()` on the public wrapper.
+
+**`_marker: PhantomData<(K, V)>`**: tells dropck that `RawTable`
+conceptually owns a `K` and a `V`, so borrowck rejects dropping a
+`RawTable<&'a str, V>` whose `'a` would be freed first. Variance
+stays covariant in `K` and `V` via `NonNull`, which matches
+`std::HashMap`'s variance. Same pattern as `RawVec::_marker`.
+If invariance is ever needed (for interior-mutability reasons),
+switch to `PhantomData<fn(K, V) -> (K, V)>` — not a v1 concern.
+
+### `RawTable` API surface
+
+`RawTable` is the *storage* layer. It knows about buckets,
+allocation, and drop. It does **not** know about hashing, probe
+sequences, Robin Hood displacement, or load-factor thresholds.
+All of those live on `HashMap` and reach into `RawTable` via
+`bucket()` / `bucket_mut()` for slot access.
+
+```rust
+impl<K, V> RawTable<K, V> {
+    const fn new() -> Self;
+    fn with_capacity(entries: usize) -> Self;
+
+    fn capacity(&self) -> usize;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+
+    /// # Safety
+    /// `i < self.capacity()`.
+    unsafe fn bucket(&self, i: usize) -> &Bucket<K, V>;
+
+    /// # Safety
+    /// `i < self.capacity()`.
+    unsafe fn bucket_mut(&mut self, i: usize) -> &mut Bucket<K, V>;
+
+    fn grow_to(&mut self, new_capacity: usize);
+}
+```
+
+**`new()`**: `const fn` returning a `RawTable` with
+`NonNull::dangling()`, `capacity = 0`, `len = 0`. `const`
+enables `HashMap::new()` to be `const` too.
+
+**`with_capacity(entries)`**: allocates enough buckets to hold
+`entries` entries at 70% load factor, rounded up to the next
+power of two, minimum 8. The sizing math runs through checked
+arithmetic and panics with "capacity overflow" on `usize`
+overflow:
+
+```rust
+let min_buckets = entries
+    .checked_mul(100)
+    .and_then(|x| x.checked_add(69))
+    .map(|x| x / 70)
+    .expect("capacity overflow");
+let capacity = core::cmp::max(8, min_buckets).next_power_of_two();
+```
+
+Allocation uses `alloc::alloc::alloc_zeroed(Layout::array::<Bucket<K, V>>(capacity).unwrap())`
+so every `raw_state` in the fresh backing starts at 0 (=
+`Empty`). Allocation failure routes through `handle_alloc_error`.
+
+**`grow_to(new_capacity)`**: allocates new backing of size
+`new_capacity` but does **not** re-insert entries. Rehashing
+requires a `BuildHasher` that `RawTable` does not own, so the
+wrapping `HashMap` is responsible for walking the old storage,
+re-inserting into the new, and then releasing the old backing.
+The precise ownership-handoff shape (`grow_to` returns the old
+`RawTable`? takes a closure? uses a helper struct?) is deferred
+to Phase 4 when `HashMap::reserve` actually needs it.
+
+**`bucket` / `bucket_mut`**: unchecked slot access by index.
+Callers (the `HashMap` probe loops) are responsible for passing
+a valid index; `debug_assert!(i < self.capacity)` provides a
+tripwire in unoptimized builds.
+
+### `RawTable::drop` and panic safety
+
+On drop, walk `0..self.capacity`, check each bucket's
+`raw_state`, and call `ptr::drop_in_place` on every slot where
+`raw_state != 0`. Then `alloc::alloc::dealloc` the backing.
+
+Drop order within the bucket array is unspecified (we go in
+bucket-index order, not insertion order). This matches
+`std::HashMap`, which also makes no drop-order promise.
+
+Panic safety: if a `K::drop` or `V::drop` panics partway through
+the walk, we must still (a) `dealloc` the backing or the table
+leaks, and (b) not re-drop the in-flight entry. The standard
+pattern is a drop guard — an inner struct that carries the
+"next bucket to drop" index and whose own `Drop` impl finishes
+the walk and frees the backing. If a second destructor panics
+during unwinding, the process aborts; double-panic during drop
+is unrecoverable and `std::HashMap` does the same. The guard
+implementation is a Phase 2 coding detail, but the panic-safety
+contract is pinned here so the design is honest about it.
+
+### ZST story
+
+`Bucket<K, V>` is **not itself a ZST** even when both `K` and
+`V` are zero-sized, because `raw_state: u8` and
+`hash_fragment: u32` are non-ZST and together give
+`Bucket<(), ()>` a size of 8 bytes (state + fragment + tail
+padding to the struct's 4-byte alignment). `RawTable` therefore
+always allocates, and there is no infinite-capacity no-allocation
+path analogous to `RawVec`'s ZST handling. The `HashMap<(), ()>`
+and `HashMap<(), V>` tests in Phase 7 exist to exercise the
+`MaybeUninit<((), ()))>` drop semantics, not to verify a special
+allocation code path.
+
+### Size sanity check
+
+A `const` assertion in the Phase 2 unit tests pins the motivating
+bucket layout so any surprise fires at compile time:
+
+```rust
+const _: () = assert!(core::mem::size_of::<Bucket<u64, u64>>() == 24);
+```
+
+This is a tripwire, not a hard requirement — if a future rustc
+changes its field-reordering heuristic and the size drifts, the
+signal is "investigate what changed" rather than "the code is
+wrong." The assertion exists because the 24-byte figure is cited
+in decision #5 above and we want the doc claim and the code to
+move together.
+
 ## Implementation checklist
 
 Work items grouped by phase. Check off each box as it lands. Each
@@ -484,29 +778,64 @@ to the next.
 
 ### Phase 2 — `RawTable<K, V>` backing type
 
-- [ ] `mod raw_table;` — private module, same shape as `raw_vec` in
-      its relationship to the public type.
-- [ ] `struct RawTable<K, V>` with fields: `buckets: NonNull<Bucket<K,
-      V>>`, `capacity: usize`, `used: usize`, `_marker: PhantomData<(K,
-      V)>`.
-- [ ] `struct Bucket<K, V>`: `{ state: u8, hash_fragment: u32, entry:
-      MaybeUninit<(K, V)> }`. Layout verified with a static assertion.
-- [ ] `RawTable::new()` — dangling allocation, capacity 0.
-- [ ] `RawTable::with_capacity(n)` — allocate enough buckets to satisfy
-      `n` entries at 70% load factor: `max(8, n * 100 / 70 + 1).next_power_of_two()`.
-- [ ] Allocation via `alloc::alloc::{alloc, dealloc, realloc, Layout}`,
-      aborting on failure via `handle_alloc_error`. Overflow detection
-      via `Layout::array::<Bucket<K, V>>(capacity)`.
-- [ ] `RawTable::drop()` — walk every used bucket, call
-      `drop_in_place` on the initialized `(K, V)` entries, then
-      `dealloc` the backing.
-- [ ] Unit tests: construction, capacity math, grow/shrink, ZST
-      `RawTable<(), ()>`, drop correctness with a `DropRecorder`.
+The struct-level design (field semantics, API surface, drop
+contract, ZST handling, layout rationale) lives in the
+"Phase 2 struct design" section above. This checklist is the
+implementation todo-list.
+
+- [ ] `collections/raw_table.rs` — private submodule of
+      `collections/`, same shape as `vec/raw_vec.rs` in its
+      relationship to the public type.
+- [ ] `pub(super) enum BucketState` with the three variants
+      `Empty`, `OccupiedInline(usize)`, `OccupiedRecompute` and
+      full doc comments per the design section.
+- [ ] `struct Bucket<K, V>` with fields
+      `{ raw_state: u8, hash_fragment: u32, entry: MaybeUninit<(K, V)> }`.
+      No `#[repr(C)]` — let the compiler auto-reorder. No
+      `Drop` impl. No constructor.
+- [ ] `impl<K, V> Bucket<K, V>` — `fn state(&self) -> BucketState`
+      and `fn is_empty(&self) -> bool` (fast path reading
+      `raw_state` directly).
+- [ ] `const _: () = assert!(size_of::<Bucket<u64, u64>>() == 24);`
+      size sanity check.
+- [ ] `struct RawTable<K, V>` with fields
+      `{ buckets: NonNull<Bucket<K, V>>, capacity: usize, len: usize, _marker: PhantomData<(K, V)> }`.
+- [ ] `const fn RawTable::new()` — `NonNull::dangling()`,
+      `capacity = 0`, `len = 0`.
+- [ ] `RawTable::with_capacity(entries)` — 70% load factor
+      math via checked arithmetic (see design section for the
+      exact form), minimum 8, next power of two, panic on
+      capacity overflow. Allocate via
+      `alloc::alloc::alloc_zeroed(Layout::array::<Bucket<K, V>>(capacity).unwrap())`
+      so every `raw_state` starts at 0. Allocation failure
+      routes through `handle_alloc_error`.
+- [ ] `RawTable::{capacity, len, is_empty}` — trivial getters.
+- [ ] `unsafe fn bucket(&self, i) -> &Bucket<K, V>` and
+      `unsafe fn bucket_mut(&mut self, i) -> &mut Bucket<K, V>`
+      with `debug_assert!(i < self.capacity)`.
+- [ ] `fn grow_to(&mut self, new_capacity: usize)` — allocate
+      new backing only, does NOT re-insert. Ownership-handoff
+      shape finalized in Phase 4 when `HashMap::reserve`
+      consumes it.
+- [ ] `RawTable::drop()` — drop guard pattern for panic safety
+      per the design section. Walk occupied buckets, call
+      `drop_in_place` on each entry, then `dealloc` the
+      backing. A destructor panic during the walk unwinds into
+      the guard, which finishes the remainder and still frees
+      the backing; a double-panic aborts.
+- [ ] Unit tests: construction, capacity math round-trips
+      (several `entries` values), grow, ZST `RawTable<(), ()>`
+      (verifies 8-byte buckets still allocate normally), drop
+      correctness with a `DropRecorder`, drop panic safety
+      with a `PoisonOnDrop` test fixture.
 
 ### Phase 3 — `HashMap<K, V>` public type, basic API
 
-- [ ] `pub struct HashMap<K, V, H = FxHasher>` with fields `{ table:
-      RawTable<K, V>, hasher_builder: BuildHasherDefault<H> }`.
+- [ ] `pub struct HashMap<K, V, S = FxBuildHasher>` with fields
+      `{ table: RawTable<K, V>, hasher: S }`. `S: BuildHasher`. The
+      `hasher` field is stored directly — there is no
+      `BuildHasherDefault<FxHasher>` wrapping, because `FxBuildHasher`
+      is already a `BuildHasher` implementation from Phase 1.
 - [ ] `fn new() -> Self` — const fn if possible.
 - [ ] `fn with_capacity(capacity: usize) -> Self`.
 - [ ] `fn len(&self) -> usize`, `fn is_empty(&self) -> bool`,
@@ -557,7 +886,7 @@ to the next.
 
 ### Phase 6 — `HashSet<T>` wrapper
 
-- [ ] `pub struct HashSet<T, H = FxHasher>` as a thin wrapper around
+- [ ] `pub struct HashSet<T, S = FxBuildHasher>` as a thin wrapper around
       `HashMap<T, ()>`.
 - [ ] `insert(&mut self, value: T) -> bool`,
       `contains<Q>(&self, value: &Q) -> bool`,
