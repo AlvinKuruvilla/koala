@@ -898,6 +898,628 @@ impl HTMLTokenizer {
             }
         }
     }
+    /// [§ 13.2.5.55 After DOCTYPE name state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
+    fn handle_after_doctype_name_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009 CHARACTER TABULATION, U+000A LINE FEED, U+000C FORM FEED,
+            // U+0020 SPACE - Ignore the character."
+            Some(c) if Self::is_whitespace_char(c) => {}
+            // "U+003E GREATER-THAN SIGN (>) - Switch to the data state. Emit
+            // the current DOCTYPE token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - This is an eof-in-doctype parse error. Set the current
+            // DOCTYPE token's force-quirks flag to on. Emit the current DOCTYPE
+            // token. Emit an end-of-file token."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - If the six characters starting from the current
+            // input character are an ASCII case-insensitive match for the word
+            // 'PUBLIC', then consume those characters and switch to the after
+            // DOCTYPE public keyword state.
+            //
+            // Otherwise, if the six characters starting from the current input
+            // character are an ASCII case-insensitive match for the word
+            // 'SYSTEM', then consume those characters and switch to the after
+            // DOCTYPE system keyword state.
+            //
+            // Otherwise, this is an invalid-character-sequence-after-doctype-name
+            // parse error. Set the current DOCTYPE token's force-quirks flag to
+            // on. Reconsume in the bogus DOCTYPE state."
+            Some(c) => {
+                // The current input character is the first of the six; check
+                // the remaining five via peek so we don't double-consume.
+                if c.eq_ignore_ascii_case(&'P')
+                    && self.next_few_characters_are_case_insensitive("UBLIC")
+                {
+                    self.consume_string("UBLIC");
+                    self.switch_to(TokenizerState::AfterDOCTYPEPublicKeyword);
+                } else if c.eq_ignore_ascii_case(&'S')
+                    && self.next_few_characters_are_case_insensitive("YSTEM")
+                {
+                    self.consume_string("YSTEM");
+                    self.switch_to(TokenizerState::AfterDOCTYPESystemKeyword);
+                } else {
+                    self.log_parse_error();
+                    if let Some(ref mut token) = self.current_token {
+                        token.set_force_quirks();
+                    }
+                    self.reconsume_in(TokenizerState::BogusDOCTYPE);
+                }
+            }
+        }
+    }
+
+    /// [§ 13.2.5.56 After DOCTYPE public keyword state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-public-keyword-state)
+    fn handle_after_doctype_public_keyword_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Switch to the before DOCTYPE
+            // public identifier state."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BeforeDOCTYPEPublicIdentifier);
+            }
+            // "U+0022 QUOTATION MARK (\") - This is a
+            // missing-whitespace-after-doctype-public-keyword parse error. Set
+            // the current DOCTYPE token's public identifier to the empty
+            // string (not missing), then switch to the DOCTYPE public
+            // identifier (double-quoted) state."
+            Some('"') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_public_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted);
+            }
+            // "U+0027 APOSTROPHE (') - This is a
+            // missing-whitespace-after-doctype-public-keyword parse error. Set
+            // public identifier to empty, switch to single-quoted state."
+            Some('\'') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_public_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPEPublicIdentifierSingleQuoted);
+            }
+            // "U+003E (>) - This is a missing-doctype-public-identifier parse
+            // error. Set force-quirks. Switch to the data state. Emit the
+            // current DOCTYPE token."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - This is an eof-in-doctype parse error. Set force-quirks.
+            // Emit DOCTYPE token. Emit end-of-file token."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - This is a missing-quote-before-doctype-public-
+            // identifier parse error. Set force-quirks. Reconsume in the bogus
+            // DOCTYPE state."
+            Some(_) => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.57 Before DOCTYPE public identifier state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-public-identifier-state)
+    fn handle_before_doctype_public_identifier_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Ignore the character."
+            Some(c) if Self::is_whitespace_char(c) => {}
+            // "U+0022 (\") - Set public identifier to empty. Switch to the
+            // DOCTYPE public identifier (double-quoted) state."
+            Some('"') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.set_public_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted);
+            }
+            // "U+0027 (') - Set public identifier to empty. Switch to
+            // single-quoted state."
+            Some('\'') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.set_public_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPEPublicIdentifierSingleQuoted);
+            }
+            // "U+003E (>) - missing-doctype-public-identifier parse error.
+            // Set force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - missing-quote-before-doctype-public-identifier
+            // parse error. Force-quirks. Reconsume in bogus DOCTYPE."
+            Some(_) => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.58 DOCTYPE public identifier (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-public-identifier-(double-quoted)-state)
+    fn handle_doctype_public_identifier_double_quoted_state(&mut self) {
+        match self.current_input_character {
+            // "U+0022 (\") - Switch to the after DOCTYPE public identifier state."
+            Some('"') => {
+                self.switch_to(TokenizerState::AfterDOCTYPEPublicIdentifier);
+            }
+            // "U+0000 NULL - unexpected-null-character parse error. Append
+            // U+FFFD REPLACEMENT CHARACTER to the current DOCTYPE token's
+            // public identifier."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_public_identifier('\u{FFFD}');
+                }
+            }
+            // "U+003E (>) - abrupt-doctype-public-identifier parse error. Set
+            // force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - Append the current input character to the
+            // current DOCTYPE token's public identifier."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_public_identifier(c);
+                }
+            }
+        }
+    }
+
+    /// [§ 13.2.5.59 DOCTYPE public identifier (single-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-public-identifier-(single-quoted)-state)
+    fn handle_doctype_public_identifier_single_quoted_state(&mut self) {
+        match self.current_input_character {
+            // "U+0027 (') - Switch to the after DOCTYPE public identifier state."
+            Some('\'') => {
+                self.switch_to(TokenizerState::AfterDOCTYPEPublicIdentifier);
+            }
+            // "U+0000 NULL - parse error. Append U+FFFD to public identifier."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_public_identifier('\u{FFFD}');
+                }
+            }
+            // "U+003E (>) - abrupt-doctype-public-identifier parse error.
+            // Force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - Append character to public identifier."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_public_identifier(c);
+                }
+            }
+        }
+    }
+
+    /// [§ 13.2.5.60 After DOCTYPE public identifier state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-public-identifier-state)
+    fn handle_after_doctype_public_identifier_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Switch to the between DOCTYPE
+            // public and system identifiers state."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BetweenDOCTYPEPublicAndSystemIdentifiers);
+            }
+            // "U+003E (>) - Switch to data state. Emit DOCTYPE."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "U+0022 (\") - missing-whitespace-between-doctype-public-and-
+            // system-identifiers parse error. Set system identifier to empty.
+            // Switch to DOCTYPE system identifier (double-quoted) state."
+            Some('"') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierDoubleQuoted);
+            }
+            // "U+0027 (') - Same parse error. Switch to single-quoted state."
+            Some('\'') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierSingleQuoted);
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - missing-quote-before-doctype-system-identifier
+            // parse error. Force-quirks. Reconsume in bogus DOCTYPE."
+            Some(_) => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.61 Between DOCTYPE public and system identifiers state](https://html.spec.whatwg.org/multipage/parsing.html#between-doctype-public-and-system-identifiers-state)
+    fn handle_between_doctype_public_and_system_identifiers_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Ignore."
+            Some(c) if Self::is_whitespace_char(c) => {}
+            // "U+003E (>) - Switch to data state. Emit DOCTYPE."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "U+0022 (\") - Set system identifier to empty. Switch to
+            // double-quoted system identifier state."
+            Some('"') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierDoubleQuoted);
+            }
+            // "U+0027 (') - Set system identifier to empty. Switch to
+            // single-quoted state."
+            Some('\'') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierSingleQuoted);
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - missing-quote-before-doctype-system-identifier
+            // parse error. Force-quirks. Reconsume in bogus DOCTYPE."
+            Some(_) => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.62 After DOCTYPE system keyword state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-system-keyword-state)
+    fn handle_after_doctype_system_keyword_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Switch to the before DOCTYPE
+            // system identifier state."
+            Some(c) if Self::is_whitespace_char(c) => {
+                self.switch_to(TokenizerState::BeforeDOCTYPESystemIdentifier);
+            }
+            // "U+0022 (\") - missing-whitespace-after-doctype-system-keyword
+            // parse error. Set system identifier to empty. Switch to
+            // double-quoted state."
+            Some('"') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierDoubleQuoted);
+            }
+            // "U+0027 (') - Same parse error. Switch to single-quoted state."
+            Some('\'') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierSingleQuoted);
+            }
+            // "U+003E (>) - missing-doctype-system-identifier parse error.
+            // Force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - missing-quote-before-doctype-system-identifier
+            // parse error. Force-quirks. Reconsume in bogus DOCTYPE."
+            Some(_) => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.63 Before DOCTYPE system identifier state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-system-identifier-state)
+    fn handle_before_doctype_system_identifier_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Ignore."
+            Some(c) if Self::is_whitespace_char(c) => {}
+            // "U+0022 (\") - Set system identifier to empty. Switch to
+            // double-quoted state."
+            Some('"') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierDoubleQuoted);
+            }
+            // "U+0027 (') - Set system identifier to empty. Switch to
+            // single-quoted state."
+            Some('\'') => {
+                if let Some(ref mut token) = self.current_token {
+                    token.set_system_identifier_empty();
+                }
+                self.switch_to(TokenizerState::DOCTYPESystemIdentifierSingleQuoted);
+            }
+            // "U+003E (>) - missing-doctype-system-identifier parse error.
+            // Force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - missing-quote-before-doctype-system-identifier
+            // parse error. Force-quirks. Reconsume in bogus DOCTYPE."
+            Some(_) => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.64 DOCTYPE system identifier (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-system-identifier-(double-quoted)-state)
+    fn handle_doctype_system_identifier_double_quoted_state(&mut self) {
+        match self.current_input_character {
+            // "U+0022 (\") - Switch to the after DOCTYPE system identifier state."
+            Some('"') => {
+                self.switch_to(TokenizerState::AfterDOCTYPESystemIdentifier);
+            }
+            // "U+0000 NULL - parse error. Append U+FFFD to system identifier."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_system_identifier('\u{FFFD}');
+                }
+            }
+            // "U+003E (>) - abrupt-doctype-system-identifier parse error.
+            // Force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - Append the current input character to the
+            // current DOCTYPE token's system identifier."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_system_identifier(c);
+                }
+            }
+        }
+    }
+
+    /// [§ 13.2.5.65 DOCTYPE system identifier (single-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-system-identifier-(single-quoted)-state)
+    fn handle_doctype_system_identifier_single_quoted_state(&mut self) {
+        match self.current_input_character {
+            // "U+0027 (') - Switch to the after DOCTYPE system identifier state."
+            Some('\'') => {
+                self.switch_to(TokenizerState::AfterDOCTYPESystemIdentifier);
+            }
+            // "U+0000 NULL - parse error. Append U+FFFD to system identifier."
+            Some('\0') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_system_identifier('\u{FFFD}');
+                }
+            }
+            // "U+003E (>) - abrupt-doctype-system-identifier parse error.
+            // Force-quirks. Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - Append character to system identifier."
+            Some(c) => {
+                if let Some(ref mut token) = self.current_token {
+                    token.append_to_system_identifier(c);
+                }
+            }
+        }
+    }
+
+    /// [§ 13.2.5.66 After DOCTYPE system identifier state](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-system-identifier-state)
+    fn handle_after_doctype_system_identifier_state(&mut self) {
+        match self.current_input_character {
+            // "U+0009, U+000A, U+000C, U+0020 - Ignore."
+            Some(c) if Self::is_whitespace_char(c) => {}
+            // "U+003E (>) - Switch to data. Emit DOCTYPE."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "EOF - eof-in-doctype. Force-quirks. Emit DOCTYPE. Emit EOF."
+            None => {
+                self.log_parse_error();
+                if let Some(ref mut token) = self.current_token {
+                    token.set_force_quirks();
+                }
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - unexpected-character-after-doctype-system-
+            // identifier parse error. Reconsume in bogus DOCTYPE.
+            //
+            // NOTE: per spec this branch does NOT set the force-quirks flag
+            // (in contrast to most other bogus-DOCTYPE transitions)."
+            Some(_) => {
+                self.log_parse_error();
+                self.reconsume_in(TokenizerState::BogusDOCTYPE);
+            }
+        }
+    }
+
+    /// [§ 13.2.5.68 Bogus DOCTYPE state](https://html.spec.whatwg.org/multipage/parsing.html#bogus-doctype-state)
+    fn handle_bogus_doctype_state(&mut self) {
+        match self.current_input_character {
+            // "U+003E (>) - Switch to data. Emit DOCTYPE token."
+            Some('>') => {
+                self.switch_to(TokenizerState::Data);
+                self.emit_token();
+            }
+            // "U+0000 NULL - unexpected-null-character parse error. Ignore."
+            Some('\0') => {
+                self.log_parse_error();
+            }
+            // "EOF - Emit the DOCTYPE token. Emit end-of-file token."
+            None => {
+                self.emit_token();
+                self.emit_eof_token();
+                self.at_eof = true;
+            }
+            // "Anything else - Ignore the character."
+            Some(_) => {}
+        }
+    }
+
     /// [§ 13.2.5.8 Tag name state](https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state)
     fn handle_tag_name_state(&mut self) {
         match self.current_input_character {
@@ -2559,64 +3181,46 @@ impl HTMLTokenizer {
                 TokenizerState::DOCTYPEName => {
                     self.handle_doctype_name_state();
                 }
-                // ===== DOCTYPE IDENTIFIER STATES =====
-                // [§ 13.2.5.55-67](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
-                //
-                // These states handle PUBLIC and SYSTEM identifiers in DOCTYPE declarations:
-                //   <!DOCTYPE html PUBLIC "..." "...">
-                //   <!DOCTYPE html SYSTEM "...">
-                //
-                // TODO: Implement DOCTYPE identifier parsing in this order:
-                //
-                // STEP 1: AfterDOCTYPEName - look for PUBLIC/SYSTEM keywords
-                //   [§ 13.2.5.55](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
+                // DOCTYPE PUBLIC/SYSTEM identifier states.
+                // [§ 13.2.5.55-68](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-name-state)
                 TokenizerState::AfterDOCTYPEName => {
-                    todo!("AfterDOCTYPEName state - see STEP 1 above")
+                    self.handle_after_doctype_name_state();
                 }
-
-                // STEP 2: PUBLIC keyword states - parse public identifier
-                //   [§ 13.2.5.56-60](https://html.spec.whatwg.org/multipage/parsing.html#after-doctype-public-keyword-state)
                 TokenizerState::AfterDOCTYPEPublicKeyword => {
-                    todo!("AfterDOCTYPEPublicKeyword state - see STEP 2")
+                    self.handle_after_doctype_public_keyword_state();
                 }
                 TokenizerState::BeforeDOCTYPEPublicIdentifier => {
-                    todo!("BeforeDOCTYPEPublicIdentifier state - see STEP 2")
+                    self.handle_before_doctype_public_identifier_state();
                 }
                 TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted => {
-                    todo!("DOCTYPEPublicIdentifierDoubleQuoted state - see STEP 2")
+                    self.handle_doctype_public_identifier_double_quoted_state();
                 }
                 TokenizerState::DOCTYPEPublicIdentifierSingleQuoted => {
-                    todo!("DOCTYPEPublicIdentifierSingleQuoted state - see STEP 2")
+                    self.handle_doctype_public_identifier_single_quoted_state();
                 }
                 TokenizerState::AfterDOCTYPEPublicIdentifier => {
-                    todo!("AfterDOCTYPEPublicIdentifier state - see STEP 2")
+                    self.handle_after_doctype_public_identifier_state();
                 }
-
-                // STEP 3: Between identifiers and SYSTEM keyword states
-                //   [§ 13.2.5.61-67](https://html.spec.whatwg.org/multipage/parsing.html#between-doctype-public-and-system-identifiers-state)
                 TokenizerState::BetweenDOCTYPEPublicAndSystemIdentifiers => {
-                    todo!("BetweenDOCTYPEPublicAndSystemIdentifiers state - see STEP 3")
+                    self.handle_between_doctype_public_and_system_identifiers_state();
                 }
                 TokenizerState::AfterDOCTYPESystemKeyword => {
-                    todo!("AfterDOCTYPESystemKeyword state - see STEP 3")
+                    self.handle_after_doctype_system_keyword_state();
                 }
                 TokenizerState::BeforeDOCTYPESystemIdentifier => {
-                    todo!("BeforeDOCTYPESystemIdentifier state - see STEP 3")
+                    self.handle_before_doctype_system_identifier_state();
                 }
                 TokenizerState::DOCTYPESystemIdentifierDoubleQuoted => {
-                    todo!("DOCTYPESystemIdentifierDoubleQuoted state - see STEP 3")
+                    self.handle_doctype_system_identifier_double_quoted_state();
                 }
                 TokenizerState::DOCTYPESystemIdentifierSingleQuoted => {
-                    todo!("DOCTYPESystemIdentifierSingleQuoted state - see STEP 3")
+                    self.handle_doctype_system_identifier_single_quoted_state();
                 }
                 TokenizerState::AfterDOCTYPESystemIdentifier => {
-                    todo!("AfterDOCTYPESystemIdentifier state - see STEP 3")
+                    self.handle_after_doctype_system_identifier_state();
                 }
-
-                // STEP 4: BogusDOCTYPE - error recovery for malformed DOCTYPEs
-                //   [§ 13.2.5.68](https://html.spec.whatwg.org/multipage/parsing.html#bogus-doctype-state)
                 TokenizerState::BogusDOCTYPE => {
-                    todo!("BogusDOCTYPE state - see STEP 4")
+                    self.handle_bogus_doctype_state();
                 }
 
                 // ===== CDATA SECTION STATES =====

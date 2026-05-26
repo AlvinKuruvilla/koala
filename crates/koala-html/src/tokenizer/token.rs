@@ -232,6 +232,84 @@ impl Token {
         }
     }
 
+    /// [§ 13.2.5.57 Before DOCTYPE public identifier state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-public-identifier-state)
+    ///
+    /// "Set the current DOCTYPE token's public identifier to the empty
+    /// string (not missing)."
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-DOCTYPE token, indicating a tokenizer bug.
+    pub fn set_public_identifier_empty(&mut self) {
+        match self {
+            Self::Doctype { public_identifier, .. } => {
+                *public_identifier = Some(String::new());
+            }
+            _ => panic!("set_public_identifier_empty called on non-DOCTYPE token"),
+        }
+    }
+
+    /// [§ 13.2.5.58 DOCTYPE public identifier (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-public-identifier-(double-quoted)-state)
+    ///
+    /// "Append the current input character to the current DOCTYPE
+    /// token's public identifier."
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-DOCTYPE token, or if the public
+    /// identifier has not been initialized to empty first (which would
+    /// indicate the tokenizer bypassed the `BeforeDOCTYPEPublicIdentifier`
+    /// transition).
+    pub fn append_to_public_identifier(&mut self, c: char) {
+        match self {
+            Self::Doctype { public_identifier, .. } => match public_identifier {
+                Some(s) => s.push(c),
+                None => panic!(
+                    "append_to_public_identifier called before set_public_identifier_empty"
+                ),
+            },
+            _ => panic!("append_to_public_identifier called on non-DOCTYPE token"),
+        }
+    }
+
+    /// [§ 13.2.5.63 Before DOCTYPE system identifier state](https://html.spec.whatwg.org/multipage/parsing.html#before-doctype-system-identifier-state)
+    ///
+    /// "Set the current DOCTYPE token's system identifier to the empty
+    /// string (not missing)."
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-DOCTYPE token, indicating a tokenizer bug.
+    pub fn set_system_identifier_empty(&mut self) {
+        match self {
+            Self::Doctype { system_identifier, .. } => {
+                *system_identifier = Some(String::new());
+            }
+            _ => panic!("set_system_identifier_empty called on non-DOCTYPE token"),
+        }
+    }
+
+    /// [§ 13.2.5.64 DOCTYPE system identifier (double-quoted) state](https://html.spec.whatwg.org/multipage/parsing.html#doctype-system-identifier-(double-quoted)-state)
+    ///
+    /// "Append the current input character to the current DOCTYPE
+    /// token's system identifier."
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-DOCTYPE token, or if the system
+    /// identifier has not been initialized to empty first.
+    pub fn append_to_system_identifier(&mut self, c: char) {
+        match self {
+            Self::Doctype { system_identifier, .. } => match system_identifier {
+                Some(s) => s.push(c),
+                None => panic!(
+                    "append_to_system_identifier called before set_system_identifier_empty"
+                ),
+            },
+            _ => panic!("append_to_system_identifier called on non-DOCTYPE token"),
+        }
+    }
+
     /// [§ 13.2.5.32 Before attribute name state](https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state)
     ///
     /// "Start a new attribute in the current tag token."
