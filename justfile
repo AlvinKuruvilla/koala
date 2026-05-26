@@ -75,9 +75,17 @@ wpt-list:
 # run to land in the conformance dashboard. For one-off iteration use
 # `just wpt` instead — it doesn't archive, so the runs/ dir doesn't
 # fill with throwaway debug data.
-#   just wpt-record                                    # default scope
-#   just wpt-record /css/CSS2/visudet/                 # whole subdir
-wpt-record scope="/css/CSS2/visudet/":
+#
+# `processes` is the parallel koala-cli count; wptrunner shards the
+# test list across that many subprocesses pulling from one wpt server.
+# A good default is the physical core count; raise it if I/O-bound,
+# lower it to debug. Each koala-cli writes its own hosts file and
+# JSON-protocol streams independently, so they don't share state.
+#
+#   just wpt-record                                       # default scope, 4 processes
+#   just wpt-record /css/CSS2/visudet/                    # whole subdir
+#   just wpt-record /css/ 8                               # /css/ at 8x parallel
+wpt-record scope="/css/CSS2/visudet/" processes="4":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p koala-cli
@@ -89,9 +97,10 @@ wpt-record scope="/css/CSS2/visudet/":
         --venv .venv-wpt --skip-venv-setup \
         run \
             --binary="{{justfile_directory()}}/target/release/koala" \
+            --processes="{{processes}}" \
             --no-pause \
             --no-restart-on-unexpected \
-            --log-mach=- --log-mach-level=info \
+            --log-mach=- --log-mach-level=warning \
             --log-wptreport="$out" \
             koala "{{scope}}"
     echo "Archived run to $out"

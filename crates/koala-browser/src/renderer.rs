@@ -177,7 +177,7 @@ impl Renderer {
     #[must_use]
     pub fn new(width: u32, height: u32, images: HashMap<String, LoadedImage>) -> Self {
         let fonts = RendererFonts::from_system();
-        if fonts.regular.is_none() {
+        if fonts.regular.is_none() && !koala_common::warning::is_quiet() {
             eprintln!("Warning: No system font found. Text will not be rendered.");
             eprintln!("Searched paths:");
             for path in FONT_SEARCH_PATHS {
@@ -221,7 +221,9 @@ impl Renderer {
             if let Ok(data) = std::fs::read(path)
                 && let Ok(font) = Font::from_bytes(data, FontSettings::default())
             {
-                eprintln!("Loaded {label} font: {path}");
+                if !koala_common::warning::is_quiet() {
+                    eprintln!("Loaded {label} font: {path}");
+                }
                 return Some(font);
             }
         }

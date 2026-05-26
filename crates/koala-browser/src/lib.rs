@@ -34,6 +34,10 @@ pub use koala_common::image::LoadedImage;
 /// [`koala_common::hosts`] for the full module docs.
 pub use koala_common::hosts;
 
+/// Engine-wide diagnostic-warning system, plus the process-wide
+/// quiet flag toggled by `koala-cli --wpt-protocol`.
+pub use koala_common::warning;
+
 use image_loader::{
     ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations,
 };
@@ -269,7 +273,9 @@ fn load_images(
             let bytes = match fetch_image_bytes(&resolved) {
                 Ok(b) => b,
                 Err(e) => {
-                    eprintln!("[Koala] Warning: failed to load image '{src}': {e}");
+                    if !warning::is_quiet() {
+                        eprintln!("[Koala] Warning: failed to load image '{src}': {e}");
+                    }
                     continue;
                 }
             };
@@ -281,10 +287,12 @@ fn load_images(
                     let _ = images.insert(src.to_string(), loaded);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[Koala] Warning: skipping <img src=\"{src}\">: {e}. \
-                         The page will still render but this image will be missing."
-                    );
+                    if !warning::is_quiet() {
+                        eprintln!(
+                            "[Koala] Warning: skipping <img src=\"{src}\">: {e}. \
+                             The page will still render but this image will be missing."
+                        );
+                    }
                 }
             }
         }

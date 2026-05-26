@@ -83,6 +83,12 @@ enum Event {
 /// Document load, parse, and render failures are reported as
 /// [`Event::LoadFailed`] and do not abort the loop.
 pub(crate) fn run() -> Result<()> {
+    // Silence engine-internal diagnostics ("Loaded regular font: …",
+    // image-load warnings, CSS warn_once feature notices) so stderr
+    // stays empty per test. wptrunner already captures real failures
+    // via the protocol; the noise here just slows large batches.
+    koala_browser::warning::set_quiet(true);
+
     let font_provider = FontProvider::load();
     let mut counter: u64 = 0;
 
