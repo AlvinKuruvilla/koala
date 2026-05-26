@@ -64,10 +64,12 @@
 
 mod dom_handle;
 mod globals;
+mod scheduler;
 
 pub use dom_handle::DomHandle;
 
 use std::cell::Cell;
+use std::time::{Duration, Instant};
 
 use boa_engine::{Context, JsError, JsValue, Source};
 
@@ -95,6 +97,13 @@ pub struct JsRuntime {
     /// DOM-mutation closures flipped the per-thread dirty flag.
     /// Cleared by [`take_dom_dirty`](Self::take_dom_dirty).
     dom_dirty: Cell<bool>,
+    /// Installs the timer scheduler in the per-thread slot for the
+    /// life of this runtime. Held purely for its `Drop` side effect;
+    /// `execute` and `pump_until_idle` read the same thread-local.
+    /// Declared after `context` so it drops AFTER the context's
+    /// GC sweep — any callback fired during shutdown still sees
+    /// a live scheduler.
+    scheduler_guard: scheduler::SchedulerGuard,
 }
 
 impl JsRuntime {
@@ -106,12 +115,20 @@ impl JsRuntime {
     /// on every call to [`execute`](Self::execute).
     #[must_use]
     pub fn new(dom: DomHandle) -> Self {
+        // Install the per-thread scheduler BEFORE registering
+        // globals — `register_globals` calls `register_timers`,
+        // which doesn't directly query the scheduler but downstream
+        // `setTimeout` calls will. Installing here means the same
+        // scheduler instance handles every script + pump cycle for
+        // this runtime.
+        let scheduler_guard = scheduler::guard();
         let mut context = Context::default();
         globals::register_globals(&mut context);
         Self {
             context,
             dom,
             dom_dirty: Cell::new(false),
+            scheduler_guard,
         }
     }
 
@@ -139,13 +156,107 @@ impl JsRuntime {
     /// Returns [`JsError`] if the JavaScript code contains syntax
     /// errors or throws an uncaught exception.
     pub fn execute(&mut self, source: &str) -> Result<JsValue, JsError> {
-        let guard = dom_handle::guard(self.dom.clone());
+        let dom_guard = dom_handle::guard(self.dom.clone());
         let result = self.context.eval(Source::from_bytes(source));
-        if guard.dirty_seen() {
+        if dom_guard.dirty_seen() {
             self.dom_dirty.set(true);
         }
-        drop(guard);
+        drop(dom_guard);
         result
+    }
+
+    /// Run pending timer callbacks until the queue is empty.
+    ///
+    /// [§ 8.1.6.3 Processing model](https://html.spec.whatwg.org/multipage/webappapis.html#event-loop-processing-model)
+    ///
+    /// Simplified relative to spec: just "while there's anything
+    /// pending, sleep until it's due, call it, loop." No microtask
+    /// queue, no rendering between iterations — those land later
+    /// when there's an actual event loop coordinated with the
+    /// browser pipeline. This is sufficient for `setTimeout`-based
+    /// async tests where the callback runs in isolation.
+    ///
+    /// Reads callbacks back out of the hidden `__koala_timers__`
+    /// global array by `TimerId`; the array is rooted by the
+    /// global object so Boa's GC keeps the callbacks alive across
+    /// every iteration. The slot is cleared to `null` after firing
+    /// so a long-running pump doesn't leak callback closures.
+    ///
+    /// Mutations performed inside fired callbacks accumulate into
+    /// `dom_dirty` the same way they do for `execute` calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first `JsError` thrown by a callback, abandoning
+    /// any remaining work. Subsequent calls to `pump_until_idle`
+    /// continue with the rest of the queue.
+    pub fn pump_until_idle(&mut self) -> Result<(), JsError> {
+        // Belt-and-braces budget so a broken setTimeout(fn, 0) →
+        // setTimeout(fn, 0) loop can't hang the parse path
+        // indefinitely. Honoured wptrunner timeouts will trip
+        // first in practice.
+        let budget = Duration::from_secs(30);
+        let started = Instant::now();
+
+        loop {
+            if started.elapsed() > budget {
+                break;
+            }
+
+            let dom_guard = dom_handle::guard(self.dom.clone());
+
+            let due_ids = scheduler::pop_due_now();
+            if due_ids.is_empty() {
+                let Some(next) = scheduler::next_due_time() else {
+                    break; // queue truly empty
+                };
+                let now = Instant::now();
+                if next > now {
+                    let wait = next.saturating_duration_since(now)
+                        .min(budget.saturating_sub(started.elapsed()));
+                    std::thread::sleep(wait);
+                }
+                continue;
+            }
+
+            for id in due_ids {
+                self.call_timer_callback(id)?;
+            }
+
+            if dom_guard.dirty_seen() {
+                self.dom_dirty.set(true);
+            }
+            // dom_guard drops here, restoring nothing (we're the
+            // outermost DOM context).
+        }
+
+        Ok(())
+    }
+
+    /// Look up a timer callback by id, call it with `this = window`,
+    /// and clear the array slot so the callback can be collected.
+    fn call_timer_callback(&mut self, id: scheduler::TimerId) -> Result<(), JsError> {
+        // Per `set_timeout`'s id scheme, the JS-visible id is
+        // `array_index + 1`. Translate back.
+        let index = u64::from(id.saturating_sub(1));
+        let timers = globals::timers::timers_array(&mut self.context)?;
+        let cb_value = timers.get(index, &mut self.context)?;
+        if cb_value.is_null_or_undefined() {
+            return Ok(());
+        }
+        let Some(cb_obj) = cb_value.as_object().cloned() else {
+            return Ok(());
+        };
+        if !cb_obj.is_callable() {
+            return Ok(());
+        }
+        let global = JsValue::from(self.context.global_object());
+        let _ = cb_obj.call(&global, &[], &mut self.context)?;
+        // Null out the slot so the closure can be collected on the
+        // next sweep. Setting to undefined would also work; null is
+        // cheaper to type.
+        let _ = timers.set(index, JsValue::null(), false, &mut self.context)?;
+        Ok(())
     }
 
     /// Return whether any [`execute`](Self::execute) call against this
@@ -627,6 +738,57 @@ mod tests {
             run_and_string(&mut rt, "document.getElementsByClassName('greeting missing').length"),
             "0",
         );
+    }
+
+    #[test]
+    fn set_timeout_schedules_a_callback_that_pump_fires() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "globalThis.fired = 0;\
+             setTimeout(function() { globalThis.fired += 1; }, 0);",
+        ).unwrap();
+        // Without pump, the callback hasn't run yet.
+        assert_eq!(run_and_string(&mut rt, "globalThis.fired"), "0");
+        rt.pump_until_idle().unwrap();
+        assert_eq!(run_and_string(&mut rt, "globalThis.fired"), "1");
+    }
+
+    #[test]
+    fn set_timeout_fires_in_chronological_order_regardless_of_call_order() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "globalThis.log = [];\
+             setTimeout(function() { globalThis.log.push('later'); }, 20);\
+             setTimeout(function() { globalThis.log.push('sooner'); }, 0);",
+        ).unwrap();
+        rt.pump_until_idle().unwrap();
+        assert_eq!(run_and_string(&mut rt, "globalThis.log.join(',')"), "sooner,later");
+    }
+
+    #[test]
+    fn clear_timeout_prevents_callback_firing() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "globalThis.fired = false;\
+             var id = setTimeout(function() { globalThis.fired = true; }, 0);\
+             clearTimeout(id);",
+        ).unwrap();
+        rt.pump_until_idle().unwrap();
+        assert_eq!(run_and_string(&mut rt, "globalThis.fired"), "false");
+    }
+
+    #[test]
+    fn timer_callback_mutations_mark_runtime_dirty() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "setTimeout(function() {\
+               document.body.appendChild(document.createElement('p'));\
+             }, 0);",
+        ).unwrap();
+        // Before pump, no mutation has run yet.
+        assert!(!rt.take_dom_dirty());
+        rt.pump_until_idle().unwrap();
+        assert!(rt.take_dom_dirty(), "callback's appendChild should mark dirty");
     }
 
     #[test]

@@ -208,6 +208,14 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
                 parse_issues.push(format!("JavaScript error: {e}"));
             }
         }
+        // After all sync scripts finish, pump pending setTimeout
+        // callbacks (and, eventually, setInterval / events) to
+        // completion. Errors thrown by callbacks get the same
+        // treatment as direct script errors — recorded in
+        // parse_issues, not propagated upward.
+        if let Err(e) = js_runtime.pump_until_idle() {
+            parse_issues.push(format!("JavaScript error (in timer): {e}"));
+        }
         js_runtime.take_dom_dirty()
     };
     let dom = std::rc::Rc::try_unwrap(dom_cell)

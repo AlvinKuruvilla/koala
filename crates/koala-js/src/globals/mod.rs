@@ -19,6 +19,7 @@
 
 mod console;
 mod document;
+pub(crate) mod timers;
 mod window;
 
 use boa_engine::Context;
@@ -41,10 +42,12 @@ use boa_engine::Context;
 pub fn register_globals(context: &mut Context) {
     console::register_console(context);
     document::register_document(context);
+    timers::register_timers(context);
     window::register_window(context);
 
     // Not yet implemented:
     // - location (Phase 2 follow-up: requires URL state)
     // - navigator (Phase 2 follow-up: browser metadata)
-    // - timers (Phase 3: requires event-loop integration)
+    // - setInterval / clearInterval (Phase 3 chunk 2)
+    // - addEventListener / removeEventListener (Phase 3 chunk 3)
 }

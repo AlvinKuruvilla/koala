@@ -223,6 +223,41 @@ fn script_can_read_document_title_and_window_globals() {
 }
 
 #[test]
+fn timer_callbacks_run_after_inline_script_returns() {
+    // setTimeout schedules a callback that mutates the DOM. The
+    // koala-browser pipeline pumps pending timers after sync
+    // scripts return, so the mutation should land and trigger
+    // the post-script cascade + layout rebuild.
+    use koala_dom::NodeId;
+
+    let doc = parse_html_string(
+        r#"<!DOCTYPE html>
+        <html><body>
+          <script>
+            setTimeout(function() {
+              var p = document.createElement('p');
+              p.setAttribute('id', 'timer-injected');
+              document.body.appendChild(p);
+            }, 0);
+          </script>
+        </body></html>"#,
+    );
+
+    let injected: Option<NodeId> = doc.dom.iter_all().find(|&id| {
+        doc.dom
+            .as_element(id)
+            .and_then(|e| e.id())
+            .is_some_and(|got| got == "timer-injected")
+    });
+    assert!(injected.is_some(), "timer callback should have appended the element");
+    let injected = injected.unwrap();
+    assert!(
+        doc.styles.contains_key(&injected),
+        "post-pump cascade should have given the timer-injected element a ComputedStyle",
+    );
+}
+
+#[test]
 fn dom_mutations_trigger_re_layout() {
     // The script appends a fresh <div> with an id. After the
     // koala-browser pipeline finishes, the post-script DOM should
