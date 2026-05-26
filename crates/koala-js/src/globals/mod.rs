@@ -19,6 +19,7 @@
 
 mod console;
 mod document;
+mod window;
 
 use boa_engine::Context;
 
@@ -31,15 +32,18 @@ use boa_engine::Context;
 ///
 /// Called once when constructing a [`crate::JsRuntime`]. The DOM
 /// handle the runtime holds is installed as the thread's current
-/// tree at execute time via
-/// [`crate::dom_handle::guard`] — these registration calls don't
-/// need to thread it explicitly.
+/// tree at execute time via [`crate::dom_handle::guard`] — these
+/// registration calls don't need to thread it explicitly.
+///
+/// Order matters: `window` is a self-pointer to the global object,
+/// so it picks up `document` and `console` as properties only after
+/// they've been registered.
 pub fn register_globals(context: &mut Context) {
     console::register_console(context);
     document::register_document(context);
+    window::register_window(context);
 
     // Not yet implemented:
-    // - window  (Phase 2 follow-up: self-referential global object)
     // - location (Phase 2 follow-up: requires URL state)
     // - navigator (Phase 2 follow-up: browser metadata)
     // - timers (Phase 3: requires event-loop integration)

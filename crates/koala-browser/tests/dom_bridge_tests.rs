@@ -139,6 +139,90 @@ fn script_can_walk_the_element_tree() {
 }
 
 #[test]
+fn script_can_use_query_selector_and_text_content() {
+    // testharness.js-style usage: query a known element, set its
+    // textContent dynamically.
+    assert_script_ran_clean(
+        r#"<!DOCTYPE html>
+        <html><body>
+          <div id="out" class="result"></div>
+          <p>other</p>
+          <script>
+            // Type, id, class, descendant — all should resolve.
+            if (document.querySelector('div').id !== 'out')
+              throw new Error('querySelector div');
+            if (document.querySelector('#out').className !== 'result')
+              throw new Error('querySelector #out');
+            if (document.querySelector('.result').id !== 'out')
+              throw new Error('querySelector .result');
+            if (document.querySelectorAll('div, p').length !== 2)
+              throw new Error('querySelectorAll count ' + document.querySelectorAll('div, p').length);
+
+            // Set textContent — should replace any prior children with
+            // a single Text node.
+            var out = document.getElementById('out');
+            out.textContent = 'hello from JS';
+            if (out.textContent !== 'hello from JS')
+              throw new Error('textContent read-back ' + out.textContent);
+            if (out.children.length !== 0)
+              throw new Error('out.children.length ' + out.children.length);
+          </script>
+        </body></html>"#,
+    );
+}
+
+#[test]
+fn script_can_build_dom_via_create_element_and_append_child() {
+    // Classic dynamic-rendering pattern: create elements, configure
+    // them, attach to the document, observe via the bridge.
+    assert_script_ran_clean(
+        r#"<!DOCTYPE html>
+        <html><body>
+          <script>
+            var p = document.createElement('p');
+            p.setAttribute('id', 'inserted');
+            p.textContent = 'inserted by script';
+            document.body.appendChild(p);
+
+            // Re-query through getElementById to prove the element
+            // landed in the tree.
+            var found = document.getElementById('inserted');
+            if (found === null) throw new Error('inserted not found');
+            if (found.tagName !== 'P') throw new Error('tagName ' + found.tagName);
+            if (found.textContent !== 'inserted by script')
+              throw new Error('textContent ' + found.textContent);
+            if (found.parentElement.tagName !== 'BODY')
+              throw new Error('parent ' + found.parentElement.tagName);
+          </script>
+        </body></html>"#,
+    );
+}
+
+#[test]
+fn script_can_read_document_title_and_window_globals() {
+    assert_script_ran_clean(
+        r#"<!DOCTYPE html>
+        <html>
+          <head><title>koala loves WPT</title></head>
+          <body>
+            <script>
+              if (document.title !== 'koala loves WPT')
+                throw new Error('title ' + document.title);
+              if (typeof window !== 'object')
+                throw new Error('window is not object');
+              if (window !== window.window)
+                throw new Error('window self-reference broken');
+              if (window.document !== document)
+                throw new Error('window.document not aliased');
+              if (window.document.documentElement.tagName !== 'HTML')
+                throw new Error('documentElement broken');
+            </script>
+          </body>
+        </html>"#,
+    );
+}
+
+#[test]
 fn script_can_mutate_attributes_and_observe_via_get_attribute() {
     // Verifies the mutation path: setAttribute → DOM stores it →
     // getAttribute reads it back via the bridge.

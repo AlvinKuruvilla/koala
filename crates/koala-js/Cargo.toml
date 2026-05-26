@@ -6,6 +6,7 @@ license.workspace = true
 description = "JavaScript engine integration for the Koala renderer"
 
 [dependencies]
+koala-css.workspace = true
 koala-dom.workspace = true
 boa_engine.workspace = true
 

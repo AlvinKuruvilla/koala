@@ -399,6 +399,220 @@ mod tests {
     }
 
     #[test]
+    fn document_body_head_and_document_element() {
+        let mut rt = JsRuntime::new(list_fixture());
+        // list_fixture builds: <html><body><ul id="list">…</ul></body></html>.
+        // There's no <head> in the fixture, so document.head is null.
+        assert_eq!(run_and_string(&mut rt, "document.documentElement.tagName"), "HTML");
+        assert_eq!(run_and_string(&mut rt, "document.body.tagName"), "BODY");
+        let head = rt.execute("document.head").unwrap();
+        assert!(head.is_null(), "no <head> in fixture, should be null");
+    }
+
+    fn fixture_with_head() -> DomHandle {
+        let mut tree = DomTree::new();
+        let root = tree.root();
+        let html = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "html".into(),
+            attrs: AttributesMap::new(),
+        }));
+        tree.append_child(root, html);
+        let head = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "head".into(),
+            attrs: AttributesMap::new(),
+        }));
+        tree.append_child(html, head);
+        let title = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "title".into(),
+            attrs: AttributesMap::new(),
+        }));
+        tree.append_child(head, title);
+        let title_text = tree.alloc(NodeType::Text("koala test page".into()));
+        tree.append_child(title, title_text);
+        let body = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "body".into(),
+            attrs: AttributesMap::new(),
+        }));
+        tree.append_child(html, body);
+        Rc::new(RefCell::new(tree))
+    }
+
+    #[test]
+    fn document_title_returns_descendant_text() {
+        let mut rt = JsRuntime::new(fixture_with_head());
+        assert_eq!(run_and_string(&mut rt, "document.title"), "koala test page");
+        assert_eq!(run_and_string(&mut rt, "document.head.tagName"), "HEAD");
+    }
+
+    #[test]
+    fn document_create_element_returns_an_unattached_element() {
+        let mut rt = JsRuntime::new(list_fixture());
+        // Unattached element has the right tagName but null parent.
+        assert_eq!(run_and_string(&mut rt, "document.createElement('span').tagName"), "SPAN");
+        let parent = rt.execute("document.createElement('span').parentElement").unwrap();
+        assert!(parent.is_null());
+    }
+
+    #[test]
+    fn append_child_attaches_a_created_element() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "var p = document.createElement('p');\
+             p.setAttribute('id', 'fresh');\
+             document.body.appendChild(p);",
+        ).unwrap();
+        // Now the element is findable by id, and its parent is body.
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('fresh').tagName"), "P");
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementById('fresh').parentElement.tagName"),
+            "BODY",
+        );
+    }
+
+    #[test]
+    fn append_child_moves_a_node_with_an_existing_parent() {
+        // Move `<li id="a">` out from under `<ul id="list">` into <body>.
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "var a = document.getElementById('a');\
+             document.body.appendChild(a);",
+        ).unwrap();
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementById('a').parentElement.tagName"),
+            "BODY",
+        );
+        // <ul> now has 2 children, not 3.
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children.length"), "2");
+    }
+
+    #[test]
+    fn remove_child_detaches() {
+        let mut rt = JsRuntime::new(list_fixture());
+        // Hold a reference to b BEFORE detaching: once it's removed it
+        // isn't reachable from the document root anymore, so a fresh
+        // getElementById('b') would return null.
+        let _ = rt.execute(
+            "globalThis.b_ref = document.getElementById('b');\
+             document.getElementById('list').removeChild(globalThis.b_ref);",
+        ).unwrap();
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children.length"), "2");
+        assert_eq!(run_and_string(&mut rt, "globalThis.b_ref.parentElement"), "null");
+        // The detached node is now orphaned: getElementById can't find it.
+        let missing = rt.execute("document.getElementById('b')").unwrap();
+        assert!(missing.is_null());
+    }
+
+    #[test]
+    fn text_content_getter_concatenates_descendants() {
+        let mut rt = JsRuntime::new(list_fixture());
+        // <ul> has three <li> children, each with one text Text child
+        // ("A", "B", "C"). Concat ignores element boundaries.
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').textContent"), "ABC");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('a').textContent"), "A");
+    }
+
+    #[test]
+    fn text_content_setter_replaces_children() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "document.getElementById('list').textContent = 'replaced';",
+        ).unwrap();
+        // No element children remain — only the new Text node.
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children.length"), "0");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').textContent"), "replaced");
+    }
+
+    #[test]
+    fn text_content_setter_with_empty_string_clears() {
+        let mut rt = JsRuntime::new(list_fixture());
+        let _ = rt.execute(
+            "document.getElementById('list').textContent = '';",
+        ).unwrap();
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').textContent"), "");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children.length"), "0");
+    }
+
+    #[test]
+    fn document_query_selector_resolves_simple_selectors() {
+        let mut rt = JsRuntime::new(list_fixture());
+        // Type selector
+        assert_eq!(run_and_string(&mut rt, "document.querySelector('ul').id"), "list");
+        // ID selector
+        assert_eq!(run_and_string(&mut rt, "document.querySelector('#b').tagName"), "LI");
+        // Descendant combinator
+        assert_eq!(
+            run_and_string(&mut rt, "document.querySelector('ul li').id"),
+            "a",
+        );
+        // No match
+        let none = rt.execute("document.querySelector('.does-not-exist')").unwrap();
+        assert!(none.is_null());
+    }
+
+    #[test]
+    fn document_query_selector_all_returns_every_match() {
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(run_and_string(&mut rt, "document.querySelectorAll('li').length"), "3");
+        assert_eq!(
+            run_and_string(&mut rt, "document.querySelectorAll('li')[1].id"),
+            "b",
+        );
+    }
+
+    #[test]
+    fn element_query_selector_is_scoped() {
+        // querySelector on an element is scoped to its descendants, so
+        // `body.querySelector('li')` shouldn't pick up `<li>` outside
+        // of body — though in this fixture there are no other <li>s.
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementById('list').querySelector('li').id"),
+            "a",
+        );
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementById('list').querySelectorAll('li').length"),
+            "3",
+        );
+    }
+
+    #[test]
+    fn get_elements_by_tag_name_returns_an_array() {
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(run_and_string(&mut rt, "document.getElementsByTagName('li').length"), "3");
+        // Wildcard returns every element.
+        let all = run_and_string(&mut rt, "document.getElementsByTagName('*').length");
+        assert!(all.parse::<usize>().unwrap() >= 5, "wildcard count was {all}");
+    }
+
+    #[test]
+    fn get_elements_by_class_name_matches_all_classes() {
+        let mut rt = JsRuntime::new(fixture());
+        // The fixture's <div id='hello'> has class "greeting prominent"
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementsByClassName('greeting').length"),
+            "1",
+        );
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementsByClassName('greeting prominent').length"),
+            "1",
+        );
+        // All requested classes must be present; absent class → zero hits.
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementsByClassName('greeting missing').length"),
+            "0",
+        );
+    }
+
+    #[test]
+    fn window_is_self_referential_and_exposes_document() {
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(run_and_string(&mut rt, "typeof window"), "object");
+        assert_eq!(run_and_string(&mut rt, "window === window.window"), "true");
+        assert_eq!(run_and_string(&mut rt, "window.document === document"), "true");
+        assert_eq!(run_and_string(&mut rt, "window.document.body.tagName"), "BODY");
+    }
+
+    #[test]
     fn next_and_previous_element_sibling() {
         let mut rt = JsRuntime::new(list_fixture());
         assert_eq!(run_and_string(&mut rt, "document.getElementById('a').nextElementSibling.id"), "b");
