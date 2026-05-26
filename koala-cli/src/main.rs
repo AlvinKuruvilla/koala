@@ -2,15 +2,18 @@
 //!
 //! Renders HTML/CSS to images with CSS 2.1 compliant layout.
 
+mod render;
+mod wpt_protocol;
+
 use anyhow::Result;
 use clap::Parser;
-use koala_browser::{
-    FontProvider, LoadedDocument, load_document, parse_html_string, renderer::Renderer,
-};
-use koala_css::{DisplayListBuilder, LayoutBox};
+use koala_browser::{FontProvider, LoadedDocument, load_document, parse_html_string};
+use koala_css::LayoutBox;
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
+
+use crate::render::render_document_to_path;
 
 /// Koala — fast, lightweight HTML-to-image renderer
 #[derive(Parser, Debug)]
@@ -65,6 +68,24 @@ struct Cli {
     /// Viewport height for screenshot (default: 720)
     #[arg(long, default_value = "720")]
     height: u32,
+
+    /// Run in WPT protocol mode: read JSON-line commands from
+    /// stdin, emit JSON-line events on stdout. Used by the
+    /// wptrunner browser plugin to drive koala under upstream WPT.
+    #[arg(
+        long,
+        group = "input",
+        conflicts_with_all = ["layout", "screenshot", "width", "height"]
+    )]
+    wpt_protocol: bool,
+
+    /// Path to a WPT-format hosts file (output of
+    /// `wpt make-hosts-file`). When set, koala uses it to override
+    /// DNS resolution for the listed hostnames instead of touching
+    /// `/etc/hosts`. Applies in every mode, but most useful with
+    /// `--wpt-protocol`.
+    #[arg(long, value_name = "FILE")]
+    hosts_file: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -88,6 +109,20 @@ fn main() -> Result<()> {
         }
     }
     let cli = Cli::parse();
+
+    // Install host overrides before any HTTP fetch can happen. Done
+    // for every mode so the same setup applies to both CLI usage
+    // and protocol-driven runs.
+    if let Some(ref path) = cli.hosts_file {
+        koala_browser::hosts::set_from_file(path)
+            .map_err(|e| anyhow::anyhow!("failed to load --hosts-file '{}': {e}", path.display()))?;
+    }
+
+    // Protocol mode owns its own input loop and rendering pipeline;
+    // dispatch before any CLI-style argument validation runs.
+    if cli.wpt_protocol {
+        return wpt_protocol::run();
+    }
 
     // Validate screenshot output path before doing any expensive work.
     if let Some(ref output_path) = cli.screenshot {
@@ -142,44 +177,14 @@ fn main() -> Result<()> {
 }
 
 /// Take a screenshot of the rendered page and save to file.
-#[allow(clippy::cast_precision_loss)] // viewport dimensions don't need full u32 precision
 fn take_screenshot(
     doc: &LoadedDocument,
     output_path: &Path,
     width: u32,
     height: u32,
 ) -> Result<()> {
-    let viewport = koala_css::Rect {
-        x: 0.0,
-        y: 0.0,
-        width: width as f32,
-        height: height as f32,
-    };
-
-    // Get the layout tree and compute layout
-    let layout_tree = doc
-        .layout_tree
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No layout tree available"))?;
-
-    let mut layout = layout_tree.clone();
     let font_provider = FontProvider::load();
-    let font_metrics = font_provider.metrics();
-
-    layout.layout(viewport, viewport, &*font_metrics, viewport);
-
-    // Paint: generate display list from layout tree
-    let builder = DisplayListBuilder::new(&doc.styles);
-    let display_list = builder.build(&layout);
-
-    // Render: execute display list to pixels
-    let mut renderer = Renderer::new(width, height, doc.images.clone());
-    renderer.render(&display_list);
-
-    // Save to file
-    renderer.save(output_path)?;
-
-    Ok(())
+    render_document_to_path(doc, output_path, width, height, &font_provider)
 }
 
 /// Print a section header with formatting.

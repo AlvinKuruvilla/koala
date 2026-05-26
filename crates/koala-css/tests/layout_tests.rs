@@ -1,5 +1,13 @@
 //! Integration tests for CSS layout types.
 
+#![allow(
+    clippy::doc_markdown,
+    clippy::float_cmp,
+    clippy::items_after_statements,
+    clippy::similar_names,
+    clippy::uninlined_format_args
+)]
+
 use koala_css::layout::default_display_for_element;
 use koala_css::{
     ApproximateFontMetrics, DisplayValue, FragmentContent, InnerDisplayType, LayoutBox,

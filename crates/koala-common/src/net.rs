@@ -130,8 +130,7 @@ impl DataURL {
 /// Returns a [`FetchError`] if the HTTP client cannot be created, the request
 /// fails, the response has a non-success status, or the body cannot be decoded.
 pub fn fetch_text(url: &str) -> Result<String, FetchError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(TIMEOUT)
+    let client = crate::hosts::apply(reqwest::blocking::Client::builder().timeout(TIMEOUT))
         .build()
         .map_err(FetchError::HttpClientInit)?;
 
@@ -164,8 +163,7 @@ pub fn fetch_text(url: &str) -> Result<String, FetchError> {
 /// Returns a [`FetchError`] if the HTTP client cannot be created, the request
 /// fails, the response has a non-success status, or the body cannot be read.
 pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(TIMEOUT)
+    let client = crate::hosts::apply(reqwest::blocking::Client::builder().timeout(TIMEOUT))
         .build()
         .map_err(FetchError::HttpClientInit)?;
 

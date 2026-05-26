@@ -1,5 +1,7 @@
 //! Integration tests for CSS style types.
 
+#![allow(clippy::float_cmp, clippy::similar_names)]
+
 use koala_css::{AutoLength, ColorValue, LengthValue};
 
 #[test]

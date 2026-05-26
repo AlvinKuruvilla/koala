@@ -1,5 +1,7 @@
 //! Integration tests for CSS selector parsing and matching.
 
+#![allow(clippy::doc_markdown, clippy::inefficient_to_string)]
+
 use std::collections::HashMap;
 
 use koala_css::selector::{

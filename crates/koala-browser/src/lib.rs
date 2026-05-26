@@ -30,6 +30,10 @@ pub use renderer::{Renderer, RendererFonts};
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
 
+/// WPT-style hosts-file DNS overrides for reqwest. See
+/// [`koala_common::hosts`] for the full module docs.
+pub use koala_common::hosts;
+
 use image_loader::{
     ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations,
 };

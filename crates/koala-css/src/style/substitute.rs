@@ -194,6 +194,7 @@ fn parse_var_arguments(
 }
 
 #[cfg(test)]
+#[allow(clippy::doc_markdown, clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::parser::ComponentValue;

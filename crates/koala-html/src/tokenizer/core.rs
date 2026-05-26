@@ -1900,7 +1900,6 @@ impl HTMLTokenizer {
             }
 
             if self.current_input_character.is_none() && self.at_eof {
-                println!();
                 break;
             }
             match self.state {

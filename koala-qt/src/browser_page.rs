@@ -685,7 +685,7 @@ fn render_state(state: &PageState, width: u32, height: u32) -> Vec<u8> {
     // html/body background colour instead of Renderer's default
     // white fill.
     if let Some(bg) = canvas_background(&state.dom, &state.styles) {
-        renderer.set_canvas_background(bg);
+        renderer.set_canvas_background(&bg);
     }
 
     renderer.render(&display_list);

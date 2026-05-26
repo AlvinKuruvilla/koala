@@ -1,5 +1,7 @@
 //! Integration tests for the HTML tokenizer.
 
+#![allow(clippy::needless_raw_string_hashes, clippy::unnecessary_map_or)]
+
 use koala_html::{HTMLTokenizer, Token};
 
 /// Helper to tokenize a string and return the tokens

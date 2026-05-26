@@ -1543,6 +1543,8 @@ dependencies = [
  "koala-html",
  "libc",
  "owo-colors",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

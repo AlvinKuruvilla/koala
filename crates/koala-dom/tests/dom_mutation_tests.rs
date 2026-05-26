@@ -1,5 +1,7 @@
 //! Tests for DOM tree mutation methods: remove_child, insert_before, move_children.
 
+#![allow(clippy::default_trait_access, clippy::doc_markdown)]
+
 use koala_dom::{DomTree, ElementData, NodeId, NodeType};
 
 /// Helper to create an element node and return its NodeId.

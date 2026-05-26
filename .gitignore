@@ -17,3 +17,5 @@ DerivedData/
 .DS_Store
 *.dSYM
 screenshot.png
+.venv-wpt/
+wptrunner_koala.egg-info

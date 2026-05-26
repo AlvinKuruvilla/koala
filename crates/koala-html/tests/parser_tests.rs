@@ -1,5 +1,13 @@
 //! Integration tests for the HTML parser.
 
+#![allow(
+    clippy::collapsible_if,
+    clippy::manual_string_new,
+    clippy::map_unwrap_or,
+    clippy::needless_raw_string_hashes,
+    clippy::unnecessary_map_or
+)]
+
 use koala_dom::{DomTree, Node, NodeId, NodeType};
 use koala_html::{HTMLParser, HTMLTokenizer};
 

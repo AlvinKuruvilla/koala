@@ -1,5 +1,7 @@
 //! Integration tests for the CSS tokenizer.
 
+#![allow(clippy::approx_constant, clippy::float_cmp)]
+
 use koala_css::tokenizer::{CSSToken, CSSTokenizer, HashType, NumericType};
 
 /// Helper to tokenize a string and return the tokens

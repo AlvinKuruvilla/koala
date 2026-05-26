@@ -1,5 +1,13 @@
 //! Integration tests for CSS cascade and style computation.
 
+#![allow(
+    clippy::collapsible_if,
+    clippy::doc_markdown,
+    clippy::items_after_statements,
+    clippy::semicolon_if_nothing_returned,
+    clippy::uninlined_format_args
+)]
+
 use koala_css::Stylesheet;
 use koala_css::cascade::compute_styles;
 use koala_css::parser::CSSParser;

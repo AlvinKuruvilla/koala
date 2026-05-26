@@ -19,3 +19,59 @@ cli url screenshot="":
     else \
         cargo run --bin koala-cli -- -S "{{screenshot}}" "{{url}}"; \
     fi
+
+# One-time setup for the WPT integration: creates `.venv-wpt/`,
+# installs the koala wptrunner plugin, and pulls in wpt's Python
+# requirements. Safe to re-run; pip will no-op when versions match.
+wpt-setup:
+    python3 -m venv .venv-wpt
+    .venv-wpt/bin/pip install --upgrade pip
+    .venv-wpt/bin/pip install -e wpt-tools/wptrunner-koala
+    .venv-wpt/bin/pip install -r third-party/wpt/tools/wptrunner/requirements.txt
+
+# Run a WPT test (or directory) against koala via the wpt-protocol
+# plugin. Builds koala-cli in release mode first (incremental, so
+# no-op when up to date). The first invocation downloads the WPT
+# manifest (~40MB).
+#   just wpt                                                # smoke test
+#   just wpt /css/CSS2/visudet/content-height-001.html      # single test
+#   just wpt /css/CSS2/visudet/                             # whole dir
+wpt test="/css/CSS2/visudet/content-height-001.html":
+    cargo build --release -p koala-cli
+    .venv-wpt/bin/python third-party/wpt/wpt \
+        --venv .venv-wpt --skip-venv-setup \
+        run \
+            --binary="{{justfile_directory()}}/target/release/koala" \
+            --no-pause \
+            --no-restart-on-unexpected \
+            --log-mach=- --log-mach-level=info \
+            koala "{{test}}"
+
+# List the top-level WPT areas sorted by test-file count, with a
+# hint on how to drive `just wpt` against one. Takes ~10-30s on
+# first run (filesystem walk over ~900MB); fast afterward thanks
+# to the OS file cache.
+wpt-list:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d third-party/wpt ]; then
+        echo "WPT submodule not initialized. Run: git submodule update --init --recursive" >&2
+        exit 1
+    fi
+    cd third-party/wpt
+    {
+        for d in */; do
+            name="${d%/}"
+            count=$(find "$d" -type f \( -name "*.html" -o -name "*.xht" -o -name "*.xhtml" \) 2>/dev/null | wc -l | tr -d ' ')
+            [ "$count" -gt 0 ] || continue
+            printf "  /%-40s %8d\n" "${name}/" "$count"
+        done
+    } | sort -k2 -rn
+    echo
+    echo "Run a family with:  just wpt /<area>/[<subdir>/]"
+
+# Tear down the wpt venv and clean up any koala temp screenshots
+# left behind by interrupted runs.
+wpt-clean:
+    rm -rf .venv-wpt
+    find /tmp /var/folders -name 'koala-wpt-*.png' -delete 2>/dev/null || true

@@ -275,9 +275,9 @@ impl Renderer {
     /// The fill is done in place over the existing buffer rather than
     /// reallocating a fresh one, so calling this immediately after
     /// [`Renderer::new_with_fonts`] does not pay a second 15 MB
-    /// allocation at a 2560×1488 viewport. On HiDPI displays that
+    /// allocation at a 2560×1488 viewport. On `HiDPI` displays that
     /// avoids ~35 ms of wasted work per render.
-    pub fn set_canvas_background(&mut self, color: ColorValue) {
+    pub fn set_canvas_background(&mut self, color: &ColorValue) {
         // Write the raw bytes in 4-byte strides. Iterating
         // `pixels_mut()` compiles into an element-by-element store
         // that's 2–3× slower than a flat byte loop on this buffer
