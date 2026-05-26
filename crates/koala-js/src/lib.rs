@@ -301,4 +301,117 @@ mod tests {
             "document.getElementById('hello').removeAttribute('href')",
         ).unwrap();
     }
+
+    /// Multi-element fixture for tree-nav tests:
+    ///
+    ///   <html>
+    ///     <body>
+    ///       <ul id="list">
+    ///         <li id="a">A</li>
+    ///         <li id="b">B</li>
+    ///         <li id="c">C</li>
+    ///       </ul>
+    ///     </body>
+    ///   </html>
+    fn list_fixture() -> DomHandle {
+        let mut tree = DomTree::new();
+        let root = tree.root();
+        let html = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "html".to_string(),
+            attrs: AttributesMap::new(),
+        }));
+        tree.append_child(root, html);
+        let body = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "body".to_string(),
+            attrs: AttributesMap::new(),
+        }));
+        tree.append_child(html, body);
+
+        let mut list_attrs = AttributesMap::new();
+        let _ = list_attrs.insert("id".into(), "list".into());
+        let list = tree.alloc(NodeType::Element(ElementData {
+            tag_name: "ul".into(),
+            attrs: list_attrs,
+        }));
+        tree.append_child(body, list);
+
+        for id in ["a", "b", "c"] {
+            let mut attrs = AttributesMap::new();
+            let _ = attrs.insert("id".into(), id.into());
+            let li = tree.alloc(NodeType::Element(ElementData {
+                tag_name: "li".into(),
+                attrs,
+            }));
+            tree.append_child(list, li);
+            let text = tree.alloc(NodeType::Text(id.to_ascii_uppercase()));
+            tree.append_child(li, text);
+        }
+
+        Rc::new(RefCell::new(tree))
+    }
+
+    fn run_and_string(rt: &mut JsRuntime, source: &str) -> String {
+        rt.execute(source)
+            .unwrap()
+            .to_string(&mut rt.context)
+            .unwrap()
+            .to_std_string_escaped()
+    }
+
+    #[test]
+    fn parent_element_walks_up() {
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementById('a').parentElement.id"),
+            "list",
+        );
+        assert_eq!(
+            run_and_string(&mut rt, "document.getElementById('list').parentElement.tagName"),
+            "BODY",
+        );
+        // <html>'s parent is the Document node — parentElement should be null.
+        let html_parent = rt
+            .execute(
+                "var html = document.getElementById('a').parentElement.parentElement.parentElement; html.parentElement",
+            )
+            .unwrap();
+        assert!(html_parent.is_null());
+    }
+
+    #[test]
+    fn children_returns_element_children_only() {
+        let mut rt = JsRuntime::new(list_fixture());
+        // <ul> has 3 <li> children plus text nodes from indentation; the
+        // accessor should filter out text nodes.
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children.length"), "3");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children[0].id"), "a");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').children[2].id"), "c");
+    }
+
+    #[test]
+    fn first_and_last_element_child() {
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').firstElementChild.id"), "a");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('list').lastElementChild.id"), "c");
+        // Leaf element has no element children.
+        let leaf_first = rt.execute("document.getElementById('a').firstElementChild").unwrap();
+        assert!(leaf_first.is_null());
+    }
+
+    #[test]
+    fn next_and_previous_element_sibling() {
+        let mut rt = JsRuntime::new(list_fixture());
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('a').nextElementSibling.id"), "b");
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('b').nextElementSibling.id"), "c");
+        let last_next = rt
+            .execute("document.getElementById('c').nextElementSibling")
+            .unwrap();
+        assert!(last_next.is_null());
+
+        assert_eq!(run_and_string(&mut rt, "document.getElementById('c').previousElementSibling.id"), "b");
+        let first_prev = rt
+            .execute("document.getElementById('a').previousElementSibling")
+            .unwrap();
+        assert!(first_prev.is_null());
+    }
 }

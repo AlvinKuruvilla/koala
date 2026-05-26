@@ -97,6 +97,48 @@ fn script_runs_against_first_matching_id_in_tree_order() {
 }
 
 #[test]
+fn script_can_walk_the_element_tree() {
+    // Element-only tree navigators: parentElement, children,
+    // first/lastElementChild, next/previousElementSibling. Verifies
+    // both that they return the right element and that they skip
+    // text nodes inserted by HTML whitespace.
+    assert_script_ran_clean(
+        r#"<!DOCTYPE html>
+        <html><body>
+          <ul id="list">
+            <li id="a">A</li>
+            <li id="b">B</li>
+            <li id="c">C</li>
+          </ul>
+          <script>
+            var list = document.getElementById('list');
+            if (list.children.length !== 3)
+              throw new Error('children.length ' + list.children.length);
+            if (list.firstElementChild.id !== 'a')
+              throw new Error('firstElementChild ' + list.firstElementChild.id);
+            if (list.lastElementChild.id !== 'c')
+              throw new Error('lastElementChild ' + list.lastElementChild.id);
+
+            var b = document.getElementById('b');
+            if (b.parentElement.id !== 'list')
+              throw new Error('parentElement ' + b.parentElement.id);
+            if (b.previousElementSibling.id !== 'a')
+              throw new Error('prev sibling ' + b.previousElementSibling.id);
+            if (b.nextElementSibling.id !== 'c')
+              throw new Error('next sibling ' + b.nextElementSibling.id);
+
+            // Leaf element has no children/siblings beyond text.
+            var a = document.getElementById('a');
+            if (a.firstElementChild !== null)
+              throw new Error('a.firstElementChild should be null');
+            if (a.previousElementSibling !== null)
+              throw new Error('a.previousElementSibling should be null');
+          </script>
+        </body></html>"#,
+    );
+}
+
+#[test]
 fn script_can_mutate_attributes_and_observe_via_get_attribute() {
     // Verifies the mutation path: setAttribute → DOM stores it →
     // getAttribute reads it back via the bridge.

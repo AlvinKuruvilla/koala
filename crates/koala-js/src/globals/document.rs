@@ -31,7 +31,10 @@
 use boa_engine::{
     Context, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction,
     js_string,
-    object::ObjectInitializer,
+    object::{
+        FunctionObjectBuilder, ObjectInitializer,
+        builtins::{JsArray, JsFunction},
+    },
     property::Attribute,
 };
 use koala_dom::{DomTree, NodeId};
@@ -149,6 +152,20 @@ fn make_element_object(context: &mut Context, node_id: NodeId) -> JsResult<JsVal
     #[allow(clippy::cast_precision_loss)] // NodeId is well below 2^53
     let node_id_value = node_id.0 as f64;
 
+    // Build the getter functions up-front. `ObjectInitializer::new`
+    // takes `&mut Context`, and each `getter(context, …)` also wants
+    // `&mut Context`, so we can't intermix them with builder calls
+    // without a second mutable borrow. Bundling them here makes the
+    // initializer chain below side-effect-free w.r.t. the context.
+    let parent_element_getter = getter(context, parent_element_get);
+    let children_getter = getter(context, children_get);
+    let first_element_child_getter = getter(context, first_element_child_get);
+    let last_element_child_getter = getter(context, last_element_child_get);
+    let next_element_sibling_getter = getter(context, next_element_sibling_get);
+    let previous_element_sibling_getter = getter(context, previous_element_sibling_get);
+
+    let accessor_attrs = Attribute::CONFIGURABLE | Attribute::ENUMERABLE;
+
     let obj = ObjectInitializer::new(context)
         .property(
             js_string!("tagName"),
@@ -190,9 +207,236 @@ fn make_element_object(context: &mut Context, node_id: NodeId) -> JsResult<JsVal
             js_string!("removeAttribute"),
             1,
         )
+        .accessor(
+            js_string!("parentElement"),
+            Some(parent_element_getter),
+            None,
+            accessor_attrs,
+        )
+        .accessor(
+            js_string!("children"),
+            Some(children_getter),
+            None,
+            accessor_attrs,
+        )
+        .accessor(
+            js_string!("firstElementChild"),
+            Some(first_element_child_getter),
+            None,
+            accessor_attrs,
+        )
+        .accessor(
+            js_string!("lastElementChild"),
+            Some(last_element_child_getter),
+            None,
+            accessor_attrs,
+        )
+        .accessor(
+            js_string!("nextElementSibling"),
+            Some(next_element_sibling_getter),
+            None,
+            accessor_attrs,
+        )
+        .accessor(
+            js_string!("previousElementSibling"),
+            Some(previous_element_sibling_getter),
+            None,
+            accessor_attrs,
+        )
         .build();
 
     Ok(obj.into())
+}
+
+/// Wrap a fn-pointer as a [`JsFunction`] suitable for an accessor.
+/// fn pointers implement `Copy` automatically, so the closure can
+/// go through `from_copy_closure` without a `Trace`-able capture
+/// shim.
+///
+/// [`JsFunction`]: boa_engine::JsFunction
+fn getter(
+    context: &mut Context,
+    f: fn(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue>,
+) -> JsFunction {
+    let realm = context.realm().clone();
+    FunctionObjectBuilder::new(&realm, NativeFunction::from_copy_closure(f)).build()
+}
+
+/// Find the parent [`NodeId`] if it is itself an Element (i.e. not
+/// the Document root). Shared between `parentElement` and the other
+/// tree-walk accessors that need "is this thing an element?".
+fn parent_element_id(dom: &DomTree, node_id: NodeId) -> Option<NodeId> {
+    dom.parent(node_id)
+        .filter(|&id| dom.as_element(id).is_some())
+}
+
+/// `Element.parentElement`
+///
+/// [§ 4.2.5 ParentNode.parentElement](https://dom.spec.whatwg.org/#dom-node-parentelement)
+///
+/// > "Returns the parent element of this. Returns null if there is
+/// > no parent element."
+///
+/// Distinct from `parentNode`: when the parent is the Document
+/// itself (i.e. this is the `<html>` element), `parentElement`
+/// returns null where `parentNode` would return the Document.
+/// We don't yet expose a Document wrapper, so only
+/// `parentElement` is supported.
+fn parent_element_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let parent = with_dom(|dom| parent_element_id(dom, node_id)).flatten();
+    match parent {
+        Some(id) => make_element_object(context, id),
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// `Element.children` — live-ish array of child Elements only.
+///
+/// [§ 4.2.6 ParentNode.children](https://dom.spec.whatwg.org/#dom-parentnode-children)
+///
+/// > "Returns the child elements."
+///
+/// The spec defines `children` as a live `HTMLCollection`, but for
+/// the Phase-2 read path a plain JS array is indistinguishable to
+/// almost every caller and avoids the per-element identity work
+/// the live collection would require. Re-reads of `el.children`
+/// produce a fresh array reflecting current state because this is
+/// an accessor.
+fn children_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let child_ids: Vec<NodeId> = with_dom(|dom| {
+        dom.children(node_id)
+            .iter()
+            .copied()
+            .filter(|&id| dom.as_element(id).is_some())
+            .collect()
+    })
+    .unwrap_or_default();
+
+    let mut elements = Vec::with_capacity(child_ids.len());
+    for id in child_ids {
+        elements.push(make_element_object(context, id)?);
+    }
+    Ok(JsArray::from_iter(elements, context).into())
+}
+
+/// `Element.firstElementChild`
+///
+/// [§ 4.2.6 ParentNode.firstElementChild](https://dom.spec.whatwg.org/#dom-parentnode-firstelementchild)
+///
+/// > "Returns the first child that is an element; otherwise null."
+fn first_element_child_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let first = with_dom(|dom| {
+        dom.children(node_id)
+            .iter()
+            .copied()
+            .find(|&id| dom.as_element(id).is_some())
+    })
+    .flatten();
+    match first {
+        Some(id) => make_element_object(context, id),
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// `Element.lastElementChild`
+///
+/// [§ 4.2.6 ParentNode.lastElementChild](https://dom.spec.whatwg.org/#dom-parentnode-lastelementchild)
+///
+/// > "Returns the last child that is an element; otherwise null."
+fn last_element_child_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let last = with_dom(|dom| {
+        dom.children(node_id)
+            .iter()
+            .copied()
+            .rev()
+            .find(|&id| dom.as_element(id).is_some())
+    })
+    .flatten();
+    match last {
+        Some(id) => make_element_object(context, id),
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// `Element.nextElementSibling`
+///
+/// [§ 4.2.7 NonDocumentTypeChildNode.nextElementSibling](https://dom.spec.whatwg.org/#dom-nondocumenttypechildnode-nextelementsibling)
+///
+/// > "Returns the first following sibling that is an element;
+/// > otherwise null."
+///
+/// Walks via [`DomTree::next_sibling`] until it finds an element or
+/// runs out of siblings; Text/Comment nodes are skipped over.
+fn next_element_sibling_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let next = with_dom(|dom| {
+        let mut cur = dom.next_sibling(node_id);
+        while let Some(id) = cur {
+            if dom.as_element(id).is_some() {
+                return Some(id);
+            }
+            cur = dom.next_sibling(id);
+        }
+        None
+    })
+    .flatten();
+    match next {
+        Some(id) => make_element_object(context, id),
+        None => Ok(JsValue::null()),
+    }
+}
+
+/// `Element.previousElementSibling`
+///
+/// [§ 4.2.7 NonDocumentTypeChildNode.previousElementSibling](https://dom.spec.whatwg.org/#dom-nondocumenttypechildnode-previouselementsibling)
+///
+/// > "Returns the first preceding sibling that is an element;
+/// > otherwise null."
+fn previous_element_sibling_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let prev = with_dom(|dom| {
+        let mut cur = dom.prev_sibling(node_id);
+        while let Some(id) = cur {
+            if dom.as_element(id).is_some() {
+                return Some(id);
+            }
+            cur = dom.prev_sibling(id);
+        }
+        None
+    })
+    .flatten();
+    match prev {
+        Some(id) => make_element_object(context, id),
+        None => Ok(JsValue::null()),
+    }
 }
 
 /// `Element.getAttribute(name)` — returns the attribute value as a
