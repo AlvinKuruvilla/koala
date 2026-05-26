@@ -1,5 +1,5 @@
-//! Per-thread timer scheduler for `setTimeout` / `clearTimeout` and
-//! (later) `setInterval`.
+//! Per-thread timer scheduler for `setTimeout` / `setInterval` and
+//! their cancel counterparts.
 //!
 //! [§ 8.6 Timers](https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#timers)
 //!
@@ -11,6 +11,13 @@
 //! `JsFunction`s to outlive a `Context` or to participate in
 //! tracing from plain Rust state.
 //!
+//! One-shot timers carry `repeat = None`; intervals carry
+//! `repeat = Some(period)`. The pump re-schedules an interval with
+//! the same id after each firing, so [`cancel`] applies uniformly
+//! to both kinds — `clearTimeout(intervalId)` and
+//! `clearInterval(timeoutId)` both work, matching the spec's
+//! shared id pool.
+//!
 //! Like [`crate::dom_handle`], the scheduler is exposed to
 //! JS-callable closures (`setTimeout` etc.) via a thread-local that
 //! [`JsRuntime`] installs around `execute` / `pump_until_idle`.
@@ -19,7 +26,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Stable identifier returned by `setTimeout` and consumed by
 /// `clearTimeout`. Also doubles as the index into the
@@ -27,9 +34,14 @@ use std::time::Instant;
 pub type TimerId = u32;
 
 /// Bookkeeping for one pending timer.
+///
+/// `repeat = None` is a one-shot (`setTimeout`); `repeat = Some(d)`
+/// is an interval that the pump re-arms at `now + d` after each
+/// firing.
 #[derive(Debug)]
 struct PendingTimer {
     id: TimerId,
+    repeat: Option<Duration>,
 }
 
 /// Per-thread timer state. Cancelled timers are dropped lazily on
@@ -77,26 +89,27 @@ impl Drop for SchedulerGuard {
     }
 }
 
-/// Schedule a timer to fire at `Instant::now() + delay`. Returns
-/// the [`TimerId`] that JS code can pass to `clearTimeout`.
-///
-/// No-op outside a [`guard`]-protected scope — callers in that
-/// position get back id `0`, which `clearTimeout` will silently
-/// ignore. This shouldn't happen in normal use (`JsRuntime`
-/// installs a guard around every execute and pump call) but
-/// staying total avoids spooky panic paths in malformed unit
-/// tests.
 /// Register a timer to fire at `Instant::now() + delay` with the
 /// caller-supplied `id`. The id is the JS-visible value returned
-/// from `setTimeout`; the caller is responsible for keeping it in
-/// sync with whatever storage holds the JS callback (in koala's
-/// case, the index+1 into the `__koala_timers__` array).
-pub(crate) fn schedule(id: TimerId, delay: std::time::Duration) {
+/// from `setTimeout` / `setInterval`; the caller is responsible
+/// for keeping it in sync with whatever storage holds the JS
+/// callback (in koala's case, the index+1 into the
+/// `__koala_timers__` array).
+///
+/// `repeat = None` makes this a one-shot. `repeat = Some(period)`
+/// makes it an interval — after the pump fires the callback it
+/// calls [`schedule`] again with the same id, `period`, and
+/// `repeat`, keeping the slot live across firings.
+pub(crate) fn schedule(id: TimerId, delay: Duration, repeat: Option<Duration>) {
     SCHEDULER.with(|cell| {
         let mut guard = cell.borrow_mut();
         let Some(sched) = guard.as_mut() else { return };
         let due = Instant::now() + delay;
-        sched.pending.entry(due).or_default().push(PendingTimer { id });
+        sched
+            .pending
+            .entry(due)
+            .or_default()
+            .push(PendingTimer { id, repeat });
     });
 }
 
@@ -122,10 +135,11 @@ pub(crate) fn next_due_time() -> Option<Instant> {
 }
 
 /// Pop every timer whose due time is `<= now()`. Filters out
-/// cancelled ids. Returns the surviving `TimerId`s in tree (i.e.
-/// chronological) order — callers iterate and invoke each
-/// callback.
-pub(crate) fn pop_due_now() -> Vec<TimerId> {
+/// cancelled ids. Returns the surviving `(TimerId, repeat)` pairs
+/// in tree (i.e. chronological) order — callers iterate, invoke
+/// each callback, and re-call [`schedule`] for any pair whose
+/// `repeat` is `Some` to keep the interval running.
+pub(crate) fn pop_due_now() -> Vec<(TimerId, Option<Duration>)> {
     SCHEDULER.with(|cell| {
         let mut guard = cell.borrow_mut();
         let Some(sched) = guard.as_mut() else { return Vec::new() };
@@ -145,7 +159,7 @@ pub(crate) fn pop_due_now() -> Vec<TimerId> {
             if let Some(bucket) = sched.pending.remove(&key) {
                 for timer in bucket {
                     if !sched.cancelled.contains(&timer.id) {
-                        out.push(timer.id);
+                        out.push((timer.id, timer.repeat));
                     }
                 }
             }
@@ -157,14 +171,13 @@ pub(crate) fn pop_due_now() -> Vec<TimerId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn schedule_orders_by_due_time() {
         let _g = guard();
-        schedule(1, Duration::from_millis(50));
-        schedule(2, Duration::from_millis(10));
-        schedule(3, Duration::from_millis(30));
+        schedule(1, Duration::from_millis(50), None);
+        schedule(2, Duration::from_millis(10), None);
+        schedule(3, Duration::from_millis(30), None);
         let now = Instant::now();
         let next = next_due_time().unwrap();
         assert!(next >= now);
@@ -174,7 +187,7 @@ mod tests {
     #[test]
     fn cancel_skips_callback_on_pop() {
         let _g = guard();
-        schedule(7, Duration::from_millis(0));
+        schedule(7, Duration::from_millis(0), None);
         cancel(7);
         std::thread::sleep(Duration::from_millis(1));
         let popped = pop_due_now();
@@ -184,11 +197,25 @@ mod tests {
     #[test]
     fn pop_due_now_only_returns_passed_due_times() {
         let _g = guard();
-        schedule(1, Duration::from_millis(0));
-        schedule(2, Duration::from_secs(60));
+        schedule(1, Duration::from_millis(0), None);
+        schedule(2, Duration::from_secs(60), None);
         std::thread::sleep(Duration::from_millis(1));
         let popped = pop_due_now();
-        assert_eq!(popped, vec![1], "only the +0ms timer should be due");
+        assert_eq!(popped, vec![(1, None)], "only the +0ms timer should be due");
         assert!(next_due_time().is_some(), "+60s timer still pending");
+    }
+
+    #[test]
+    fn pop_due_now_reports_interval_repeat_period() {
+        let _g = guard();
+        let period = Duration::from_millis(25);
+        schedule(9, Duration::from_millis(0), Some(period));
+        std::thread::sleep(Duration::from_millis(1));
+        let popped = pop_due_now();
+        assert_eq!(
+            popped,
+            vec![(9, Some(period))],
+            "interval should pop with its repeat period so the caller can re-arm it",
+        );
     }
 }

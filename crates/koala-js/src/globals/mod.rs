@@ -12,10 +12,11 @@
 //!
 //! # Not Yet Implemented
 //!
-//! - `window` — [§ 7.2 The Window object](https://html.spec.whatwg.org/multipage/window-object.html)
 //! - `location` — [§ 7.7.1 The Location interface](https://html.spec.whatwg.org/multipage/nav-history-apis.html#the-location-interface)
 //! - `navigator` — [§ 8.8 The Navigator object](https://html.spec.whatwg.org/multipage/system-state.html#the-navigator-object)
-//! - `setTimeout`/`setInterval` — [§ 8.6 Timers](https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#timers)
+//! - `EventTarget` (Phase 3 chunk 3) — bringing
+//!   `addEventListener` / `removeEventListener` / `dispatchEvent`
+//!   along with the `DOMContentLoaded` / `load` lifecycle events
 
 mod console;
 mod document;
@@ -52,6 +53,6 @@ pub fn register_globals(context: &mut Context) {
     // Not yet implemented:
     // - location (Phase 2 follow-up: requires URL state)
     // - navigator (Phase 2 follow-up: browser metadata)
-    // - setInterval / clearInterval (Phase 3 chunk 2)
-    // - addEventListener / removeEventListener (Phase 3 chunk 3)
+    // - addEventListener / removeEventListener / dispatchEvent +
+    //   DOMContentLoaded / load (Phase 3 chunk 3)
 }

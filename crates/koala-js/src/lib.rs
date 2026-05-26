@@ -37,15 +37,17 @@
 //!   - `Element.appendChild`, `removeChild`, `querySelector`,
 //!     `querySelectorAll`
 //!   - `window` (self-referential global)
-//! - Timers (Phase 3 chunk 1):
+//! - Timers (Phase 3 chunks 1 and 2):
 //!   - `setTimeout`, `clearTimeout`
+//!   - `setInterval`, `clearInterval` (shared id pool with the
+//!     timeout variants)
 //! - DOM mutations trigger a re-cascade + re-layout in
 //!   koala-browser after scripts return.
 //!
 //! # Not Yet Implemented
 //!
-//! - `setInterval` / `clearInterval` (Phase 3 chunk 2)
-//! - Lifecycle events `DOMContentLoaded` / `load` (Phase 3 chunk 2)
+//! - Lifecycle events `DOMContentLoaded` / `load` (Phase 3 chunk 3,
+//!   landing alongside `EventTarget`)
 //! - `EventTarget`: `addEventListener` / `removeEventListener` /
 //!   `dispatchEvent` (Phase 3 chunk 3)
 //! - External scripts (`<script src="…">`), `async` / `defer`,
@@ -95,6 +97,7 @@ pub struct JsRuntime {
     /// Declared after `context` so it drops AFTER the context's
     /// GC sweep — any callback fired during shutdown still sees
     /// a live scheduler.
+    #[allow(dead_code)] // RAII only; the compiler can't see Drop as a "read"
     scheduler_guard: scheduler::SchedulerGuard,
 }
 
@@ -188,8 +191,12 @@ impl JsRuntime {
     /// Reads callbacks back out of the hidden `__koala_timers__`
     /// global array by `TimerId`; the array is rooted by the
     /// global object so Boa's GC keeps the callbacks alive across
-    /// every iteration. The slot is cleared to `null` after firing
-    /// so a long-running pump doesn't leak callback closures.
+    /// every iteration. For one-shot timers (`setTimeout`) the
+    /// slot is cleared to `null` after firing so a long-running
+    /// pump doesn't leak callback closures. For interval timers
+    /// (`setInterval`) the slot is left in place because the same
+    /// id is re-armed for the next firing via
+    /// [`scheduler::schedule`].
     ///
     /// Mutations performed inside fired callbacks accumulate into
     /// `dom_dirty` the same way they do for `execute` calls.
@@ -228,8 +235,16 @@ impl JsRuntime {
                 continue;
             }
 
-            for id in due_ids {
-                self.call_timer_callback(id)?;
+            for (id, repeat) in due_ids {
+                self.call_timer_callback(id, repeat.is_some())?;
+                // Re-arm intervals *after* the callback returns. If
+                // the callback called clearInterval(id) on itself
+                // that cancellation is already recorded in the
+                // scheduler, so the next pop_due_now will filter
+                // this re-armed entry out before it can fire again.
+                if let Some(period) = repeat {
+                    scheduler::schedule(id, period, Some(period));
+                }
             }
 
             if dom_guard.dirty_seen() {
@@ -243,8 +258,14 @@ impl JsRuntime {
     }
 
     /// Look up a timer callback by id, call it with `this = window`,
-    /// and clear the array slot so the callback can be collected.
-    fn call_timer_callback(&mut self, id: scheduler::TimerId) -> Result<(), JsError> {
+    /// and for one-shots clear the array slot so the closure can be
+    /// collected. Interval slots stay live because the same id is
+    /// re-armed by the caller for the next firing.
+    fn call_timer_callback(
+        &mut self,
+        id: scheduler::TimerId,
+        is_interval: bool,
+    ) -> Result<(), JsError> {
         // Per `set_timeout`'s id scheme, the JS-visible id is
         // `array_index + 1`. Translate back.
         let index = u64::from(id.saturating_sub(1));
@@ -261,10 +282,12 @@ impl JsRuntime {
         }
         let global = JsValue::from(self.context.global_object());
         let _ = cb_obj.call(&global, &[], &mut self.context)?;
-        // Null out the slot so the closure can be collected on the
-        // next sweep. Setting to undefined would also work; null is
-        // cheaper to type.
-        let _ = timers.set(index, JsValue::null(), false, &mut self.context)?;
+        if !is_interval {
+            // One-shot: null the slot so the closure can be
+            // collected on the next sweep. Setting to undefined
+            // would also work; null is cheaper to type.
+            let _ = timers.set(index, JsValue::null(), false, &mut self.context)?;
+        }
         Ok(())
     }
 
