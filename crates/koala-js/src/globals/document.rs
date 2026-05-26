@@ -36,7 +36,7 @@ use boa_engine::{
 };
 use koala_dom::{DomTree, NodeId};
 
-use crate::dom_handle::with_dom;
+use crate::dom_handle::{with_dom, with_dom_mut};
 
 /// Register the `document` global on the context. Called once by
 /// [`crate::globals::register_globals`] when a [`JsRuntime`] is
@@ -180,6 +180,16 @@ fn make_element_object(context: &mut Context, node_id: NodeId) -> JsResult<JsVal
             js_string!("hasAttribute"),
             1,
         )
+        .function(
+            NativeFunction::from_copy_closure(set_attribute),
+            js_string!("setAttribute"),
+            2,
+        )
+        .function(
+            NativeFunction::from_copy_closure(remove_attribute),
+            js_string!("removeAttribute"),
+            1,
+        )
         .build();
 
     Ok(obj.into())
@@ -246,6 +256,91 @@ fn has_attribute(
     .unwrap_or(false);
 
     Ok(JsValue::from(present))
+}
+
+/// `Element.setAttribute(name, value)` — write the attribute,
+/// adding it if absent. Always returns `undefined` (per spec) and
+/// always mutates: the only way to fail is via the receiver check.
+///
+/// [§ 4.9.2 Element.setAttribute](https://dom.spec.whatwg.org/#dom-element-setattribute)
+///
+/// > "Set an attribute value for this using qualifiedName and value."
+///
+/// NOTE: we don't lowercase the qualified name here. Per the spec,
+/// HTML documents lowercase before lookup; we keep the case the
+/// caller supplied since koala's HTML parser already canonicalises
+/// attribute names at parse time. Re-introducing lowercasing here
+/// would create asymmetry with `getAttribute`.
+///
+/// LIMITATION: mutations don't trigger re-layout yet — see the
+/// note in [`crate`] about scripts running after the layout pass.
+fn set_attribute(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let name = args
+        .first()
+        .ok_or_else(|| {
+            JsError::from_native(
+                JsNativeError::typ()
+                    .with_message("setAttribute requires a name argument"),
+            )
+        })?
+        .to_string(context)?
+        .to_std_string_escaped();
+    let value = args
+        .get(1)
+        .ok_or_else(|| {
+            JsError::from_native(
+                JsNativeError::typ()
+                    .with_message("setAttribute requires a value argument"),
+            )
+        })?
+        .to_string(context)?
+        .to_std_string_escaped();
+
+    let _ = with_dom_mut(|dom| {
+        if let Some(elem) = dom.as_element_mut(node_id) {
+            let _ = elem.attrs.insert(name, value);
+        }
+    });
+
+    Ok(JsValue::undefined())
+}
+
+/// `Element.removeAttribute(name)` — remove the attribute. No-op
+/// when it's already absent. Always returns `undefined`.
+///
+/// [§ 4.9.2 Element.removeAttribute](https://dom.spec.whatwg.org/#dom-element-removeattribute)
+///
+/// > "Remove an attribute given qualifiedName and this, and then
+/// > return undefined."
+fn remove_attribute(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let name = args
+        .first()
+        .ok_or_else(|| {
+            JsError::from_native(
+                JsNativeError::typ()
+                    .with_message("removeAttribute requires a name argument"),
+            )
+        })?
+        .to_string(context)?
+        .to_std_string_escaped();
+
+    let _ = with_dom_mut(|dom| {
+        if let Some(elem) = dom.as_element_mut(node_id) {
+            let _ = elem.attrs.remove(&name);
+        }
+    });
+
+    Ok(JsValue::undefined())
 }
 
 /// Read the `__nodeId` slot off the JS-side element wrapper and

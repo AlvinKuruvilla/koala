@@ -21,16 +21,21 @@
 //! - `console.log()`, `console.warn()`, `console.error()`
 //! - DOM bridge: `document.getElementById()`, `Element.tagName`,
 //!   `Element.id`, `Element.className`, `Element.getAttribute()`,
-//!   `Element.hasAttribute()`
+//!   `Element.hasAttribute()`, `Element.setAttribute()`,
+//!   `Element.removeAttribute()`
 //!
 //! # Not Yet Implemented
 //!
 //! ## DOM mutations
 //!
 //! [§ 4.9 Interface Element](https://dom.spec.whatwg.org/#interface-element)
-//! - `setAttribute()` / `removeAttribute()`
-//! - `innerHTML` (write) / `textContent` (write)
+//! - `innerHTML` (write) / `textContent` (read + write)
 //! - `appendChild` / `removeChild` / `insertBefore`
+//!
+//! Mutations from JS update the DOM but do not yet trigger a
+//! re-layout. Scripts run after the layout pass today, so visual
+//! effects of JS mutations aren't visible until that pipeline is
+//! rewired in a later Phase-2 follow-up.
 //!
 //! ## More queries
 //!
@@ -132,7 +137,7 @@ impl JsRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koala_dom::{AttributesMap, DomTree, ElementData, NodeType};
+    use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -230,5 +235,70 @@ mod tests {
             "document.getElementById('hello').hasAttribute('href')"
         ).unwrap();
         assert_eq!(no.as_boolean(), Some(false));
+    }
+
+    #[test]
+    fn set_attribute_writes_through_to_the_dom() {
+        let dom = fixture();
+        let mut rt = JsRuntime::new(dom.clone());
+        let _ = rt.execute(
+            "document.getElementById('hello').setAttribute('data-track', 'no')",
+        ).unwrap();
+
+        // Confirm via the JS bridge…
+        let after = rt.execute(
+            "document.getElementById('hello').getAttribute('data-track')",
+        ).unwrap();
+        assert_eq!(
+            after.to_string(&mut rt.context).unwrap().to_std_string_escaped(),
+            "no",
+        );
+        // …and via the underlying DomTree (the bridge is supposed to
+        // mutate the *shared* handle, not a copy).
+        let direct = dom.borrow().as_element(NodeId(3))
+            .and_then(|e| e.attrs.get("data-track").cloned());
+        assert_eq!(direct.as_deref(), Some("no"));
+    }
+
+    #[test]
+    fn set_attribute_adds_a_new_attribute() {
+        let mut rt = JsRuntime::new(fixture());
+        let _ = rt.execute(
+            "document.getElementById('hello').setAttribute('aria-hidden', 'true')",
+        ).unwrap();
+        let v = rt.execute(
+            "document.getElementById('hello').getAttribute('aria-hidden')",
+        ).unwrap();
+        assert_eq!(
+            v.to_string(&mut rt.context).unwrap().to_std_string_escaped(),
+            "true",
+        );
+    }
+
+    #[test]
+    fn remove_attribute_clears_an_existing_attribute() {
+        let mut rt = JsRuntime::new(fixture());
+        let _ = rt.execute(
+            "document.getElementById('hello').removeAttribute('data-track')",
+        ).unwrap();
+        let has = rt.execute(
+            "document.getElementById('hello').hasAttribute('data-track')",
+        ).unwrap();
+        assert_eq!(has.as_boolean(), Some(false));
+        let val = rt.execute(
+            "document.getElementById('hello').getAttribute('data-track')",
+        ).unwrap();
+        assert!(val.is_null());
+    }
+
+    #[test]
+    fn remove_attribute_is_a_noop_for_missing_attribute() {
+        let mut rt = JsRuntime::new(fixture());
+        // Should not throw — spec says "remove an attribute given
+        // qualifiedName and this, and then return undefined" with no
+        // error path for "not found".
+        let _ = rt.execute(
+            "document.getElementById('hello').removeAttribute('href')",
+        ).unwrap();
     }
 }

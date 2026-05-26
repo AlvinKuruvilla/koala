@@ -91,7 +91,6 @@ where
 /// Panics if a read borrow is already outstanding on the same
 /// thread — which would indicate a re-entrancy bug in a JS-callable
 /// closure that's holding a borrow across a nested script call.
-#[allow(dead_code)] // first mutating method lands in the next Phase-2 chunk
 pub(crate) fn with_dom_mut<R, F>(f: F) -> Option<R>
 where
     F: FnOnce(&mut DomTree) -> R,

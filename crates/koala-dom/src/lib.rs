@@ -393,6 +393,22 @@ impl DomTree {
         })
     }
 
+    /// Mutable view of an element's data, for in-place attribute or
+    /// `tag_name` edits. Returns `None` if `id` is not an element
+    /// (or is out of range).
+    ///
+    /// Used by the JavaScript DOM bridge for `Element.setAttribute`
+    /// and `removeAttribute`. For tree-structure mutations
+    /// ([`Self::append_child`], [`Self::remove_child`], etc.) use
+    /// the dedicated methods instead — they keep parent/sibling
+    /// invariants in sync.
+    pub fn as_element_mut(&mut self, id: NodeId) -> Option<&mut ElementData> {
+        self.get_mut(id).and_then(|n| match &mut n.node_type {
+            NodeType::Element(data) => Some(data),
+            _ => None,
+        })
+    }
+
     /// Get text content if this node is a text node.
     #[must_use]
     pub fn as_text(&self, id: NodeId) -> Option<&str> {

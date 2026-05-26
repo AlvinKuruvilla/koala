@@ -95,3 +95,33 @@ fn script_runs_against_first_matching_id_in_tree_order() {
         </body></html>"#,
     );
 }
+
+#[test]
+fn script_can_mutate_attributes_and_observe_via_get_attribute() {
+    // Verifies the mutation path: setAttribute → DOM stores it →
+    // getAttribute reads it back via the bridge.
+    assert_script_ran_clean(
+        r#"<!DOCTYPE html>
+        <html><body>
+          <button id="btn">x</button>
+          <script>
+            var b = document.getElementById('btn');
+            b.setAttribute('aria-pressed', 'true');
+            if (b.getAttribute('aria-pressed') !== 'true')
+              throw new Error('setAttribute did not stick');
+
+            b.setAttribute('aria-pressed', 'false');
+            if (b.getAttribute('aria-pressed') !== 'false')
+              throw new Error('setAttribute did not overwrite');
+
+            b.removeAttribute('aria-pressed');
+            if (b.hasAttribute('aria-pressed'))
+              throw new Error('removeAttribute did not remove');
+            if (b.getAttribute('aria-pressed') !== null)
+              throw new Error('removed attribute should read null');
+
+            b.removeAttribute('never-present');  // no-op, must not throw
+          </script>
+        </body></html>"#,
+    );
+}
