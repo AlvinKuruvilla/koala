@@ -70,6 +70,48 @@ wpt-list:
     echo
     echo "Run a family with:  just wpt /<area>/[<subdir>/]"
 
+# Run wpt against `scope` and archive the JSON report into
+# `dashboard/runs/<timestamp>_<sha>.json`. Use this when you want a
+# run to land in the conformance dashboard. For one-off iteration use
+# `just wpt` instead — it doesn't archive, so the runs/ dir doesn't
+# fill with throwaway debug data.
+#   just wpt-record                                    # default scope
+#   just wpt-record /css/CSS2/visudet/                 # whole subdir
+wpt-record scope="/css/CSS2/visudet/":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p koala-cli
+    mkdir -p dashboard/runs
+    ts=$(date -u +%Y-%m-%dT%H-%M-%S)
+    sha=$(git rev-parse --short HEAD)
+    out="dashboard/runs/${ts}_${sha}.json"
+    .venv-wpt/bin/python third-party/wpt/wpt \
+        --venv .venv-wpt --skip-venv-setup \
+        run \
+            --binary="{{justfile_directory()}}/target/release/koala" \
+            --no-pause \
+            --no-restart-on-unexpected \
+            --log-mach=- --log-mach-level=info \
+            --log-wptreport="$out" \
+            koala "{{scope}}"
+    echo "Archived run to $out"
+
+# Install the dashboard's Node dependencies (Observable Framework).
+# One-time per checkout; safe to re-run.
+dashboard-setup:
+    cd dashboard && npm install
+
+# Build the static dashboard into dashboard/dist/. The Observable
+# data loader re-runs on every build, so the dashboard always
+# reflects whatever is currently in dashboard/runs/.
+dashboard-build:
+    cd dashboard && npm run build
+
+# Start the Observable preview server on http://127.0.0.1:3000 with
+# hot reload. Edit src/*.md and the page re-renders automatically.
+dashboard-serve:
+    cd dashboard && npm run dev
+
 # Tear down the wpt venv and clean up any koala temp screenshots
 # left behind by interrupted runs.
 wpt-clean:
