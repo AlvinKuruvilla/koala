@@ -1,0 +1,401 @@
+/* koala WPT dashboard — utility-first overrides on top of Observable
+   Framework's "air" theme. Goal: dense, dashboard-feeling, sans-serif
+   single-page layout instead of the framework's default markdown-doc
+   look. */
+
+:root {
+  --dash-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --dash-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --dash-border: var(--theme-foreground-fainter, rgba(0, 0, 0, 0.1));
+  --dash-fg: var(--theme-foreground, #111);
+  --dash-fg-muted: var(--theme-foreground-muted, #555);
+  --dash-fg-dim: var(--theme-foreground-faint, #888);
+  --dash-bg-alt: var(--theme-background-alt, #f7f7f7);
+  --dash-accent: #2563eb;
+  --dash-pass: #16a34a;
+  --dash-fail: #ea580c;
+  --dash-crash: #dc2626;
+  --dash-error: #7c3aed;
+  --dash-timeout: #db2777;
+}
+
+/* Full-bleed: drop the markdown-doc max-width and serif typography. */
+#observablehq-center,
+.observablehq-page {
+  max-width: none !important;
+}
+body,
+.observablehq-main,
+.observablehq-page {
+  font-family: var(--dash-sans);
+  font-feature-settings: "ss01", "ss02", "cv01", "cv11", "tnum";
+}
+main {
+  padding: 1rem 1.5rem 3rem !important;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+/* Kill the serif headings; we'll use our own classes instead. */
+h1, h2, h3, h4, h5 {
+  font-family: var(--dash-sans);
+  margin: 0;
+}
+
+/* The framework drops a "Built with Observable" footer — hide it,
+   it's not relevant for an internal tool. */
+.observablehq-footer { display: none; }
+
+/* Hero strip. */
+.dash-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--dash-border);
+  margin-bottom: 1.25rem;
+}
+.dash-hero h1 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.dash-hero-meta {
+  font-size: 0.8rem;
+  color: var(--dash-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dash-hero-meta code {
+  font-family: var(--dash-mono);
+  font-size: 0.78rem;
+  color: var(--dash-fg);
+}
+
+/* Section labels: small uppercase eyebrow rather than big H2. */
+.dash-section {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dash-fg-dim);
+  margin: 1.25rem 0 0.5rem;
+}
+
+/* KPI cards — a horizontal strip of 4. */
+.dash-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.dash-kpi {
+  padding: 0.65rem 0.85rem;
+  background: var(--dash-bg-alt);
+  border: 1px solid var(--dash-border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.dash-kpi-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dash-fg-dim);
+}
+.dash-kpi-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  font-family: var(--dash-mono);
+}
+.dash-kpi-sub {
+  font-size: 0.72rem;
+  color: var(--dash-fg-muted);
+}
+.dash-kpi.pass .dash-kpi-value { color: var(--dash-pass); }
+.dash-kpi.crash .dash-kpi-value { color: var(--dash-crash); }
+
+/* Two-pane row (crash reasons | subarea heatmap). */
+.dash-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+/* Click-to-filter rank list (used for crash reasons and area
+   heatmap). Custom because the markdown-doc table styling is too
+   loud for this density. */
+.dash-rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--dash-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--dash-bg-alt);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dash-rank li {
+  display: grid;
+  grid-template-columns: 60px 1fr 80px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.83rem;
+  border-bottom: 1px solid var(--dash-border);
+  cursor: pointer;
+  transition: background 80ms;
+}
+.dash-rank li:hover { background: rgba(37, 99, 235, 0.08); }
+.dash-rank li.selected {
+  background: rgba(37, 99, 235, 0.14);
+  box-shadow: inset 3px 0 0 var(--dash-accent);
+}
+.dash-rank li:last-child { border-bottom: none; }
+.dash-rank .count {
+  font-family: var(--dash-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--dash-fg);
+  text-align: right;
+}
+.dash-rank .label {
+  font-family: var(--dash-mono);
+  font-size: 0.78rem;
+  color: var(--dash-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-rank .bar {
+  height: 6px;
+  background: var(--dash-bg-alt);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.dash-rank .bar > div {
+  height: 100%;
+  background: var(--dash-accent);
+}
+
+/* Status chips for the test filter. */
+.dash-chips {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.dash-chip {
+  font-family: var(--dash-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--dash-border);
+  background: var(--dash-bg-alt);
+  color: var(--dash-fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.dash-chip.active.pass    { background: var(--dash-pass);    color: white; border-color: var(--dash-pass); }
+.dash-chip.active.fail    { background: var(--dash-fail);    color: white; border-color: var(--dash-fail); }
+.dash-chip.active.crash   { background: var(--dash-crash);   color: white; border-color: var(--dash-crash); }
+.dash-chip.active.error   { background: var(--dash-error);   color: white; border-color: var(--dash-error); }
+.dash-chip.active.timeout { background: var(--dash-timeout); color: white; border-color: var(--dash-timeout); }
+.dash-chip.active.skip    { background: var(--dash-fg-dim);  color: white; border-color: var(--dash-fg-dim); }
+
+/* Filter bar above the tests table. */
+.dash-filterbar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--dash-border);
+  margin-bottom: 0.5rem;
+}
+.dash-filterbar input[type="search"],
+.dash-filterbar input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--dash-border);
+  border-radius: 4px;
+  font-family: var(--dash-mono);
+  font-size: 0.85rem;
+  background: var(--dash-bg-alt);
+}
+.dash-filterbar select {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--dash-border);
+  border-radius: 4px;
+  font-family: var(--dash-mono);
+  font-size: 0.85rem;
+  background: var(--dash-bg-alt);
+}
+.dash-filterbar-count {
+  font-size: 0.78rem;
+  color: var(--dash-fg-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+/* Tests grid + detail two-pane. */
+.dash-row-split {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+/* Compact tests list. */
+.dash-tests {
+  border: 1px solid var(--dash-border);
+  border-radius: 6px;
+  overflow: hidden;
+  max-height: 560px;
+  overflow-y: auto;
+  background: var(--dash-bg-alt);
+}
+.dash-tests table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--dash-mono);
+  font-size: 0.78rem;
+}
+.dash-tests thead th {
+  position: sticky;
+  top: 0;
+  background: var(--dash-bg-alt);
+  text-align: left;
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dash-fg-dim);
+  padding: 0.4rem 0.65rem;
+  border-bottom: 1px solid var(--dash-border);
+}
+.dash-tests tbody td {
+  padding: 0.25rem 0.65rem;
+  border-bottom: 1px solid var(--dash-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-tests tbody tr {
+  cursor: pointer;
+}
+.dash-tests tbody tr:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+.dash-tests tbody tr.selected {
+  background: rgba(37, 99, 235, 0.14);
+  box-shadow: inset 3px 0 0 var(--dash-accent);
+}
+.dash-tests tbody tr.selected td:first-child {
+  font-weight: 600;
+}
+.dash-status {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.08rem 0.4rem;
+  border-radius: 3px;
+  color: white;
+}
+.dash-status.PASS    { background: var(--dash-pass); }
+.dash-status.OK      { background: var(--dash-pass); }
+.dash-status.FAIL    { background: var(--dash-fail); }
+.dash-status.CRASH   { background: var(--dash-crash); }
+.dash-status.ERROR   { background: var(--dash-error); }
+.dash-status.TIMEOUT { background: var(--dash-timeout); }
+.dash-status.SKIP    { background: var(--dash-fg-dim); }
+
+/* Detail panel. */
+.dash-detail {
+  border: 1px solid var(--dash-border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  background: var(--dash-bg-alt);
+  max-height: 560px;
+  overflow-y: auto;
+}
+.dash-detail .empty {
+  color: var(--dash-fg-dim);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+.dash-detail h3 {
+  font-family: var(--dash-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  word-break: break-all;
+  margin-bottom: 0.4rem;
+}
+.dash-detail .meta {
+  font-size: 0.78rem;
+  color: var(--dash-fg-muted);
+  margin-bottom: 0.6rem;
+}
+.dash-detail .label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dash-fg-dim);
+  margin-top: 0.4rem;
+}
+.dash-detail pre {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  padding: 0.5rem 0.65rem;
+  font-family: var(--dash-mono);
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0.3rem 0 0.6rem;
+}
+.dash-detail code {
+  font-family: var(--dash-mono);
+  font-size: 0.78rem;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}
+.dash-detail details summary {
+  cursor: pointer;
+  color: var(--dash-fg-muted);
+  font-size: 0.78rem;
+}
+
+/* Active-filter banner (when a crash-reason or area row is picked). */
+.dash-active-filter {
+  font-size: 0.78rem;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  color: var(--dash-accent);
+  padding: 0.35rem 0.65rem;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dash-active-filter button {
+  font-family: var(--dash-sans);
+  font-size: 0.72rem;
+  background: var(--dash-accent);
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+}

@@ -3,12 +3,13 @@
 // option reference.
 
 export default {
-  title: "koala WPT conformance",
+  title: "koala WPT",
   root: "src",
-  pages: [
-    { name: "Overview", path: "/" },
-    { name: "By area", path: "/areas" },
-    { name: "Tests", path: "/tests" },
-  ],
+  // Single-page dashboard — no sidebar/header nav.
+  pages: [],
+  sidebar: false,
+  header: "",
+  footer: "",
   theme: ["air", "wide"],
+  style: "style.css",
 };
