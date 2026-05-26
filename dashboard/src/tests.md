@@ -16,11 +16,20 @@ const db = await DuckDBClient.of({
 ```
 
 ```js
-// Drop the empty-schema placeholder row that the data loader ships
-// when no runs are archived yet.
-const totalRows = (await db.query(
+// DuckDBClient.query() returns an Apache Arrow Table — iterable but
+// not a JS array, so we convert. queryRow() handles single-row reads.
+async function rows(sql, params) {
+  return Array.from(await db.query(sql, params));
+}
+```
+
+```js
+// Drop the empty-schema placeholder row the loader ships when no
+// runs are archived yet.
+const totalRowsRow = await db.queryRow(
   "SELECT COUNT(*)::INTEGER AS n FROM results WHERE run_id != ''"
-))[0].n;
+);
+const totalRows = totalRowsRow?.n ?? 0;
 ```
 
 ```js
@@ -32,22 +41,25 @@ if (totalRows === 0) {
 ```
 
 ```js
-// Pull the dimension values once at page load — these are tiny and
-// drive the filter Inputs.
-const allStatuses = (await db.query(
-  "SELECT DISTINCT status FROM results WHERE run_id != '' ORDER BY status"
-)).map(r => r.status);
-const allAreas = (await db.query(
-  "SELECT DISTINCT area FROM results WHERE run_id != '' ORDER BY area"
-)).map(r => r.area);
-const allRuns = (await db.query(
-  "SELECT DISTINCT run_id FROM results WHERE run_id != '' ORDER BY run_id DESC"
-)).map(r => r.run_id);
+// Pull the dimension values once at page load — these drive the
+// filter Inputs.
+const allStatuses = Array.from(
+  await db.query("SELECT DISTINCT status FROM results WHERE run_id != '' ORDER BY status"),
+  row => row.status
+);
+const allAreas = Array.from(
+  await db.query("SELECT DISTINCT area FROM results WHERE run_id != '' ORDER BY area"),
+  row => row.area
+);
+const allRuns = Array.from(
+  await db.query("SELECT DISTINCT run_id FROM results WHERE run_id != '' ORDER BY run_id DESC"),
+  row => row.run_id
+);
 ```
 
 ```js
-// Read pre-applied filter values from the URL so links from
-// /areas can deep-link into "show me all CRASHes in css/CSS2".
+// Read pre-applied filter values from the URL so links from /areas
+// can deep-link into "show me all CRASHes in css/CSS2".
 const params = new URLSearchParams(location.search);
 const initialStatuses = params.get("status")?.split(",").filter(Boolean) ?? ["CRASH", "FAIL"];
 const initialArea = params.get("area") ?? "(all)";
@@ -87,8 +99,7 @@ const search = view(Inputs.text({
 ```
 
 ```js
-// Keep the URL in sync with the current filter selection so the user
-// can bookmark or share.
+// Keep the URL in sync with the current filter selection.
 {
   const url = new URL(location.href);
   url.searchParams.set("status", statuses.join(","));
@@ -102,36 +113,36 @@ const search = view(Inputs.text({
 ## Results
 
 ```js
-// Build the SQL predicate from the live filter values. DuckDB-WASM
-// supports parameter binding; we use it for the substring search to
-// avoid quote-escaping. `area` and `status` come from select inputs
-// so their values are already enumerated and safe to interpolate.
+// Status and area come from <select>/<checkbox> inputs whose values
+// are enumerated from the data, so interpolating them into SQL is
+// safe. The user-supplied substring goes through prepared-statement
+// binding (the `?` placeholders).
 const statusList = statuses.length === 0
   ? "''"
   : statuses.map(s => `'${s.replace(/'/g, "''")}'`).join(",");
 const areaPred = area === "(all)" ? "1=1" : `area = '${area.replace(/'/g, "''")}'`;
-const sql = `
-  SELECT test, status, area, duration_ms, message
-  FROM results
-  WHERE run_id = ?
-    AND status IN (${statusList})
-    AND ${areaPred}
-    AND (? = '' OR test ILIKE '%' || ? || '%')
-  ORDER BY status, test
-  LIMIT 5000
-`;
-const filtered = await db.query(sql, [run, search, search]);
-```
 
-```js
-const filteredCount = (await db.query(
+const filteredCountRow = await db.queryRow(
   `SELECT COUNT(*)::INTEGER AS n FROM results
      WHERE run_id = ?
        AND status IN (${statusList})
        AND ${areaPred}
        AND (? = '' OR test ILIKE '%' || ? || '%')`,
   [run, search, search]
-))[0].n;
+);
+const filteredCount = filteredCountRow?.n ?? 0;
+
+const filtered = await db.query(
+  `SELECT test, status, area, duration_ms, message
+   FROM results
+   WHERE run_id = ?
+     AND status IN (${statusList})
+     AND ${areaPred}
+     AND (? = '' OR test ILIKE '%' || ? || '%')
+   ORDER BY status, test
+   LIMIT 5000`,
+  [run, search, search]
+);
 ```
 
 <p style="margin: 0 0 0.5rem 0;">
@@ -159,9 +170,9 @@ display(
 ## Selected test detail
 
 ```js
-// `Inputs.table` returns the selected rows when used as a view.
-// Default `multiple: true` returns an array; with `required: false`
-// the empty selection is `[]`.
+// Inputs.table can act as a form input; when used inside `view()` it
+// returns the selected row(s). `multiple: false` returns a single
+// row (or `null` when nothing is selected).
 const selected = view(
   Inputs.table(filtered, {
     columns: ["test", "status"],
@@ -175,11 +186,20 @@ const selected = view(
 ```
 
 ```js
-if (!selected || (Array.isArray(selected) && selected.length === 0)) {
+if (!selected) {
   display(html`<p><em>Select a row above to see its failure
     message and surrounding context.</em></p>`);
 } else {
-  const row = Array.isArray(selected) ? selected[0] : selected;
+  // `selected` is an Arrow RowProxy; pull the columns we want into a
+  // plain object so template literals and the message <pre> work
+  // without surprises.
+  const row = {
+    test: selected.test,
+    status: selected.status,
+    area: selected.area,
+    duration_ms: selected.duration_ms,
+    message: selected.message,
+  };
   display(html`
     <div class="card">
       <h3 style="margin-top: 0; font-family: var(--monospace);">${row.test}</h3>

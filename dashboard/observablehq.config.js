@@ -11,5 +11,4 @@ export default {
     { name: "Tests", path: "/tests" },
   ],
   theme: ["air", "wide"],
-  cleanUrls: true,
 };
