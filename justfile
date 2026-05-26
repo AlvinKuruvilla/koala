@@ -105,21 +105,30 @@ wpt-record scope="/css/CSS2/visudet/" processes="4":
             koala "{{scope}}"
     echo "Archived run to $out"
 
-# Install the dashboard's Node dependencies (Observable Framework).
-# One-time per checkout; safe to re-run.
+# Install the dashboard's Node dependencies (Observable Framework)
+# plus the Python deps the data loaders need (`duckdb` for the
+# parquet emitter). The Python install lands in `.venv-wpt`, which
+# `just wpt-setup` is responsible for creating.
+#   just wpt-setup           # if you haven't already
+#   just dashboard-setup
 dashboard-setup:
     cd dashboard && npm install
+    .venv-wpt/bin/pip install --quiet duckdb
 
-# Build the static dashboard into dashboard/dist/. The Observable
-# data loader re-runs on every build, so the dashboard always
-# reflects whatever is currently in dashboard/runs/.
+# Build the static dashboard into dashboard/dist/. Observable's data
+# loaders re-run on every build (they read dashboard/runs/), so the
+# dashboard always reflects whatever runs are currently archived.
+# We prepend `.venv-wpt/bin` to PATH so the `#!/usr/bin/env python3`
+# shebang in our loaders picks up the wpt venv (which has `duckdb`)
+# instead of a system python3 that probably doesn't.
 dashboard-build:
-    cd dashboard && npm run build
+    cd dashboard && PATH="{{justfile_directory()}}/.venv-wpt/bin:$PATH" npm run build
 
 # Start the Observable preview server on http://127.0.0.1:3000 with
 # hot reload. Edit src/*.md and the page re-renders automatically.
+# Same PATH injection as `dashboard-build`.
 dashboard-serve:
-    cd dashboard && npm run dev
+    cd dashboard && PATH="{{justfile_directory()}}/.venv-wpt/bin:$PATH" npm run dev
 
 # Clear Observable's data-loader cache and the built site. Useful
 # after changing the data loader's output schema (Observable caches

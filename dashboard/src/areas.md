@@ -67,6 +67,20 @@ if (areas.length === 0) {
 
 ## Detail table
 
+Click any **failures** count to drill in to that subarea's
+non-passing tests on the [Tests](/tests) page.
+
+```js
+function testsLink(area, statuses, label) {
+  const params = new URLSearchParams({
+    area,
+    status: statuses.join(","),
+    run: latest.id,
+  });
+  return html`<a href="/tests?${params}">${label}</a>`;
+}
+```
+
 ```js
 display(
   Inputs.table(
@@ -79,6 +93,10 @@ display(
         pass_rate: "Pass rate",
       },
       format: {
+        FAIL: (n, i) => n ? testsLink(areas[i].area, ["FAIL"], n.toLocaleString()) : "0",
+        CRASH: (n, i) => n ? testsLink(areas[i].area, ["CRASH"], n.toLocaleString()) : "0",
+        TIMEOUT: (n, i) => n ? testsLink(areas[i].area, ["TIMEOUT"], n.toLocaleString()) : "0",
+        ERROR: (n, i) => n ? testsLink(areas[i].area, ["ERROR"], n.toLocaleString()) : "0",
         pass_rate: fmtPct,
       },
       sort: "pass_rate",

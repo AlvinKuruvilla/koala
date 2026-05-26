@@ -33,6 +33,18 @@ function fmtDate(iso) {
 
 ## Latest run
 
+```js
+function crashLink(label) {
+  if (!latest) return label;
+  const params = new URLSearchParams({
+    status: "CRASH",
+    run: latest.id,
+    area: "(all)",
+  });
+  return html`<a href="/tests?${params}" style="text-decoration: none; color: inherit;">${label}</a>`;
+}
+```
+
 <div class="grid grid-cols-4" style="grid-auto-rows: 88px;">
   <div class="card">
     <h2>Pass rate</h2>
@@ -44,7 +56,7 @@ function fmtDate(iso) {
   </div>
   <div class="card">
     <h2>Crashes</h2>
-    <span class="big">${latest ? (latest.totals.CRASH ?? 0).toLocaleString() : "—"}</span>
+    <span class="big">${latest ? crashLink((latest.totals.CRASH ?? 0).toLocaleString()) : "—"}</span>
   </div>
   <div class="card">
     <h2>Recorded</h2>

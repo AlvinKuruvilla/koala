@@ -8,6 +8,7 @@ export default {
   pages: [
     { name: "Overview", path: "/" },
     { name: "By area", path: "/areas" },
+    { name: "Tests", path: "/tests" },
   ],
   theme: ["air", "wide"],
   cleanUrls: true,
