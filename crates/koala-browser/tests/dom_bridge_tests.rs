@@ -223,6 +223,42 @@ fn script_can_read_document_title_and_window_globals() {
 }
 
 #[test]
+fn dom_mutations_trigger_re_layout() {
+    // The script appends a fresh <div> with an id. After the
+    // koala-browser pipeline finishes, the post-script DOM should
+    // contain it AND `styles` (the cascade output) and the layout
+    // tree should know about it — both prove the re-cascade +
+    // re-layout pass ran after the script.
+    use koala_dom::NodeId;
+
+    let doc = parse_html_string(
+        r#"<!DOCTYPE html>
+        <html><body>
+          <script>
+            var p = document.createElement('div');
+            p.setAttribute('id', 'injected');
+            document.body.appendChild(p);
+          </script>
+        </body></html>"#,
+    );
+
+    // Find the NodeId of the new element by walking the DOM. The
+    // arena order means it's just whatever element has id="injected".
+    let injected_id: Option<NodeId> = doc.dom.iter_all().find(|&id| {
+        doc.dom
+            .as_element(id)
+            .and_then(|e| e.id())
+            .is_some_and(|got| got == "injected")
+    });
+    let injected_id = injected_id.expect("script's createElement should have landed in the DOM");
+
+    assert!(
+        doc.styles.contains_key(&injected_id),
+        "post-script element {injected_id:?} must have a ComputedStyle — would not be the case without a re-cascade",
+    );
+}
+
+#[test]
 fn script_can_mutate_attributes_and_observe_via_get_attribute() {
     // Verifies the mutation path: setAttribute → DOM stores it →
     // getAttribute reads it back via the bridge.

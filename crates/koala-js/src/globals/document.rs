@@ -58,7 +58,7 @@ use boa_engine::{
 use koala_css::selector::{ParsedSelector, parse_selector};
 use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 
-use crate::dom_handle::{with_dom, with_dom_mut};
+use crate::dom_handle::{mark_dirty, with_dom, with_dom_mut};
 
 const NODE_TYPE_ELEMENT: f64 = 1.0;
 const NODE_TYPE_TEXT: f64 = 3.0;
@@ -614,11 +614,17 @@ fn set_attribute(
     let name = required_string_arg(args, 0, "setAttribute", "name", context)?;
     let value = required_string_arg(args, 1, "setAttribute", "value", context)?;
 
-    let _ = with_dom_mut(|dom| {
+    let mutated = with_dom_mut(|dom| {
         if let Some(elem) = dom.as_element_mut(node_id) {
             let _ = elem.attrs.insert(name, value);
+            true
+        } else {
+            false
         }
     });
+    if mutated == Some(true) {
+        mark_dirty();
+    }
 
     Ok(JsValue::undefined())
 }
@@ -632,11 +638,16 @@ fn remove_attribute(
     let node_id = node_id_from_this(this, context)?;
     let name = required_string_arg(args, 0, "removeAttribute", "name", context)?;
 
-    let _ = with_dom_mut(|dom| {
+    let mutated = with_dom_mut(|dom| {
         if let Some(elem) = dom.as_element_mut(node_id) {
-            let _ = elem.attrs.remove(&name);
+            elem.attrs.remove(&name).is_some()
+        } else {
+            false
         }
     });
+    if mutated == Some(true) {
+        mark_dirty();
+    }
 
     Ok(JsValue::undefined())
 }
@@ -669,6 +680,7 @@ fn element_append_child(
         }
         dom.append_child(parent_id, child_id);
     });
+    mark_dirty();
 
     Ok(child_value.clone())
 }
@@ -693,6 +705,7 @@ fn element_remove_child(
     }
 
     let _ = with_dom_mut(|dom| dom.remove_child(parent_id, child_id));
+    mark_dirty();
 
     Ok(child_value.clone())
 }
@@ -907,6 +920,7 @@ fn text_content_set(
             dom.append_child(node_id, text_id);
         }
     });
+    mark_dirty();
 
     Ok(JsValue::undefined())
 }

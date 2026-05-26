@@ -67,6 +67,8 @@ mod globals;
 
 pub use dom_handle::DomHandle;
 
+use std::cell::Cell;
+
 use boa_engine::{Context, JsError, JsValue, Source};
 
 /// JavaScript runtime for a document.
@@ -89,6 +91,10 @@ pub struct JsRuntime {
     /// JS-callable closures via [`dom_handle::guard`] for the
     /// duration of each [`execute`](Self::execute) call.
     dom: DomHandle,
+    /// Sticky bit set whenever any [`execute`](Self::execute) call's
+    /// DOM-mutation closures flipped the per-thread dirty flag.
+    /// Cleared by [`take_dom_dirty`](Self::take_dom_dirty).
+    dom_dirty: Cell<bool>,
 }
 
 impl JsRuntime {
@@ -102,7 +108,11 @@ impl JsRuntime {
     pub fn new(dom: DomHandle) -> Self {
         let mut context = Context::default();
         globals::register_globals(&mut context);
-        Self { context, dom }
+        Self {
+            context,
+            dom,
+            dom_dirty: Cell::new(false),
+        }
     }
 
     /// Execute JavaScript source code against the runtime's DOM.
@@ -129,8 +139,24 @@ impl JsRuntime {
     /// Returns [`JsError`] if the JavaScript code contains syntax
     /// errors or throws an uncaught exception.
     pub fn execute(&mut self, source: &str) -> Result<JsValue, JsError> {
-        let _guard = dom_handle::guard(self.dom.clone());
-        self.context.eval(Source::from_bytes(source))
+        let guard = dom_handle::guard(self.dom.clone());
+        let result = self.context.eval(Source::from_bytes(source));
+        if guard.dirty_seen() {
+            self.dom_dirty.set(true);
+        }
+        drop(guard);
+        result
+    }
+
+    /// Return whether any [`execute`](Self::execute) call against this
+    /// runtime has mutated the DOM via the bridge (`setAttribute`,
+    /// `appendChild`, `textContent` setter, …) and clear the flag.
+    ///
+    /// koala-browser calls this once after running all of a
+    /// document's scripts to decide whether to re-run style cascade
+    /// and layout against the post-script tree.
+    pub fn take_dom_dirty(&self) -> bool {
+        self.dom_dirty.replace(false)
     }
 }
 

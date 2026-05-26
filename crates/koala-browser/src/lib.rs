@@ -201,17 +201,34 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
     // recovers the owned `DomTree` for `LoadedDocument`.
     let scripts = extract_inline_scripts(&dom);
     let dom_cell = std::rc::Rc::new(std::cell::RefCell::new(dom));
-    {
+    let dom_was_mutated = {
         let mut js_runtime = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
         for script in scripts {
             if let Err(e) = js_runtime.execute(&script) {
                 parse_issues.push(format!("JavaScript error: {e}"));
             }
         }
-    }
+        js_runtime.take_dom_dirty()
+    };
     let dom = std::rc::Rc::try_unwrap(dom_cell)
         .expect("JsRuntime is dropped above; no other holders of the DOM handle")
         .into_inner();
+
+    // If JS mutated the DOM (setAttribute, appendChild, textContent
+    // setter, …), the styles + layout tree we built before scripts
+    // ran no longer reflect the actual tree. Re-run cascade and
+    // layout against the post-script DOM. We deliberately reuse the
+    // already-loaded image cache rather than re-fetching, since
+    // image loads are network-bound and the post-script DOM rarely
+    // adds <img> tags pointing to never-fetched URLs in practice.
+    let (styles, layout_tree) = if dom_was_mutated {
+        let post_styles = compute_styles(&dom, ua, &stylesheet);
+        let post_layout =
+            LayoutBox::build_layout_tree(&dom, &post_styles, dom.root(), &image_dims);
+        (post_styles, post_layout)
+    } else {
+        (styles, layout_tree)
+    };
 
     LoadedDocument {
         html_source: html.to_string(),

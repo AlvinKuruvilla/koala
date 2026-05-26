@@ -30,41 +30,90 @@ use koala_dom::DomTree;
 /// installed by [`guard`] around each script execution.
 pub type DomHandle = Rc<RefCell<DomTree>>;
 
-thread_local! {
-    static CURRENT_DOM: RefCell<Option<DomHandle>> = const { RefCell::new(None) };
+/// Per-thread script-execution context: the current DOM handle plus
+/// a dirty flag that gets flipped on by any mutation method
+/// (`setAttribute`, `appendChild`, `textContent` setter, …). The
+/// flag is captured on [`DomGuard`] install/teardown so each
+/// script invocation has its own dirty window — see
+/// [`DomGuard::dirty_seen`].
+struct DomContext {
+    handle: DomHandle,
+    dirty: bool,
 }
 
-/// Install `handle` as the current DOM for the calling thread and
-/// return a [`DomGuard`] that restores the previous binding when
-/// dropped. Wrap script execution like:
+thread_local! {
+    static CURRENT: RefCell<Option<DomContext>> = const { RefCell::new(None) };
+}
+
+/// Install `handle` as the current DOM for the calling thread, with
+/// a fresh dirty=false flag, and return a [`DomGuard`] that
+/// restores the previous binding on drop. Wrap script execution
+/// like:
 ///
 /// ```ignore
-/// let _guard = dom_handle::guard(self.dom.clone());
-/// self.context.eval(Source::from_bytes(source))
+/// let guard = dom_handle::guard(self.dom.clone());
+/// let result = self.context.eval(Source::from_bytes(source));
+/// let did_mutate = guard.dirty_seen();
+/// drop(guard);
 /// ```
 ///
-/// Nested guards stack correctly: dropping the outer one restores
-/// the binding from before the outer guard, not whatever the inner
-/// one set.
+/// Nested guards stack correctly: the inner guard sees its own
+/// fresh dirty window; dropping it restores the outer window's
+/// previous dirty state, so the outer caller's dirty-tracking is
+/// not affected by a nested script's mutations (which is the right
+/// thing — those mutations belong to the inner script's
+/// re-layout decision, not the outer one's).
 #[must_use = "the guard restores the previous DOM on drop; bind it to `_guard`"]
 pub(crate) fn guard(handle: DomHandle) -> DomGuard {
-    let previous = CURRENT_DOM.with(|cell| cell.borrow_mut().replace(handle));
+    let previous = CURRENT.with(|cell| {
+        cell.borrow_mut()
+            .replace(DomContext { handle, dirty: false })
+    });
     DomGuard { previous }
 }
 
 /// RAII guard returned by [`guard`] that restores the previous DOM
-/// binding on drop.
+/// context on drop. Use [`Self::dirty_seen`] before dropping if you
+/// want to know whether any mutation closure flipped the dirty flag
+/// during the guard's window.
 pub(crate) struct DomGuard {
-    previous: Option<DomHandle>,
+    previous: Option<DomContext>,
+}
+
+impl DomGuard {
+    /// True if any mutation method ran [`mark_dirty`] since this
+    /// guard was installed. Reads the current thread-local context
+    /// rather than the captured `previous` field — by construction
+    /// the guard's *own* context is what's installed right now.
+    #[allow(clippy::unused_self)] // method belongs to DomGuard by design (clears at scope exit)
+    pub(crate) fn dirty_seen(&self) -> bool {
+        CURRENT.with(|cell| cell.borrow().as_ref().is_some_and(|c| c.dirty))
+    }
 }
 
 impl Drop for DomGuard {
     fn drop(&mut self) {
         let prev = self.previous.take();
-        CURRENT_DOM.with(|cell| {
+        CURRENT.with(|cell| {
             *cell.borrow_mut() = prev;
         });
     }
+}
+
+/// Mark the current DOM context as having been mutated. Called by
+/// every DOM-bridge method that changes the tree's observable
+/// state (attributes, child lists, text data). The flag is read
+/// by [`DomGuard::dirty_seen`] after the JS script returns.
+///
+/// No-op outside a [`guard`]-protected scope; that path is mainly
+/// hit by direct unit tests of helpers, where the caller doesn't
+/// care about layout invalidation.
+pub(crate) fn mark_dirty() {
+    CURRENT.with(|cell| {
+        if let Some(ctx) = cell.borrow_mut().as_mut() {
+            ctx.dirty = true;
+        }
+    });
 }
 
 /// Run `f` with a borrow of the thread's current DOM. Returns
@@ -80,10 +129,10 @@ pub(crate) fn with_dom<R, F>(f: F) -> Option<R>
 where
     F: FnOnce(&DomTree) -> R,
 {
-    CURRENT_DOM.with(|cell| {
+    CURRENT.with(|cell| {
         cell.borrow()
             .as_ref()
-            .map(|handle| f(&handle.borrow()))
+            .map(|ctx| f(&ctx.handle.borrow()))
     })
 }
 
@@ -95,10 +144,10 @@ pub(crate) fn with_dom_mut<R, F>(f: F) -> Option<R>
 where
     F: FnOnce(&mut DomTree) -> R,
 {
-    CURRENT_DOM.with(|cell| {
+    CURRENT.with(|cell| {
         cell.borrow()
             .as_ref()
-            .map(|handle| f(&mut handle.borrow_mut()))
+            .map(|ctx| f(&mut ctx.handle.borrow_mut()))
     })
 }
 
@@ -122,6 +171,29 @@ mod tests {
             assert!(count >= 1, "document root should be visible");
         }
         assert!(with_dom(|_| ()).is_none(), "binding restored on drop");
+    }
+
+    #[test]
+    fn dirty_flag_isolated_per_guard() {
+        let outer = Rc::new(RefCell::new(DomTree::new()));
+        let inner = Rc::new(RefCell::new(DomTree::new()));
+
+        let g_outer = guard(Rc::clone(&outer));
+        assert!(!g_outer.dirty_seen());
+        {
+            let g_inner = guard(Rc::clone(&inner));
+            mark_dirty();
+            assert!(g_inner.dirty_seen(), "inner guard sees its own dirty flip");
+        }
+        // The inner guard dropped restoring the outer context; the
+        // outer guard should not have inherited the inner's dirty.
+        assert!(
+            !g_outer.dirty_seen(),
+            "outer guard's dirty state is unaffected by inner mutations",
+        );
+
+        mark_dirty();
+        assert!(g_outer.dirty_seen(), "outer flips when its own scope mutates");
     }
 
     #[test]
