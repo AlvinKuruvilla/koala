@@ -13,10 +13,6 @@ const allStatuses = Array.from(
   await db.query("SELECT DISTINCT status FROM results WHERE run_id != '' ORDER BY status"),
   r => r.status
 );
-const allAreas = Array.from(
-  await db.query("SELECT DISTINCT area FROM results WHERE run_id != '' ORDER BY area"),
-  r => r.area
-);
 const allRuns = Array.from(
   await db.query("SELECT DISTINCT run_id FROM results WHERE run_id != '' ORDER BY run_id DESC"),
   r => r.run_id
@@ -24,9 +20,10 @@ const allRuns = Array.from(
 ```
 
 ```js
-// Cross-section reactive state. Each Mutable drives the SQL the test
-// grid runs, so clicking a crash reason or an area row pre-filters
-// the grid below without us re-architecting around URL params.
+// Cross-section reactive state + helper setters. The Mutables live
+// in this declaring cell; setter functions close over them so that
+// other cells (whose code sees the unwrapped value of a Mutable, not
+// the Mutable itself) can drive updates via plain function calls.
 const selectedRun = Mutable(allRuns[0] ?? null);
 const selectedReason = Mutable(null);
 const selectedAreaPick = Mutable(null);
@@ -34,16 +31,25 @@ const selectedTest = Mutable(null);
 const statusSet = Mutable(new Set(["FAIL", "CRASH", "ERROR", "TIMEOUT"]));
 const searchText = Mutable("");
 
-function toggleStatus(s) {
-  const next = new Set(statusSet);
+const setRun = v => { selectedRun.value = v; };
+const toggleReason = r => {
+  selectedReason.value = selectedReason.value === r ? null : r;
+};
+const toggleArea = a => {
+  selectedAreaPick.value = selectedAreaPick.value === a ? null : a;
+};
+const setTest = t => { selectedTest.value = t; };
+const toggleStatus = s => {
+  const next = new Set(statusSet.value);
   if (next.has(s)) next.delete(s); else next.add(s);
   statusSet.value = next;
-}
-function clearFilters() {
+};
+const setSearch = v => { searchText.value = v; };
+const clearFilters = () => {
   selectedReason.value = null;
   selectedAreaPick.value = null;
   searchText.value = "";
-}
+};
 ```
 
 ```js
@@ -120,20 +126,9 @@ if (runsData.length >= 2) {
 }
 ```
 
-<div class="dash-row-2">
-  <div>
-    <div class="dash-section">Top crash reasons</div>
-    <div id="crash-list"></div>
-  </div>
-  <div>
-    <div class="dash-section">Subarea pass rate</div>
-    <div id="area-list"></div>
-  </div>
-</div>
-
 ```js
-// Top crash reasons in the current run. Click a row to filter the
-// test grid to "all crashes with this reason."
+// Crash-reason aggregation. Re-runs when selectedRun changes (i.e.
+// the user picks a different archived run in the filter bar below).
 const crashRowsTable = await db.query(
   `SELECT
      COALESCE(
@@ -150,31 +145,9 @@ const crashRowsTable = await db.query(
    LIMIT 30`,
   [selectedRun]
 );
-const crashRows = Array.from(crashRowsTable);
+const crashRows = Array.from(crashRowsTable, r => ({reason: r.reason, n: r.n}));
 const maxCrash = Math.max(...crashRows.map(r => r.n), 1);
-```
 
-```js
-const sel = selectedReason;
-const list = html`<ul class="dash-rank">
-  ${crashRows.length === 0
-    ? html`<li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); font-style: italic; cursor: default;">No crashes in this run</li>`
-    : crashRows.map(r => html`
-        <li class=${sel === r.reason ? "selected" : ""}
-            onclick=${() => selectedReason.value = sel === r.reason ? null : r.reason}>
-          <span class="count">${fmtNum(r.n)}</span>
-          <span class="label" title=${r.reason}>${r.reason}</span>
-          <span class="bar"><div style=${`width: ${(r.n / maxCrash * 100).toFixed(1)}%`}></div></span>
-        </li>
-      `)}
-</ul>`;
-document.querySelector("#crash-list").replaceChildren(list);
-```
-
-```js
-// Subarea pass rate, sorted ascending — worst-performing first so
-// the priority is at the top. Click to filter the test grid to that
-// subarea.
 const areaRowsTable = await db.query(
   `SELECT area,
           COUNT(*)::INTEGER AS total,
@@ -186,95 +159,124 @@ const areaRowsTable = await db.query(
    ORDER BY pass_rate ASC, total DESC`,
   [selectedRun]
 );
-const areaRows = Array.from(areaRowsTable);
+const areaRows = Array.from(areaRowsTable, r => ({
+  area: r.area, total: r.total, pass: r.pass, pass_rate: r.pass_rate,
+}));
 ```
 
 ```js
-const sel = selectedAreaPick;
-const list = html`<ul class="dash-rank">
-  ${areaRows.length === 0
-    ? html`<li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); font-style: italic; cursor: default;">No areas in this run</li>`
-    : areaRows.map(r => html`
-        <li class=${sel === r.area ? "selected" : ""}
-            onclick=${() => selectedAreaPick.value = sel === r.area ? null : r.area}>
+// Render both rank lists as a single two-pane block so the whole
+// row re-renders coherently when either selection changes.
+const selR = selectedReason;
+const selA = selectedAreaPick;
+
+const crashListView = crashRows.length === 0
+  ? html`<ul class="dash-rank"><li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); font-style: italic; cursor: default;">No crashes in this run</li></ul>`
+  : html`<ul class="dash-rank">
+      ${crashRows.map(r => html`
+        <li class=${selR === r.reason ? "selected" : ""}
+            onclick=${() => toggleReason(r.reason)}>
+          <span class="count">${fmtNum(r.n)}</span>
+          <span class="label" title=${r.reason}>${r.reason}</span>
+          <span class="bar"><div style=${`width: ${(r.n / maxCrash * 100).toFixed(1)}%`}></div></span>
+        </li>`)}
+    </ul>`;
+
+const areaListView = areaRows.length === 0
+  ? html`<ul class="dash-rank"><li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); font-style: italic; cursor: default;">No areas in this run</li></ul>`
+  : html`<ul class="dash-rank">
+      ${areaRows.map(r => html`
+        <li class=${selA === r.area ? "selected" : ""}
+            onclick=${() => toggleArea(r.area)}>
           <span class="count" style=${`color: ${r.pass_rate > 0.5 ? "var(--dash-pass)" : "var(--dash-fail)"}`}>${(r.pass_rate * 100).toFixed(0)}%</span>
           <span class="label" title=${`${r.area} — ${r.pass}/${r.total}`}>${r.area}</span>
           <span class="bar"><div style=${`width: ${(r.pass_rate * 100).toFixed(1)}%; background: ${r.pass_rate > 0.5 ? "var(--dash-pass)" : "var(--dash-fail)"}`}></div></span>
-        </li>
-      `)}
-</ul>`;
-document.querySelector("#area-list").replaceChildren(list);
-```
+        </li>`)}
+    </ul>`;
 
-<div class="dash-section">Tests</div>
-
-```js
-// Active-filter banner — only when at least one cross-section pick
-// is set. Clicking "Clear" resets both reason and area selections.
-const _reason = selectedReason;
-const _area = selectedAreaPick;
-if (_reason || _area) {
-  const parts = [];
-  if (_area) parts.push(html`area <code>${_area}</code>`);
-  if (_reason) parts.push(html`reason <code>${_reason}</code>`);
-  display(html`<div class="dash-active-filter" style="margin-bottom: 0.5rem;">
-    Filtering by ${parts.flatMap((p, i) => i === 0 ? [p] : [" and ", p])}
-    <button onclick=${() => clearFilters()}>Clear</button>
-  </div>`);
-}
-```
-
-```js
-// Status chips + search + run picker.
-const _statusSet = statusSet;
-const _searchText = searchText;
-const _selectedRun = selectedRun;
-
-const chipRow = html`<div class="dash-chips">
-  ${allStatuses.map(s => html`<span
-    class=${`dash-chip ${_statusSet.has(s) ? "active " + s.toLowerCase() : ""}`}
-    onclick=${() => toggleStatus(s)}>${s}</span>`)}
-</div>`;
-
-const searchInput = Object.assign(
-  html`<input type="search" placeholder="search test path (e.g. flexbox, abrupt-doctype, grid-template)…" value=${_searchText}/>`,
-  {oninput(e) { searchText.value = e.target.value; }}
-);
-
-const runSelect = (() => {
-  const sel = html`<select></select>`;
-  for (const r of allRuns) {
-    const opt = html`<option value=${r}>${r}</option>`;
-    if (r === _selectedRun) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  sel.onchange = (e) => { selectedRun.value = e.target.value; };
-  return sel;
-})();
-
-display(html`<div class="dash-filterbar">
-  ${chipRow}
-  ${searchInput}
-  ${allRuns.length > 1 ? runSelect : ""}
-  <span class="dash-filterbar-count" id="match-count">—</span>
+display(html`<div class="dash-row-2">
+  <div>
+    <div class="dash-section">Top crash reasons${selR ? ' · filtered' : ''}</div>
+    ${crashListView}
+  </div>
+  <div>
+    <div class="dash-section">Subarea pass rate${selA ? ' · filtered' : ''}</div>
+    ${areaListView}
+  </div>
 </div>`);
 ```
 
 ```js
-// Build and execute the filtered query. We interpolate enumerated
-// values (status, area) into the SQL since they come from <select>s
-// over the data's own distinct values; the user-supplied substring
-// and the reason filter are passed as bound parameters.
-const statusList = [...statusSet].length === 0
-  ? "''"
-  : [...statusSet].map(s => `'${s.replace(/'/g, "''")}'`).join(",");
-const areaPred = selectedAreaPick
-  ? `area = '${selectedAreaPick.replace(/'/g, "''")}'`
-  : "1=1";
-const reasonPred = selectedReason ? "message ILIKE '%' || ? || '%'" : "1=1";
+// Filter bar + active-filter banner. One cell so banner and bar
+// re-render together on any state change.
+const _ss = statusSet;
+const _st = searchText;
+const _sr = selectedRun;
+const _selR = selectedReason;
+const _selA = selectedAreaPick;
 
-const queryParams = [selectedRun, searchText, searchText];
-if (selectedReason) queryParams.push(selectedReason);
+const chipRow = html`<div class="dash-chips">
+  ${allStatuses.map(s => html`<span
+    class=${`dash-chip ${_ss.has(s) ? "active " + s.toLowerCase() : ""}`}
+    onclick=${() => toggleStatus(s)}>${s}</span>`)}
+</div>`;
+
+const searchInput = (() => {
+  const el = html`<input type="search" placeholder="search test path (e.g. flexbox, abrupt-doctype, grid-template)…"/>`;
+  el.value = _st;
+  el.oninput = (e) => setSearch(e.target.value);
+  return el;
+})();
+
+const runSelect = (() => {
+  if (allRuns.length <= 1) return "";
+  const sel = html`<select></select>`;
+  for (const r of allRuns) {
+    const opt = html`<option value=${r}>${r}</option>`;
+    if (r === _sr) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.onchange = (e) => setRun(e.target.value);
+  return sel;
+})();
+
+const banner = (_selR || _selA)
+  ? html`<div class="dash-active-filter">
+      Filtering by ${_selA ? html`area <code>${_selA}</code>` : ""}${_selR && _selA ? " and " : ""}${_selR ? html`reason <code>${_selR}</code>` : ""}
+      <button onclick=${() => clearFilters()}>Clear</button>
+    </div>`
+  : "";
+
+display(html`<div class="dash-section">Tests</div>
+  ${banner}
+  <div class="dash-filterbar">
+    ${chipRow}
+    ${searchInput}
+    ${runSelect}
+    <span class="dash-filterbar-count">${" "}</span>
+  </div>`);
+```
+
+```js
+// Run the filtered query against the current state. Reads every
+// Mutable that affects the result set so this cell re-runs whenever
+// any of them change.
+const _statusSet = statusSet;
+const _search = searchText;
+const _run = selectedRun;
+const _reason = selectedReason;
+const _areaPick = selectedAreaPick;
+
+const statusList = [..._statusSet].length === 0
+  ? "''"
+  : [..._statusSet].map(s => `'${s.replace(/'/g, "''")}'`).join(",");
+const areaPred = _areaPick
+  ? `area = '${_areaPick.replace(/'/g, "''")}'`
+  : "1=1";
+const reasonPred = _reason ? "message ILIKE '%' || ? || '%'" : "1=1";
+
+const params = [_run, _search, _search];
+if (_reason) params.push(_reason);
 
 const filteredTable = await db.query(
   `SELECT test, status, area, duration_ms, message
@@ -289,17 +291,14 @@ const filteredTable = await db.query(
                  WHEN 'FAIL' THEN 3 WHEN 'PASS' THEN 4 ELSE 5 END,
      test
    LIMIT 2000`,
-  queryParams
+  params
 );
 const filtered = Array.from(filteredTable, r => ({
-  test: r.test,
-  status: r.status,
-  area: r.area,
-  duration_ms: r.duration_ms,
-  message: r.message,
+  test: r.test, status: r.status, area: r.area,
+  duration_ms: r.duration_ms, message: r.message,
 }));
 
-const totalMatchTable = await db.query(
+const countTable = await db.query(
   `SELECT COUNT(*)::INTEGER AS n
    FROM results
    WHERE run_id = ?
@@ -307,46 +306,9 @@ const totalMatchTable = await db.query(
      AND ${areaPred}
      AND (? = '' OR test ILIKE '%' || ? || '%')
      AND ${reasonPred}`,
-  queryParams
+  params
 );
-const totalMatch = Array.from(totalMatchTable)[0]?.n ?? 0;
-
-// Update the count in the filter bar (sibling element, easier than
-// threading through reactive cells).
-const countEl = document.querySelector("#match-count");
-if (countEl) {
-  countEl.textContent =
-    totalMatch > 2000
-      ? `${totalMatch.toLocaleString()} matches · showing first 2,000`
-      : `${totalMatch.toLocaleString()} matches`;
-}
-```
-
-<div class="dash-row-split">
-  <div id="tests-list"></div>
-  <div id="tests-detail"></div>
-</div>
-
-```js
-const _selected = selectedTest;
-const rows = filtered;
-const table = html`<div class="dash-tests"><table>
-  <thead><tr>
-    <th>Test</th><th>Status</th><th>Duration</th>
-  </tr></thead>
-  <tbody>
-    ${rows.length === 0
-      ? html`<tr><td colspan="3" style="padding: 1rem; text-align: center; color: var(--dash-fg-dim); font-style: italic;">No tests match the current filter.</td></tr>`
-      : rows.map(r => html`<tr
-          class=${_selected === r.test ? "selected" : ""}
-          onclick=${() => selectedTest.value = r.test}>
-          <td title=${r.test}>${r.test}</td>
-          <td><span class=${`dash-status ${r.status}`}>${r.status}</span></td>
-          <td style="text-align: right; color: var(--dash-fg-muted);">${r.duration_ms ?? "—"}</td>
-        </tr>`)}
-  </tbody>
-</table></div>`;
-document.querySelector("#tests-list").replaceChildren(table);
+const totalMatch = Array.from(countTable)[0]?.n ?? 0;
 ```
 
 ```js
@@ -360,7 +322,6 @@ function formatMessage(status, raw) {
       ? html`<p class="empty">Test passed.</p>`
       : html`<p class="empty">No message recorded for this ${status}.</p>`;
   }
-
   if (status === "CRASH") {
     const m = raw.match(/panicked at ([^\n]+):\s*\n([^\n]+)/);
     if (m) {
@@ -372,11 +333,9 @@ function formatMessage(status, raw) {
         <details style="margin-top: 0.5rem;">
           <summary>Full panic output</summary>
           ${preBlock(raw)}
-        </details>
-      `;
+        </details>`;
     }
   }
-
   if (status === "ERROR") {
     const m = raw.match(/^koala load_failed for (\S+):\s*(.+)/s);
     if (m) {
@@ -388,11 +347,9 @@ function formatMessage(status, raw) {
         <details style="margin-top: 0.5rem;">
           <summary>Full error</summary>
           ${preBlock(raw)}
-        </details>
-      `;
+        </details>`;
     }
   }
-
   if (status === "FAIL") {
     const lines = raw.trim().split("\n").filter(Boolean);
     if (lines.length === 2) {
@@ -409,31 +366,57 @@ function formatMessage(status, raw) {
           <div class="label">Test</div>
           <div><code>${t[1]}</code> <span style="color: var(--dash-fg-dim);">(${t[2].slice(0, 12)})</span></div>
           <div class="label">Ref</div>
-          <div><code>${r[1]}</code> <span style="color: var(--dash-fg-dim);">(${r[2].slice(0, 12)})</span></div>
-        `;
+          <div><code>${r[1]}</code> <span style="color: var(--dash-fg-dim);">(${r[2].slice(0, 12)})</span></div>`;
       }
     }
   }
-
   return preBlock(raw);
 }
 ```
 
 ```js
-const _selectedTest = selectedTest;
-const row = filtered.find(r => r.test === _selectedTest);
-const panel = !_selectedTest
+// Tests list (left) + detail panel (right), rendered together so
+// selection highlight and detail-pane content stay in sync.
+const sel = selectedTest;
+const matchedCountText = totalMatch > 2000
+  ? `${totalMatch.toLocaleString()} matches · showing first 2,000`
+  : `${totalMatch.toLocaleString()} matches`;
+
+const listView = html`<div class="dash-tests">
+  <div style="padding: 0.4rem 0.65rem; font-size: 0.75rem; color: var(--dash-fg-muted); background: var(--dash-bg-alt); border-bottom: 1px solid var(--dash-border); font-variant-numeric: tabular-nums;">${matchedCountText}</div>
+  <table>
+    <thead><tr><th>Test</th><th>Status</th><th>ms</th></tr></thead>
+    <tbody>
+      ${filtered.length === 0
+        ? html`<tr><td colspan="3" style="padding: 1rem; text-align: center; color: var(--dash-fg-dim); font-style: italic;">No tests match the current filter.</td></tr>`
+        : filtered.map(r => html`<tr
+            class=${sel === r.test ? "selected" : ""}
+            onclick=${() => setTest(r.test)}>
+            <td title=${r.test}>${r.test}</td>
+            <td><span class=${`dash-status ${r.status}`}>${r.status}</span></td>
+            <td style="text-align: right; color: var(--dash-fg-muted);">${r.duration_ms ?? "—"}</td>
+          </tr>`)}
+    </tbody>
+  </table>
+</div>`;
+
+const detailRow = sel ? filtered.find(r => r.test === sel) : null;
+const detailView = !sel
   ? html`<div class="dash-detail"><p class="empty">Select a test on the left to see its failure detail.</p></div>`
-  : !row
+  : !detailRow
   ? html`<div class="dash-detail"><p class="empty">The selected test isn't in the current filter. Adjust filters or click another row.</p></div>`
   : html`<div class="dash-detail">
-      <h3>${row.test}</h3>
+      <h3>${detailRow.test}</h3>
       <div class="meta">
-        <span class=${`dash-status ${row.status}`}>${row.status}</span>
-        · <code>${row.area}</code>
-        · ${row.duration_ms ?? "—"} ms
+        <span class=${`dash-status ${detailRow.status}`}>${detailRow.status}</span>
+        · <code>${detailRow.area}</code>
+        · ${detailRow.duration_ms ?? "—"} ms
       </div>
-      ${formatMessage(row.status, row.message)}
+      ${formatMessage(detailRow.status, detailRow.message)}
     </div>`;
-document.querySelector("#tests-detail").replaceChildren(panel);
+
+display(html`<div class="dash-row-split">
+  ${listView}
+  ${detailView}
+</div>`);
 ```
