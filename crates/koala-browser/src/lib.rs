@@ -199,20 +199,37 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
     // DOM-bridge globals. After the runtime is dropped its handle
     // clone drops with it, leaving the Rc unique — `into_inner`
     // recovers the owned `DomTree` for `LoadedDocument`.
-    let scripts = extract_inline_scripts(&dom);
+    let scripts = load_scripts(&dom, base_url, &mut parse_issues);
     let dom_cell = std::rc::Rc::new(std::cell::RefCell::new(dom));
     let dom_was_mutated = {
         let mut js_runtime = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
         for script in scripts {
-            if let Err(e) = js_runtime.execute(&script) {
-                parse_issues.push(format!("JavaScript error: {e}"));
+            if let Err(e) = js_runtime.execute(&script.source) {
+                parse_issues.push(format!(
+                    "JavaScript error (in {label}): {e}",
+                    label = script.label,
+                ));
             }
         }
-        // After all sync scripts finish, pump pending setTimeout
-        // callbacks (and, eventually, setInterval / events) to
-        // completion. Errors thrown by callbacks get the same
-        // treatment as direct script errors — recorded in
-        // parse_issues, not propagated upward.
+        // HTML § 13.2.6 "Stop parsing" lifecycle:
+        //   1. Run sync scripts (above)
+        //   2. Fire DOMContentLoaded at the document
+        //   3. Drain the task queue (setTimeout / setInterval callbacks)
+        //   4. Fire load at the window
+        //   5. Drain anything queued by load handlers
+        // We collapse "drain" into the same `pump_until_idle` used
+        // after script execution. Errors thrown by listeners or
+        // timer callbacks are recorded as parse issues rather than
+        // aborting the document.
+        if let Err(e) = js_runtime.dispatch_dom_content_loaded() {
+            parse_issues.push(format!("JavaScript error (in DOMContentLoaded): {e}"));
+        }
+        if let Err(e) = js_runtime.pump_until_idle() {
+            parse_issues.push(format!("JavaScript error (in timer): {e}"));
+        }
+        if let Err(e) = js_runtime.dispatch_load() {
+            parse_issues.push(format!("JavaScript error (in load): {e}"));
+        }
         if let Err(e) = js_runtime.pump_until_idle() {
             parse_issues.push(format!("JavaScript error (in timer): {e}"));
         }
@@ -334,45 +351,114 @@ fn load_images(
     (images, image_dims)
 }
 
-/// Extract inline script content from the DOM.
+/// One script extracted from the document, ready to feed
+/// [`JsRuntime::execute`].
+///
+/// `source` is the UTF-8 JavaScript text. `label` is a
+/// human-readable diagnostic tag — `"inline"` for inline
+/// `<script>` blocks, or the resolved URL for fetched external
+/// scripts — included in any error message the runtime emits
+/// so a stack trace points at the right place.
+struct LoadedScript {
+    source: String,
+    label: String,
+}
+
+/// Walk the DOM for `<script>` elements in tree order, fetching
+/// each `src=`'d script's body and collecting each inline
+/// script's text content.
 ///
 /// [§ 4.12.1 The script element](https://html.spec.whatwg.org/multipage/scripting.html#the-script-element)
 ///
-/// Finds all `<script>` elements without a `src` attribute and extracts their
-/// text content. Scripts are returned in document order.
-fn extract_inline_scripts(dom: &DomTree) -> Vec<String> {
+/// Order of the returned `Vec` matches document order — the
+/// caller is expected to execute each script in that order, the
+/// "classic script, parse-blocking" path from § 4.12.1.1. We
+/// don't actually interleave with parsing (the parse is finished
+/// before this runs), so the parse-time-side-effects of executing
+/// a `document.write`-style script are out of scope. `async` and
+/// `defer` attributes are recognized but treated as synchronous
+/// for now; real ordering is deferred until tests demand it.
+///
+/// Fetch failures are appended to `issues` rather than aborting
+/// the document load — the rest of the page still renders, the
+/// script just doesn't run.
+fn load_scripts(
+    dom: &DomTree,
+    base_url: Option<&str>,
+    issues: &mut Vec<String>,
+) -> Vec<LoadedScript> {
     let mut scripts = Vec::new();
 
-    // Walk the DOM in document order
     for node_id in dom.iter_all() {
-        // Check if this is a <script> element
-        if let Some(element) = dom.as_element(node_id)
-            && element.tag_name.eq_ignore_ascii_case("script")
-        {
-            // Skip external scripts (those with src attribute)
-            // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
-            // "If the element has a src content attribute..."
-            if element.attrs.contains_key("src") {
+        let Some(element) = dom.as_element(node_id) else {
+            continue;
+        };
+        if !element.tag_name.eq_ignore_ascii_case("script") {
+            continue;
+        }
+
+        // External script: `src=` present. Fetch the body and
+        // record either the source or a parse issue.
+        if let Some(src) = element.attrs.get("src") {
+            let src_trim = src.trim();
+            if src_trim.is_empty() {
                 continue;
             }
-
-            // Collect text content from child text nodes
-            // [§ 4.12.1.3](https://html.spec.whatwg.org/multipage/scripting.html)
-            // "...the script block's source is the value of the text content..."
-            let mut script_text = String::new();
-            for child_id in dom.children(node_id) {
-                if let Some(text) = dom.as_text(*child_id) {
-                    script_text.push_str(text);
+            let resolved = koala_common::url::resolve_url(src_trim, base_url);
+            match fetch_script_source(&resolved) {
+                Ok(source) => scripts.push(LoadedScript {
+                    source,
+                    label: resolved,
+                }),
+                Err(reason) => {
+                    issues.push(format!(
+                        "Failed to load <script src=\"{src_trim}\">: {reason}"
+                    ));
                 }
             }
+            continue;
+        }
 
-            if !script_text.is_empty() {
-                scripts.push(script_text);
+        // Inline script: concatenate child text nodes per
+        // § 4.12.1.3 ("the script block's source is the value
+        // of the text content"). Empty inline blocks are
+        // skipped — passing an empty string to the runtime
+        // is a no-op and would just clutter diagnostics.
+        let mut inline = String::new();
+        for child_id in dom.children(node_id) {
+            if let Some(text) = dom.as_text(*child_id) {
+                inline.push_str(text);
             }
+        }
+        if !inline.is_empty() {
+            scripts.push(LoadedScript {
+                source: inline,
+                label: "inline".into(),
+            });
         }
     }
 
     scripts
+}
+
+/// Fetch the body of an external script as a UTF-8 string.
+///
+/// Mirrors `image_loader::fetch_image_bytes` but stays in UTF-8
+/// land — `<script>` resources are always character data per
+/// HTML § 4.12.1.1.6 ("Decoding the response's body as
+/// UTF-8"). Invalid UTF-8 is replaced with `U+FFFD` rather than
+/// rejected, matching the spec's lossy decode.
+fn fetch_script_source(resolved_url: &str) -> Result<String, String> {
+    let bytes = if resolved_url.starts_with("http://") || resolved_url.starts_with("https://")
+    {
+        koala_common::net::fetch_bytes(resolved_url).map_err(|e| e.to_string())?
+    } else if resolved_url.starts_with("data:") {
+        koala_common::net::fetch_bytes_from_data_url(resolved_url)
+            .map_err(|e| e.to_string())?
+    } else {
+        fs::read(resolved_url).map_err(|e| format!("{resolved_url}: {e}"))?
+    };
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Try to load a system font for text measurement and rendering.
