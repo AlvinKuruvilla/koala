@@ -83,9 +83,6 @@ pub struct LoadedDocument {
     /// Parse issues/warnings
     pub parse_issues: Vec<String>,
 
-    /// JavaScript runtime for this document
-    pub js_runtime: JsRuntime,
-
     /// Loaded images keyed by their `src` attribute value.
     ///
     /// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
@@ -194,15 +191,27 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
     // Build layout tree
     let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims);
 
-    // Execute JavaScript
+    // Execute JavaScript.
     // [§ 4.12.1.1 Processing model](https://html.spec.whatwg.org/multipage/scripting.html)
-    let mut js_runtime = JsRuntime::new();
+    //
+    // Wrap the DOM in `Rc<RefCell<>>` for the duration of script
+    // execution so JsRuntime can hand a shared handle to its
+    // DOM-bridge globals. After the runtime is dropped its handle
+    // clone drops with it, leaving the Rc unique — `into_inner`
+    // recovers the owned `DomTree` for `LoadedDocument`.
     let scripts = extract_inline_scripts(&dom);
-    for script in scripts {
-        if let Err(e) = js_runtime.execute(&script) {
-            parse_issues.push(format!("JavaScript error: {e}"));
+    let dom_cell = std::rc::Rc::new(std::cell::RefCell::new(dom));
+    {
+        let mut js_runtime = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
+        for script in scripts {
+            if let Err(e) = js_runtime.execute(&script) {
+                parse_issues.push(format!("JavaScript error: {e}"));
+            }
         }
     }
+    let dom = std::rc::Rc::try_unwrap(dom_cell)
+        .expect("JsRuntime is dropped above; no other holders of the DOM handle")
+        .into_inner();
 
     LoadedDocument {
         html_source: html.to_string(),
@@ -214,7 +223,6 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
         styles,
         layout_tree,
         parse_issues,
-        js_runtime,
         images,
     }
 }
