@@ -1,8 +1,31 @@
 ---
 created: 2026-05-26
 area: wpt + koala-browser + koala-js
-status: open — spec locked, Phase 1 not started
+status: in progress — Phases 1, 1.5, 2 complete; Phase 3 chunk 1 of 3 landed
+last_updated: 2026-05-26
 ---
+
+## Progress at a glance
+
+| Phase | Status | Notes |
+|------|--------|-------|
+| 1   — wptrunner integration            | ✓ DONE | M1 hit: `wpt run --product=koala /css/CSS2/visudet/content-height-001.html` returns `TEST_END: PASS` end-to-end. Plugin at `wpt-tools/wptrunner-koala/`; subprocess JSON-line protocol implemented in `koala-cli --wpt-protocol`. |
+| 1.5 — Observable Framework dashboard  | ✓ DONE | Single-page Linear-styled dashboard at `dashboard/`. Parquet + DuckDB-WASM for per-test drill-down. Crash-reason aggregation, click-to-filter from top crash reasons → tests table. |
+| 2   — DOM bridge                       | ✓ DONE | Every spec bullet live (see Phase 2 section). `document.*` + `Element.*` + `window`. DOM mutation triggers a re-cascade + re-layout in `koala-browser`. |
+| 3   — event loop                       | 1/3    | Chunk 1 (`setTimeout` / `clearTimeout` + `pump_until_idle`) landed. Chunk 2 (`setInterval` + `DOMContentLoaded`/`load`) and chunk 3 (`EventTarget`) outstanding. |
+| 4   — external `<script src>`         | ─      |  |
+| 5   — testharness.js result reporting | ─      | Hits M2 when this lands. |
+
+Reality-check / known limitations recorded as we hit them:
+
+- WPT-side **hosts setup** sidesteps `/etc/hosts` via `koala-cli --hosts-file` + the plugin generating a temp file via `wpt make-hosts-file` on every subprocess start. The plugin also monkey-patches `tools.wpt.run.check_environ` to bypass the env-check for `--product=koala`. Decision 1 in this doc captured this.
+- **DOCTYPE PUBLIC/SYSTEM**: implemented in `crates/koala-html/src/tokenizer/core.rs` per WHATWG § 13.2.5.55–68. `.xht` reftests no longer crash; the whole `/css/CSS2/visudet/` directory went from 1 PASS / 37 CRASH+FAIL to 7 PASS / 31 FAIL / 0 CRASH.
+- **TLS**: reqwest is on `rustls-tls`, not `native-tls` (closed 8 openssl dependabot alerts).
+- **dashboard/runs/** holds archived wptreport JSON; one /css/ run from `acf0045` is committed-out locally but not pushed (12MB).
+- **DOM-mutation re-layout** runs after all sync scripts AND `pump_until_idle` finishes — single re-cascade per document, not per-mutation. Good enough until rendering-between-iterations matters.
+
+---
+
 
 # WPT integration spec
 
