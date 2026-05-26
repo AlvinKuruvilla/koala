@@ -121,6 +121,12 @@ dashboard-build:
 dashboard-serve:
     cd dashboard && npm run dev
 
+# Clear Observable's data-loader cache and the built site. Useful
+# after changing the data loader's output schema (Observable caches
+# loader output and may serve a stale shape otherwise).
+dashboard-clean:
+    rm -rf dashboard/src/.observablehq dashboard/.observablehq dashboard/dist
+
 # Tear down the wpt venv and clean up any koala temp screenshots
 # left behind by interrupted runs.
 wpt-clean:

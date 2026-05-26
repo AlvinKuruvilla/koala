@@ -21,11 +21,6 @@ Output schema:
             {"area": "css", "PASS": 7, "FAIL": 31, "total": 38, "pass_rate": 0.184},
             ...
           ],
-          "results": [
-            {"test": "/css/.../foo.html", "status": "PASS",
-             "area": "css", "duration_ms": 65, "message": null},
-            ...
-          ]
         },
         ...
       ]
@@ -33,6 +28,12 @@ Output schema:
 
 Runs are sorted oldest-first so dashboards can take ``runs[-1]`` for
 the latest run and walk forward for history charts.
+
+The per-test array is intentionally omitted from this output to keep
+the in-browser bundle small (a single /css/ run is ~24k tests). When
+per-test drill-down lands, the raw wptreport JSON archives in
+``dashboard/runs/`` are the source of truth, and a separate data
+loader can ship them on demand.
 """
 
 from __future__ import annotations
@@ -70,13 +71,28 @@ def parse_timestamp_from_filename(path: Path) -> str | None:
 
 
 def area_of(test_path: str) -> str:
-    """Top-level WPT area for a test path, e.g. ``/css/CSS2/visudet/foo.html``
-    becomes ``"css"``. Tests that don't have a leading-slash path fall
-    back to ``"other"``."""
+    """Two-level WPT area for a test path, e.g.
+    ``/css/CSS2/visudet/foo.html`` → ``"css/CSS2"``. The leading two
+    directory components are the natural WPT test-suite grouping —
+    deep enough to distinguish ``css/CSS2`` from ``css/css-grid``,
+    shallow enough that a broad ``/css/`` run still fits on one bar
+    chart with a few dozen entries instead of hundreds.
+
+    Tests that live as a single file directly under a top-level area
+    (e.g. ``/dom/foo.html``) bucket under just that area. Paths
+    without a leading slash fall back to ``"other"``.
+    """
     if not test_path.startswith("/"):
         return "other"
-    parts = test_path[1:].split("/", 1)
-    return parts[0] if parts and parts[0] else "other"
+    parts = [p for p in test_path[1:].split("/") if p]
+    if not parts:
+        return "other"
+    # The last segment is the filename; the rest is the directory.
+    dirs = parts[:-1]
+    if not dirs:
+        # File sits at the WPT root — rare but possible.
+        return parts[0]
+    return "/".join(dirs[:2])
 
 
 def summarize_run(report: dict, path: Path) -> dict:
@@ -90,7 +106,6 @@ def summarize_run(report: dict, path: Path) -> dict:
     results = report.get("results", [])
     totals: dict[str, int] = {}
     areas: dict[str, dict[str, int]] = {}
-    flat_results = []
 
     for r in results:
         status = r.get("status", "UNKNOWN")
@@ -101,14 +116,6 @@ def summarize_run(report: dict, path: Path) -> dict:
         area_bucket = areas.setdefault(area, {})
         area_bucket[status] = area_bucket.get(status, 0) + 1
         area_bucket["total"] = area_bucket.get("total", 0) + 1
-
-        flat_results.append({
-            "test": test,
-            "status": status,
-            "area": area,
-            "duration_ms": r.get("duration"),
-            "message": r.get("message"),
-        })
 
     total = sum(totals.values())
     passed = totals.get("PASS", 0) + totals.get("OK", 0)
@@ -140,7 +147,6 @@ def summarize_run(report: dict, path: Path) -> dict:
         "total": total,
         "pass_rate": pass_rate,
         "areas": area_list,
-        "results": flat_results,
     }
 
 
