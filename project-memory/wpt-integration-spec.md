@@ -12,8 +12,8 @@ last_updated: 2026-05-26
 | 1   — wptrunner integration            | ✓ DONE | M1 hit: `wpt run --product=koala /css/CSS2/visudet/content-height-001.html` returns `TEST_END: PASS` end-to-end. Plugin at `wpt-tools/wptrunner-koala/`; subprocess JSON-line protocol implemented in `koala-cli --wpt-protocol`. |
 | 1.5 — Observable Framework dashboard  | ✓ DONE | Single-page Linear-styled dashboard at `dashboard/`. Parquet + DuckDB-WASM for per-test drill-down. Crash-reason aggregation, click-to-filter from top crash reasons → tests table. |
 | 2   — DOM bridge                       | ✓ DONE | Every spec bullet live (see Phase 2 section). `document.*` + `Element.*` + `window`. DOM mutation triggers a re-cascade + re-layout in `koala-browser`. |
-| 3   — event loop                       | 1/3    | Chunk 1 (`setTimeout` / `clearTimeout` + `pump_until_idle`) landed. Chunk 2 (`setInterval` + `DOMContentLoaded`/`load`) and chunk 3 (`EventTarget`) outstanding. |
-| 4   — external `<script src>`         | ─      |  |
+| 3   — event loop                       | ✓ DONE | Chunk 1 (`setTimeout` / `clearTimeout` + `pump_until_idle`), chunk 2 (`setInterval` / `clearInterval` with the shared id pool), and chunk 3 (`EventTarget` mixin on `window` / `document` / `Element`, `Event` constructor with `preventDefault` + `stopImmediatePropagation`, and `DOMContentLoaded` / `load` fired from the koala-browser pipeline) all landed. Dispatch is strict-target-only — bubbling / capture phases are deferred. |
+| 4   — external `<script src>`         | ✓ DONE | `load_scripts` walks the DOM in tree order, fetching external scripts via the existing `koala_common::net` paths (HTTP / data: / file). All scripts execute *after* parse rather than mid-parse — true parse-blocking semantics would require parser-side hooks and are deferred. `async` / `defer` recognized but treated as synchronous. Fetch failures recorded in `parse_issues` rather than aborting. |
 | 5   — testharness.js result reporting | ─      | Hits M2 when this lands. |
 
 Reality-check / known limitations recorded as we hit them:
