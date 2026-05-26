@@ -145,6 +145,55 @@ const filtered = await db.query(
 );
 ```
 
+## Top crash reasons in this filter
+
+```js
+// Group CRASH-status rows by parsed panic reason. The `not yet
+// implemented:` panics are the dominant koala crash kind today, so
+// we extract that line first; otherwise fall back to the file:line
+// of the panic site. DuckDB's regexp_extract takes a 1-indexed
+// capture group.
+const crashReasonsTable = await db.query(
+  `SELECT
+     COALESCE(
+       NULLIF(regexp_extract(message, 'not yet implemented: ([^\n]+)', 1), ''),
+       NULLIF(regexp_extract(message, 'panicked at ([^\n]+):', 1), ''),
+       '(unparsed)'
+     ) AS reason,
+     COUNT(*)::INTEGER AS n
+   FROM results
+   WHERE run_id = ?
+     AND status = 'CRASH'
+     AND ${areaPred}
+   GROUP BY 1
+   ORDER BY n DESC
+   LIMIT 20`,
+  [run]
+);
+const crashReasons = Array.from(crashReasonsTable, r => ({
+  reason: r.reason,
+  count: r.n,
+}));
+```
+
+```js
+if (crashReasons.length === 0) {
+  display(html`<p><em>No crashes in this filter — every test ran to a real result.</em></p>`);
+} else {
+  display(
+    Inputs.table(crashReasons, {
+      columns: ["count", "reason"],
+      header: { count: "Crashes", reason: "Reason (parsed from panic)" },
+      width: { count: 80, reason: 800 },
+      rows: 20,
+      layout: "fixed",
+    })
+  );
+}
+```
+
+## Results
+
 <p style="margin: 0 0 0.5rem 0;">
   <strong>${filteredCount.toLocaleString()}</strong> matching rows
   ${filteredCount > 5000 ? html`(showing first 5,000)` : ""}
@@ -186,13 +235,97 @@ const selected = view(
 ```
 
 ```js
+function preBlock(text) {
+  return html`<pre style="white-space: pre-wrap; word-break: break-word;
+       background: var(--theme-background-alt); padding: 0.75rem;
+       border-radius: 4px; font-size: 0.85em;">${text}</pre>`;
+}
+
+// Parse the message field into a structured shape so the panel can
+// surface the actionable bit (panic reason, network error, pixel
+// mismatch) prominently and tuck the full text under a <details>.
+function formatMessage(status, raw) {
+  if (!raw) {
+    return status === "PASS"
+      ? html`<p style="opacity: 0.7;"><em>Test passed.</em></p>`
+      : html`<p style="opacity: 0.7;"><em>No message recorded for this ${status}.</em></p>`;
+  }
+
+  // CRASH — koala-cli panicked. Pull out file:line and the
+  // not-yet-implemented reason; both are emitted by Rust's default
+  // panic handler in the format
+  //   panicked at <file:line:col>:
+  //   <reason>
+  if (status === "CRASH") {
+    const m = raw.match(/panicked at ([^\n]+):\s*\n([^\n]+)/);
+    if (m) {
+      const [, location, reason] = m;
+      return html`
+        <p><strong>Panic at:</strong> <code>${location}</code></p>
+        <p><strong>Reason:</strong> <code style="background: var(--theme-background-alt); padding: 2px 6px; border-radius: 3px;">${reason}</code></p>
+        <details>
+          <summary style="cursor: pointer; opacity: 0.7;">Full crash output</summary>
+          ${preBlock(raw)}
+        </details>
+      `;
+    }
+  }
+
+  // ERROR — koala-cli emitted a `load_failed` event, the executor
+  // surfaces it as "koala load_failed for <url>: <reason>".
+  if (status === "ERROR") {
+    const m = raw.match(/^koala load_failed for (\S+):\s*(.+)/s);
+    if (m) {
+      const [, url, rest] = m;
+      const reason = rest.split("\n")[0].trim();
+      return html`
+        <p><strong>Failed to load:</strong> <code style="word-break: break-all;">${url}</code></p>
+        <p><strong>Reason:</strong> ${reason}</p>
+        <details>
+          <summary style="cursor: pointer; opacity: 0.7;">Full error output</summary>
+          ${preBlock(raw)}
+        </details>
+      `;
+    }
+  }
+
+  // FAIL — for reftests, wptrunner's "message" is just the test
+  // path + screenshot hash followed by the ref path + ref hash,
+  // separated by a newline. There's no semantic diff: it's "the
+  // pixels didn't match." Surface that explicitly so the user
+  // isn't squinting at hex hashes wondering what failed.
+  if (status === "FAIL") {
+    const lines = raw.trim().split("\n").filter(Boolean);
+    if (lines.length === 2) {
+      const t = lines[0].match(/^(\/\S+)\s+\['([0-9a-f]+)'\]/);
+      const r = lines[1].match(/^(\/\S+)\s+\['([0-9a-f]+)'\]/);
+      if (t && r) {
+        return html`
+          <p><strong>Pixel mismatch</strong> — koala's rendering of the test
+            differs from the reference. wptrunner doesn't archive screenshots
+            by default; re-run with <code>--reftest-screenshot=always</code>
+            to capture both PNGs.</p>
+          <p><strong>Test:</strong> <code>${t[1]}</code><br>
+             <span style="opacity: 0.7;">hash <code>${t[2].slice(0, 12)}</code></span></p>
+          <p><strong>Ref:</strong> <code>${r[1]}</code><br>
+             <span style="opacity: 0.7;">hash <code>${r[2].slice(0, 12)}</code></span></p>
+        `;
+      }
+    }
+  }
+
+  return preBlock(raw);
+}
+```
+
+```js
 if (!selected) {
   display(html`<p><em>Select a row above to see its failure
     message and surrounding context.</em></p>`);
 } else {
   // `selected` is an Arrow RowProxy; pull the columns we want into a
-  // plain object so template literals and the message <pre> work
-  // without surprises.
+  // plain object so template literals and the message handlers work
+  // without RowProxy surprises.
   const row = {
     test: selected.test,
     status: selected.status,
@@ -202,15 +335,13 @@ if (!selected) {
   };
   display(html`
     <div class="card">
-      <h3 style="margin-top: 0; font-family: var(--monospace);">${row.test}</h3>
+      <h3 style="margin-top: 0; font-family: var(--monospace); word-break: break-all;">${row.test}</h3>
       <p>
         <strong>Status:</strong> ${row.status} ·
         <strong>Area:</strong> ${row.area} ·
         <strong>Duration:</strong> ${row.duration_ms ?? "—"} ms
       </p>
-      ${row.message
-        ? html`<pre style="white-space: pre-wrap; background: var(--theme-background-alt); padding: 0.75rem; border-radius: 4px;">${row.message}</pre>`
-        : html`<p><em>(no message — the test ${row.status === "PASS" ? "passed" : "produced no diagnostic"})</em></p>`}
+      ${formatMessage(row.status, row.message)}
     </div>
   `);
 }
