@@ -171,26 +171,24 @@ const selR = selectedReason;
 const selA = selectedAreaPick;
 
 const crashListView = crashRows.length === 0
-  ? html`<ul class="dash-rank"><li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); font-style: italic; cursor: default;">No crashes in this run</li></ul>`
+  ? html`<ul class="dash-rank"><li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); cursor: default;">No crashes in this run</li></ul>`
   : html`<ul class="dash-rank">
       ${crashRows.map(r => html`
         <li class=${selR === r.reason ? "selected" : ""}
             onclick=${() => toggleReason(r.reason)}>
           <span class="count">${fmtNum(r.n)}</span>
           <span class="label" title=${r.reason}>${r.reason}</span>
-          <span class="bar"><div style=${`width: ${(r.n / maxCrash * 100).toFixed(1)}%`}></div></span>
         </li>`)}
     </ul>`;
 
 const areaListView = areaRows.length === 0
-  ? html`<ul class="dash-rank"><li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); font-style: italic; cursor: default;">No areas in this run</li></ul>`
+  ? html`<ul class="dash-rank"><li style="grid-template-columns: 1fr; color: var(--dash-fg-dim); cursor: default;">No areas in this run</li></ul>`
   : html`<ul class="dash-rank">
       ${areaRows.map(r => html`
         <li class=${selA === r.area ? "selected" : ""}
             onclick=${() => toggleArea(r.area)}>
           <span class="count" style=${`color: ${r.pass_rate > 0.5 ? "var(--dash-pass)" : "var(--dash-fail)"}`}>${(r.pass_rate * 100).toFixed(0)}%</span>
           <span class="label" title=${`${r.area} — ${r.pass}/${r.total}`}>${r.area}</span>
-          <span class="bar"><div style=${`width: ${(r.pass_rate * 100).toFixed(1)}%; background: ${r.pass_rate > 0.5 ? "var(--dash-pass)" : "var(--dash-fail)"}`}></div></span>
         </li>`)}
     </ul>`;
 
@@ -217,8 +215,8 @@ const _selA = selectedAreaPick;
 
 const chipRow = html`<div class="dash-chips">
   ${allStatuses.map(s => html`<span
-    class=${`dash-chip ${_ss.has(s) ? "active " + s.toLowerCase() : ""}`}
-    onclick=${() => toggleStatus(s)}>${s}</span>`)}
+    class=${`dash-chip ${s} ${_ss.has(s) ? "active" : ""}`}
+    onclick=${() => toggleStatus(s)}><span class="dot"></span>${s}</span>`)}
 </div>`;
 
 const searchInput = (() => {
@@ -383,7 +381,7 @@ const matchedCountText = totalMatch > 2000
   : `${totalMatch.toLocaleString()} matches`;
 
 const listView = html`<div class="dash-tests">
-  <div style="padding: 0.4rem 0.65rem; font-size: 0.75rem; color: var(--dash-fg-muted); background: var(--dash-bg-alt); border-bottom: 1px solid var(--dash-border); font-variant-numeric: tabular-nums;">${matchedCountText}</div>
+  <div class="dash-tests-header">${matchedCountText}</div>
   <table>
     <thead><tr><th>Test</th><th>Status</th><th>ms</th></tr></thead>
     <tbody>
