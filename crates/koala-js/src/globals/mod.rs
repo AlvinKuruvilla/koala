@@ -19,6 +19,10 @@
 
 mod console;
 mod document;
+mod element;
+mod helpers;
+mod selectors;
+mod text;
 pub(crate) mod timers;
 mod window;
 
