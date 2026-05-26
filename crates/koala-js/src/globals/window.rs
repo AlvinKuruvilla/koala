@@ -23,10 +23,23 @@
 //! # Not yet implemented
 //!
 //! - `window.location`, `window.navigator`, `window.history`, …
-//! - `setTimeout` / `setInterval` (Phase 3 — event loop)
-//! - Event handlers (`window.onload`, etc.)
+//! - Event-handler IDL attributes (`window.onload`, …) — today
+//!   listeners are registered via `addEventListener`, not by
+//!   assigning to `on*` properties.
 
-use boa_engine::{Context, js_string, property::Attribute};
+use boa_engine::{
+    Context, JsResult, JsValue, NativeFunction, js_string, property::Attribute,
+};
+
+use super::events::{
+    add_listener_at_scope, dispatch_event_call, remove_listener_at_scope,
+};
+
+/// Scope key used by `events::dispatch_at_scope` for listeners
+/// attached at the window level. Public so the runtime's
+/// lifecycle-event dispatcher in `crate::lib` can reuse it
+/// without duplicating the literal.
+pub(crate) const WINDOW_SCOPE: &str = "window";
 
 /// Register the `window` global on the context. Called from
 /// [`crate::globals::register_globals`] after the document and
@@ -37,4 +50,67 @@ pub fn register_window(context: &mut Context) {
     context
         .register_global_property(js_string!("window"), global, Attribute::all())
         .expect("`window` global should not already exist");
+}
+
+/// Register `addEventListener` / `removeEventListener` /
+/// `dispatchEvent` on the global object. Because `window === globalThis`
+/// for koala, registering these as plain globals makes them
+/// reachable both as bare names (`addEventListener(...)`) and as
+/// methods on `window` (`window.addEventListener(...)`).
+///
+/// Called from [`crate::globals::register_globals`] *before*
+/// `register_window` so the methods are visible on the global
+/// before any user script runs.
+pub fn register_event_target(context: &mut Context) {
+    context
+        .register_global_callable(
+            js_string!("addEventListener"),
+            2,
+            NativeFunction::from_copy_closure(window_add_event_listener),
+        )
+        .expect("window.addEventListener should not already be registered");
+    context
+        .register_global_callable(
+            js_string!("removeEventListener"),
+            2,
+            NativeFunction::from_copy_closure(window_remove_event_listener),
+        )
+        .expect("window.removeEventListener should not already be registered");
+    context
+        .register_global_callable(
+            js_string!("dispatchEvent"),
+            1,
+            NativeFunction::from_copy_closure(window_dispatch_event),
+        )
+        .expect("window.dispatchEvent should not already be registered");
+}
+
+fn window_add_event_listener(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let type_ = args.first().cloned().unwrap_or(JsValue::undefined());
+    let listener = args.get(1).cloned().unwrap_or(JsValue::undefined());
+    add_listener_at_scope(WINDOW_SCOPE, &type_, &listener, context)?;
+    Ok(JsValue::undefined())
+}
+
+fn window_remove_event_listener(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let type_ = args.first().cloned().unwrap_or(JsValue::undefined());
+    let listener = args.get(1).cloned().unwrap_or(JsValue::undefined());
+    remove_listener_at_scope(WINDOW_SCOPE, &type_, &listener, context)?;
+    Ok(JsValue::undefined())
+}
+
+fn window_dispatch_event(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    dispatch_event_call(WINDOW_SCOPE, this, args, context)
 }

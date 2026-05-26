@@ -29,12 +29,24 @@ use koala_dom::{NodeId, NodeType};
 
 use crate::dom_handle::{mark_dirty, with_dom, with_dom_mut};
 
+use super::events::{
+    add_listener_at_scope, dispatch_event_call, remove_listener_at_scope,
+};
 use super::helpers::{
     NODE_TYPE_ELEMENT, descendant_text, getter, js_string_value, missing_arg,
     no_dom_error, node_id_from_this, node_id_from_value, required_string_arg,
     type_error,
 };
 use super::selectors::{find_all_matches, find_first_match, parse_query_arg};
+
+/// Build the per-element scope key used by
+/// `events::dispatch_at_scope`. The Element-side EventTarget
+/// methods derive this from the wrapper's `__nodeId` slot, so
+/// listeners survive re-querying the same node through a new
+/// JsElement wrapper.
+pub(crate) fn element_scope_key(node_id: NodeId) -> String {
+    format!("node:{}", node_id.0)
+}
 
 /// Build the JS object that represents the element at `node_id`.
 ///
@@ -138,6 +150,21 @@ pub(super) fn make_element_object(
         .function(
             NativeFunction::from_copy_closure(query_selector_all),
             js_string!("querySelectorAll"),
+            1,
+        )
+        .function(
+            NativeFunction::from_copy_closure(element_add_event_listener),
+            js_string!("addEventListener"),
+            2,
+        )
+        .function(
+            NativeFunction::from_copy_closure(element_remove_event_listener),
+            js_string!("removeEventListener"),
+            2,
+        )
+        .function(
+            NativeFunction::from_copy_closure(element_dispatch_event),
+            js_string!("dispatchEvent"),
             1,
         )
         .accessor(
@@ -552,4 +579,40 @@ fn text_content_set(
     mark_dirty();
 
     Ok(JsValue::undefined())
+}
+
+fn element_add_event_listener(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let scope = element_scope_key(node_id);
+    let type_ = args.first().cloned().unwrap_or(JsValue::undefined());
+    let listener = args.get(1).cloned().unwrap_or(JsValue::undefined());
+    add_listener_at_scope(&scope, &type_, &listener, context)?;
+    Ok(JsValue::undefined())
+}
+
+fn element_remove_event_listener(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let scope = element_scope_key(node_id);
+    let type_ = args.first().cloned().unwrap_or(JsValue::undefined());
+    let listener = args.get(1).cloned().unwrap_or(JsValue::undefined());
+    remove_listener_at_scope(&scope, &type_, &listener, context)?;
+    Ok(JsValue::undefined())
+}
+
+fn element_dispatch_event(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let scope = element_scope_key(node_id);
+    dispatch_event_call(&scope, this, args, context)
 }

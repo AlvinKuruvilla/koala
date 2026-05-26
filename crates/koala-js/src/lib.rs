@@ -41,15 +41,24 @@
 //!   - `setTimeout`, `clearTimeout`
 //!   - `setInterval`, `clearInterval` (shared id pool with the
 //!     timeout variants)
+//! - EventTarget (Phase 3 chunk 3):
+//!   - `addEventListener` / `removeEventListener` /
+//!     `dispatchEvent` on `window`, `document`, and `Element`
+//!   - `new Event(type, { bubbles, cancelable })`,
+//!     `preventDefault`, `stopImmediatePropagation`
+//!   - Lifecycle events `DOMContentLoaded` and `load` fired from
+//!     [`JsRuntime::dispatch_dom_content_loaded`] /
+//!     [`JsRuntime::dispatch_load`]
 //! - DOM mutations trigger a re-cascade + re-layout in
 //!   koala-browser after scripts return.
 //!
 //! # Not Yet Implemented
 //!
-//! - Lifecycle events `DOMContentLoaded` / `load` (Phase 3 chunk 3,
-//!   landing alongside `EventTarget`)
-//! - `EventTarget`: `addEventListener` / `removeEventListener` /
-//!   `dispatchEvent` (Phase 3 chunk 3)
+//! - Event bubbling / capture phases — dispatch is currently
+//!   strict-target-only. `bubbles: true` is honoured on
+//!   `Event` instances but does not yet walk parent chains.
+//! - Event-handler IDL attributes (`window.onload = fn`,
+//!   `document.onreadystatechange`, …)
 //! - External scripts (`<script src="…">`), `async` / `defer`,
 //!   module scripts (Phase 4)
 //! - `Element.innerHTML` (write), Text-node accessors
@@ -65,7 +74,7 @@ pub use dom_handle::DomHandle;
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
-use boa_engine::{Context, JsError, JsValue, Source};
+use boa_engine::{Context, JsError, JsString, JsValue, Source, js_string};
 
 /// JavaScript runtime for a document.
 ///
@@ -300,6 +309,90 @@ impl JsRuntime {
     /// and layout against the post-script tree.
     pub fn take_dom_dirty(&self) -> bool {
         self.dom_dirty.replace(false)
+    }
+
+    /// Fire a `DOMContentLoaded` event at `document`.
+    ///
+    /// [§ 7.5 Loading the document](https://html.spec.whatwg.org/multipage/parsing.html#the-end)
+    ///
+    /// Called by `koala-browser` after every sync script has run
+    /// and before [`pump_until_idle`](Self::pump_until_idle), so
+    /// any listener registered via `document.addEventListener(
+    /// 'DOMContentLoaded', …)` runs on the just-parsed tree.
+    ///
+    /// `bubbles: true` and `cancelable: false` per spec, but
+    /// today's dispatcher is strict-target-only so the bubble
+    /// flag is recorded on the event without yet propagating up
+    /// to `window` listeners. That symmetry lands when the
+    /// bubble phase is implemented.
+    ///
+    /// Mutations triggered by listeners flow through the same
+    /// `dom_dirty` channel as `execute` and `pump_until_idle`.
+    ///
+    /// # Errors
+    ///
+    /// Returns any [`JsError`] thrown synchronously by a listener.
+    pub fn dispatch_dom_content_loaded(&mut self) -> Result<(), JsError> {
+        self.dispatch_lifecycle_event(
+            globals::document::DOCUMENT_SCOPE,
+            js_string!("DOMContentLoaded"),
+            /* bubbles */ true,
+        )
+    }
+
+    /// Fire a `load` event at `window`.
+    ///
+    /// [§ 7.5 Loading the document](https://html.spec.whatwg.org/multipage/parsing.html#the-end)
+    ///
+    /// Called by `koala-browser` after the post-script
+    /// [`pump_until_idle`](Self::pump_until_idle) returns. A
+    /// follow-up `pump_until_idle` is expected so that work
+    /// scheduled inside `load` listeners (typical pattern:
+    /// `window.addEventListener('load', () => setTimeout(...))`)
+    /// also runs before the document is considered done.
+    ///
+    /// `bubbles: false`, `cancelable: false` per spec.
+    ///
+    /// # Errors
+    ///
+    /// Returns any [`JsError`] thrown synchronously by a listener.
+    pub fn dispatch_load(&mut self) -> Result<(), JsError> {
+        self.dispatch_lifecycle_event(
+            globals::window::WINDOW_SCOPE,
+            js_string!("load"),
+            /* bubbles */ false,
+        )
+    }
+
+    /// Shared body for the lifecycle dispatchers. Installs the
+    /// DOM guard (listeners may touch the DOM via the bridge),
+    /// synthesises an `Event` with the supplied flags, and
+    /// dispatches at the requested scope using the global object
+    /// as both `target` and `currentTarget`.
+    fn dispatch_lifecycle_event(
+        &mut self,
+        scope: &str,
+        type_: JsString,
+        bubbles: bool,
+    ) -> Result<(), JsError> {
+        let dom_guard = dom_handle::guard(self.dom.clone());
+        let event = globals::events::make_event_object(
+            &mut self.context,
+            type_,
+            bubbles,
+            /* cancelable */ false,
+        );
+        let this_value = JsValue::from(self.context.global_object());
+        let result = globals::events::dispatch_at_scope(
+            scope,
+            &this_value,
+            &event,
+            &mut self.context,
+        );
+        if dom_guard.dirty_seen() {
+            self.dom_dirty.set(true);
+        }
+        result
     }
 }
 

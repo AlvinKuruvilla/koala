@@ -33,11 +33,20 @@ use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 use crate::dom_handle::{with_dom, with_dom_mut};
 
 use super::element::{array_of_element_objects, make_element_object};
+use super::events::{
+    add_listener_at_scope, dispatch_event_call, remove_listener_at_scope,
+};
 use super::helpers::{
     descendant_text, getter, js_string_value, no_dom_error, required_string_arg,
 };
 use super::selectors::{find_all_matches, find_first_match, parse_query_arg};
 use super::text::make_text_object;
+
+/// Scope key used by `events::dispatch_at_scope` for listeners
+/// attached to `document`. Public to the crate so
+/// [`crate::JsRuntime::dispatch_dom_content_loaded`] can reuse
+/// the literal.
+pub(crate) const DOCUMENT_SCOPE: &str = "document";
 
 /// Register the `document` global. Called once by
 /// [`super::register_globals`].
@@ -83,6 +92,21 @@ pub fn register_document(context: &mut Context) {
         .function(
             NativeFunction::from_copy_closure(create_text_node),
             js_string!("createTextNode"),
+            1,
+        )
+        .function(
+            NativeFunction::from_copy_closure(document_add_event_listener),
+            js_string!("addEventListener"),
+            2,
+        )
+        .function(
+            NativeFunction::from_copy_closure(document_remove_event_listener),
+            js_string!("removeEventListener"),
+            2,
+        )
+        .function(
+            NativeFunction::from_copy_closure(document_dispatch_event),
+            js_string!("dispatchEvent"),
             1,
         )
         .accessor(js_string!("body"), Some(body_getter), None, accessor_attrs)
@@ -349,4 +373,34 @@ fn find_head(dom: &DomTree) -> Option<NodeId> {
         dom.as_element(id)
             .is_some_and(|e| e.tag_name.eq_ignore_ascii_case("head"))
     })
+}
+
+fn document_add_event_listener(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let type_ = args.first().cloned().unwrap_or(JsValue::undefined());
+    let listener = args.get(1).cloned().unwrap_or(JsValue::undefined());
+    add_listener_at_scope(DOCUMENT_SCOPE, &type_, &listener, context)?;
+    Ok(JsValue::undefined())
+}
+
+fn document_remove_event_listener(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let type_ = args.first().cloned().unwrap_or(JsValue::undefined());
+    let listener = args.get(1).cloned().unwrap_or(JsValue::undefined());
+    remove_listener_at_scope(DOCUMENT_SCOPE, &type_, &listener, context)?;
+    Ok(JsValue::undefined())
+}
+
+fn document_dispatch_event(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    dispatch_event_call(DOCUMENT_SCOPE, this, args, context)
 }

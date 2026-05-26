@@ -10,22 +10,29 @@
 //!   (Phase-2 read-only subset; see [`document`] for the method
 //!   list)
 //!
+//! - `EventTarget` mixin on `window`, `document`, and `Element` —
+//!   [§ 2.6 Interface EventTarget](https://dom.spec.whatwg.org/#interface-eventtarget)
+//!   — plus a minimal `Event` constructor. Dispatch is
+//!   strict-target-only for now; see [`events`] for the
+//!   deferred-bubbling note.
+//!
 //! # Not Yet Implemented
 //!
 //! - `location` — [§ 7.7.1 The Location interface](https://html.spec.whatwg.org/multipage/nav-history-apis.html#the-location-interface)
 //! - `navigator` — [§ 8.8 The Navigator object](https://html.spec.whatwg.org/multipage/system-state.html#the-navigator-object)
-//! - `EventTarget` (Phase 3 chunk 3) — bringing
-//!   `addEventListener` / `removeEventListener` / `dispatchEvent`
-//!   along with the `DOMContentLoaded` / `load` lifecycle events
+//! - Event-handler IDL attributes (`window.onload = fn`,
+//!   `document.onreadystatechange`, …)
+//! - Event bubbling / capture phases (chunk-3 follow-up)
 
 mod console;
-mod document;
+pub(crate) mod document;
 mod element;
+pub(crate) mod events;
 mod helpers;
 mod selectors;
 mod text;
 pub(crate) mod timers;
-mod window;
+pub(crate) mod window;
 
 use boa_engine::Context;
 
@@ -48,11 +55,13 @@ pub fn register_globals(context: &mut Context) {
     console::register_console(context);
     document::register_document(context);
     timers::register_timers(context);
+    events::register_events(context);
+    window::register_event_target(context);
     window::register_window(context);
 
     // Not yet implemented:
     // - location (Phase 2 follow-up: requires URL state)
     // - navigator (Phase 2 follow-up: browser metadata)
-    // - addEventListener / removeEventListener / dispatchEvent +
-    //   DOMContentLoaded / load (Phase 3 chunk 3)
+    // - Event bubbling / capture (chunk 3 follow-up; today's
+    //   dispatch is strict-target-only)
 }
