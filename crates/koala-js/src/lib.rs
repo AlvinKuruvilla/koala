@@ -231,6 +231,29 @@ impl JsRuntime {
     /// any remaining work. Subsequent calls to `pump_until_idle`
     /// continue with the rest of the queue.
     pub fn pump_until_idle(&mut self) -> Result<(), JsError> {
+        self.pump_until_idle_or(|_| false)
+    }
+
+    /// Same as [`pump_until_idle`](Self::pump_until_idle), but
+    /// `should_stop` is consulted between iterations and the loop
+    /// exits early when it returns `true`.
+    ///
+    /// The predicate is invoked with a fresh `&mut JsRuntime`
+    /// borrow once at the top of each iteration and again before
+    /// the pump sleeps on a future-due timer, so a caller can use
+    /// it to short-circuit waiting once their work is complete
+    /// (e.g. the WPT testharness hook stops the pump as soon as
+    /// `__koala_emit_completion__` has fired — there's no point
+    /// sleeping for the harness's own watchdog `setTimeout` once
+    /// the actual completion payload is in).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`pump_until_idle`](Self::pump_until_idle).
+    pub fn pump_until_idle_or<F>(&mut self, mut should_stop: F) -> Result<(), JsError>
+    where
+        F: FnMut(&mut Self) -> bool,
+    {
         // Belt-and-braces budget so a broken setTimeout(fn, 0) →
         // setTimeout(fn, 0) loop can't hang the parse path
         // indefinitely. Honoured wptrunner timeouts will trip
@@ -242,6 +265,9 @@ impl JsRuntime {
             if started.elapsed() > budget {
                 break;
             }
+            if should_stop(self) {
+                break;
+            }
 
             let dom_guard = dom_handle::guard(self.dom.clone());
 
@@ -250,6 +276,15 @@ impl JsRuntime {
                 let Some(next) = scheduler::next_due_time() else {
                     break; // queue truly empty
                 };
+                // Drop the guard before re-consulting the predicate.
+                // The predicate may itself touch the DOM via Boa
+                // bindings, and we want the next iteration's guard
+                // (or none, if it returns true) to be the canonical
+                // one for that work.
+                drop(dom_guard);
+                if should_stop(self) {
+                    break;
+                }
                 let now = Instant::now();
                 if next > now {
                     let wait = next.saturating_duration_since(now)
@@ -282,6 +317,58 @@ impl JsRuntime {
             // outermost DOM context).
         }
 
+        Ok(())
+    }
+
+    /// Drain currently-due timer callbacks and microtasks without
+    /// sleeping for future timers.
+    ///
+    /// [HTML § 13.2.6 Stop parsing](https://html.spec.whatwg.org/multipage/parsing.html#stop-parsing)
+    /// calls for the task queue to be "processed" between
+    /// DOMContentLoaded and the `load` event. The processing step
+    /// runs whatever is currently due — it does not wait for
+    /// future timers (that's `pump_until_idle`'s job, after
+    /// `load`).
+    ///
+    /// Concretely: pop any `pop_due_now`-eligible timers, run
+    /// them, drain Boa's microtask queue, and repeat until no
+    /// timer is currently due. A 5s safety budget guards against
+    /// a `setTimeout(fn, 0)` → `setTimeout(fn, 0)` loop in a DCL
+    /// handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first `JsError` thrown by a callback,
+    /// abandoning any remaining work. Subsequent calls continue
+    /// with whatever's still queued.
+    pub fn drain_due_tasks(&mut self) -> Result<(), JsError> {
+        let budget = Duration::from_secs(5);
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > budget {
+                break;
+            }
+            let dom_guard = dom_handle::guard(self.dom.clone());
+            let due_ids = scheduler::pop_due_now();
+            if due_ids.is_empty() {
+                // Nothing currently due. Drain microtasks one
+                // last time in case the previous timer batch
+                // queued some, then exit — no waiting on future
+                // timers.
+                self.context.run_jobs();
+                break;
+            }
+            for (id, repeat) in due_ids {
+                self.call_timer_callback(id, repeat.is_some())?;
+                if let Some(period) = repeat {
+                    scheduler::schedule(id, period, Some(period));
+                }
+            }
+            self.context.run_jobs();
+            if dom_guard.dirty_seen() {
+                self.dom_dirty.set(true);
+            }
+        }
         Ok(())
     }
 

@@ -187,6 +187,30 @@ pub fn take_test_results(
     })
 }
 
+/// Return `true` if the testharness completion callback has
+/// fired (the `__koala_test_completion__` JS slot is non-null /
+/// non-undefined).
+///
+/// This is a non-draining peek — repeated calls keep returning
+/// `true` until [`take_test_completion`] drains the slot back to
+/// `null`. Intended for use as the stop predicate of
+/// [`JsRuntime::pump_until_idle_or`](koala_js::JsRuntime::pump_until_idle_or):
+/// once the harness has emitted its overall verdict, the pump
+/// has no reason to keep sleeping for stray watchdog timers.
+///
+/// # Errors
+///
+/// Returns a [`JsError`] only when the slot has been replaced
+/// with a value that is neither null nor an object — symptomatic
+/// of a malicious script having clobbered the buffer.
+pub fn has_test_completion(runtime: &mut JsRuntime) -> Result<bool, JsError> {
+    runtime.with_context_mut(|context| {
+        let global = context.global_object();
+        let value = global.get(js_string!(testharness::COMPLETION_KEY), context)?;
+        Ok(!value.is_null_or_undefined())
+    })
+}
+
 /// Drain the harness completion payload, if any.
 ///
 /// Returns `None` until `__koala_emit_completion__` has fired at

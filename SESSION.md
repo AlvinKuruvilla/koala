@@ -96,26 +96,34 @@ Verification: `wpt run --product=koala
 `Element.childElementCount` itself isn't implemented yet —
 that's a separate DOM gap, captured below).
 
-## Engine pump waits for harness setTimeout even when results are in
+## Engine pump waits for harness setTimeout (resolved)
 
-`koala_js::JsRuntime::pump_until_idle` (at `crates/koala-js/src/lib.rs:233`)
-sleeps until the next scheduled timer is due. testharness.js
-schedules a `setTimeout(harness_timeout_fn, 10000 * multiplier)`
-inside the `Tests` constructor, so every WPT run sleeps the full
-harness timeout even when the test completed synchronously and
-`__koala_emit_completion__` already fired.
+**Resolved** in `perf(js): early-exit pump_until_idle once
+testharness completion fires`.
 
-Symptom: every testharness test takes ~10s × `timeout-multiplier`
-to come back, and short wptrunner deadlines surface as TIMEOUT
-even though the result was actually ready immediately.
+Two changes landed together:
 
-Sketch of the fix: expose a "has the testharness completed?"
-signal from `TestharnessHook` and let `load_document_with_hooks`
-(or a new `pump_until_idle_or_settled` variant) break out of
-the pump loop as soon as the completion callback fires. Care
-needed for `async_test` and `promise_test` — those legitimately
-need the pump to drain timers before they finish, so we can't
-just kill the pump on first emit.
+- `JsRuntime::pump_until_idle_or<F>` accepts a stop predicate
+  consulted between iterations and before sleeping. The
+  existing `pump_until_idle` delegates with `|_| false`.
+- The DCL→`load` lifecycle now uses a new
+  `JsRuntime::drain_due_tasks` that processes currently-due
+  timers + microtasks without sleeping for future ones. The
+  testharness watchdog `setTimeout` no longer blocks `load`
+  from firing.
+
+`TestharnessHook::should_stop_pumping` reads
+`koala_wpt::has_test_completion` (a non-draining peek of the
+`__koala_test_completion__` slot). Once the harness completion
+callback has fired the post-load pump exits on its next
+iteration. async / promise tests still drain correctly — they
+register their completion via the same callback path; the
+pump just keeps running until that callback fires.
+
+Verification: the sync test
+`/dom/nodes/Element-childElementCount-nochild.html` now runs in
+~19 ms inside wptrunner (was ~50 003 ms — bounded by the
+harness timeout × `timeout-multiplier`).
 
 ## Pre-existing clippy errors unmasked
 

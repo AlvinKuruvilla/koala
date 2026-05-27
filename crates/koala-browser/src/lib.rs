@@ -130,6 +130,20 @@ pub trait JsHooks {
     /// globals or pre-populate hidden state.
     fn before_scripts(&mut self, _rt: &mut JsRuntime) {}
 
+    /// Consulted between iterations of the post-`load`
+    /// [`pump_until_idle`](JsRuntime::pump_until_idle_or) loop.
+    /// Returning `true` exits the pump immediately.
+    ///
+    /// Default implementation never stops, matching the
+    /// pre-hook behaviour. Hooks that observe a definite
+    /// completion signal — most notably the WPT testharness
+    /// bridge, which has captured `__koala_emit_completion__` —
+    /// override this so the pump doesn't keep sleeping for
+    /// stray watchdog timers once the verdict is in.
+    fn should_stop_pumping(&mut self, _rt: &mut JsRuntime) -> bool {
+        false
+    }
+
     /// Called once after the post-`load` pump returns and right
     /// before the runtime is dropped. The right place to read
     /// out any state the hook accumulated during script
@@ -300,20 +314,32 @@ fn parse_html_with_base_url<H: JsHooks>(
         //   3. Drain the task queue (setTimeout / setInterval callbacks)
         //   4. Fire load at the window
         //   5. Drain anything queued by load handlers
-        // We collapse "drain" into the same `pump_until_idle` used
-        // after script execution. Errors thrown by listeners or
-        // timer callbacks are recorded as parse issues rather than
-        // aborting the document.
+        // Errors thrown by listeners or timer callbacks are
+        // recorded as parse issues rather than aborting the
+        // document.
+        //
+        // The DCL→load drain (step 3) uses `drain_due_tasks`,
+        // which processes whatever is currently due without
+        // sleeping for future timers. Sleeping here would force
+        // every WPT testharness run to wait the harness's
+        // watchdog `setTimeout` (10 s × `timeout_multiplier`)
+        // before firing `load` — the watchdog is scheduled at
+        // testharness.js IIFE-load time and is the longest
+        // single timer in the queue. The post-`load` pump (step
+        // 5) is where future-timer waiting belongs, and it's
+        // also where `should_stop_pumping` can exit early once
+        // a hook signals it's done.
         if let Err(e) = js_runtime.dispatch_dom_content_loaded() {
             parse_issues.push(format!("JavaScript error (in DOMContentLoaded): {e}"));
         }
-        if let Err(e) = js_runtime.pump_until_idle() {
+        if let Err(e) = js_runtime.drain_due_tasks() {
             parse_issues.push(format!("JavaScript error (in timer): {e}"));
         }
         if let Err(e) = js_runtime.dispatch_load() {
             parse_issues.push(format!("JavaScript error (in load): {e}"));
         }
-        if let Err(e) = js_runtime.pump_until_idle() {
+        let pump_result = js_runtime.pump_until_idle_or(|rt| hooks.should_stop_pumping(rt));
+        if let Err(e) = pump_result {
             parse_issues.push(format!("JavaScript error (in timer): {e}"));
         }
         // Hook point: caller drains any state it accumulated

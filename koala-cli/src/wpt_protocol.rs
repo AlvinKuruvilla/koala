@@ -272,6 +272,16 @@ impl JsHooks for TestharnessHook {
         koala_wpt::install(rt);
     }
 
+    fn should_stop_pumping(&mut self, rt: &mut JsRuntime) -> bool {
+        // Once the harness has emitted its completion payload,
+        // there's no reason for the pump to keep sleeping on
+        // testharness.js's watchdog `setTimeout`. Read failures
+        // (only possible if a script has clobbered the hidden
+        // buffer slot) fall back to "keep pumping" so the budget
+        // path still terminates the loop.
+        koala_wpt::has_test_completion(rt).unwrap_or(false)
+    }
+
     fn after_settled(&mut self, rt: &mut JsRuntime) {
         // Drain results. Errors here can only come from a
         // malicious script clobbering the hidden buffer slot,
