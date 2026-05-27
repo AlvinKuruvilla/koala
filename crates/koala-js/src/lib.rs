@@ -170,6 +170,13 @@ impl JsRuntime {
     pub fn execute(&mut self, source: &str) -> Result<JsValue, JsError> {
         let dom_guard = dom_handle::guard(self.dom.clone());
         let result = self.context.eval(Source::from_bytes(source));
+        // Drain Boa's microtask / Promise job queue. Boa
+        // explicitly does NOT do this as part of `eval` — see
+        // `Context::run_jobs` doc — so promises resolved during
+        // the script never fire their `.then` continuations
+        // without this call. testharness.js's whole test-
+        // scheduling path relies on it.
+        self.context.run_jobs();
         if dom_guard.dirty_seen() {
             self.dom_dirty.set(true);
         }
@@ -263,6 +270,10 @@ impl JsRuntime {
                     scheduler::schedule(id, period, Some(period));
                 }
             }
+            // Timer callbacks may have resolved / rejected
+            // promises; drain those microtasks before checking
+            // for more due timers.
+            self.context.run_jobs();
 
             if dom_guard.dirty_seen() {
                 self.dom_dirty.set(true);
@@ -463,6 +474,7 @@ impl JsRuntime {
             &event,
             &mut self.context,
         );
+        self.context.run_jobs();
         if dom_guard.dirty_seen() {
             self.dom_dirty.set(true);
         }
@@ -518,6 +530,12 @@ impl JsRuntime {
             &event,
             &mut self.context,
         );
+        // Listeners may resolve / reject promises (e.g.
+        // `DOMContentLoaded` handlers that kick off a
+        // `promise_test`); drain those microtasks before
+        // returning so the caller's next `pump_until_idle` /
+        // drain sees them.
+        self.context.run_jobs();
         if dom_guard.dirty_seen() {
             self.dom_dirty.set(true);
         }
