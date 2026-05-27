@@ -22,26 +22,26 @@ cargo test test_name                # Run a specific test
 cargo run --bin koala -- <file.html>
 cargo run --bin koala -- --html '<h1>Test</h1>'
 
-# Run the Qt browser UI
-cargo run --bin koala-qt
+# Run the browser UI
+cargo run --bin koala-ui
 
 # Lint
 cargo clippy --workspace
 cargo fmt --check
 ```
 
-## Qt Browser UI
+## Browser UI
 
-`koala-qt` is a Ladybird-modeled Qt6 browser chrome with a cxx bridge to the
-`koala-browser` engine. The Qt widget layer is in `koala-qt/cpp/`
-(`BrowserWindow`, `TabWidget`, `Tab`, `LocationEdit`, `BrowserView`), and the
-Rust side (`koala-qt/src/`) hosts the engine plus the bridge. Each new tab
-renders the landing page from `koala-qt/res/landing.html` via the viewport
-widget.
+`koala-ui` is the multi-tab browser chrome over `koala-browser`. The frontend
+is written in [Slint](https://slint.dev) — `.slint` markup under `koala-ui/ui/`
+(`main.slint` for the window + menu bar, `tabs.slint` for the tab strip) and
+Rust glue under `koala-ui/src/` (`main.rs` event-loop wiring, `tab_state.rs`
+per-tab state, `browser_page.rs` engine integration). Each tab owns its own
+`BrowserPage` with its own render and loader worker threads; the active tab's
+RGBA frames flow into a Slint `Image` item via `SharedPixelBuffer<Rgba8Pixel>`.
 
-Requires Qt6 (Homebrew: `brew install qt`). The build script discovers Qt via
-`qmake6` and compiles the C++ sources through `cxx-build`, running `moc` on
-Q_OBJECT-bearing headers.
+Pure-Rust dependencies — no C++ build step, no system Qt install. `slint` and
+`slint-build` are pulled directly from crates.io.
 
 ## Project Overview
 
@@ -244,7 +244,7 @@ koala/
 │   ├── koala-wpt/        # WPT-runner-specific glue (testharness.js bridge)
 │   └── koala-browser/    # Document pipeline + software renderer
 ├── koala-cli/            # Primary binary: HTML-to-image renderer
-├── koala-qt/             # Qt browser UI (cxx bridge to koala-browser)
+├── koala-ui/             # Browser UI (Slint frontend over koala-browser)
 └── res/                  # Test HTML files
 ```
 
@@ -260,7 +260,7 @@ koala-wpt          (depends on koala-js — WPT-only globals, not pulled by brow
     ↑
 koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css, koala-js)
     ↑
-koala-qt           (depends on koala-browser via `cxx`; widget layer in C++)
+koala-ui           (depends on koala-browser; Slint frontend, multi-tab chrome)
 koala-cli          (depends on koala-browser + koala-wpt; the latter for `--wpt-protocol` mode)
 ```
 
@@ -283,13 +283,13 @@ The `DomTree` uses arena-based allocation with `NodeId` indices for O(1) travers
 - **CSS Engine**: Tokenizer, parser, selector matching (type/class/ID/combinators/attribute selectors), cascade, computed styles, CSS variables, shorthand expansion
 - **Layout**: Block (CSS 2.1 § 9-10), inline formatting context, flexbox, grid, table, inline-block, margin collapsing, replaced elements (`<img>`), overflow clipping
 - **Rendering**: Headless PNG/JPG/BMP output via software renderer — text (bold/italic/decoration), backgrounds, borders (with radius), box shadows, images
-- **Qt Browser UI**: `koala-qt` — Ladybird-modeled QMainWindow/QTabWidget/LocationEdit/BrowserView shell over a cxx bridge into koala-browser, with OS-standard keyboard shortcuts and a landing page served from `koala-qt/res/landing.html`
+- **Browser UI**: `koala-ui` — Slint frontend with multi-tab chrome, per-tab `BrowserPage` workers, native macOS menu bar with ⌘ shortcuts (New/Close Tab, Reload, Focus Location Bar, Back/Forward, Quit), and a landing page served from `koala-ui/res/landing.html`
 
 ### Dependencies
 
 - **fontdue** — Font rasterization and text measurement
 - **image** — Image encoding (PNG, JPG, etc.)
-- **cxx** — Rust ↔ C++ bridge used by `koala-qt`
+- **slint** — UI toolkit for `koala-ui`
 - **serde** — Serialization for computed styles
 - **strum/strum_macros** — Enum utilities for tokenizer states
 - **thiserror** — Typed error enums at I/O boundaries

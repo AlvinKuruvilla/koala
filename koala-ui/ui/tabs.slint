@@ -1,0 +1,113 @@
+// Tab strip building blocks: the per-row payload struct `TabEntry`
+// and the visual component `TabItem`. Kept separate from
+// `main.slint` so the strip can grow (favicons, pinned state, tab
+// groups, audio indicators) without inflating the top-level window
+// component.
+//
+// Both items are exported. `TabEntry` is re-exported from
+// `main.slint` so Rust sees the generated struct via
+// `slint::include_modules!()`. `TabItem` only needs to be visible
+// to `main.slint`'s `for` loop, but the cost of exporting it is
+// nil.
+//
+// The close button is laid out as a sibling of the activate
+// TouchArea (not a child), so clicking ✕ never also fires
+// activate. Slint's TouchArea overlap dispatch would otherwise
+// let both fire and we'd activate a row immediately before
+// removing it.
+
+import { Spinner, Palette } from "std-widgets.slint";
+
+export struct TabEntry {
+    title: string,
+    loading: bool,
+}
+
+export component TabItem inherits Rectangle {
+    in property <string> title;
+    in property <bool> loading;
+    in property <bool> active;
+
+    callback activate();
+    callback close();
+
+    background: root.active ? Palette.background : Palette.alternate-background;
+    border-radius: 4px;
+    height: 30px;
+    min-width: 128px;
+    max-width: 225px;
+    horizontal-stretch: 1;
+
+    HorizontalLayout {
+        spacing: 0px;
+
+        TouchArea {
+            clicked => { root.activate(); }
+            pointer-event(event) => {
+                // Middle-click anywhere on the tab body closes it.
+                // Fired on release so a stray middle-press during
+                // a drag doesn't unintentionally remove the tab.
+                if (event.button == PointerEventButton.middle
+                    && event.kind == PointerEventKind.up) {
+                    root.close();
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 4px;
+                spacing: 6px;
+                alignment: stretch;
+
+                if root.loading: Spinner {
+                    indeterminate: true;
+                    width: 14px;
+                    height: 14px;
+                }
+
+                Text {
+                    text: root.title == "" ? "New Tab" : root.title;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    color: Palette.foreground;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        close-area := TouchArea {
+            width: 24px;
+            mouse-cursor: pointer;
+            clicked => { root.close(); }
+
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                background: close-area.has-hover
+                    ? Palette.alternate-background.darker(0.1)
+                    : transparent;
+
+                // U+00D7 MULTIPLICATION SIGN, not U+2715
+                // MULTIPLICATION X — the latter is in the Dingbats
+                // block and missing from several common system
+                // fonts (Slint falls back to the replacement
+                // square when the chosen font doesn't carry it).
+                // U+00D7 is in Latin-1 Supplement so every font
+                // ships it. Explicit width/height on the Text
+                // makes `horizontal-alignment` / `vertical-alignment`
+                // take effect — without them the Text shrinks to
+                // its glyph box and centering is a no-op.
+                Text {
+                    width: 100%;
+                    height: 100%;
+                    text: "×";
+                    color: Palette.foreground;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

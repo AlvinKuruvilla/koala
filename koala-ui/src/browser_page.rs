@@ -1,7 +1,7 @@
 // BrowserPage — Rust side of the viewport rendering bridge.
 //
 // A `BrowserPage` owns two worker threads so that neither network
-// I/O nor CPU rasterization ever runs on the Qt GUI thread:
+// I/O nor CPU rasterization ever runs on the Slint event loop:
 //
 //   - **render worker**: takes a `RenderJob { Arc<PageState>, w, h }`,
 //     runs layout → paint → rasterize, and emits a `RenderResult`
@@ -15,16 +15,16 @@
 // page is being fetched, and once the new `PageState` lands the
 // GUI schedules a fresh render.
 //
-// The C++ `BrowserView` widget drives the flow: it calls
-// `request_render(w, h)` and `request_load(url)` from the Qt
-// thread (both non-blocking — they return as soon as the job is
-// in the queue) and polls `try_take_render_result` /
-// `try_take_load_result` from a `QTimer` slot at ~60 Hz.
+// The Slint main loop drives the flow: it calls `request_render`
+// and `request_load` from the event-loop thread (both non-blocking
+// — they return as soon as the job is in the queue) and polls
+// `try_take_render_image` / `try_take_load_result` from a
+// `slint::Timer` callback at ~60 Hz.
 //
 // The JavaScript runtime that koala-browser builds during parse is
 // discarded here. Boa's `Context` is not `Send`, which would prevent
 // the rest of the document from crossing the thread boundary. Since
-// koala-qt has no DOM↔JS bindings yet, keeping the runtime past
+// koala-ui has no DOM↔JS bindings yet, keeping the runtime past
 // parse time provides no value anyway; we run inline scripts inside
 // `parse_html_string` / `load_document` and drop the interpreter
 // immediately after.
@@ -43,13 +43,12 @@ use koala_browser::{
     FontProvider, LoadedDocument, LoadedImage, Renderer, RendererFonts, load_document,
     parse_html_string,
 };
-
-use crate::bridge::ffi::{LoadPollResult, RenderResult};
+use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 // Process-wide `RendererFonts` cache. Loading four font files from
 // disk costs ~250 ms on macOS; doing it per render was the dominant
-// cost before task #6. Now loaded exactly once, shared across every
-// `BrowserPage` and every render via `Arc` clones.
+// cost before the rasterizer rework. Now loaded exactly once, shared
+// across every `BrowserPage` and every render via `Arc` clones.
 fn cached_fonts() -> &'static RendererFonts {
     static FONTS: OnceLock<RendererFonts> = OnceLock::new();
     FONTS.get_or_init(RendererFonts::from_system)
@@ -61,6 +60,36 @@ fn cached_fonts() -> &'static RendererFonts {
 fn cached_font_provider() -> &'static FontProvider {
     static PROVIDER: OnceLock<FontProvider> = OnceLock::new();
     PROVIDER.get_or_init(FontProvider::load)
+}
+
+/// Summary returned by `try_take_load_result`. The GUI side uses
+/// `state_swapped` to decide whether to trigger a fresh render, and
+/// `load_finished` to toggle any loading indicator (success and
+/// failure both count as "finished" — the engine is no longer working
+/// on that request).
+pub struct LoadPollResult {
+    /// `true` when the loader worker delivered a new page state on
+    /// this poll (successful load only).
+    pub state_swapped: bool,
+    /// `true` when a load request completed (either with a new state
+    /// or with an error). `false` means no load event was pending.
+    pub load_finished: bool,
+}
+
+/// One finished frame produced by the render worker. Crate-private
+/// — the public surface exposes `try_take_render_image` which wraps
+/// these bytes into a Slint `Image`.
+///
+/// `error` is populated when the render worker caught a panic while
+/// trying to rasterise the page. The Rust side handles this case
+/// internally by swapping the current page for the built-in error
+/// template and scheduling a fresh render; the GUI caller never sees
+/// the error payload and only knows that no paintable frame arrived.
+struct RenderResult {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    error: String,
 }
 
 /// The Send-able subset of `LoadedDocument` needed to render a page.
@@ -218,21 +247,21 @@ pub struct BrowserPage {
 }
 
 impl BrowserPage {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let (render_job_tx, render_job_rx) = mpsc::channel::<RenderJob>();
         let (render_result_tx, render_result_rx) = mpsc::channel::<RenderResult>();
         let render_worker = thread::Builder::new()
-            .name("koala-qt-render".to_owned())
+            .name("koala-ui-render".to_owned())
             .spawn(move || run_render_worker(&render_job_rx, &render_result_tx))
-            .expect("failed to spawn koala-qt render worker");
+            .expect("failed to spawn koala-ui render worker");
 
         let (load_request_tx, load_request_rx) = mpsc::channel::<LoadRequest>();
         let (load_result_tx, load_result_rx) = mpsc::channel::<LoadResult>();
         let load_result_tx_for_worker = load_result_tx.clone();
         let load_worker = thread::Builder::new()
-            .name("koala-qt-loader".to_owned())
+            .name("koala-ui-loader".to_owned())
             .spawn(move || run_load_worker(&load_request_rx, &load_result_tx_for_worker))
-            .expect("failed to spawn koala-qt loader worker");
+            .expect("failed to spawn koala-ui loader worker");
 
         Self {
             state: None,
@@ -389,9 +418,17 @@ impl BrowserPage {
         }
     }
 
+    /// The most-recently-committed URL, if any. `None` when the
+    /// current page came from `load_html` or the built-in landing
+    /// page — those have no addressable identity. Used to keep the
+    /// URL bar in sync after Back / Forward jumps.
+    pub fn current_url(&self) -> Option<String> {
+        self.current_url.clone()
+    }
+
     /// The current page's `<title>` text, or an empty string when
-    /// there is no current page or it has no title. Read by
-    /// `BrowserView` after every load to update the tab label.
+    /// there is no current page or it has no title. Read after every
+    /// load to update the tab label.
     pub fn current_title(&self) -> String {
         self.state
             .as_ref()
@@ -469,46 +506,49 @@ impl BrowserPage {
         });
     }
 
-    /// Non-blocking check for a finished frame. Returns an empty
-    /// `RenderResult` (`pixels.len() == 0`) when no frame is ready.
-    /// Intended to be called from a Qt timer slot at ~60 Hz.
+    /// Non-blocking check for a finished frame. Returns `None` when
+    /// no frame is ready. Intended to be called from a `slint::Timer`
+    /// at ~60 Hz.
     ///
-    /// When the render worker caught a panic while rasterising
-    /// the current page (e.g. a slice out-of-bounds in the grid
-    /// layout code on a real-world site), the worker sends back a
-    /// result with `error` populated and no pixels. We handle
-    /// that case right here on the main thread by synthesising an
-    /// error-page `PageState` and injecting it through the load
-    /// channel, so the next poll tick swaps state and schedules a
-    /// fresh render of the built-in error template. The C++
-    /// caller always sees either a real frame or an empty
-    /// placeholder — it never has to know about engine panics.
-    pub fn try_take_render_result(&self) -> RenderResult {
-        let result = self.render_result_rx.try_recv().unwrap_or(RenderResult {
-            width: 0,
-            height: 0,
-            pixels: Vec::new(),
-            error: String::new(),
-        });
+    /// When the render worker caught a panic while rasterising the
+    /// current page (e.g. a slice out-of-bounds in real-world HTML),
+    /// the worker sends back a result with `error` populated and no
+    /// pixels. We handle that case here on the main thread by
+    /// synthesising an error-page `PageState` and injecting it
+    /// through the load channel, so the next poll tick swaps state
+    /// and schedules a fresh render of the built-in error template.
+    /// The caller always sees either a real `Image` or `None` — it
+    /// never has to know about engine panics.
+    pub fn try_take_render_image(&self) -> Option<Image> {
+        let Ok(result) = self.render_result_rx.try_recv() else {
+            return None;
+        };
 
         if !result.error.is_empty() {
             self.install_engine_error(&result.error);
-            return RenderResult {
-                width: 0,
-                height: 0,
-                pixels: Vec::new(),
-                error: String::new(),
-            };
+            return None;
         }
 
-        result
+        if result.pixels.is_empty() || result.width == 0 || result.height == 0 {
+            return None;
+        }
+
+        // RGBA bytes are already in `Rgba8Pixel`'s memory layout
+        // (R, G, B, A; 4 bytes per pixel, no padding). `make_mut_bytes`
+        // exposes the buffer as a flat `&mut [u8]` of length
+        // `width * height * 4`, so a single `copy_from_slice` does the
+        // whole transfer — no per-pixel iteration, no allocation past
+        // the initial buffer.
+        let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(result.width, result.height);
+        buf.make_mut_bytes().copy_from_slice(&result.pixels);
+        Some(Image::from_rgba8(buf))
     }
 
     /// Builds the error page for the currently-displayed URL and
     /// injects it into the load result channel. The main poll loop
     /// then picks it up on its next tick and runs it through the
     /// normal `try_take_load_result` code path, which swaps the
-    /// `state` and emits `titleChanged` / `loadFinished` for free.
+    /// `state` and updates the title for free.
     ///
     /// Marks the injection as `HistoryNavigation` so the existing
     /// history stack is left alone — the failing URL was already
@@ -520,10 +560,7 @@ impl BrowserPage {
         let error_html = crate::error_page::render(&url, message);
         let Some(state) = PageState::from_document(parse_html_string(&error_html)).map(Arc::new)
         else {
-            // The error template itself failed to parse. We have
-            // nothing sensible to show, so drop on the floor and
-            // let the GUI keep whatever was last painted.
-            eprintln!("[koala-qt] error template failed to parse; engine error was: {message}");
+            eprintln!("[koala-ui] error template failed to parse; engine error was: {message}");
             return;
         };
         let _ = self.load_result_tx_main.send(LoadResult {
@@ -561,7 +598,7 @@ fn run_render_worker(
             },
             Err(payload) => {
                 let message = panic_message(&payload);
-                eprintln!("[koala-qt] render panicked: {message}");
+                eprintln!("[koala-ui] render panicked: {message}");
                 RenderResult {
                     width: latest.width,
                     height: latest.height,
@@ -577,20 +614,20 @@ fn run_render_worker(
     }
 }
 
-/// Emit each collected parse / script issue on its own stderr
-/// line, prefixed with the page URL so multiple concurrent
-/// loads can be told apart in the terminal. No-op for the empty
-/// case so clean pages don't add noise.
+/// Emit each collected parse / script issue on its own stderr line,
+/// prefixed with the page URL so multiple concurrent loads can be
+/// told apart in the terminal. No-op for the empty case so clean
+/// pages don't add noise.
 fn report_parse_issues(url: &str, issues: &[String]) {
     for issue in issues {
-        eprintln!("[koala-qt] {url}: {issue}");
+        eprintln!("[koala-ui] {url}: {issue}");
     }
 }
 
-/// Best-effort extraction of a human-readable message from a
-/// panic payload. `catch_unwind` hands us a `Box<dyn Any>`, so we
-/// try the two concrete types the standard library uses before
-/// falling back to a placeholder.
+/// Best-effort extraction of a human-readable message from a panic
+/// payload. `catch_unwind` hands us a `Box<dyn Any>`, so we try the
+/// two concrete types the standard library uses before falling back
+/// to a placeholder.
 fn panic_message(payload: &Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<String>() {
         s.clone()
@@ -605,14 +642,14 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
 /// `koala_browser::load_document` (blocking HTTP on this thread
 /// only) and turns the resulting document into an `Arc<PageState>`.
 ///
-/// The fetch + parse runs inside `catch_unwind` so a panic in
-/// any of koala-browser's dependencies (HTML parser, CSS parser,
-/// cascade, image decoder) doesn't kill the worker thread. On
-/// failure — whether from an HTTP error, an empty layout tree,
-/// or a caught panic — we build an error `PageState` from the
-/// built-in template and return it as a successful `Loaded`
-/// result, preserving the original `source` so the history stack
-/// behaves the same way as it would for a real page.
+/// The fetch + parse runs inside `catch_unwind` so a panic in any
+/// of koala-browser's dependencies (HTML parser, CSS parser, cascade,
+/// image decoder) doesn't kill the worker thread. On failure —
+/// whether from an HTTP error, an empty layout tree, or a caught
+/// panic — we build an error `PageState` from the built-in template
+/// and return it as a successful `Loaded` result, preserving the
+/// original `source` so the history stack behaves the same way as it
+/// would for a real page.
 fn run_load_worker(
     request_rx: &Receiver<LoadRequest>,
     result_tx: &Sender<LoadResult>,
@@ -625,21 +662,11 @@ fn run_load_worker(
         let state = match attempt {
             Ok(Ok(doc)) => {
                 // HTML parse warnings, script-load failures, and
-                // every JS error (script-eval, DOMContentLoaded,
-                // timer, load handler) collect into
-                // `LoadedDocument.parse_issues`. `koala-cli`
-                // already prints these under a "Parse Issues"
-                // header; the Qt browser was silently dropping
-                // them, which made debugging "site X looks
-                // half-rendered" blind. Mirror the cli's
-                // surfacing on stderr — every issue gets one
-                // line prefixed with the URL so the terminal
-                // launching `just gui` can be eyeballed.
-                //
-                // CSS warnings travel a different channel
-                // (`koala_common::warning::warn_once`) and
-                // already print to stderr at their own emit
-                // sites; nothing extra needed there.
+                // every JS error collect into
+                // `LoadedDocument.parse_issues`. Mirror koala-cli's
+                // surfacing on stderr so a partly-rendered site
+                // isn't an opaque mystery to whoever launched the
+                // app from a terminal.
                 report_parse_issues(&url, &doc.parse_issues);
                 match PageState::from_document(doc) {
                     Some(state) => Arc::new(state),
@@ -649,7 +676,7 @@ fn run_load_worker(
             Ok(Err(e)) => error_state(&url, &e.to_string()),
             Err(payload) => {
                 let message = panic_message(&payload);
-                eprintln!("[koala-qt] loader panicked for {url}: {message}");
+                eprintln!("[koala-ui] loader panicked for {url}: {message}");
                 error_state(&url, &message)
             }
         };
@@ -674,8 +701,6 @@ fn error_state(url: &str, message: &str) -> Arc<PageState> {
     if let Some(state) = PageState::from_document(parse_html_string(&html)) {
         return Arc::new(state);
     }
-    // Last-resort fallback: a trivial page the layout engine
-    // cannot plausibly choke on.
     let fallback = parse_html_string(
         "<!doctype html><html><body><h1>Page couldn't load</h1></body></html>",
     );
@@ -719,9 +744,4 @@ fn render_state(state: &PageState, width: u32, height: u32) -> Vec<u8> {
 
     renderer.render(&display_list);
     renderer.rgba_bytes().to_vec()
-}
-
-/// Factory used by the cxx bridge.
-pub fn new_browser_page() -> Box<BrowserPage> {
-    Box::new(BrowserPage::new())
 }

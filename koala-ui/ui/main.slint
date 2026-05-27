@@ -1,0 +1,200 @@
+// Top-level window: tab strip, header bar (back / forward /
+// reload / URL bar), an indeterminate progress strip visible
+// during in-flight navigations, and the viewport itself. Per-row
+// tab markup lives in `tabs.slint`.
+//
+// `TabEntry` is re-exported below so Rust sees the generated
+// struct via `slint::include_modules!()` — Slint only publishes a
+// struct's Rust binding from the entry-point module's export list.
+//
+// `viewport-width` / `viewport-height` are `out` so Rust can read
+// the laid-out viewport area (logical pixels) and request a render
+// at the right physical-pixel size — without these the polling
+// timer would have to subtract a hard-coded chrome height instead.
+
+import {
+    Button, LineEdit, HorizontalBox, VerticalBox,
+    ProgressIndicator, Palette,
+} from "std-widgets.slint";
+import { TabEntry, TabItem } from "tabs.slint";
+
+export { TabEntry }
+
+export component MainWindow inherits Window {
+    title: root.page-title;
+    preferred-width: 1024px;
+    preferred-height: 768px;
+    min-width: 640px;
+    min-height: 480px;
+
+    in property <[TabEntry]> tabs;
+    in property <int> active-tab: 0;
+    in property <image> viewport-source;
+    in property <string> page-title: "koala";
+    in property <bool> back-enabled: false;
+    in property <bool> forward-enabled: false;
+    in property <bool> loading: false;
+    in-out property <string> url-text;
+
+    out property <length> viewport-width: viewport.width;
+    out property <length> viewport-height: viewport.height;
+
+    callback navigate(string);
+    callback back();
+    callback forward();
+    callback reload();
+    callback tab-activated(int);
+    callback tab-closed(int);
+    callback new-tab();
+    callback quit-requested();
+
+    // Application menu bar. Native NSMenu on macOS, in-window
+    // strip elsewhere. Must be a direct child of `Window` —
+    // Slint rejects `MenuBar` defined in a separate component
+    // file, so the menu definition stays inline here even though
+    // the structural pieces (tab strip in tabs.slint, eventually
+    // devtools etc.) live in their own files.
+    //
+    // `Control` in `@keys(Control + X)` is Slint's cross-platform
+    // primary modifier — it maps to Command on macOS and Ctrl on
+    // Windows / Linux. Back and Forward use ⌘[ / ⌘] rather than
+    // ⌘← / ⌘→ because cmd-arrow is consumed by `LineEdit` for
+    // cursor positioning when the URL bar has focus, which would
+    // swallow the menu shortcut before dispatch. Safari uses the
+    // bracket bindings for the same reason.
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem {
+                title: "New Tab";
+                shortcut: @keys(Control + T);
+                activated => { root.new-tab(); }
+            }
+            MenuItem {
+                title: "Close Tab";
+                shortcut: @keys(Control + W);
+                activated => { root.tab-closed(root.active-tab); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Quit";
+                shortcut: @keys(Control + Q);
+                activated => { root.quit-requested(); }
+            }
+        }
+        Menu {
+            title: "View";
+            MenuItem {
+                title: "Reload";
+                shortcut: @keys(Control + R);
+                activated => { root.reload(); }
+            }
+            MenuItem {
+                title: "Focus Location Bar";
+                shortcut: @keys(Control + L);
+                activated => { url-input.focus(); }
+            }
+        }
+        Menu {
+            title: "History";
+            MenuItem {
+                title: "Back";
+                shortcut: @keys(Control + "[");
+                activated => { root.back(); }
+            }
+            MenuItem {
+                title: "Forward";
+                shortcut: @keys(Control + "]");
+                activated => { root.forward(); }
+            }
+        }
+    }
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            background: Palette.alternate-background.darker(0.05);
+            vertical-stretch: 0;
+            height: 40px;
+
+            HorizontalLayout {
+                padding: 4px;
+                spacing: 2px;
+                alignment: start;
+
+                for entry[i] in root.tabs: TabItem {
+                    title: entry.title;
+                    loading: entry.loading;
+                    active: i == root.active-tab;
+                    activate => { root.tab-activated(i); }
+                    close => { root.tab-closed(i); }
+                }
+
+                Button {
+                    text: "+";
+                    width: 32px;
+                    clicked => { root.new-tab(); }
+                }
+
+                // Filler so the + button doesn't expand into
+                // remaining space when there are few tabs.
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        HorizontalBox {
+            padding: 6px;
+            spacing: 4px;
+            vertical-stretch: 0;
+            alignment: stretch;
+
+            Button {
+                text: "←";
+                enabled: root.back-enabled;
+                clicked => { root.back(); }
+            }
+            Button {
+                text: "→";
+                enabled: root.forward-enabled;
+                clicked => { root.forward(); }
+            }
+            Button {
+                text: "↻";
+                clicked => { root.reload(); }
+            }
+
+            url-input := LineEdit {
+                placeholder-text: "Enter web address";
+                text <=> root.url-text;
+                accepted(text) => { root.navigate(text); }
+                changed has-focus => {
+                    // Browser convention: focusing the URL bar
+                    // selects the whole address so the next
+                    // keystroke replaces it. Re-focus also
+                    // re-selects, matching Safari / Chrome /
+                    // Firefox. Click-to-position cursor still
+                    // works on subsequent clicks because
+                    // `has-focus` doesn't change then.
+                    if (self.has-focus) {
+                        self.select-all();
+                    }
+                }
+                horizontal-stretch: 1;
+            }
+        }
+
+        if root.loading: ProgressIndicator {
+            indeterminate: true;
+            height: 3px;
+            vertical-stretch: 0;
+        }
+
+        viewport := Image {
+            source: root.viewport-source;
+            image-fit: fill;
+            vertical-stretch: 1;
+        }
+    }
+}

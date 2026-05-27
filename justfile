@@ -1,13 +1,8 @@
-# Open the browser GUI, optionally loading a URL or file path.
+# Open the browser GUI. The address bar handles URL navigation
+# after launch, so this recipe takes no argument.
 #   just gui
-#   just gui https://example.com
-#   just gui res/test.html
-gui url="":
-    @if [ -z "{{url}}" ]; then \
-        cargo run --bin koala; \
-    else \
-        cargo run --bin koala -- "{{url}}"; \
-    fi
+gui:
+    cargo run --bin koala-ui
 
 # Run the headless CLI, optionally saving a screenshot.
 #   just cli https://example.com

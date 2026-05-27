@@ -1,0 +1,21 @@
+[package]
+name = "koala-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Browser UI for koala — Slint frontend over koala-browser"
+
+[[bin]]
+name = "koala-ui"
+path = "src/main.rs"
+
+[dependencies]
+slint = "1.16"
+koala-browser.workspace = true
+
+[build-dependencies]
+slint-build = "1.16"
+
+[lints.rust]
+# `slint::include_modules!` generates pub items without doc comments.
+missing_docs = "allow"

@@ -10,7 +10,7 @@ members = [
     "crates/koala-wpt",
     "crates/koala-browser",
     "koala-cli",
-    "koala-qt",
+    "koala-ui",
 ]
 
 [workspace.package]
