@@ -33,9 +33,16 @@ wpt-setup:
 # plugin. Builds koala-cli in release mode first (incremental, so
 # no-op when up to date). The first invocation downloads the WPT
 # manifest (~40MB).
+#
+# Always writes a JSON wptreport to /tmp/koala-wpt.json so a
+# directory run's output is analyzable after the fact (per-test
+# status, subtest results, timing) without standing up the
+# dashboard. Use `just wpt-record` instead if you want the run
+# archived under `dashboard/runs/`.
+#
 #   just wpt                                                # smoke test
 #   just wpt /css/CSS2/visudet/content-height-001.html      # single test
-#   just wpt /css/CSS2/visudet/                             # whole dir
+#   just wpt /dom/nodes/                                    # whole dir
 wpt test="/css/CSS2/visudet/content-height-001.html":
     cargo build --release -p koala-cli
     .venv-wpt/bin/python third-party/wpt/wpt \
@@ -45,7 +52,9 @@ wpt test="/css/CSS2/visudet/content-height-001.html":
             --no-pause \
             --no-restart-on-unexpected \
             --log-mach=- --log-mach-level=info \
+            --log-wptreport=/tmp/koala-wpt.json \
             koala "{{test}}"
+    @echo "Report: /tmp/koala-wpt.json"
 
 # List the top-level WPT areas sorted by test-file count, with a
 # hint on how to drive `just wpt` against one. Takes ~10-30s on
