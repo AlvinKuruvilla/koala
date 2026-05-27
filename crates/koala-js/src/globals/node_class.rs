@@ -92,16 +92,14 @@ dom_interface! {
     register: register_node_class,
 }
 
-// ---- method / accessor implementations ----
-//
-// These mirror the existing `super::element` per-element
-// methods of the same name — calling them via the prototype
-// chain on an Element wrapper will produce the same observable
-// behaviour as the (now-removed) own-property duplicates did
-// before this migration. Diverging from the element.rs
-// versions: parentNode returns a Node even when the parent is
-// not an Element, whereas Element's `parentElement` filtered
-// non-element parents to `null`.
+// Method and accessor implementations below mirror the
+// corresponding `super::element` functions — calling them via
+// the prototype chain on an Element wrapper produces the same
+// observable behaviour the (now-removed) own-property
+// duplicates did. The one deliberate divergence: `parentNode`
+// returns a Node even when the parent isn't an Element, whereas
+// Element's `parentElement` filtered non-element parents to
+// `null`.
 
 fn node_append_child(
     this: &JsValue,

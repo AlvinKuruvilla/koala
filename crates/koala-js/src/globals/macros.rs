@@ -105,7 +105,7 @@
 /// docs for syntax and rationale.
 #[macro_export]
 macro_rules! dom_interface {
-    // ---- with parent (inheritance link) ----
+    // Variant with a parent interface (inheritance link).
     (
         $(#[$meta:meta])*
         name: $name:literal,
@@ -141,7 +141,7 @@ macro_rules! dom_interface {
         }
     };
 
-    // ---- no parent (top of chain — currently just EventTarget) ----
+    // Variant with no parent — top of the chain, currently just EventTarget.
     (
         $(#[$meta:meta])*
         name: $name:literal,
@@ -187,7 +187,7 @@ macro_rules! dom_interface {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __dom_interface_impl {
-    // ---- Class impl with abstract / illegal constructor ----
+    // Class impl with abstract / illegal constructor.
     (@class $data:ty, $name:literal, false) => {
         impl ::boa_engine::class::Class for $data {
             const NAME: &'static str = $name;
@@ -215,8 +215,7 @@ macro_rules! __dom_interface_impl {
         }
     };
 
-    // ---- Class impl with constructible (no-args) constructor ----
-    //
+    // Class impl with constructible (no-args) constructor.
     // Calls `<$data>::new()`. The user must provide `impl $data
     // { fn new() -> Self }`.
     (@class $data:ty, $name:literal, true) => {
@@ -240,8 +239,7 @@ macro_rules! __dom_interface_impl {
         }
     };
 
-    // ---- Class impl with constructible-with-args constructor ----
-    //
+    // Class impl with constructible-with-args constructor.
     // The user provides a free function with signature
     //     fn(args: &[JsValue], context: &mut Context) -> JsResult<$data>
     // and passes its path in parens:  `constructible: (my_fn)`.
@@ -275,8 +273,7 @@ macro_rules! __dom_interface_impl {
         }
     };
 
-    // ---- inherent impl carrying the init body ----
-    //
+    // Inherent impl carrying the init body.
     // The init body is hung off the data type itself (rather
     // than living inside the trait impl) so that the `methods`
     // and `accessors` lists can be expanded into straightforward
@@ -339,8 +336,7 @@ macro_rules! __dom_interface_impl {
         }
     };
 
-    // ---- post-registration prototype-chain stitch ----
-    //
+    // Post-registration prototype-chain stitch.
     // After `register_global_class::<$data>()` runs, walk through
     // the global object to find this class's prototype and the
     // parent class's prototype, then set the former's

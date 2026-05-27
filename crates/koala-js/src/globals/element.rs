@@ -140,7 +140,7 @@ pub(super) fn array_of_element_objects(
     Ok(JsArray::from_iter(elements, context).into())
 }
 
-// ---- attribute IO ----
+// Attribute IO.
 
 /// `Element.getAttribute(name)` — string or `null`.
 pub(super) fn get_attribute(
@@ -241,7 +241,7 @@ pub(super) fn remove_attribute(
 // (and any other Node wrapper we add later) instead of
 // duplicating per instance.
 
-// ---- scoped selector queries ----
+// Scoped selector queries.
 
 pub(super) fn query_selector(
     this: &JsValue,
@@ -278,7 +278,7 @@ pub(super) fn query_selector_all(
     array_of_element_objects(ids, context)
 }
 
-// ---- live tree-nav accessors ----
+// Live tree-navigation accessors.
 
 pub(super) fn parent_element_get(
     this: &JsValue,
@@ -399,15 +399,13 @@ pub(super) fn previous_element_sibling_get(
     }
 }
 
-// ---- id / className IDL attributes ----
-//
-// Routing reads through `getAttribute` and writes through
-// `setAttribute` keeps the IDL attribute and the content
-// attribute synchronised automatically — the spec defines
-// `Element.id` as a "reflected" attribute (DOM § 4.9
-// "reflected IDL attributes"), and reflection means the IDL
-// getter literally returns the content-attribute value. The
-// same applies to `Element.className` reflecting `class`.
+// `id` / `className` IDL attributes. Reads go through
+// `getAttribute` and writes through `setAttribute` so the IDL
+// attribute and the content attribute stay synchronised —
+// `Element.id` is a "reflected" attribute per DOM § 4.9, and
+// reflection means the IDL getter literally returns the
+// content-attribute value. Same for `Element.className`
+// reflecting `class`.
 
 /// `Element.tagName` — read-only accessor that returns the
 /// element's tag name uppercased (the spec form for HTML
@@ -526,7 +524,7 @@ pub(super) fn class_name_set(
     Ok(JsValue::undefined())
 }
 
-// ---- textContent ----
+// `textContent` getter and setter.
 
 /// `Element.textContent` (getter) — concatenation of every Text
 /// descendant's data, in tree order.

@@ -481,7 +481,7 @@ fn window_is_self_referential_and_exposes_document() {
     );
 }
 
-// ---- DOM interface prototype chain (Tier 1) ----
+// DOM interface prototype chain (Tier 1).
 
 #[test]
 fn interface_constructors_are_globals() {
@@ -616,7 +616,7 @@ fn event_target_is_constructible() {
     assert_eq!(rt.eval_to_string("fired").unwrap(), "2");
 }
 
-// ---- Wrapper identity (Tier 1.5) ----
+// Wrapper identity (Tier 1.5).
 
 #[test]
 fn repeated_get_element_by_id_returns_the_same_object() {
@@ -680,7 +680,7 @@ fn children_array_shares_identity_with_other_accessors() {
     assert_eq!(rt.eval_to_string("via_arr === via_first").unwrap(), "true");
 }
 
-// ---- DOMException (Tier 1.5) ----
+// DOMException (Tier 1.5).
 
 #[test]
 fn dom_exception_constructor_defaults() {
@@ -775,7 +775,7 @@ fn dom_exception_can_be_thrown_and_caught() {
     assert_eq!(rt.eval_to_string("caught.code").unwrap(), "8");
 }
 
-// ---- Element / HTMLElement prototype migration (Tier 1) ----
+// Element / HTMLElement prototype migration (Tier 1).
 
 #[test]
 fn element_methods_resolve_via_the_prototype() {
@@ -880,7 +880,7 @@ fn html_element_prototype_is_empty_but_inherits_element() {
     );
 }
 
-// ---- Node.prototype migration (Tier 1, second slice) ----
+// Node.prototype migration (Tier 1, second slice).
 
 #[test]
 fn node_constructor_throws_but_methods_live_on_the_prototype() {

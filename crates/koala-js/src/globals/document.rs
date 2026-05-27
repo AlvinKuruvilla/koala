@@ -307,7 +307,7 @@ fn create_text_node(
     make_text_object(context, new_id)
 }
 
-// ---- document accessors ----
+// Document accessors.
 
 fn document_body_get(
     _this: &JsValue,
