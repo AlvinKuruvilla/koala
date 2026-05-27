@@ -261,7 +261,7 @@ koala-wpt          (depends on koala-js — WPT-only globals, not pulled by brow
 koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css, koala-js)
     ↑
 koala-qt           (depends on koala-browser via `cxx`; widget layer in C++)
-koala-cli          (depends on koala-browser; will depend on koala-wpt for `--wpt-protocol` mode)
+koala-cli          (depends on koala-browser + koala-wpt; the latter for `--wpt-protocol` mode)
 ```
 
 **Data Flow:**

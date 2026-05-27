@@ -14,7 +14,7 @@ last_updated: 2026-05-26
 | 2   — DOM bridge                       | ✓ DONE | Every spec bullet live (see Phase 2 section). `document.*` + `Element.*` + `window`. DOM mutation triggers a re-cascade + re-layout in `koala-browser`. |
 | 3   — event loop                       | ✓ DONE | Chunk 1 (`setTimeout` / `clearTimeout` + `pump_until_idle`), chunk 2 (`setInterval` / `clearInterval` with the shared id pool), and chunk 3 (`EventTarget` mixin on `window` / `document` / `Element`, `Event` constructor with `preventDefault` + `stopImmediatePropagation`, and `DOMContentLoaded` / `load` fired from the koala-browser pipeline) all landed. Dispatch is strict-target-only — bubbling / capture phases are deferred. |
 | 4   — external `<script src>`         | ✓ DONE | `load_scripts` walks the DOM in tree order, fetching external scripts via the existing `koala_common::net` paths (HTTP / data: / file). All scripts execute *after* parse rather than mid-parse — true parse-blocking semantics would require parser-side hooks and are deferred. `async` / `defer` recognized but treated as synchronous. Fetch failures recorded in `parse_issues` rather than aborting. |
-| 5   — testharness.js result reporting | 2/3    | Chunk 1 (callback bridge in `crates/koala-wpt/`: `add_result_callback` / `add_completion_callback` fallbacks, `__koala_emit_result__` / `__koala_emit_completion__` capture functions, `koala_wpt::install` / `take_test_results` / `take_test_completion`) and chunk 2 (testharness.js dependency stubs: `self` alias on window, `location` with `.href` / `.search` / `.pathname` driven by `JsRuntime::set_location`, `setTimeout` / `setInterval` trailing-args forwarding, `'error'` event fired from `JsRuntime::dispatch_error` and wired into koala-browser's pipeline) landed. `JsRuntime::with_context_mut` is the narrow extension hook that lets `koala-wpt` register globals on the embedded Boa context without `koala-js` learning about WPT. Chunk 3 (`executor_koala.py` extension to emit and aggregate `testharness_result` frames) outstanding. Hits M2 when it lands. |
+| 5   — testharness.js result reporting | ✓ DONE | **M2 hit.** Chunk 1 (callback bridge in `crates/koala-wpt/`), chunk 2 (testharness.js dependency stubs: `self`, `location`, `setTimeout` trailing args, `'error'` event), and chunk 3 (`koala-cli --wpt-protocol`'s new `testharness` command emitting `testharness_complete` events; Python `KoalaTestharnessPart` + `KoalaTestharnessExecutor` registered under `__wptrunner__["executor"]["testharness"]`) all landed. The pipeline wires through `koala-browser`'s new `JsHooks` trait so `koala-cli` can install `koala_wpt::install` pre-script and drain results post-settle without `koala-browser` knowing about WPT. End-to-end test in `koala-cli/tests/wpt_protocol_testharness.rs` exercises the full subprocess protocol. |
 
 Reality-check / known limitations recorded as we hit them:
 
@@ -784,9 +784,7 @@ unchanged.
 | M1  | `wpt run --product=koala css/CSS2/` produces a JSON   | Phase 1         |
 |     | conformance report and the dashboard renders it       | + Phase 1.5     |
 | M2  | `wpt run --product=koala dom/nodes/` runs testharness | Phases 1–5      |
-|     | tests with real pass/fail counts in the dashboard     |                 |
-
-**Total estimated effort to M2: ~7–9 weeks of focused work.**
+|     | tests with real pass/fail counts in the dashboard     | **HIT** 2026-05 |
 
 ## Risks and mitigations
 
