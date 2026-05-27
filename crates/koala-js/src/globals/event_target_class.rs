@@ -43,11 +43,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use boa_engine::{
-    Context, JsArgs, JsData, JsError, JsNativeError, JsResult, JsValue, NativeFunction,
-    class::{Class, ClassBuilder},
-    js_string,
-};
+use boa_engine::{Context, JsArgs, JsData, JsError, JsNativeError, JsResult, JsValue};
 use boa_gc::{Finalize, Trace};
 
 use super::events::{
@@ -89,48 +85,17 @@ impl EventTargetData {
     }
 }
 
-impl Class for EventTargetData {
-    const NAME: &'static str = "EventTarget";
-    const LENGTH: usize = 0;
-
-    fn data_constructor(
-        _new_target: &JsValue,
-        _args: &[JsValue],
-        _context: &mut Context,
-    ) -> JsResult<Self> {
-        Ok(Self::new())
-    }
-
-    fn init(class: &mut ClassBuilder<'_>) -> JsResult<()> {
-        // `ClassBuilder::method` returns the builder for chaining;
-        // bind the result to `_` so the workspace's
-        // `unused_must_use` lint doesn't fire on a non-chained call.
-        let _ = class.method(
-            js_string!("addEventListener"),
-            2,
-            NativeFunction::from_fn_ptr(class_add_event_listener),
-        );
-        let _ = class.method(
-            js_string!("removeEventListener"),
-            2,
-            NativeFunction::from_fn_ptr(class_remove_event_listener),
-        );
-        let _ = class.method(
-            js_string!("dispatchEvent"),
-            1,
-            NativeFunction::from_fn_ptr(class_dispatch_event),
-        );
-        Ok(())
-    }
-}
-
-/// Register `EventTarget` as a global class. Replaces the
-/// hand-rolled stub previously installed by
-/// [`super::interfaces::register_dom_interfaces`].
-pub(super) fn register_event_target_class(context: &mut Context) {
-    context
-        .register_global_class::<EventTargetData>()
-        .expect("EventTarget class should not already be registered");
+dom_interface! {
+    name: "EventTarget",
+    data: EventTargetData,
+    constructible: true,
+    methods: [
+        ("addEventListener", 2, class_add_event_listener),
+        ("removeEventListener", 2, class_remove_event_listener),
+        ("dispatchEvent", 1, class_dispatch_event),
+    ],
+    accessors: [],
+    register: register_event_target_class,
 }
 
 /// Pull the `scope_key` off a method's `this` value. Returns

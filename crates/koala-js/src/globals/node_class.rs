@@ -54,133 +54,42 @@
 //! `Element.prototype` onto `Node.prototype` for the still-
 //! hand-rolled half of the chain.
 
-use boa_engine::{
-    Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, NativeFunction,
-    class::{Class, ClassBuilder},
-    js_string,
-    property::Attribute,
-};
+use boa_engine::{Context, JsArgs, JsResult, JsValue};
 use boa_gc::{Finalize, Trace};
 use koala_dom::NodeId;
 
 use crate::dom_handle::{mark_dirty, with_dom, with_dom_mut};
 
 use super::helpers::{
-    NODE_TYPE_ELEMENT, NODE_TYPE_TEXT, getter, js_string_value, missing_arg,
+    NODE_TYPE_ELEMENT, NODE_TYPE_TEXT, js_string_value, missing_arg,
     node_id_from_this, node_id_from_value, type_error,
 };
 
 /// Zero-sized marker. `Node` is abstract; no wrapper is ever
-/// actually constructed from it, but [`Class`] requires a
-/// per-instance data type. The data slot for every real DOM
-/// node wrapper remains the `__nodeId` JS property that
+/// actually constructed from it, but [`boa_engine::class::Class`]
+/// requires a per-instance data type. The data slot for every
+/// real DOM node wrapper remains the `__nodeId` JS property that
 /// [`super::element::make_element_object`] writes — same path
 /// the inherited prototype methods read from on lookup.
 #[derive(Debug, Trace, Finalize, boa_engine::JsData)]
 pub(crate) struct NodeData;
 
-impl Class for NodeData {
-    const NAME: &'static str = "Node";
-    const LENGTH: usize = 0;
-
-    fn data_constructor(
-        _new_target: &JsValue,
-        _args: &[JsValue],
-        _context: &mut Context,
-    ) -> JsResult<Self> {
-        Err(JsError::from_native(
-            JsNativeError::typ()
-                .with_message("Illegal constructor: Node is not constructible"),
-        ))
-    }
-
-    fn init(class: &mut ClassBuilder<'_>) -> JsResult<()> {
-        // Methods. Each returns `&mut Self`; binding to `_`
-        // satisfies the workspace's `unused_must_use` lint.
-        let _ = class.method(
-            js_string!("appendChild"),
-            1,
-            NativeFunction::from_fn_ptr(node_append_child),
-        );
-        let _ = class.method(
-            js_string!("removeChild"),
-            1,
-            NativeFunction::from_fn_ptr(node_remove_child),
-        );
-        let _ = class.method(
-            js_string!("contains"),
-            1,
-            NativeFunction::from_fn_ptr(node_contains),
-        );
-
-        // Accessors. `getter()` wraps a fn-pointer as a
-        // `JsFunction`; we feed it through `class.context()` so
-        // the resulting function lives in the same realm as the
-        // class being initialised.
-        let cx = class.context();
-        let node_type_getter = getter(cx, node_node_type_get);
-        let node_name_getter = getter(cx, node_node_name_get);
-        let parent_node_getter = getter(cx, node_parent_node_get);
-
-        let attrs = Attribute::CONFIGURABLE | Attribute::ENUMERABLE;
-        let _ = class.accessor(
-            js_string!("nodeType"),
-            Some(node_type_getter),
-            None,
-            attrs,
-        );
-        let _ = class.accessor(
-            js_string!("nodeName"),
-            Some(node_name_getter),
-            None,
-            attrs,
-        );
-        let _ = class.accessor(
-            js_string!("parentNode"),
-            Some(parent_node_getter),
-            None,
-            attrs,
-        );
-
-        Ok(())
-    }
-}
-
-/// Register the `Node` class and then rewire `Node.prototype`'s
-/// `[[Prototype]]` to point at `EventTarget.prototype`. Caller
-/// contract: `EventTarget` must already be registered.
-pub(super) fn register_node_class(context: &mut Context) {
-    context
-        .register_global_class::<NodeData>()
-        .expect("Node class should not already be registered");
-
-    // Stitch Node.prototype -> EventTarget.prototype.
-    let global = context.global_object();
-    let node_ctor = global
-        .get(js_string!("Node"), context)
-        .expect("Node global should be readable post-registration");
-    let node_ctor_obj = node_ctor.as_object().expect("Node global should be an object");
-    let node_proto_value = node_ctor_obj
-        .get(js_string!("prototype"), context)
-        .expect("Node.prototype should be readable");
-    let node_proto = node_proto_value
-        .as_object()
-        .cloned()
-        .expect("Node.prototype should be an object");
-
-    let event_target_ctor = global
-        .get(js_string!("EventTarget"), context)
-        .expect("EventTarget must be registered before Node");
-    let event_target_proto = event_target_ctor
-        .as_object()
-        .expect("EventTarget global should be an object")
-        .get(js_string!("prototype"), context)
-        .expect("EventTarget.prototype should be readable")
-        .as_object()
-        .cloned()
-        .expect("EventTarget.prototype should be an object");
-
-    let _ = node_proto.set_prototype(Some(event_target_proto));
+dom_interface! {
+    name: "Node",
+    data: NodeData,
+    parent: "EventTarget",
+    constructible: false,
+    methods: [
+        ("appendChild", 1, node_append_child),
+        ("removeChild", 1, node_remove_child),
+        ("contains", 1, node_contains),
+    ],
+    accessors: [
+        ("nodeType", get(node_node_type_get)),
+        ("nodeName", get(node_node_name_get)),
+        ("parentNode", get(node_parent_node_get)),
+    ],
+    register: register_node_class,
 }
 
 // ---- method / accessor implementations ----

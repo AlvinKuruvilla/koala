@@ -24,12 +24,18 @@
 //!   `document.onreadystatechange`, …)
 //! - Event bubbling / capture phases (chunk-3 follow-up)
 
+// `macros` is declared first so its `dom_interface!` macro is in
+// scope for every sibling module without each needing its own
+// `use` import.
+#[macro_use]
+pub(crate) mod macros;
+
 mod console;
 pub(crate) mod document;
 mod element;
 pub(crate) mod event_target_class;
 pub(crate) mod events;
-mod helpers;
+pub(crate) mod helpers;
 pub(crate) mod interfaces;
 pub(crate) mod location;
 pub(crate) mod node_class;
