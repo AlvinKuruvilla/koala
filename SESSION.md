@@ -148,3 +148,61 @@ that fails real tests:
   `assert_equals: expected (number) 0 but got (undefined) undefined`.
   The property is straightforward (count of `Element` children),
   and once it lands the test should pass cleanly.
+  **Resolved** in the Tier-1 Element / HTMLElement migration —
+  `childElementCount` now lives on `Element.prototype` and the
+  smoke test flips from FAIL to PASS.
+
+## Bugs surfaced by running koala-cli against real sites
+
+After wiring JS-error surfacing into the Qt browser, smoke
+tests against a handful of real pages with
+`./target/release/koala <url>` turned up two follow-ups worth
+filing.
+
+### Relative `<script src>` URL resolution is wrong on bare-name paths
+
+Loading `https://news.ycombinator.com` produces:
+
+```
+! Failed to load <script src="hn.js?SMNcJPuowwn2FRyKwpFD">:
+  request to 'https://hn.js?SMNcJPuowwn2FRyKwpFD' failed:
+  error sending request for url (https://hn.js/?SMNcJPuowwn2FRyKwpFD)
+```
+
+The HTML is `<script src="hn.js?SMNcJPuowwn2FRyKwpFD"></script>`
+and the base URL is `https://news.ycombinator.com/`. Per RFC
+3986 § 5.2 the relative reference should resolve to
+`https://news.ycombinator.com/hn.js?SMNcJPuowwn2FRyKwpFD`. Our
+`koala_common::url::resolve_url` is instead treating `hn.js`
+as a hostname.
+
+Likely cause: the resolver sees no leading `/` and no scheme,
+and the URL crate's `Url::parse` interprets `hn.js?…` as
+`scheme: hn`, `host: js`, `query: …` or similar. The fix is
+probably to detect "purely relative reference, no scheme, no
+authority" and join against the base path explicitly.
+
+Reproducer: `./target/release/koala https://news.ycombinator.com`
+— the bug shows up in the "Parse Issues" section.
+
+### Boa parser rejects some real-world inline JS
+
+Loading `https://en.wikipedia.org/wiki/Web_browser` surfaces:
+
+```
+! JavaScript error (in inline): SyntaxError: expected token ';',
+  got ':' in expression statement at line 1, col 12
+```
+
+Boa's parser can't handle whatever Wikipedia's first inline
+script does at line 1 col 12. Probably a modern-ES feature
+that 0.20 doesn't accept (labelled statement? destructuring
+assignment as a statement? property shorthand in a place we
+read as an expression?). Diagnosis would mean extracting the
+exact inline source and bisecting against Boa.
+
+Tier-3 work — fixing this means either upgrading Boa to a
+newer release with broader ES coverage or working around the
+specific syntax. Not blocking koala's WPT path (testharness.js
+doesn't use the offending syntax), but a recurring hit when
+testing against real sites.

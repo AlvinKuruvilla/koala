@@ -577,6 +577,16 @@ fn run_render_worker(
     }
 }
 
+/// Emit each collected parse / script issue on its own stderr
+/// line, prefixed with the page URL so multiple concurrent
+/// loads can be told apart in the terminal. No-op for the empty
+/// case so clean pages don't add noise.
+fn report_parse_issues(url: &str, issues: &[String]) {
+    for issue in issues {
+        eprintln!("[koala-qt] {url}: {issue}");
+    }
+}
+
 /// Best-effort extraction of a human-readable message from a
 /// panic payload. `catch_unwind` hands us a `Box<dyn Any>`, so we
 /// try the two concrete types the standard library uses before
@@ -613,10 +623,29 @@ fn run_load_worker(
         let attempt = catch_unwind(AssertUnwindSafe(|| load_document(&url)));
 
         let state = match attempt {
-            Ok(Ok(doc)) => match PageState::from_document(doc) {
-                Some(state) => Arc::new(state),
-                None => error_state(&url, "document produced no layout tree"),
-            },
+            Ok(Ok(doc)) => {
+                // HTML parse warnings, script-load failures, and
+                // every JS error (script-eval, DOMContentLoaded,
+                // timer, load handler) collect into
+                // `LoadedDocument.parse_issues`. `koala-cli`
+                // already prints these under a "Parse Issues"
+                // header; the Qt browser was silently dropping
+                // them, which made debugging "site X looks
+                // half-rendered" blind. Mirror the cli's
+                // surfacing on stderr — every issue gets one
+                // line prefixed with the URL so the terminal
+                // launching `just gui` can be eyeballed.
+                //
+                // CSS warnings travel a different channel
+                // (`koala_common::warning::warn_once`) and
+                // already print to stderr at their own emit
+                // sites; nothing extra needed there.
+                report_parse_issues(&url, &doc.parse_issues);
+                match PageState::from_document(doc) {
+                    Some(state) => Arc::new(state),
+                    None => error_state(&url, "document produced no layout tree"),
+                }
+            }
             Ok(Err(e)) => error_state(&url, &e.to_string()),
             Err(payload) => {
                 let message = panic_message(&payload);
