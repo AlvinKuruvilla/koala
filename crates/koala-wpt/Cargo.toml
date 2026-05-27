@@ -1,0 +1,16 @@
+[package]
+name = "koala-wpt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WPT-runner-specific glue for the Koala browser engine"
+
+[dependencies]
+koala-js.workspace = true
+boa_engine.workspace = true
+
+[dev-dependencies]
+koala-dom.workspace = true
+
+[lints]
+workspace = true

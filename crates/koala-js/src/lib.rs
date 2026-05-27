@@ -311,6 +311,26 @@ impl JsRuntime {
         self.dom_dirty.replace(false)
     }
 
+    /// Run `f` with mutable access to the embedded Boa
+    /// [`Context`]. Returns whatever `f` returns.
+    ///
+    /// Narrow extension hook for crates that need to register
+    /// additional globals or drain state held on the JS side.
+    /// Used by [`koala_wpt`] to install the testharness.js
+    /// bridge and to drain the resulting result buffers without
+    /// having to embed those concerns inside `koala-js` itself.
+    ///
+    /// This deliberately does NOT install the DOM thread-local
+    /// guard — extensions that touch the DOM via the bridge
+    /// globals must call [`execute`](Self::execute) instead, so
+    /// the same dirty-tracking invariants hold there as for
+    /// regular script execution.
+    ///
+    /// [`koala_wpt`]: https://docs.rs/koala-wpt
+    pub fn with_context_mut<R>(&mut self, f: impl FnOnce(&mut Context) -> R) -> R {
+        f(&mut self.context)
+    }
+
     /// Fire a `DOMContentLoaded` event at `document`.
     ///
     /// [§ 7.5 Loading the document](https://html.spec.whatwg.org/multipage/parsing.html#the-end)
@@ -394,5 +414,6 @@ impl JsRuntime {
         }
         result
     }
+
 }
 

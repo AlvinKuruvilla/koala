@@ -241,6 +241,7 @@ koala/
 │   ├── koala-html/       # HTML tokenizer and parser (WHATWG spec)
 │   ├── koala-css/        # CSS parser, cascade, layout engine, paint, values
 │   ├── koala-js/         # Boa-backed JavaScript runtime
+│   ├── koala-wpt/        # WPT-runner-specific glue (testharness.js bridge)
 │   └── koala-browser/    # Document pipeline + software renderer
 ├── koala-cli/            # Primary binary: HTML-to-image renderer
 ├── koala-qt/             # Qt browser UI (cxx bridge to koala-browser)
@@ -255,11 +256,12 @@ koala-js           (no deps — Boa-backed JS runtime)
     ↑
 koala-html         (depends on koala-dom)
 koala-css          (depends on koala-common, koala-dom)
+koala-wpt          (depends on koala-js — WPT-only globals, not pulled by browser builds)
     ↑
 koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css, koala-js)
     ↑
 koala-qt           (depends on koala-browser via `cxx`; widget layer in C++)
-koala-cli          (depends on koala-browser)
+koala-cli          (depends on koala-browser; will depend on koala-wpt for `--wpt-protocol` mode)
 ```
 
 **Data Flow:**
