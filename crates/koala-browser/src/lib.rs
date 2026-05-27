@@ -109,6 +109,39 @@ pub enum LoadError {
     Fetch(#[from] koala_common::net::FetchError),
 }
 
+/// Extension points into the JS lifecycle for callers who need
+/// to install globals before scripts run or drain state after the
+/// document settles.
+///
+/// Both methods are default no-ops, so the simplest implementor
+/// (`()`) just acts as "no extension." More substantial hooks
+/// can be implemented by any caller — the WPT runner uses one to
+/// install the testharness bridge via `koala_wpt::install` and
+/// to drain results via `koala_wpt::take_test_results`.
+///
+/// The hook trait deliberately exposes only `&mut JsRuntime`
+/// rather than the full pipeline state — keeps the surface
+/// narrow and forces any cross-cutting state to live on the
+/// hook implementor itself.
+pub trait JsHooks {
+    /// Called once after [`JsRuntime`] construction and after
+    /// `location` is set, but *before* any `<script>` from the
+    /// document executes. The right place to register additional
+    /// globals or pre-populate hidden state.
+    fn before_scripts(&mut self, _rt: &mut JsRuntime) {}
+
+    /// Called once after the post-`load` pump returns and right
+    /// before the runtime is dropped. The right place to read
+    /// out any state the hook accumulated during script
+    /// execution.
+    fn after_settled(&mut self, _rt: &mut JsRuntime) {}
+}
+
+/// No-op hook implementation. `load_document` delegates to
+/// `load_document_with_hooks` with `&mut ()` so the existing
+/// non-hooked entry points stay unchanged.
+impl JsHooks for () {}
+
 /// Load a document from a file path or URL.
 ///
 /// This is the main entry point for loading a document. It handles:
@@ -129,6 +162,25 @@ pub enum LoadError {
 /// be read, or [`LoadError::Fetch`] if it is a URL that cannot be
 /// fetched.
 pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
+    load_document_with_hooks(path, &mut ())
+}
+
+/// Load a document with a [`JsHooks`] implementation installed
+/// during script execution.
+///
+/// Identical to [`load_document`] except that `hooks` gets
+/// `before_scripts` called after `JsRuntime` construction and
+/// `after_settled` called once the post-`load` pump returns.
+/// Use this from the WPT runner / any caller that needs to wire
+/// custom globals or drain JS state.
+///
+/// # Errors
+///
+/// Same as [`load_document`].
+pub fn load_document_with_hooks<H: JsHooks>(
+    path: &str,
+    hooks: &mut H,
+) -> Result<LoadedDocument, LoadError> {
     // Fetch or read the HTML source
     let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
         let text = koala_common::net::fetch_text(path)?;
@@ -142,7 +194,7 @@ pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     };
 
     // Parse the document with base URL for resolving external stylesheets
-    let mut doc = parse_html_with_base_url(&html_source, base_url);
+    let mut doc = parse_html_with_base_url(&html_source, base_url, hooks);
     doc.source_path = path.to_string();
 
     Ok(doc)
@@ -154,11 +206,15 @@ pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
 /// Note: External stylesheets cannot be loaded without a base URL.
 #[must_use]
 pub fn parse_html_string(html: &str) -> LoadedDocument {
-    parse_html_with_base_url(html, None)
+    parse_html_with_base_url(html, None, &mut ())
 }
 
 /// Parse an HTML string with an optional base URL for resolving external resources.
-fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocument {
+fn parse_html_with_base_url<H: JsHooks>(
+    html: &str,
+    base_url: Option<&str>,
+    hooks: &mut H,
+) -> LoadedDocument {
     // Tokenize HTML
     let mut tokenizer = HTMLTokenizer::new(html.to_string());
     tokenizer.run();
@@ -203,6 +259,17 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
     let dom_cell = std::rc::Rc::new(std::cell::RefCell::new(dom));
     let dom_was_mutated = {
         let mut js_runtime = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
+        // Plumb the document's source URL into `location.href` so
+        // scripts that read it (and testharness.js's self-reporting
+        // path in particular) see the real URL instead of the
+        // default `about:blank`.
+        if let Some(url) = base_url {
+            js_runtime.set_location(url);
+        }
+        // Hook point: callers that need to install extra JS-side
+        // globals (e.g. the WPT testharness bridge) get one chance
+        // to do so before any document script runs.
+        hooks.before_scripts(&mut js_runtime);
         for script in scripts {
             if let Err(e) = js_runtime.execute(&script.source) {
                 let message = format!(
@@ -242,6 +309,10 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
         if let Err(e) = js_runtime.pump_until_idle() {
             parse_issues.push(format!("JavaScript error (in timer): {e}"));
         }
+        // Hook point: caller drains any state it accumulated
+        // during script execution (testharness results, custom
+        // globals, etc.) before the runtime drops.
+        hooks.after_settled(&mut js_runtime);
         js_runtime.take_dom_dirty()
     };
     let dom = std::rc::Rc::try_unwrap(dom_cell)
