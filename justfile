@@ -45,6 +45,12 @@ wpt-setup:
 #   just wpt /dom/nodes/                                    # whole dir
 wpt test="/css/CSS2/visudet/content-height-001.html":
     cargo build --release -p koala-cli
+    # PYTHONWARNINGS silences wpt-pinned urllib3 v2's
+    # `NotOpenSSLWarning` (Python 3.9 on macOS links against
+    # LibreSSL, not OpenSSL). The warning is informational and
+    # not actionable from our side — wpt's requirements.txt pins
+    # urllib3 to exactly 2.6.3.
+    PYTHONWARNINGS="ignore::urllib3.exceptions.NotOpenSSLWarning" \
     .venv-wpt/bin/python third-party/wpt/wpt \
         --venv .venv-wpt --skip-venv-setup \
         run \
@@ -54,7 +60,8 @@ wpt test="/css/CSS2/visudet/content-height-001.html":
             --log-mach=- --log-mach-level=info \
             --log-wptreport=/tmp/koala-wpt.json \
             koala "{{test}}"
-    @echo "Report: /tmp/koala-wpt.json"
+    @echo
+    @.venv-wpt/bin/python -m wptrunner_koala.summary /tmp/koala-wpt.json
 
 # List the top-level WPT areas sorted by test-file count, with a
 # hint on how to drive `just wpt` against one. Takes ~10-30s on
