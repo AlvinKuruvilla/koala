@@ -32,11 +32,11 @@ pub(crate) mod macros;
 
 mod console;
 pub(crate) mod document;
-mod element;
+pub(crate) mod element;
+pub(crate) mod element_class;
 pub(crate) mod event_target_class;
 pub(crate) mod events;
 pub(crate) mod helpers;
-pub(crate) mod interfaces;
 pub(crate) mod location;
 pub(crate) mod node_class;
 mod selectors;
@@ -64,21 +64,14 @@ use boa_engine::Context;
 pub fn register_globals(context: &mut Context) {
     // DOM interface chain, built bottom-up so each child can
     // read its parent's prototype off the global object when
-    // setting its own `[[Prototype]]`. Each migration to Boa's
-    // `Class` trait (EventTarget, Node so far) lives in its own
-    // module; the still-hand-rolled tail of the chain (Element,
-    // HTMLElement) lives in `interfaces` and is the next
-    // candidate for migration.
+    // setting its own `[[Prototype]]`. Every interface here
+    // goes through the `dom_interface!` macro and the
+    // `boa_engine::class::Class` trait — uniform shape, no
+    // hand-rolled stubs.
     event_target_class::register_event_target_class(context);
     node_class::register_node_class(context);
-
-    // DOM interface constructors for the hand-rolled half of
-    // the chain. Element / HTMLElement still register here.
-    // `document`, element wrappers built lazily by selectors,
-    // etc. read `HTMLElement.prototype` out of a hidden global
-    // slot when stitching prototypes, so the chain must exist
-    // before any wrapper is built.
-    interfaces::register_dom_interfaces(context);
+    element_class::register_element_class(context);
+    element_class::register_html_element_class(context);
 
     console::register_console(context);
     document::register_document(context);

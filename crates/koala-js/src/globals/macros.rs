@@ -246,6 +246,12 @@ macro_rules! __dom_interface_impl {
     ) => {
         impl $data {
             #[doc(hidden)]
+            // `class` is unused when both `methods` and `accessors`
+            // lists are empty (e.g. HTMLElement, which inherits its
+            // entire surface from Element). The allow keeps the
+            // empty-interface call site lint-clean without forcing
+            // every caller to add at least one method.
+            #[allow(unused_variables)]
             fn __dom_interface_init(
                 class: &mut ::boa_engine::class::ClassBuilder<'_>,
             ) -> ::boa_engine::JsResult<()> {

@@ -616,6 +616,111 @@ fn event_target_is_constructible() {
     assert_eq!(rt.eval_to_string("fired").unwrap(), "2");
 }
 
+// ---- Element / HTMLElement prototype migration (Tier 1) ----
+
+#[test]
+fn element_methods_resolve_via_the_prototype() {
+    // Post-migration, `getAttribute` and friends live on
+    // `Element.prototype` (not as own properties on each wrapper).
+    // Identity check verifies the resolution path goes through
+    // the prototype, not through a per-wrapper own-property.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    for (name, owner) in &[
+        ("getAttribute", "Element"),
+        ("setAttribute", "Element"),
+        ("hasAttribute", "Element"),
+        ("removeAttribute", "Element"),
+        ("querySelector", "Element"),
+        ("querySelectorAll", "Element"),
+        ("addEventListener", "Element"),
+        ("removeEventListener", "Element"),
+        ("dispatchEvent", "Element"),
+        // Inherited further up the chain
+        ("appendChild", "Node"),
+        ("removeChild", "Node"),
+        ("contains", "Node"),
+    ] {
+        let answer = rt
+            .eval_to_string(&format!("el.{name} === {owner}.prototype.{name}"))
+            .unwrap();
+        assert_eq!(
+            answer, "true",
+            "el.{name} should be inherited from {owner}.prototype",
+        );
+    }
+}
+
+#[test]
+fn element_tag_name_is_a_live_prototype_accessor() {
+    // `tagName` used to be a snapshot READONLY string property
+    // per wrapper. It's now a live accessor on Element.prototype,
+    // which means it reads the DOM on every access — important
+    // for future tag-renaming paths (`outerHTML =` etc.).
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    assert_eq!(rt.eval_to_string("el.tagName").unwrap(), "DIV");
+    // The descriptor must be an accessor (a `get` function), not
+    // a value.
+    assert_eq!(
+        rt.eval_to_string(
+            "typeof Object.getOwnPropertyDescriptor(Element.prototype, 'tagName').get"
+        )
+        .unwrap(),
+        "function",
+    );
+}
+
+#[test]
+fn child_element_count_excludes_non_element_children() {
+    // Regression cover for the WPT
+    // /dom/nodes/Element-childElementCount-nochild.html test that
+    // drove this whole migration. The fixture's `<p id="hello">`
+    // has no element children (only text), so the count is 0.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    assert_eq!(rt.eval_to_string("el.childElementCount").unwrap(), "0");
+
+    // And the list-fixture's `<ul>` has element children — three
+    // `<li>`s.
+    let mut rt2 = JsRuntime::new(list_fixture());
+    assert_eq!(
+        rt2.eval_to_string(
+            "document.body.firstElementChild.childElementCount"
+        )
+        .unwrap(),
+        "3",
+    );
+}
+
+#[test]
+fn html_element_prototype_is_empty_but_inherits_element() {
+    // HTMLElement currently exposes no additional methods of its
+    // own; everything comes from Element.prototype via the chain.
+    // The chain itself is what makes `el instanceof HTMLElement`
+    // work for every wrapper.
+    let mut rt = JsRuntime::new(fixture());
+    assert_eq!(
+        rt.eval_to_string(
+            "Object.getPrototypeOf(HTMLElement.prototype) === Element.prototype"
+        )
+        .unwrap(),
+        "true",
+    );
+    // No HTMLElement-specific own methods.
+    let own_names = rt
+        .eval_to_string(
+            // Filter out `constructor` which every prototype carries.
+            "Object.getOwnPropertyNames(HTMLElement.prototype)\
+             .filter(function (n) { return n !== 'constructor'; }).length"
+        )
+        .unwrap();
+    assert_eq!(
+        own_names, "0",
+        "HTMLElement.prototype should currently be empty"
+    );
+}
+
 // ---- Node.prototype migration (Tier 1, second slice) ----
 
 #[test]

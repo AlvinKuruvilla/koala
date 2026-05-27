@@ -22,7 +22,7 @@
 //!   queries.
 
 use boa_engine::{
-    Context, JsResult, JsString, JsValue, NativeFunction, js_string,
+    Context, JsResult, JsValue, js_string,
     object::ObjectInitializer, object::builtins::JsArray, property::Attribute,
 };
 use koala_dom::{NodeId, NodeType};
@@ -33,10 +33,9 @@ use super::events::{
     add_listener_at_scope, dispatch_event_call, remove_listener_at_scope,
 };
 use super::helpers::{
-    descendant_text, getter, js_string_value, no_dom_error, node_id_from_this,
+    descendant_text, js_string_value, no_dom_error, node_id_from_this,
     required_string_arg,
 };
-use super::interfaces::html_element_prototype;
 use super::selectors::{find_all_matches, find_first_match, parse_query_arg};
 
 /// Build the per-element scope key used by
@@ -60,166 +59,57 @@ pub(super) fn make_element_object(
     context: &mut Context,
     node_id: NodeId,
 ) -> JsResult<JsValue> {
-    let tag_name = with_dom(|dom| {
-        dom.as_element(node_id)
-            .map(|e| e.tag_name.to_ascii_uppercase())
-    })
-    .flatten()
-    .ok_or_else(no_dom_error)?;
+    // Bail early if the DOM doesn't actually have an element at
+    // this id — same contract `dom.as_element(node_id)` already
+    // imposes on every accessor down-stream.
+    let exists =
+        with_dom(|dom| dom.as_element(node_id).is_some()).unwrap_or(false);
+    if !exists {
+        return Err(no_dom_error());
+    }
 
     #[allow(clippy::cast_precision_loss)] // NodeId well below 2^53
     let node_id_value = node_id.0 as f64;
 
-    let parent_element_getter = getter(context, parent_element_get);
-    let children_getter = getter(context, children_get);
-    let first_element_child_getter = getter(context, first_element_child_get);
-    let last_element_child_getter = getter(context, last_element_child_get);
-    let next_element_sibling_getter = getter(context, next_element_sibling_get);
-    let previous_element_sibling_getter = getter(context, previous_element_sibling_get);
-    let text_content_getter = getter(context, text_content_get);
-    let text_content_setter = getter(context, text_content_set);
-    // id and className are live read/write accessors that route
-    // back through the underlying attribute store. They were
-    // snapshot READONLY string properties before — that broke
-    // every WPT test that did `el.id = "foo"` (the cascade of
-    // ~70 "cannot set non-writable property: id" failures in
-    // /dom/nodes/). Routing through `setAttribute` keeps the
-    // attribute view (`el.getAttribute("id")`) consistent with
-    // the IDL view (`el.id`) automatically.
-    let id_getter = getter(context, id_get);
-    let id_setter = getter(context, id_set);
-    let class_name_getter = getter(context, class_name_get);
-    let class_name_setter = getter(context, class_name_set);
-
-    let accessor_attrs = Attribute::CONFIGURABLE | Attribute::ENUMERABLE;
-
-    // Methods inherited from Node.prototype (`appendChild`,
-    // `removeChild`, `contains`) and accessors inherited from
-    // Node.prototype (`nodeType`, `nodeName`, `parentNode`) are
-    // resolved through the prototype chain and do not need
-    // duplicating here. Element-specific own properties below.
+    // The wrapper is now a thin object carrying only the
+    // `__nodeId` slot. All other methods + accessors —
+    // `getAttribute`, `id`, `tagName`, `addEventListener`,
+    // `parentElement`, … — live on `Element.prototype` (or
+    // higher up the chain) and resolve via the prototype lookup
+    // chain. See `super::element_class` for the registration.
     let obj = ObjectInitializer::new(context)
-        .property(
-            js_string!("tagName"),
-            JsString::from(tag_name.as_str()),
-            Attribute::READONLY,
-        )
-        .accessor(
-            js_string!("id"),
-            Some(id_getter),
-            Some(id_setter),
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("className"),
-            Some(class_name_getter),
-            Some(class_name_setter),
-            accessor_attrs,
-        )
         .property(
             js_string!("__nodeId"),
             node_id_value,
             Attribute::READONLY,
         )
-        .function(
-            NativeFunction::from_copy_closure(get_attribute),
-            js_string!("getAttribute"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(has_attribute),
-            js_string!("hasAttribute"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(set_attribute),
-            js_string!("setAttribute"),
-            2,
-        )
-        .function(
-            NativeFunction::from_copy_closure(remove_attribute),
-            js_string!("removeAttribute"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(query_selector),
-            js_string!("querySelector"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(query_selector_all),
-            js_string!("querySelectorAll"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(element_add_event_listener),
-            js_string!("addEventListener"),
-            2,
-        )
-        .function(
-            NativeFunction::from_copy_closure(element_remove_event_listener),
-            js_string!("removeEventListener"),
-            2,
-        )
-        .function(
-            NativeFunction::from_copy_closure(element_dispatch_event),
-            js_string!("dispatchEvent"),
-            1,
-        )
-        .accessor(
-            js_string!("parentElement"),
-            Some(parent_element_getter),
-            None,
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("children"),
-            Some(children_getter),
-            None,
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("firstElementChild"),
-            Some(first_element_child_getter),
-            None,
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("lastElementChild"),
-            Some(last_element_child_getter),
-            None,
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("nextElementSibling"),
-            Some(next_element_sibling_getter),
-            None,
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("previousElementSibling"),
-            Some(previous_element_sibling_getter),
-            None,
-            accessor_attrs,
-        )
-        .accessor(
-            js_string!("textContent"),
-            Some(text_content_getter),
-            Some(text_content_setter),
-            accessor_attrs,
-        )
         .build();
 
     // Stitch the wrapper into the DOM interface chain so that
     // `el instanceof HTMLElement` / `Element` / `Node` /
-    // `EventTarget` all walk through to true. The actual methods
-    // remain own properties on `obj` (set up by the
-    // `ObjectInitializer` above) — own properties shadow
-    // prototype properties, so behaviour is unchanged.
+    // `EventTarget` all walk through to true.
     let proto = html_element_prototype(context)?;
     let _ = obj.set_prototype(Some(proto));
 
     Ok(obj.into())
+}
+
+/// Read `HTMLElement.prototype` off the global object. Used by
+/// [`make_element_object`] to set the wrapper's `[[Prototype]]`.
+/// The HTMLElement class is registered by
+/// [`super::element_class::register_html_element_class`].
+fn html_element_prototype(context: &mut Context) -> JsResult<boa_engine::JsObject> {
+    use super::helpers::type_error;
+    let global = context.global_object();
+    let ctor = global.get(js_string!("HTMLElement"), context)?;
+    let ctor_obj = ctor
+        .as_object()
+        .ok_or_else(|| type_error("HTMLElement is not an object"))?;
+    let proto = ctor_obj.get(js_string!("prototype"), context)?;
+    proto
+        .as_object()
+        .cloned()
+        .ok_or_else(|| type_error("HTMLElement.prototype is not an object"))
 }
 
 /// Convert a list of element [`NodeId`]s into a JS Array of element
@@ -239,7 +129,7 @@ pub(super) fn array_of_element_objects(
 // ---- attribute IO ----
 
 /// `Element.getAttribute(name)` — string or `null`.
-fn get_attribute(
+pub(super) fn get_attribute(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -260,7 +150,7 @@ fn get_attribute(
 }
 
 /// `Element.hasAttribute(name)` — true/false.
-fn has_attribute(
+pub(super) fn has_attribute(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -280,7 +170,7 @@ fn has_attribute(
 /// `Element.setAttribute(name, value)`. Always overwrites. Marks
 /// the runtime DOM-dirty on a real change so koala-browser
 /// re-runs the style cascade after scripts finish.
-fn set_attribute(
+pub(super) fn set_attribute(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -306,7 +196,7 @@ fn set_attribute(
 
 /// `Element.removeAttribute(name)`. No-op if absent. Marks dirty
 /// only when an attribute was actually removed.
-fn remove_attribute(
+pub(super) fn remove_attribute(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -339,7 +229,7 @@ fn remove_attribute(
 
 // ---- scoped selector queries ----
 
-fn query_selector(
+pub(super) fn query_selector(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -357,7 +247,7 @@ fn query_selector(
     }
 }
 
-fn query_selector_all(
+pub(super) fn query_selector_all(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -376,7 +266,7 @@ fn query_selector_all(
 
 // ---- live tree-nav accessors ----
 
-fn parent_element_get(
+pub(super) fn parent_element_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -393,7 +283,7 @@ fn parent_element_get(
     }
 }
 
-fn children_get(
+pub(super) fn children_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -410,7 +300,7 @@ fn children_get(
     array_of_element_objects(child_ids, context)
 }
 
-fn first_element_child_get(
+pub(super) fn first_element_child_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -429,7 +319,7 @@ fn first_element_child_get(
     }
 }
 
-fn last_element_child_get(
+pub(super) fn last_element_child_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -449,7 +339,7 @@ fn last_element_child_get(
     }
 }
 
-fn next_element_sibling_get(
+pub(super) fn next_element_sibling_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -472,7 +362,7 @@ fn next_element_sibling_get(
     }
 }
 
-fn previous_element_sibling_get(
+pub(super) fn previous_element_sibling_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -505,7 +395,50 @@ fn previous_element_sibling_get(
 // getter literally returns the content-attribute value. The
 // same applies to `Element.className` reflecting `class`.
 
-fn id_get(this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+/// `Element.tagName` — read-only accessor that returns the
+/// element's tag name uppercased (the spec form for HTML
+/// elements). Lives on `Element.prototype` rather than as a
+/// per-wrapper own property so it's not a stale snapshot — if a
+/// future bridge mutates the tag name (e.g. via `outerHTML`),
+/// readers see the live value.
+pub(super) fn tag_name_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let name = with_dom(|dom| {
+        dom.as_element(node_id)
+            .map(|e| e.tag_name.to_ascii_uppercase())
+    })
+    .flatten()
+    .unwrap_or_default();
+    Ok(js_string_value(&name))
+}
+
+/// `ParentNode.childElementCount` — number of Element children
+/// (excludes Text / Comment / etc.). The DOM spec puts this on
+/// the `ParentNode` mixin (`Element`, `Document`, and
+/// `DocumentFragment` all implement it); for now we expose it
+/// on `Element.prototype` only.
+#[allow(clippy::cast_precision_loss)]
+pub(super) fn child_element_count_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let count = with_dom(|dom| {
+        dom.children(node_id)
+            .iter()
+            .filter(|&&id| dom.as_element(id).is_some())
+            .count()
+    })
+    .unwrap_or(0);
+    Ok(JsValue::from(count as f64))
+}
+
+pub(super) fn id_get(this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let node_id = node_id_from_this(this, context)?;
     let value = with_dom(|dom| {
         dom.as_element(node_id)
@@ -516,7 +449,7 @@ fn id_get(this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<
     Ok(js_string_value(&value))
 }
 
-fn id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+pub(super) fn id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let node_id = node_id_from_this(this, context)?;
     let new_value = args
         .first()
@@ -538,7 +471,7 @@ fn id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     Ok(JsValue::undefined())
 }
 
-fn class_name_get(
+pub(super) fn class_name_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -553,7 +486,7 @@ fn class_name_get(
     Ok(js_string_value(&value))
 }
 
-fn class_name_set(
+pub(super) fn class_name_set(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -583,7 +516,7 @@ fn class_name_set(
 
 /// `Element.textContent` (getter) — concatenation of every Text
 /// descendant's data, in tree order.
-fn text_content_get(
+pub(super) fn text_content_get(
     this: &JsValue,
     _args: &[JsValue],
     context: &mut Context,
@@ -596,7 +529,7 @@ fn text_content_get(
 /// `Element.textContent` (setter) — replace all children with a
 /// single Text node carrying the assigned string. Empty string
 /// leaves the element with no children.
-fn text_content_set(
+pub(super) fn text_content_set(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -626,7 +559,7 @@ fn text_content_set(
     Ok(JsValue::undefined())
 }
 
-fn element_add_event_listener(
+pub(super) fn element_add_event_listener(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -639,7 +572,7 @@ fn element_add_event_listener(
     Ok(JsValue::undefined())
 }
 
-fn element_remove_event_listener(
+pub(super) fn element_remove_event_listener(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -652,7 +585,7 @@ fn element_remove_event_listener(
     Ok(JsValue::undefined())
 }
 
-fn element_dispatch_event(
+pub(super) fn element_dispatch_event(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
