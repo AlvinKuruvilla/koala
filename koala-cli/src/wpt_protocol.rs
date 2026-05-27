@@ -265,23 +265,6 @@ impl JsHooks for TestharnessHook {
         koala_wpt::install(rt);
     }
 
-    fn after_scripts(&mut self, rt: &mut JsRuntime) {
-        // Bind the koala-wpt capture functions through
-        // testharness.js's real `add_result_callback`
-        // / `add_completion_callback`. Must run after every
-        // document script (so testharness.js has loaded and
-        // overwritten our fallbacks) but before the pump (so
-        // async tests fire into the bound reporter).
-        //
-        // Reporter failures go to stderr — they almost
-        // certainly mean a broken document, and we still want
-        // the testharness_complete frame to surface so the
-        // executor can report the failure rather than time out.
-        if let Err(e) = koala_wpt::attach_reporter(rt) {
-            eprintln!("[koala-cli] testharness reporter install failed: {e}");
-        }
-    }
-
     fn after_settled(&mut self, rt: &mut JsRuntime) {
         // Drain results. Errors here can only come from a
         // malicious script clobbering the hidden buffer slot,

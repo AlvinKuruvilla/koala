@@ -130,18 +130,6 @@ pub trait JsHooks {
     /// globals or pre-populate hidden state.
     fn before_scripts(&mut self, _rt: &mut JsRuntime) {}
 
-    /// Called once after every document `<script>` (inline and
-    /// external) has executed, but *before* `DOMContentLoaded`
-    /// dispatches and the pump starts.
-    ///
-    /// The right place to install JS that needs to see the
-    /// post-script global state — most notably the WPT
-    /// testharness reporter, which binds
-    /// `__koala_emit_result__` through testharness.js's
-    /// `add_result_callback` only after testharness.js itself
-    /// has loaded.
-    fn after_scripts(&mut self, _rt: &mut JsRuntime) {}
-
     /// Called once after the post-`load` pump returns and right
     /// before the runtime is dropped. The right place to read
     /// out any state the hook accumulated during script
@@ -306,13 +294,6 @@ fn parse_html_with_base_url<H: JsHooks>(
                 parse_issues.push(message);
             }
         }
-        // Hook point: caller installs any JS that needs to run
-        // AFTER every document script but BEFORE lifecycle events
-        // fire. The testharness.js reporter is the motivating
-        // case — it can only register through testharness.js's
-        // real `add_result_callback` once testharness.js has
-        // actually loaded.
-        hooks.after_scripts(&mut js_runtime);
         // HTML § 13.2.6 "Stop parsing" lifecycle:
         //   1. Run sync scripts (above)
         //   2. Fire DOMContentLoaded at the document

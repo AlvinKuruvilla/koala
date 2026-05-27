@@ -86,11 +86,27 @@ def env_extras(**kwargs):
 
 
 def env_options():
-    """Phase-1 server config: HTTP-only on 127.0.0.1, no debugger."""
+    """Server config + per-product overrides for the WPT environment.
+
+    - HTTP-only on 127.0.0.1; no debugger.
+    - `testharnessreport` overrides wptrunner's HTTP route for
+      `/resources/testharnessreport.js` so that testharness.js
+      results flow into koala's `__koala_emit_result__` /
+      `__koala_emit_completion__` capture functions instead of
+      vanishing into the upstream no-op stub. wptrunner resolves
+      relative entries against its own module dir and leaves
+      absolute paths alone (`tools/wptrunner/wptrunner/environment.py`
+      → `os.path.join(here, path)`); we pass an absolute path so
+      our file can live alongside this plugin.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
     return {
         "server_host": "127.0.0.1",
         "bind_address": True,
         "supports_debugger": False,
+        "testharnessreport": [
+            os.path.join(here, "testharnessreport-koala.js"),
+        ],
     }
 
 
