@@ -9,6 +9,7 @@ description = "JavaScript engine integration for the Koala renderer"
 koala-css.workspace = true
 koala-dom.workspace = true
 boa_engine.workspace = true
+boa_gc = "0.20"
 
 [lints]
 workspace = true

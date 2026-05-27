@@ -37,6 +37,7 @@ use super::helpers::{
     no_dom_error, node_id_from_this, node_id_from_value, required_string_arg,
     type_error,
 };
+use super::interfaces::html_element_prototype;
 use super::selectors::{find_all_matches, find_first_match, parse_query_arg};
 
 /// Build the per-element scope key used by
@@ -60,14 +61,9 @@ pub(super) fn make_element_object(
     context: &mut Context,
     node_id: NodeId,
 ) -> JsResult<JsValue> {
-    let (tag_name, id, class_name) = with_dom(|dom| {
-        dom.as_element(node_id).map(|e| {
-            (
-                e.tag_name.to_ascii_uppercase(),
-                e.id().cloned().unwrap_or_default(),
-                e.attrs.get("class").cloned().unwrap_or_default(),
-            )
-        })
+    let tag_name = with_dom(|dom| {
+        dom.as_element(node_id)
+            .map(|e| e.tag_name.to_ascii_uppercase())
     })
     .flatten()
     .ok_or_else(no_dom_error)?;
@@ -83,6 +79,18 @@ pub(super) fn make_element_object(
     let previous_element_sibling_getter = getter(context, previous_element_sibling_get);
     let text_content_getter = getter(context, text_content_get);
     let text_content_setter = getter(context, text_content_set);
+    // id and className are live read/write accessors that route
+    // back through the underlying attribute store. They were
+    // snapshot READONLY string properties before — that broke
+    // every WPT test that did `el.id = "foo"` (the cascade of
+    // ~70 "cannot set non-writable property: id" failures in
+    // /dom/nodes/). Routing through `setAttribute` keeps the
+    // attribute view (`el.getAttribute("id")`) consistent with
+    // the IDL view (`el.id`) automatically.
+    let id_getter = getter(context, id_get);
+    let id_setter = getter(context, id_set);
+    let class_name_getter = getter(context, class_name_get);
+    let class_name_setter = getter(context, class_name_set);
 
     let accessor_attrs = Attribute::CONFIGURABLE | Attribute::ENUMERABLE;
 
@@ -97,15 +105,17 @@ pub(super) fn make_element_object(
             JsString::from(tag_name.as_str()),
             Attribute::READONLY,
         )
-        .property(
+        .accessor(
             js_string!("id"),
-            JsString::from(id.as_str()),
-            Attribute::READONLY,
+            Some(id_getter),
+            Some(id_setter),
+            accessor_attrs,
         )
-        .property(
+        .accessor(
             js_string!("className"),
-            JsString::from(class_name.as_str()),
-            Attribute::READONLY,
+            Some(class_name_getter),
+            Some(class_name_setter),
+            accessor_attrs,
         )
         .property(
             js_string!("__nodeId"),
@@ -210,6 +220,15 @@ pub(super) fn make_element_object(
             accessor_attrs,
         )
         .build();
+
+    // Stitch the wrapper into the DOM interface chain so that
+    // `el instanceof HTMLElement` / `Element` / `Node` /
+    // `EventTarget` all walk through to true. The actual methods
+    // remain own properties on `obj` (set up by the
+    // `ObjectInitializer` above) — own properties shadow
+    // prototype properties, so behaviour is unchanged.
+    let proto = html_element_prototype(context)?;
+    let _ = obj.set_prototype(Some(proto));
 
     Ok(obj.into())
 }
@@ -532,6 +551,90 @@ fn previous_element_sibling_get(
         Some(id) => make_element_object(context, id),
         None => Ok(JsValue::null()),
     }
+}
+
+// ---- id / className IDL attributes ----
+//
+// Routing reads through `getAttribute` and writes through
+// `setAttribute` keeps the IDL attribute and the content
+// attribute synchronised automatically — the spec defines
+// `Element.id` as a "reflected" attribute (DOM § 4.9
+// "reflected IDL attributes"), and reflection means the IDL
+// getter literally returns the content-attribute value. The
+// same applies to `Element.className` reflecting `class`.
+
+fn id_get(this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let value = with_dom(|dom| {
+        dom.as_element(node_id)
+            .map(|e| e.id().cloned().unwrap_or_default())
+    })
+    .flatten()
+    .unwrap_or_default();
+    Ok(js_string_value(&value))
+}
+
+fn id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let new_value = args
+        .first()
+        .map(|v| v.to_string(context))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+    let mutated = with_dom_mut(|dom| {
+        if let Some(elem) = dom.as_element_mut(node_id) {
+            let _ = elem.attrs.insert("id".to_owned(), new_value);
+            true
+        } else {
+            false
+        }
+    });
+    if mutated == Some(true) {
+        mark_dirty();
+    }
+    Ok(JsValue::undefined())
+}
+
+fn class_name_get(
+    this: &JsValue,
+    _args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let value = with_dom(|dom| {
+        dom.as_element(node_id)
+            .map(|e| e.attrs.get("class").cloned().unwrap_or_default())
+    })
+    .flatten()
+    .unwrap_or_default();
+    Ok(js_string_value(&value))
+}
+
+fn class_name_set(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node_id = node_id_from_this(this, context)?;
+    let new_value = args
+        .first()
+        .map(|v| v.to_string(context))
+        .transpose()?
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+    let mutated = with_dom_mut(|dom| {
+        if let Some(elem) = dom.as_element_mut(node_id) {
+            let _ = elem.attrs.insert("class".to_owned(), new_value);
+            true
+        } else {
+            false
+        }
+    });
+    if mutated == Some(true) {
+        mark_dirty();
+    }
+    Ok(JsValue::undefined())
 }
 
 // ---- textContent ----

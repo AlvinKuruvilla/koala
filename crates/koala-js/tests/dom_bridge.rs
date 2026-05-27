@@ -480,3 +480,206 @@ fn window_is_self_referential_and_exposes_document() {
         "BODY",
     );
 }
+
+// ---- DOM interface prototype chain (Tier 1) ----
+
+#[test]
+fn interface_constructors_are_globals() {
+    let mut rt = JsRuntime::new(fixture());
+    for name in ["EventTarget", "Node", "Element", "HTMLElement"] {
+        let typeof_ = rt
+            .eval_to_string(&format!("typeof {name}"))
+            .unwrap();
+        assert_eq!(
+            typeof_, "function",
+            "{name} should be a global constructor"
+        );
+    }
+}
+
+#[test]
+fn element_instanceof_walks_the_full_chain() {
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    for name in ["HTMLElement", "Element", "Node", "EventTarget"] {
+        let answer = rt
+            .eval_to_string(&format!("el instanceof {name}"))
+            .unwrap();
+        assert_eq!(answer, "true", "el instanceof {name} should be true");
+    }
+}
+
+#[test]
+fn html_element_prototype_chain_matches_spec() {
+    // Object.getPrototypeOf chain must be exactly HTMLElement →
+    // Element → Node → EventTarget → Object — what testharness
+    // tests assert with `prototypeChain` helpers.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    assert_eq!(
+        rt.eval_to_string("Object.getPrototypeOf(el) === HTMLElement.prototype")
+            .unwrap(),
+        "true",
+    );
+    assert_eq!(
+        rt.eval_to_string("Object.getPrototypeOf(HTMLElement.prototype) === Element.prototype")
+            .unwrap(),
+        "true",
+    );
+    assert_eq!(
+        rt.eval_to_string("Object.getPrototypeOf(Element.prototype) === Node.prototype")
+            .unwrap(),
+        "true",
+    );
+    assert_eq!(
+        rt.eval_to_string("Object.getPrototypeOf(Node.prototype) === EventTarget.prototype")
+            .unwrap(),
+        "true",
+    );
+}
+
+#[test]
+fn interface_prototype_constructor_back_links_to_itself() {
+    let mut rt = JsRuntime::new(fixture());
+    for name in ["EventTarget", "Node", "Element", "HTMLElement"] {
+        assert_eq!(
+            rt.eval_to_string(&format!("{name}.prototype.constructor === {name}"))
+                .unwrap(),
+            "true",
+            "{name}.prototype.constructor should round-trip",
+        );
+    }
+}
+
+#[test]
+fn node_element_html_element_constructors_throw_on_new() {
+    // `Node`, `Element`, and `HTMLElement` have no public IDL
+    // constructor — web content can't say `new Element()`.
+    // (Per DOM § 4.4 / § 4.9 the interface objects exist for
+    // `instanceof` and prototype lookup, but their `[[Call]]`
+    // and `[[Construct]]` slots throw.)
+    let mut rt = JsRuntime::new(fixture());
+    for name in ["Node", "Element", "HTMLElement"] {
+        let err = rt
+            .execute(&format!("new {name}()"))
+            .expect_err(&format!("new {name}() should throw"));
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Illegal constructor") && msg.contains(name),
+            "expected `Illegal constructor: {name}` in error message, got: {msg}",
+        );
+    }
+}
+
+#[test]
+fn event_target_is_constructible() {
+    // EventTarget IS constructible per DOM § 2.6:
+    //   `[Exposed=*] interface EventTarget { constructor(); ... }`.
+    // The wrapper produced by `new EventTarget()` must:
+    //   - be an EventTarget instance,
+    //   - carry the prototype-installed addEventListener /
+    //     removeEventListener / dispatchEvent methods, and
+    //   - fire user listeners on dispatchEvent.
+    let mut rt = JsRuntime::new(fixture());
+    assert_eq!(
+        rt.eval_to_string("(new EventTarget()) instanceof EventTarget")
+            .unwrap(),
+        "true",
+    );
+    // Methods come off the prototype, not own properties — the
+    // whole point of moving to Boa's Class trait.
+    assert_eq!(
+        rt.eval_to_string(
+            "Object.getPrototypeOf(new EventTarget()) === EventTarget.prototype"
+        )
+        .unwrap(),
+        "true",
+    );
+    assert_eq!(
+        rt.eval_to_string("typeof EventTarget.prototype.addEventListener")
+            .unwrap(),
+        "function",
+    );
+
+    // End-to-end: register listener, dispatch, observe.
+    let _ = rt
+        .execute(
+            r#"
+        var et = new EventTarget();
+        var fired = 0;
+        et.addEventListener('ping', function () { fired += 1; });
+        et.dispatchEvent(new Event('ping'));
+        et.dispatchEvent(new Event('ping'));
+        "#,
+        )
+        .unwrap();
+    assert_eq!(rt.eval_to_string("fired").unwrap(), "2");
+}
+
+#[test]
+fn distinct_event_target_instances_have_isolated_listener_buckets() {
+    // Each `new EventTarget()` mints a fresh scope_key, so a
+    // listener on `a` must not fire when an event is dispatched
+    // on `b`. This is what makes EventTarget instances a real
+    // identity rather than aliases for a shared bucket.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt
+        .execute(
+            r#"
+        var a = new EventTarget();
+        var b = new EventTarget();
+        var a_fired = 0;
+        var b_fired = 0;
+        a.addEventListener('x', function () { a_fired += 1; });
+        b.addEventListener('x', function () { b_fired += 1; });
+        a.dispatchEvent(new Event('x'));
+        b.dispatchEvent(new Event('x'));
+        b.dispatchEvent(new Event('x'));
+        "#,
+        )
+        .unwrap();
+    assert_eq!(rt.eval_to_string("a_fired").unwrap(), "1");
+    assert_eq!(rt.eval_to_string("b_fired").unwrap(), "2");
+}
+
+#[test]
+fn element_id_is_writable_and_reflects_to_attribute() {
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    // Read: live accessor returns the current attribute value.
+    assert_eq!(rt.eval_to_string("el.id").unwrap(), "hello");
+    // Write: setter routes through the same attribute store
+    // setAttribute uses, so both views stay in sync.
+    let _ = rt.execute("el.id = 'changed';").unwrap();
+    assert_eq!(rt.eval_to_string("el.id").unwrap(), "changed");
+    assert_eq!(
+        rt.eval_to_string("el.getAttribute('id')").unwrap(),
+        "changed",
+    );
+}
+
+#[test]
+fn element_class_name_is_writable_and_reflects_to_attribute() {
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    assert_eq!(
+        rt.eval_to_string("el.className").unwrap(),
+        "greeting prominent",
+    );
+    let _ = rt.execute("el.className = 'replaced';").unwrap();
+    assert_eq!(rt.eval_to_string("el.className").unwrap(), "replaced");
+    assert_eq!(
+        rt.eval_to_string("el.getAttribute('class')").unwrap(),
+        "replaced",
+    );
+}
+
+#[test]
+fn set_attribute_id_is_visible_through_idl_getter() {
+    // The reverse direction: writing the content attribute via
+    // setAttribute must immediately show up on the IDL getter.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var el = document.getElementById('hello');").unwrap();
+    let _ = rt.execute("el.setAttribute('id', 'attr-route');").unwrap();
+    assert_eq!(rt.eval_to_string("el.id").unwrap(), "attr-route");
+}
