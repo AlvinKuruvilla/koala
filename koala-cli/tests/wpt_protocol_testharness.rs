@@ -124,6 +124,85 @@ fn testharness_command_round_trips_emitted_results() {
 }
 
 #[test]
+fn testharness_command_runs_real_testharness_style_test_via_reporter() {
+    // The motivating case for the reporter installer: an HTML
+    // fixture that mimics testharness.js's API (no replay in
+    // add_result_callback) runs a synchronous test BEFORE the
+    // reporter binds. The reporter's tests.tests replay path
+    // captures it so the testharness_complete frame carries
+    // the result.
+    let html = r#"<!DOCTYPE html>
+        <html><body>
+          <script>
+            // Mock the slice of testharness.js the reporter relies on.
+            globalThis.__cbs = [];
+            globalThis.__completionCbs = [];
+            add_result_callback = function (cb) { __cbs.push(cb); };
+            add_completion_callback = function (cb) { __completionCbs.push(cb); };
+            globalThis.tests = { tests: [] };
+            globalThis.Test = function () {};
+            Test.prototype.phases = { COMPLETE: 4 };
+            globalThis.test = function (fn, name) {
+              var t = { name: name, status: 0, message: '', stack: '', phase: 4 };
+              try { fn(); } catch (e) { t.status = 1; t.message = String(e && e.message || e); }
+              tests.tests.push(t);
+              for (var i = 0; i < __cbs.length; i++) { __cbs[i](t); }
+            };
+          </script>
+          <script>
+            test(function () {}, 'first');
+            test(function () { throw new Error('nope') }, 'second');
+          </script>
+        </body></html>"#;
+    let fixture = fixture_path("reporter-sync");
+    std::fs::write(&fixture, html).expect("write fixture");
+
+    let binary = koala_binary();
+    let mut child = Command::new(&binary)
+        .arg("--wpt-protocol")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn koala-cli --wpt-protocol");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let _ = reader.read_line(&mut line).unwrap(); // ready
+
+    let cmd = format!(
+        r#"{{"cmd":"testharness","url":"{}"}}"#,
+        fixture.to_string_lossy(),
+    );
+    writeln!(stdin, "{cmd}").unwrap();
+
+    line.clear();
+    let _ = reader.read_line(&mut line).unwrap();
+
+    writeln!(stdin, r#"{{"cmd":"shutdown"}}"#).unwrap();
+    drop(stdin);
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&fixture);
+
+    let event: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(event["event"].as_str(), Some("testharness_complete"));
+
+    let results = event["results"].as_array().expect("results array");
+    assert_eq!(
+        results.len(),
+        2,
+        "reporter replay should have captured both sync tests: {event}",
+    );
+    assert_eq!(results[0]["name"].as_str(), Some("first"));
+    assert_eq!(results[0]["status"].as_i64(), Some(0));
+    assert_eq!(results[1]["name"].as_str(), Some("second"));
+    assert_eq!(results[1]["status"].as_i64(), Some(1));
+    assert_eq!(results[1]["message"].as_str(), Some("nope"));
+}
+
+#[test]
 fn testharness_command_with_no_completion_returns_null_completion() {
     // A document that emits results but never fires the harness
     // completion callback. The frame should still come through
