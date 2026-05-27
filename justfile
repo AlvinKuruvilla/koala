@@ -47,10 +47,34 @@ wpt-setup:
 # dashboard. Use `just wpt-record` instead if you want the run
 # archived under `dashboard/runs/`.
 #
+# `processes` is the parallel koala-cli count. The current
+# rate-limiter on every directory run is tests that hit wpt's
+# 10s per-test deadline (because koala doesn't implement enough
+# DOM yet for testharness.js to declare any subtests), so a
+# directory's wall time is dominated by N timeout tests × 10s.
+# Parallelism cuts that linearly. Default is 4, matching
+# wpt-record; pass `1` for clean sequential output (single-test
+# debugging) or higher to push more cores. Each koala-cli writes
+# its own JSON-protocol stream and they don't share state.
+#
 #   just wpt                                                # smoke test
 #   just wpt /css/CSS2/visudet/content-height-001.html      # single test
-#   just wpt /dom/nodes/                                    # whole dir
-wpt test="/css/CSS2/visudet/content-height-001.html":
+#   just wpt /css/CSS2/visudet/content-height-001.html 1    # force serial
+#   just wpt /dom/nodes/                                    # whole dir, 4 parallel
+#   just wpt /dom/nodes/ 8                                  # whole dir, 8 parallel
+wpt test="/css/CSS2/visudet/content-height-001.html" processes="4":
+    #!/usr/bin/env bash
+    # Shebang form so we own the whole script and can:
+    #   1. Keep going past `wpt run` exiting non-zero (it does
+    #      whenever any test has an unexpected result — default
+    #      just behaviour would skip the summary exactly when
+    #      it matters most).
+    #   2. Hold off on the koala summary until wpt's wptserve
+    #      subprocesses have finished flushing their shutdown
+    #      log lines, so the summary lands at the very bottom
+    #      rather than mid-shutdown.
+    #   3. Propagate wpt's exit code back to just / CI.
+    set -uo pipefail
     cargo build --release -p koala-cli
     # PYTHONWARNINGS silences wpt-pinned urllib3 v2's
     # `NotOpenSSLWarning` (Python 3.9 on macOS links against
@@ -64,18 +88,29 @@ wpt test="/css/CSS2/visudet/content-height-001.html":
     # with "invalid module name". The message form matches a
     # regex against the warning's start, which Python can
     # evaluate without importing anything.
+    rc=0
     PYTHONWARNINGS="ignore:urllib3 v2 only supports OpenSSL" \
     .venv-wpt/bin/python third-party/wpt/wpt \
         --venv .venv-wpt --skip-venv-setup \
         run \
             --binary="{{justfile_directory()}}/target/release/koala" \
+            --processes="{{processes}}" \
             --no-pause \
             --no-restart-on-unexpected \
             --log-mach=- --log-mach-level=info \
             --log-wptreport=/tmp/koala-wpt.json \
-            koala "{{test}}"
-    @echo
-    @.venv-wpt/bin/python -m wptrunner_koala.summary /tmp/koala-wpt.json
+            koala "{{test}}" || rc=$?
+    # `wpt run` returns once its main thread is done, but its
+    # wptserve worker subprocesses keep emitting "Stopped http
+    # server" / "Closing logging queue" lines for a moment
+    # afterwards (separate processes, inherited stdout, no way
+    # for bash to `wait` on them). Pause long enough that those
+    # stragglers land before the summary; 500ms is well past
+    # the observed shutdown noise without being noticeable.
+    sleep 0.5
+    echo
+    .venv-wpt/bin/python -m wptrunner_koala.summary /tmp/koala-wpt.json
+    exit "$rc"
 
 # List the top-level WPT areas sorted by test-file count, with a
 # hint on how to drive `just wpt` against one. Takes ~10-30s on
