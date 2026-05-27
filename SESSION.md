@@ -70,3 +70,42 @@ polish the look.
   controls is the easy part; the state model and event plumbing
   (which depends on JS being wired through the DOM) is where
   the real complexity lives.
+
+## Real WPT testharness tests still don't report subtests
+
+End-to-end `wpt run --product=koala dom/nodes/Element-childElementCount-nochild.html`
+gets to a clean `TEST_END: OK` with a working
+`testharnessreport-koala.js`, but the user's `test(...)` block
+never fires `add_result_callback`. The fixture's HTML loads
+testharness.js + testharnessreport.js + a synchronous
+`test(function () { assert_equals(p.childElementCount, 0); })`,
+and none of the post-setup sentinels I added to the reporter
+fired for the user test (only the setup-time ones).
+
+What we ruled out during the validation:
+- `testharnessreport-koala.js` IS being served (sentinels prove
+  it; the wptrunner HTTP route override works).
+- `setup({...})` succeeds, `add_result_callback` /
+  `add_completion_callback` succeed.
+- Boa's Promise/microtask queue IS now being drained (separate
+  fix in `fix(js): drain Boa microtask / Promise job queue`).
+  Didn't unlock subtests.
+
+The actual blocker is somewhere deeper in testharness.js's
+test-scheduling internals — possibly `queueMicrotask`,
+`MutationObserver`, structured cloning, `Promise.then` chain
+order under our microtask drain, or some other API that
+testharness.js expects but koala doesn't yet provide.
+
+Reproducible cheaply: run
+`.venv-wpt/bin/python3 third-party/wpt/wpt run --binary=$PWD/target/release/koala
+--timeout-multiplier=5 --log-wptreport=/tmp/r.json koala
+/dom/nodes/Element-childElementCount-nochild.html`
+and inspect `/tmp/r.json` — `subtests` is empty.
+
+Next debug step is to add per-line sentinels INSIDE
+testharness.js's `Test.prototype.run` (or wherever test() lands)
+to find the first line where execution stops. Or write a tiny
+WPT-format test that bypasses `test()` entirely and just calls
+`__koala_emit_result__` directly — that should at least confirm
+the end-to-end path past the harness.
