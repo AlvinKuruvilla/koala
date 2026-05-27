@@ -18,7 +18,9 @@ use anyhow::{Context, Result};
 use koala_browser::{FontProvider, JsHooks, load_document, load_document_with_hooks};
 use koala_browser::js::JsRuntime;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::io::{self, BufRead, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 use crate::render::render_document_to_path;
@@ -176,16 +178,32 @@ pub(crate) fn run() -> Result<()> {
 
         match command {
             Command::Testharness { url } => {
-                let event = match run_testharness(&url) {
-                    Ok((results, completion)) => Event::TestharnessComplete {
+                // Catch panics so a single broken test doesn't
+                // kill the subprocess and turn every subsequent
+                // test in the batch into a cascading failure.
+                // wptrunner still surfaces the panic message (we
+                // route it through `load_failed`), so individual
+                // crashes are visible without taking the whole
+                // run down with them.
+                let attempt = catch_unwind(AssertUnwindSafe(|| run_testharness(&url)));
+                let event = match attempt {
+                    Ok(Ok((results, completion))) => Event::TestharnessComplete {
                         url,
                         results,
                         completion,
                     },
-                    Err(e) => Event::LoadFailed {
+                    Ok(Err(e)) => Event::LoadFailed {
                         url,
                         error: format!("{e:#}"),
                     },
+                    Err(payload) => {
+                        let message = panic_message(&payload);
+                        eprintln!("[koala-wpt] testharness panicked for {url}: {message}");
+                        Event::LoadFailed {
+                            url,
+                            error: format!("panic: {message}"),
+                        }
+                    }
                 };
                 emit(&event)?;
             }
@@ -195,20 +213,46 @@ pub(crate) fn run() -> Result<()> {
                 let [w, h] =
                     viewport.unwrap_or([DEFAULT_VIEWPORT_WIDTH, DEFAULT_VIEWPORT_HEIGHT]);
 
-                let event = match render_url(&url, &path, w, h, &font_provider) {
-                    Ok(()) => Event::Rendered {
+                let attempt = catch_unwind(AssertUnwindSafe(|| {
+                    render_url(&url, &path, w, h, &font_provider)
+                }));
+                let event = match attempt {
+                    Ok(Ok(())) => Event::Rendered {
                         url,
                         screenshot: path.to_string_lossy().into_owned(),
                     },
-                    Err(e) => Event::LoadFailed {
+                    Ok(Err(e)) => Event::LoadFailed {
                         url,
                         error: format!("{e:#}"),
                     },
+                    Err(payload) => {
+                        let message = panic_message(&payload);
+                        eprintln!("[koala-wpt] render panicked for {url}: {message}");
+                        Event::LoadFailed {
+                            url,
+                            error: format!("panic: {message}"),
+                        }
+                    }
                 };
                 emit(&event)?;
             }
             Command::Shutdown => return Ok(()),
         }
+    }
+}
+
+/// Best-effort extraction of a human-readable message from a
+/// `catch_unwind` payload. Panics in std use either `String` or
+/// `&'static str`; anything else falls back to a placeholder.
+/// Mirrors the helper at `koala-qt/src/browser_page.rs:584` — if
+/// a third site ends up needing it, lift to `koala-common`.
+fn panic_message(payload: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_owned()
+    } else {
+        "engine panicked (no message)".to_owned()
     }
 }
 
@@ -341,7 +385,39 @@ fn emit(event: &Event) -> Result<()> {
 mod tests {
     use super::{
         Command, Event, TestharnessCompletionPayload, TestharnessResultPayload,
+        panic_message,
     };
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn panic_message_recovers_string_payload() {
+        let payload = catch_unwind(AssertUnwindSafe(|| {
+            panic!("{}", "boom from String".to_owned());
+        }))
+        .expect_err("panic should have been caught");
+        assert_eq!(panic_message(&payload), "boom from String");
+    }
+
+    #[test]
+    fn panic_message_recovers_str_payload() {
+        let payload = catch_unwind(AssertUnwindSafe(|| {
+            panic!("boom from &str literal");
+        }))
+        .expect_err("panic should have been caught");
+        assert_eq!(panic_message(&payload), "boom from &str literal");
+    }
+
+    #[test]
+    fn panic_message_falls_back_on_unknown_payload() {
+        // `panic_any` lets us throw a non-string type. The helper
+        // should hand back its placeholder rather than panicking
+        // itself on the downcast failure.
+        let payload = catch_unwind(AssertUnwindSafe(|| {
+            std::panic::panic_any(42i32);
+        }))
+        .expect_err("panic should have been caught");
+        assert_eq!(panic_message(&payload), "engine panicked (no message)");
+    }
 
     #[test]
     fn parses_render_command_without_viewport() {

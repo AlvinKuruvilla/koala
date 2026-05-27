@@ -124,6 +124,90 @@ fn testharness_command_round_trips_emitted_results() {
 }
 
 #[test]
+fn subprocess_survives_failed_test_and_serves_subsequent_command() {
+    // wptrunner runs every test in a directory through a single
+    // koala-cli subprocess. If one test fails — whether from a
+    // bogus URL, a JS error, or a Rust-side panic — the
+    // subprocess MUST stay alive so the next test in the batch
+    // can be served. Otherwise a single bad test cascades into
+    // every subsequent test in the batch reporting CRASH.
+    //
+    // This test exercises the command-loop-continues path with
+    // a non-existent URL (the load_document call returns
+    // `Err`, which the protocol surfaces as `load_failed`).
+    // The matching catch_unwind path for actual Rust panics is
+    // covered by the panic_message unit tests; both paths share
+    // the same "log + emit + continue" structure in `run`.
+    let good_html = r#"<!DOCTYPE html>
+        <html><body>
+          <script>
+            __koala_emit_result__({ name: 'second-command-ran', status: 0 });
+          </script>
+        </body></html>"#;
+    let good_fixture = fixture_path("recovery-good");
+    std::fs::write(&good_fixture, good_html).expect("write good fixture");
+
+    let binary = koala_binary();
+    let mut child = Command::new(&binary)
+        .arg("--wpt-protocol")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn koala-cli --wpt-protocol");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let _ = reader.read_line(&mut line).unwrap(); // ready
+
+    // First command: a path that doesn't exist. Should come back
+    // as load_failed without taking the subprocess down.
+    let bogus = fixture_path("recovery-bogus-DOES-NOT-EXIST");
+    let bad_cmd = format!(
+        r#"{{"cmd":"testharness","url":"{}"}}"#,
+        bogus.to_string_lossy(),
+    );
+    writeln!(stdin, "{bad_cmd}").expect("write bad command");
+    line.clear();
+    let _ = reader.read_line(&mut line).expect("read load_failed event");
+    let first: serde_json::Value =
+        serde_json::from_str(line.trim()).expect("parse first event");
+    assert_eq!(
+        first["event"].as_str(),
+        Some("load_failed"),
+        "expected first response to be load_failed, got: {first}",
+    );
+
+    // Second command: a known-good fixture. Subprocess must
+    // still be alive and serving.
+    let good_cmd = format!(
+        r#"{{"cmd":"testharness","url":"{}"}}"#,
+        good_fixture.to_string_lossy(),
+    );
+    writeln!(stdin, "{good_cmd}").expect("write good command");
+    line.clear();
+    let _ = reader.read_line(&mut line).expect("read testharness_complete event");
+    let second: serde_json::Value =
+        serde_json::from_str(line.trim()).expect("parse second event");
+
+    writeln!(stdin, r#"{{"cmd":"shutdown"}}"#).unwrap();
+    drop(stdin);
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&good_fixture);
+
+    assert_eq!(
+        second["event"].as_str(),
+        Some("testharness_complete"),
+        "expected subprocess to survive and complete second command, got: {second}",
+    );
+    let results = second["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["name"].as_str(), Some("second-command-ran"));
+}
+
+#[test]
 fn testharness_command_with_no_completion_returns_null_completion() {
     // A document that emits results but never fires the harness
     // completion callback. The frame should still come through
