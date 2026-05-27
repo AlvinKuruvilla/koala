@@ -60,6 +60,12 @@ use crate::scheduler;
 /// mutates it deserves the broken-timer behaviour it gets.
 const TIMERS_KEY: &str = "__koala_timers__";
 
+/// Parallel hidden global indexed by the same `id - 1` key that
+/// `__koala_timers__` uses, holding the trailing-argument list
+/// each timer was scheduled with. Empty array when no extra args
+/// were passed. See the module-level doc for the spec rationale.
+const TIMER_ARGS_KEY: &str = "__koala_timer_args__";
+
 /// Register `setTimeout`, `setInterval`, `clearTimeout`,
 /// `clearInterval`, and the [`TIMERS_KEY`] backing array on the
 /// given context. Called from
@@ -73,6 +79,18 @@ pub fn register_timers(context: &mut Context) {
     context
         .register_global_property(js_string!(TIMERS_KEY), arr, Attribute::all())
         .expect("__koala_timers__ should not already exist");
+
+    // Parallel storage for trailing arguments. Same index space
+    // as `__koala_timers__`; each slot is a JsArray (empty when
+    // setTimeout was called without trailing args).
+    let args_arr = JsArray::new(context);
+    context
+        .register_global_property(
+            js_string!(TIMER_ARGS_KEY),
+            args_arr,
+            Attribute::all(),
+        )
+        .expect("__koala_timer_args__ should not already exist");
 
     context
         .register_global_callable(
@@ -130,14 +148,14 @@ fn set_interval(
     register_timer(args, context, /* is_interval */ true, "setInterval")
 }
 
-/// Shared implementation behind `setTimeout` and `setInterval`. The
-/// only meaningful difference is whether the scheduler is told to
-/// re-arm the same id after each firing.
+/// Shared implementation behind `setTimeout` and `setInterval`.
+/// The only meaningful difference is whether the scheduler is
+/// told to re-arm the same id after each firing.
 ///
-/// We don't yet support the trailing `...args` form (extra
-/// arguments forwarded to the handler) — partly because nobody
-/// uses it and partly because we'd need to keep those `JsValue`s
-/// alive too. Add if/when a test demands it.
+/// Trailing `args.get(2..)` are captured into a parallel
+/// `__koala_timer_args__` slot keyed by the same id-1 index, so
+/// the pump can pass them back to the handler at firing time.
+/// Intervals re-fire with the same captured args every time.
 fn register_timer(
     args: &[JsValue],
     context: &mut Context,
@@ -163,9 +181,22 @@ fn register_timer(
         None => 0,
     };
 
+    // Capture trailing args into a fresh JsArray BEFORE touching
+    // the timers/args storage — the long-lived mutable borrow
+    // ObjectInitializer-style builders take of `context` blocks
+    // any further `context` calls, but `JsArray::new` only needs
+    // a single borrow.
+    let extra_args = JsArray::new(context);
+    for arg in args.iter().skip(2) {
+        let _ = extra_args.push(arg.clone(), context)?;
+    }
+
     let timers = timers_array(context)?;
     let id_index = timers.length(context)?;
     let _ = timers.push(callback.clone(), context)?;
+
+    let timer_args = timer_args_array(context)?;
+    let _ = timer_args.push(extra_args, context)?;
 
     // JS-visible id = array_index + 1, so id `0` stays a sentinel
     // (clearTimeout(undefined) doesn't accidentally hit a real
@@ -204,6 +235,22 @@ fn clear_handle(
     };
     scheduler::cancel(id);
     Ok(JsValue::undefined())
+}
+
+/// Get the `__koala_timer_args__` global as a [`JsArray`]
+/// handle. Indexed by the same id-1 key as
+/// [`timers_array`]; each slot is itself a `JsArray` holding the
+/// trailing arguments passed at scheduling time.
+pub(crate) fn timer_args_array(context: &mut Context) -> JsResult<JsArray> {
+    let global = context.global_object();
+    let value = global.get(js_string!(TIMER_ARGS_KEY), context)?;
+    let object = value.as_object().cloned().ok_or_else(|| {
+        JsError::from_native(
+            JsNativeError::typ()
+                .with_message("__koala_timer_args__ is missing or not an object"),
+        )
+    })?;
+    JsArray::from_object(object)
 }
 
 /// Get the `__koala_timers__` global as a [`JsArray`] handle.

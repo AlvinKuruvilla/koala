@@ -205,10 +205,19 @@ fn parse_html_with_base_url(html: &str, base_url: Option<&str>) -> LoadedDocumen
         let mut js_runtime = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
         for script in scripts {
             if let Err(e) = js_runtime.execute(&script.source) {
-                parse_issues.push(format!(
+                let message = format!(
                     "JavaScript error (in {label}): {e}",
                     label = script.label,
-                ));
+                );
+                // Make the error observable to JS via
+                // `window.addEventListener('error', …)` so
+                // testharness.js's failure path triggers. Then
+                // record the issue for human consumption.
+                if let Err(dispatch_err) = js_runtime.dispatch_error(&message) {
+                    parse_issues
+                        .push(format!("JavaScript error (in error handler): {dispatch_err}"));
+                }
+                parse_issues.push(message);
             }
         }
         // HTML § 13.2.6 "Stop parsing" lifecycle:

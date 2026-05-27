@@ -45,11 +45,20 @@ pub(crate) const WINDOW_SCOPE: &str = "window";
 /// [`crate::globals::register_globals`] after the document and
 /// console have been registered, so `window.document` resolves
 /// correctly from the moment `window` is queryable.
+///
+/// Also registers `self` as a second pointer to the same global
+/// object. testharness.js (and a swath of code that came up
+/// through Web Workers, where `self` is the canonical name) leans
+/// on `self === window`, so the alias has to exist even though
+/// koala doesn't model a Worker context yet.
 pub fn register_window(context: &mut Context) {
     let global = context.global_object();
     context
-        .register_global_property(js_string!("window"), global, Attribute::all())
+        .register_global_property(js_string!("window"), global.clone(), Attribute::all())
         .expect("`window` global should not already exist");
+    context
+        .register_global_property(js_string!("self"), global, Attribute::all())
+        .expect("`self` global should not already exist");
 }
 
 /// Register `addEventListener` / `removeEventListener` /

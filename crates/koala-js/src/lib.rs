@@ -49,6 +49,14 @@
 //!   - Lifecycle events `DOMContentLoaded` and `load` fired from
 //!     [`JsRuntime::dispatch_dom_content_loaded`] /
 //!     [`JsRuntime::dispatch_load`]
+//! - testharness.js dependency stubs (Phase 5 chunk 2):
+//!   - `self` alias for `window`
+//!   - `location` with `.href`, `.search`, `.pathname` plumbed
+//!     through [`JsRuntime::set_location`]
+//!   - `setTimeout` / `setInterval` trailing-args forwarding
+//!   - `'error'` event dispatch via
+//!     [`JsRuntime::dispatch_error`] (called by koala-browser
+//!     when a script throws)
 //! - DOM mutations trigger a re-cascade + re-layout in
 //!   koala-browser after scripts return.
 //!
@@ -270,6 +278,11 @@ impl JsRuntime {
     /// and for one-shots clear the array slot so the closure can be
     /// collected. Interval slots stay live because the same id is
     /// re-armed by the caller for the next firing.
+    ///
+    /// Trailing arguments captured at `setTimeout` /
+    /// `setInterval` time live in
+    /// [`globals::timers::timer_args_array`] under the same
+    /// index and are forwarded to the handler here.
     fn call_timer_callback(
         &mut self,
         id: scheduler::TimerId,
@@ -289,13 +302,32 @@ impl JsRuntime {
         if !cb_obj.is_callable() {
             return Ok(());
         }
+
+        // Pull trailing args out of the parallel storage. Decode
+        // into a Rust Vec<JsValue> so the call site can hand them
+        // to Boa as a slice. Empty when setTimeout was called
+        // without trailing args.
+        let timer_args = globals::timers::timer_args_array(&mut self.context)?;
+        let args_value = timer_args.get(index, &mut self.context)?;
+        let extra_args = if let Some(obj) = args_value.as_object() {
+            let array = boa_engine::object::builtins::JsArray::from_object(obj.clone())?;
+            let len = array.length(&mut self.context)?;
+            let mut out = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+            for i in 0..len {
+                out.push(array.get(i, &mut self.context)?);
+            }
+            out
+        } else {
+            Vec::new()
+        };
+
         let global = JsValue::from(self.context.global_object());
-        let _ = cb_obj.call(&global, &[], &mut self.context)?;
+        let _ = cb_obj.call(&global, &extra_args, &mut self.context)?;
         if !is_interval {
-            // One-shot: null the slot so the closure can be
-            // collected on the next sweep. Setting to undefined
-            // would also work; null is cheaper to type.
+            // One-shot: null both slots so the closures can be
+            // collected on the next sweep.
             let _ = timers.set(index, JsValue::null(), false, &mut self.context)?;
+            let _ = timer_args.set(index, JsValue::null(), false, &mut self.context)?;
         }
         Ok(())
     }
@@ -309,6 +341,31 @@ impl JsRuntime {
     /// and layout against the post-script tree.
     pub fn take_dom_dirty(&self) -> bool {
         self.dom_dirty.replace(false)
+    }
+
+    /// Update the URL exposed through `location.href` /
+    /// `location.search` / `location.pathname`.
+    ///
+    /// [§ 7.7.1 The Location interface](https://html.spec.whatwg.org/multipage/nav-history-apis.html#the-location-interface)
+    ///
+    /// Defaults to `about:blank` before any setter call; the
+    /// koala-browser pipeline calls this once after construction
+    /// with the document's base URL so testharness.js sees the
+    /// real loaded URL rather than the initial-empty-document
+    /// placeholder.
+    ///
+    /// Writes through to the hidden `__koala_location_href__`
+    /// slot the `location` accessors read on every property
+    /// access, so the change is visible to all subsequent JS
+    /// without re-registering the `location` object.
+    pub fn set_location(&mut self, href: &str) {
+        let global = self.context.global_object();
+        let _ = global.set(
+            js_string!(globals::location::HREF_KEY),
+            JsValue::from(JsString::from(href)),
+            false,
+            &mut self.context,
+        );
     }
 
     /// Run `f` with mutable access to the embedded Boa
@@ -358,6 +415,58 @@ impl JsRuntime {
             js_string!("DOMContentLoaded"),
             /* bubbles */ true,
         )
+    }
+
+    /// Fire an `error` event at `window` carrying `message` in
+    /// the event's `.message` field.
+    ///
+    /// [§ 7.5.3 Runtime script errors](https://html.spec.whatwg.org/multipage/webappapis.html#runtime-script-errors)
+    ///
+    /// The spec uses an `ErrorEvent` interface with
+    /// `.message` / `.filename` / `.lineno` / `.colno` / `.error`
+    /// — we only populate `.message` for now. Filename + line
+    /// info would require the script-loader to track the source
+    /// label through the runtime, which is deferred.
+    ///
+    /// `bubbles: false`, `cancelable: true` per spec. Today's
+    /// dispatch is strict-target-only so the `bubbles` flag is
+    /// recorded on the event without propagating up.
+    ///
+    /// Handler errors are NOT propagated back: a listener that
+    /// itself throws would otherwise trip an infinite error
+    /// loop. The handler-error is logged via the parse_issues
+    /// channel inside koala-browser instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`JsError`] only when the listener dispatch
+    /// machinery itself fails (e.g. a malicious script replaced
+    /// the listener storage).
+    pub fn dispatch_error(&mut self, message: &str) -> Result<(), JsError> {
+        let dom_guard = dom_handle::guard(self.dom.clone());
+        let event = globals::events::make_event_object(
+            &mut self.context,
+            js_string!("error"),
+            /* bubbles */ false,
+            /* cancelable */ true,
+        );
+        let _ = event.set(
+            js_string!("message"),
+            JsValue::from(JsString::from(message)),
+            false,
+            &mut self.context,
+        )?;
+        let this_value = JsValue::from(self.context.global_object());
+        let result = globals::events::dispatch_at_scope(
+            globals::window::WINDOW_SCOPE,
+            &this_value,
+            &event,
+            &mut self.context,
+        );
+        if dom_guard.dirty_seen() {
+            self.dom_dirty.set(true);
+        }
+        result
     }
 
     /// Fire a `load` event at `window`.

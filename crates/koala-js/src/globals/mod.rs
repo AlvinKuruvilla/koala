@@ -29,6 +29,7 @@ pub(crate) mod document;
 mod element;
 pub(crate) mod events;
 mod helpers;
+pub(crate) mod location;
 mod selectors;
 mod text;
 pub(crate) mod timers;
@@ -56,11 +57,11 @@ pub fn register_globals(context: &mut Context) {
     document::register_document(context);
     timers::register_timers(context);
     events::register_events(context);
+    location::register_location(context);
     window::register_event_target(context);
     window::register_window(context);
 
     // Not yet implemented:
-    // - location (Phase 2 follow-up: requires URL state)
     // - navigator (Phase 2 follow-up: browser metadata)
     // - Event bubbling / capture (chunk 3 follow-up; today's
     //   dispatch is strict-target-only)
