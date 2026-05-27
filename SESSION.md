@@ -71,41 +71,72 @@ polish the look.
   (which depends on JS being wired through the DOM) is where
   the real complexity lives.
 
-## Real WPT testharness tests still don't report subtests
+## Real WPT testharness tests now report subtests (resolved)
 
-End-to-end `wpt run --product=koala dom/nodes/Element-childElementCount-nochild.html`
-gets to a clean `TEST_END: OK` with a working
-`testharnessreport-koala.js`, but the user's `test(...)` block
-never fires `add_result_callback`. The fixture's HTML loads
-testharness.js + testharnessreport.js + a synchronous
-`test(function () { assert_equals(p.childElementCount, 0); })`,
-and none of the post-setup sentinels I added to the reporter
-fired for the user test (only the setup-time ones).
+**Resolved** in `fix(js): top-level Window self-references for testharness.js`.
 
-What we ruled out during the validation:
-- `testharnessreport-koala.js` IS being served (sentinels prove
-  it; the wptrunner HTTP route override works).
-- `setup({...})` succeeds, `add_result_callback` /
-  `add_completion_callback` succeed.
-- Boa's Promise/microtask queue IS now being drained (separate
-  fix in `fix(js): drain Boa microtask / Promise job queue`).
-  Didn't unlock subtests.
+Root cause: testharness.js's `_forEach_windows` walked
+`self → self.parent → self.parent.parent …` looking for the
+top-level WindowProxy, and `koala-js` exposed `self`/`window`
+but not `parent`/`top`/`opener`. The loop dereferenced `.parent`
+on `undefined`, throwing `TypeError: cannot convert 'null' or
+'undefined' to object` inside `Tests.prototype.start →
+notify_start → message_functions.start`. The throw escaped
+through every `test()` call before the user function ran, so
+`add_result_callback` never fired.
 
-The actual blocker is somewhere deeper in testharness.js's
-test-scheduling internals — possibly `queueMicrotask`,
-`MutationObserver`, structured cloning, `Promise.then` chain
-order under our microtask drain, or some other API that
-testharness.js expects but koala doesn't yet provide.
+Fix: `register_window` now also installs `window.parent` and
+`window.top` as self-references and `window.opener = null`,
+which are the spec values for a top-level browsing context with
+no parent/opener.
 
-Reproducible cheaply: run
-`.venv-wpt/bin/python3 third-party/wpt/wpt run --binary=$PWD/target/release/koala
---timeout-multiplier=5 --log-wptreport=/tmp/r.json koala
-/dom/nodes/Element-childElementCount-nochild.html`
-and inspect `/tmp/r.json` — `subtests` is empty.
+Verification: `wpt run --product=koala
+/dom/nodes/Element-childElementCount-nochild.html` now produces
+`status=OK` with one subtest reported (FAIL, because
+`Element.childElementCount` itself isn't implemented yet —
+that's a separate DOM gap, captured below).
 
-Next debug step is to add per-line sentinels INSIDE
-testharness.js's `Test.prototype.run` (or wherever test() lands)
-to find the first line where execution stops. Or write a tiny
-WPT-format test that bypasses `test()` entirely and just calls
-`__koala_emit_result__` directly — that should at least confirm
-the end-to-end path past the harness.
+## Engine pump waits for harness setTimeout even when results are in
+
+`koala_js::JsRuntime::pump_until_idle` (at `crates/koala-js/src/lib.rs:233`)
+sleeps until the next scheduled timer is due. testharness.js
+schedules a `setTimeout(harness_timeout_fn, 10000 * multiplier)`
+inside the `Tests` constructor, so every WPT run sleeps the full
+harness timeout even when the test completed synchronously and
+`__koala_emit_completion__` already fired.
+
+Symptom: every testharness test takes ~10s × `timeout-multiplier`
+to come back, and short wptrunner deadlines surface as TIMEOUT
+even though the result was actually ready immediately.
+
+Sketch of the fix: expose a "has the testharness completed?"
+signal from `TestharnessHook` and let `load_document_with_hooks`
+(or a new `pump_until_idle_or_settled` variant) break out of
+the pump loop as soon as the completion callback fires. Care
+needed for `async_test` and `promise_test` — those legitimately
+need the pump to drain timers before they finish, so we can't
+just kill the pump on first emit.
+
+## Pre-existing clippy errors unmasked
+
+`cargo clippy --workspace` previously failed on the first error
+in `koala-common/src/net.rs:144` (collapsible-if). With that one
+fixed, clippy now runs further into the tree and surfaces ~8
+pre-existing style errors across `koala-js` (mostly
+`doc_markdown` and a stray `needless_borrow` in
+`globals/events.rs`). None are new regressions — they were
+silently masked while the koala-common one short-circuited the
+run. Mechanical to fix; bundling them with the next round of
+crate hygiene rather than rolling them into the WPT-fix
+changeset.
+
+## DOM gaps surfaced by the now-working WPT pipeline
+
+With testharness reporting fixed, the first concrete DOM gap
+that fails real tests:
+
+- `Element.childElementCount` is `undefined`. WPT test
+  `/dom/nodes/Element-childElementCount-nochild.html` fails with
+  `assert_equals: expected (number) 0 but got (undefined) undefined`.
+  The property is straightforward (count of `Element` children),
+  and once it lands the test should pass cleanly.

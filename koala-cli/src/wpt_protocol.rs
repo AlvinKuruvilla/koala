@@ -243,8 +243,15 @@ fn run_testharness(
     url: &str,
 ) -> Result<(Vec<TestharnessResultPayload>, Option<TestharnessCompletionPayload>)> {
     let mut hook = TestharnessHook::default();
-    let _doc = load_document_with_hooks(url, &mut hook)
+    let doc = load_document_with_hooks(url, &mut hook)
         .context("while attempting to load testharness document")?;
+    // Surface JS parse / runtime errors so debugging real
+    // testharness.js failures isn't blind. stderr is fine —
+    // wptrunner captures it via KoalaErrorsPart and threads
+    // it into the wptrunner log on EXTERNAL-TIMEOUT / ERROR.
+    for issue in &doc.parse_issues {
+        eprintln!("[koala-wpt] parse_issue: {issue}");
+    }
     Ok((hook.results, hook.completion))
 }
 

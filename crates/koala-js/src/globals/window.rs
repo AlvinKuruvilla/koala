@@ -51,14 +51,54 @@ pub(crate) const WINDOW_SCOPE: &str = "window";
 /// through Web Workers, where `self` is the canonical name) leans
 /// on `self === window`, so the alias has to exist even though
 /// koala doesn't model a Worker context yet.
+///
+/// # Top-level browsing-context self-references
+///
+/// [§ 7.2.5 The Window object — the WindowProxy exotic object](https://html.spec.whatwg.org/multipage/window-object.html#the-windowproxy-exotic-object)
+///
+/// The HTML spec defines `parent`, `top`, and `opener` getters on
+/// `Window`:
+///
+/// > "The parent getter steps are to … return [the] parent navigable's
+/// > active WindowProxy [object], if [a parent navigable exists];
+/// > otherwise, this's WindowProxy."
+/// >
+/// > "The top getter steps are to … return [the] top-level traversable's
+/// > active WindowProxy [object]."
+/// >
+/// > "The opener getter steps are to … return [the] opener browsing
+/// > context's WindowProxy object, if [one exists]; otherwise, null."
+///
+/// Koala models a single top-level document with no parent, no nested
+/// browsing contexts, and no opener. The spec's degenerate cases for
+/// that situation resolve to:
+///
+/// - `window.parent === window` (no parent navigable)
+/// - `window.top   === window` (this *is* the top)
+/// - `window.opener === null`   (no opener)
+///
+/// In particular, testharness.js's `_forEach_windows` walks
+/// `self → self.parent → self.parent.parent …` until it finds a
+/// fixed point; without `parent` resolving to a Window the loop
+/// dereferences `.parent` on `undefined` and throws a `TypeError`
+/// before any `test(...)` body runs.
 pub fn register_window(context: &mut Context) {
     let global = context.global_object();
     context
         .register_global_property(js_string!("window"), global.clone(), Attribute::all())
         .expect("`window` global should not already exist");
     context
-        .register_global_property(js_string!("self"), global, Attribute::all())
+        .register_global_property(js_string!("self"), global.clone(), Attribute::all())
         .expect("`self` global should not already exist");
+    context
+        .register_global_property(js_string!("parent"), global.clone(), Attribute::all())
+        .expect("`parent` global should not already exist");
+    context
+        .register_global_property(js_string!("top"), global, Attribute::all())
+        .expect("`top` global should not already exist");
+    context
+        .register_global_property(js_string!("opener"), JsValue::null(), Attribute::all())
+        .expect("`opener` global should not already exist");
 }
 
 /// Register `addEventListener` / `removeEventListener` /
