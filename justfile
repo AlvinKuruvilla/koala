@@ -23,11 +23,18 @@ cli url screenshot="":
 # One-time setup for the WPT integration: creates `.venv-wpt/`,
 # installs the koala wptrunner plugin, and pulls in wpt's Python
 # requirements. Safe to re-run; pip will no-op when versions match.
+#
+# `blessings` is the colour backend mozterm/machformatter look for
+# when deciding whether to colourise PASS / FAIL / TIMEOUT lines.
+# wpt doesn't list it as a hard dependency — without it, every
+# TEST_END line renders monochrome. Adding it here means `just
+# wpt` produces coloured live output out of the box.
 wpt-setup:
     python3 -m venv .venv-wpt
     .venv-wpt/bin/pip install --upgrade pip
     .venv-wpt/bin/pip install -e wpt-tools/wptrunner-koala
     .venv-wpt/bin/pip install -r third-party/wpt/tools/wptrunner/requirements.txt
+    .venv-wpt/bin/pip install blessings
 
 # Run a WPT test (or directory) against koala via the wpt-protocol
 # plugin. Builds koala-cli in release mode first (incremental, so
@@ -50,7 +57,14 @@ wpt test="/css/CSS2/visudet/content-height-001.html":
     # LibreSSL, not OpenSSL). The warning is informational and
     # not actionable from our side — wpt's requirements.txt pins
     # urllib3 to exactly 2.6.3.
-    PYTHONWARNINGS="ignore::urllib3.exceptions.NotOpenSSLWarning" \
+    #
+    # Filter by message text rather than category class: -W
+    # parses before site.py runs, so `urllib3.exceptions` isn't
+    # importable yet and a category-based filter is rejected
+    # with "invalid module name". The message form matches a
+    # regex against the warning's start, which Python can
+    # evaluate without importing anything.
+    PYTHONWARNINGS="ignore:urllib3 v2 only supports OpenSSL" \
     .venv-wpt/bin/python third-party/wpt/wpt \
         --venv .venv-wpt --skip-venv-setup \
         run \
