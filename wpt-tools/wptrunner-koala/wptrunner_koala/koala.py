@@ -24,7 +24,10 @@ from wptrunner.executors import executor_kwargs as base_executor_kwargs
 # `__wptrunner__` must be live in this module's namespace even if
 # nothing here references it directly.
 from wptrunner.browsers.base import get_timeout_multiplier  # noqa: F401
-from .executorkoala import KoalaRefTestExecutor  # noqa: F401
+from .executorkoala import (  # noqa: F401
+    KoalaRefTestExecutor,
+    KoalaTestharnessExecutor,
+)
 
 
 # Graceful-shutdown timeouts. After requesting `{"cmd":"shutdown"}`
@@ -260,6 +263,7 @@ __wptrunner__ = {
     "browser": "KoalaBrowser",
     "executor": {
         "reftest": "KoalaRefTestExecutor",
+        "testharness": "KoalaTestharnessExecutor",
     },
     "browser_kwargs": "browser_kwargs",
     "executor_kwargs": "executor_kwargs",

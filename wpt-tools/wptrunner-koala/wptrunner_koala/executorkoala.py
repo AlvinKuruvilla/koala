@@ -2,9 +2,9 @@
 
 Translates wptrunner's per-test ``do_test`` / ``screenshot`` calls
 into the JSON-lines protocol that ``koala-cli --wpt-protocol``
-speaks. For Phase 1 we only ship a ``RefTestExecutor``; testharness
-support waits on the DOM bridge (see
-``project-memory/wpt-integration-spec.md`` Phases 2–5).
+speaks. Ships two executors: ``RefTestExecutor`` (Phase 1, pixel-
+diff reftests) and ``TestharnessExecutor`` (Phase 5 chunk 3,
+testharness.js result reporting → M2).
 """
 
 import json
@@ -16,8 +16,34 @@ from time import time
 from wptrunner.executors.base import (
     RefTestExecutor,
     RefTestImplementation,
+    TestharnessExecutor,
 )
 from wptrunner.executors.protocol import Protocol, ProtocolPart
+
+
+# koala-js encodes testharness.js's `Test.status` enum as a
+# numeric for transport over the JSON-lines protocol. Map back to
+# wptrunner's string statuses on the way out. Unknown statuses
+# fall through to "FAIL" so the surrounding tooling treats them
+# as test failures rather than silently dropping the result.
+_SUBTEST_STATUS_NAMES = {
+    0: "PASS",
+    1: "FAIL",
+    2: "TIMEOUT",
+    3: "NOTRUN",
+    4: "PRECONDITION_FAILED",
+}
+
+# Same mapping for `TestsStatus.status` (the harness-level
+# completion code). Unknown values fall through to "ERROR" so an
+# unrecognised state shows up as a hard failure rather than a
+# misleading pass.
+_HARNESS_STATUS_NAMES = {
+    0: "OK",
+    1: "ERROR",
+    2: "TIMEOUT",
+    3: "PRECONDITION_FAILED",
+}
 
 
 class KoalaProtocolError(Exception):
@@ -113,6 +139,104 @@ class KoalaRenderPart(ProtocolPart):
             self.logger.debug(f"ignoring stale event: {event!r}")
 
 
+class KoalaTestharnessPart(ProtocolPart):
+    """Sends a single ``testharness`` command and waits for the
+    matching ``testharness_complete`` event. Returns the parsed
+    ``(harness_status, harness_message, subtests)`` triple in
+    wptrunner's expected shape."""
+
+    name = "koala_testharness"
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.stdin_queue = parent.browser.stdin_queue
+        self.stdout_queue = parent.browser.stdout_queue
+        self._ready_seen = False
+
+    def wait_for_ready(self, timeout=10.0):
+        """Consume koala-cli's startup ``ready`` event. Shares the
+        ``_ready_seen`` latch shape with ``KoalaRenderPart`` — both
+        kinds of run end up gating on the same handshake but each
+        protocol part tracks it independently because wptrunner
+        may instantiate them on separate test batches."""
+        if self._ready_seen:
+            return
+        event = _read_event(self.stdout_queue, time() + timeout)
+        if event.get("event") != "ready":
+            raise KoalaProtocolError(f"expected ready event, got {event!r}")
+        self._ready_seen = True
+
+    def run(self, url, timeout):
+        """Send a testharness command for ``url`` and return the
+        decoded ``(status, message, subtests)`` triple.
+
+        ``subtests`` is a list of ``(name, status, message, stack)``
+        tuples in emission order, where ``status`` is one of the
+        wptrunner subtest status strings (PASS, FAIL, TIMEOUT,
+        NOTRUN, PRECONDITION_FAILED). ``status`` for the harness
+        itself is similarly one of OK, ERROR, TIMEOUT,
+        PRECONDITION_FAILED.
+
+        Raises ``KoalaProtocolError`` for load failures /
+        unrecognised events, and ``TimeoutError`` if ``timeout``
+        elapses before ``testharness_complete`` arrives.
+        """
+        self.wait_for_ready()
+
+        command = {"cmd": "testharness", "url": url}
+        self.stdin_queue.put((json.dumps(command) + "\n").encode("utf-8"))
+
+        deadline = time() + timeout if timeout else None
+        while True:
+            event = _read_event(self.stdout_queue, deadline)
+            etype = event.get("event")
+            if etype == "testharness_complete" and event.get("url") == url:
+                return self._decode(event)
+            if etype == "load_failed" and event.get("url") == url:
+                raise KoalaProtocolError(
+                    f"koala load_failed for {url}: {event.get('error')}"
+                )
+            if etype == "protocol_error":
+                raise KoalaProtocolError(
+                    f"koala protocol_error: {event.get('message')}"
+                )
+            self.logger.debug(f"ignoring stale event: {event!r}")
+
+    def _decode(self, event):
+        """Turn a ``testharness_complete`` event into the triple
+        wptrunner's ``TestharnessExecutor`` expects.
+
+        - When koala-cli reports a completion payload, use its
+          status + message.
+        - When the harness completion callback never fired (e.g.
+          the document didn't include testharness.js), default
+          to ``OK`` with an empty message. The per-test results
+          (if any) still surface through the subtests list.
+        """
+        completion = event.get("completion")
+        if completion is None:
+            harness_status = "OK"
+            harness_message = ""
+        else:
+            harness_status = _HARNESS_STATUS_NAMES.get(
+                completion.get("status"), "ERROR"
+            )
+            harness_message = completion.get("message", "")
+
+        subtests = []
+        for raw in event.get("results", []):
+            subtest_status = _SUBTEST_STATUS_NAMES.get(
+                raw.get("status"), "FAIL"
+            )
+            subtests.append((
+                raw.get("name", ""),
+                subtest_status,
+                raw.get("message", ""),
+                raw.get("stack", ""),
+            ))
+        return harness_status, harness_message, subtests
+
+
 class KoalaErrorsPart(ProtocolPart):
     """Drains stderr non-blockingly so the subprocess never deadlocks
     on a full pipe buffer, and so the executor can include any
@@ -136,7 +260,7 @@ class KoalaErrorsPart(ProtocolPart):
 
 
 class KoalaProtocol(Protocol):
-    implements = [KoalaRenderPart, KoalaErrorsPart]
+    implements = [KoalaRenderPart, KoalaTestharnessPart, KoalaErrorsPart]
 
     def connect(self):
         # No connection — the executor talks directly to the
@@ -222,3 +346,50 @@ class KoalaRefTestExecutor(RefTestExecutor):
 
     def wait(self):
         return
+
+
+class KoalaTestharnessExecutor(TestharnessExecutor):
+    """Runs a testharness.js test through koala-cli's
+    ``testharness`` protocol command and converts the captured
+    result frame into wptrunner's ``TestharnessResult`` shape.
+
+    Mirrors ``KoalaRefTestExecutor``'s error-handling pattern:
+    protocol errors and timeouts surface as ERROR /
+    EXTERNAL-TIMEOUT harness statuses with any captured stderr
+    appended to the message so the wptrunner log is useful when
+    things go wrong.
+    """
+
+    def __init__(self, logger, browser, server_config, timeout_multiplier=1,
+                 debug_info=None, **kwargs):
+        super().__init__(
+            logger, browser, server_config, timeout_multiplier,
+            debug_info, **kwargs,
+        )
+        self.protocol = KoalaProtocol(self, browser)
+
+    def do_test(self, test):
+        url = self.test_url(test)
+        timeout = test.timeout * self.timeout_multiplier
+        try:
+            harness_status, harness_message, subtests = (
+                self.protocol.koala_testharness.run(url, timeout)
+            )
+        except KoalaProtocolError as exc:
+            errors = self.protocol.koala_errors.read_errors()
+            return (
+                test.make_result("ERROR", f"{exc}\n{errors}"),
+                [],
+            )
+        except TimeoutError:
+            errors = self.protocol.koala_errors.read_errors()
+            return (test.make_result("EXTERNAL-TIMEOUT", errors), [])
+
+        subtest_results = [
+            test.make_subtest_result(name, status, message, stack)
+            for (name, status, message, stack) in subtests
+        ]
+        return (
+            test.make_result(harness_status, harness_message),
+            subtest_results,
+        )
