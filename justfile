@@ -15,9 +15,9 @@ gui url="":
 #   just cli https://example.com screenshot.png
 cli url screenshot="":
     @if [ -z "{{screenshot}}" ]; then \
-        cargo run --bin koala-cli -- "{{url}}"; \
+        cargo run --bin koala -- "{{url}}"; \
     else \
-        cargo run --bin koala-cli -- -S "{{screenshot}}" "{{url}}"; \
+        cargo run --bin koala -- -S "{{screenshot}}" "{{url}}"; \
     fi
 
 # One-time setup for the WPT integration: creates `.venv-wpt/`,
