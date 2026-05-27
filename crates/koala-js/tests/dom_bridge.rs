@@ -616,6 +616,70 @@ fn event_target_is_constructible() {
     assert_eq!(rt.eval_to_string("fired").unwrap(), "2");
 }
 
+// ---- Wrapper identity (Tier 1.5) ----
+
+#[test]
+fn repeated_get_element_by_id_returns_the_same_object() {
+    // DOM spec: every navigation accessor must return the same
+    // JS object for the same underlying node. Pre-cache, every
+    // call minted a fresh wrapper and `a === b` was `false`.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt
+        .execute(
+            r#"
+        var a = document.getElementById('hello');
+        var b = document.getElementById('hello');
+        "#,
+        )
+        .unwrap();
+    assert_eq!(rt.eval_to_string("a === b").unwrap(), "true");
+}
+
+#[test]
+fn parent_element_is_a_stable_identity() {
+    // `el.parentNode === el.parentNode` is the canonical
+    // wrapper-identity invariant; WPT relies on it heavily.
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            r#"
+        var li   = document.body.firstElementChild.firstElementChild;
+        var p1   = li.parentElement;
+        var p2   = li.parentElement;
+        "#,
+        )
+        .unwrap();
+    assert_eq!(rt.eval_to_string("p1 === p2").unwrap(), "true");
+    // Round-tripping through a different lookup path returns
+    // the same object — proving the cache is keyed on NodeId,
+    // not on the path taken to reach the wrapper.
+    let _ = rt
+        .execute(
+            "var ul_via_parent = li.parentElement;\
+             var ul_via_first  = document.body.firstElementChild;"
+        )
+        .unwrap();
+    assert_eq!(
+        rt.eval_to_string("ul_via_parent === ul_via_first").unwrap(),
+        "true",
+    );
+}
+
+#[test]
+fn children_array_shares_identity_with_other_accessors() {
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            r#"
+        var ul       = document.body.firstElementChild;
+        var via_arr  = ul.children[0];
+        var via_first = ul.firstElementChild;
+        "#,
+        )
+        .unwrap();
+    assert_eq!(rt.eval_to_string("via_arr === via_first").unwrap(), "true");
+}
+
 // ---- DOMException (Tier 1.5) ----
 
 #[test]

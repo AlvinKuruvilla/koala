@@ -27,7 +27,9 @@ use boa_engine::{
 };
 use koala_dom::{NodeId, NodeType};
 
-use crate::dom_handle::{mark_dirty, with_dom, with_dom_mut};
+use crate::dom_handle::{
+    cache_wrapper, cached_wrapper, mark_dirty, with_dom, with_dom_mut,
+};
 
 use super::events::{
     add_listener_at_scope, dispatch_event_call, remove_listener_at_scope,
@@ -59,6 +61,17 @@ pub(super) fn make_element_object(
     context: &mut Context,
     node_id: NodeId,
 ) -> JsResult<JsValue> {
+    // Identity: every JS-side reference to the same NodeId must
+    // resolve to the same JsObject. The DOM spec requires
+    // `el.parentNode === el.parentNode` (and analogous identity
+    // for `firstElementChild`, `children[0]`, etc.), and WPT
+    // tests assert this everywhere. Caching here means the
+    // identity rule holds without each accessor having to know
+    // about it.
+    if let Some(cached) = cached_wrapper(node_id) {
+        return Ok(JsValue::from(cached));
+    }
+
     // Bail early if the DOM doesn't actually have an element at
     // this id — same contract `dom.as_element(node_id)` already
     // imposes on every accessor down-stream.
@@ -91,7 +104,8 @@ pub(super) fn make_element_object(
     let proto = html_element_prototype(context)?;
     let _ = obj.set_prototype(Some(proto));
 
-    Ok(obj.into())
+    cache_wrapper(node_id, obj.clone());
+    Ok(JsValue::from(obj))
 }
 
 /// Read `HTMLElement.prototype` off the global object. Used by

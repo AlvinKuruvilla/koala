@@ -20,9 +20,11 @@
 //! [`JsRuntime`]: crate::JsRuntime
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use koala_dom::DomTree;
+use boa_engine::JsObject;
+use koala_dom::{DomTree, NodeId};
 
 /// Shared handle to a DOM tree. Cloning is cheap (`Rc` bump). Held
 /// by [`JsRuntime`](crate::JsRuntime) for the lifetime of the
@@ -39,6 +41,18 @@ pub type DomHandle = Rc<RefCell<DomTree>>;
 struct DomContext {
     handle: DomHandle,
     dirty: bool,
+    /// Per-NodeId wrapper cache. The DOM spec requires
+    /// `el.parentNode === el.parentNode` and analogous identity
+    /// for every navigation accessor — without a cache, each
+    /// `make_*_object` call mints a fresh JsObject and breaks
+    /// identity. Cache lives in `DomContext` so its lifetime is
+    /// exactly the DOM's: when the guard drops, the cached
+    /// wrappers go with it, no cross-runtime pollution.
+    ///
+    /// NodeId-keyed and append-only for now (koala_dom doesn't
+    /// recycle ids). A future "remove and free node" path would
+    /// need to evict here; not a concern at current scope.
+    wrappers: HashMap<NodeId, JsObject>,
 }
 
 thread_local! {
@@ -66,8 +80,11 @@ thread_local! {
 #[must_use = "the guard restores the previous DOM on drop; bind it to `_guard`"]
 pub(crate) fn guard(handle: DomHandle) -> DomGuard {
     let previous = CURRENT.with(|cell| {
-        cell.borrow_mut()
-            .replace(DomContext { handle, dirty: false })
+        cell.borrow_mut().replace(DomContext {
+            handle,
+            dirty: false,
+            wrappers: HashMap::new(),
+        })
     });
     DomGuard { previous }
 }
@@ -149,6 +166,33 @@ where
             .as_ref()
             .map(|ctx| f(&mut ctx.handle.borrow_mut()))
     })
+}
+
+/// Return the cached JS wrapper for `node_id`, if one was built
+/// during this guard scope. Used by `make_*_object` helpers to
+/// preserve wrapper identity — every JS-visible navigation that
+/// returns the same node must return the same `JsObject` so
+/// `el.parentNode === el.parentNode` holds.
+///
+/// No-op outside a [`guard`]-protected scope.
+pub(crate) fn cached_wrapper(node_id: NodeId) -> Option<JsObject> {
+    CURRENT.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|ctx| ctx.wrappers.get(&node_id).cloned())
+    })
+}
+
+/// Insert a freshly-built JS wrapper into the cache. Callers
+/// should consult [`cached_wrapper`] first; this is the
+/// post-build step the `make_*_object` helpers run after
+/// constructing a new wrapper. No-op outside a guard.
+pub(crate) fn cache_wrapper(node_id: NodeId, obj: JsObject) {
+    CURRENT.with(|cell| {
+        if let Some(ctx) = cell.borrow_mut().as_mut() {
+            let _ = ctx.wrappers.insert(node_id, obj);
+        }
+    });
 }
 
 #[cfg(test)]
