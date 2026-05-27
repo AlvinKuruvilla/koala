@@ -616,6 +616,99 @@ fn event_target_is_constructible() {
     assert_eq!(rt.eval_to_string("fired").unwrap(), "2");
 }
 
+// ---- Node.prototype migration (Tier 1, second slice) ----
+
+#[test]
+fn node_constructor_throws_but_methods_live_on_the_prototype() {
+    // Node is abstract — `new Node()` must throw — but
+    // Node.prototype must still carry the methods/accessors so
+    // every wrapped node inherits them. This is the canonical
+    // shape for an abstract DOM interface.
+    let mut rt = JsRuntime::new(fixture());
+    let err = rt
+        .execute("new Node()")
+        .expect_err("new Node() should throw");
+    assert!(
+        format!("{err}").contains("Illegal constructor"),
+        "expected Illegal constructor message, got: {err}",
+    );
+    assert_eq!(
+        rt.eval_to_string("typeof Node.prototype.appendChild").unwrap(),
+        "function",
+    );
+    assert_eq!(
+        rt.eval_to_string("typeof Node.prototype.removeChild").unwrap(),
+        "function",
+    );
+    assert_eq!(
+        rt.eval_to_string("typeof Node.prototype.contains").unwrap(),
+        "function",
+    );
+    // Accessor functions appear via `getOwnPropertyDescriptor`,
+    // not as plain `typeof prototype.foo === "function"`, so
+    // check existence through the descriptor.
+    for name in ["nodeType", "nodeName", "parentNode"] {
+        let answer = rt
+            .eval_to_string(&format!(
+                "typeof Object.getOwnPropertyDescriptor(Node.prototype, '{name}').get"
+            ))
+            .unwrap();
+        assert_eq!(
+            answer, "function",
+            "expected Node.prototype to expose a `{name}` getter",
+        );
+    }
+}
+
+#[test]
+fn element_inherits_node_prototype_methods() {
+    // The Element wrapper no longer carries `appendChild` etc.
+    // as own properties; they resolve via the prototype chain.
+    // Test both the method-presence side and behavioural
+    // equivalence with what the own-properties used to do.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt
+        .execute("var el = document.getElementById('hello');")
+        .unwrap();
+    // appendChild / removeChild come off Node.prototype now.
+    assert_eq!(
+        rt.eval_to_string(
+            "el.appendChild === Node.prototype.appendChild"
+        )
+        .unwrap(),
+        "true",
+        "el.appendChild should resolve to Node.prototype.appendChild",
+    );
+    // nodeType comes off Node.prototype's accessor — and still
+    // returns 1 for an element.
+    assert_eq!(rt.eval_to_string("el.nodeType").unwrap(), "1");
+    // nodeName uppercases the tag for elements (DOM spec).
+    assert_eq!(rt.eval_to_string("el.nodeName").unwrap(), "DIV");
+}
+
+#[test]
+fn node_contains_walks_the_descendant_chain() {
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            r#"
+        var body = document.body;
+        var ul   = body.firstElementChild;
+        var li   = ul.firstElementChild;
+        "#,
+        )
+        .unwrap();
+    // body contains itself, the ul, and the li
+    assert_eq!(rt.eval_to_string("body.contains(body)").unwrap(), "true");
+    assert_eq!(rt.eval_to_string("body.contains(ul)").unwrap(), "true");
+    assert_eq!(rt.eval_to_string("body.contains(li)").unwrap(), "true");
+    // ul contains the li but not the body
+    assert_eq!(rt.eval_to_string("ul.contains(li)").unwrap(), "true");
+    assert_eq!(rt.eval_to_string("ul.contains(body)").unwrap(), "false");
+    // contains(null) returns false (spec § 4.4)
+    assert_eq!(rt.eval_to_string("body.contains(null)").unwrap(), "false");
+}
+
 #[test]
 fn distinct_event_target_instances_have_isolated_listener_buckets() {
     // Each `new EventTarget()` mints a fresh scope_key, so a

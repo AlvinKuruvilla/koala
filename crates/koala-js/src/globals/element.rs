@@ -33,9 +33,8 @@ use super::events::{
     add_listener_at_scope, dispatch_event_call, remove_listener_at_scope,
 };
 use super::helpers::{
-    NODE_TYPE_ELEMENT, descendant_text, getter, js_string_value, missing_arg,
-    no_dom_error, node_id_from_this, node_id_from_value, required_string_arg,
-    type_error,
+    descendant_text, getter, js_string_value, no_dom_error, node_id_from_this,
+    required_string_arg,
 };
 use super::interfaces::html_element_prototype;
 use super::selectors::{find_all_matches, find_first_match, parse_query_arg};
@@ -94,12 +93,12 @@ pub(super) fn make_element_object(
 
     let accessor_attrs = Attribute::CONFIGURABLE | Attribute::ENUMERABLE;
 
+    // Methods inherited from Node.prototype (`appendChild`,
+    // `removeChild`, `contains`) and accessors inherited from
+    // Node.prototype (`nodeType`, `nodeName`, `parentNode`) are
+    // resolved through the prototype chain and do not need
+    // duplicating here. Element-specific own properties below.
     let obj = ObjectInitializer::new(context)
-        .property(
-            js_string!("nodeType"),
-            NODE_TYPE_ELEMENT,
-            Attribute::READONLY,
-        )
         .property(
             js_string!("tagName"),
             JsString::from(tag_name.as_str()),
@@ -140,16 +139,6 @@ pub(super) fn make_element_object(
         .function(
             NativeFunction::from_copy_closure(remove_attribute),
             js_string!("removeAttribute"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(append_child),
-            js_string!("appendChild"),
-            1,
-        )
-        .function(
-            NativeFunction::from_copy_closure(remove_child),
-            js_string!("removeChild"),
             1,
         )
         .function(
@@ -339,61 +328,14 @@ fn remove_attribute(
     Ok(JsValue::undefined())
 }
 
-// ---- tree mutation ----
-
-/// `Element.appendChild(node)` — append `node` as the last child.
-/// If `node` already has a parent, it is first removed (DOM spec
-/// requirement for "adopt the node into this's node document").
-///
-/// [§ 4.4 Node.appendChild](https://dom.spec.whatwg.org/#dom-node-appendchild)
-fn append_child(
-    this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let parent_id = node_id_from_this(this, context)?;
-    let child_value = args.first().ok_or_else(|| missing_arg("appendChild", "node"))?;
-    let child_id = node_id_from_value(child_value, context)?;
-
-    if parent_id == child_id {
-        return Err(type_error("a node cannot be its own child"));
-    }
-
-    let _ = with_dom_mut(|dom| {
-        if let Some(old_parent) = dom.parent(child_id) {
-            dom.remove_child(old_parent, child_id);
-        }
-        dom.append_child(parent_id, child_id);
-    });
-    mark_dirty();
-
-    Ok(child_value.clone())
-}
-
-/// `Element.removeChild(node)` — detach `node` from this element.
-/// Throws (a `TypeError`, since we don't yet model `DOMException`)
-/// if `node`'s parent isn't this element.
-///
-/// [§ 4.4 Node.removeChild](https://dom.spec.whatwg.org/#dom-node-removechild)
-fn remove_child(
-    this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let parent_id = node_id_from_this(this, context)?;
-    let child_value = args.first().ok_or_else(|| missing_arg("removeChild", "node"))?;
-    let child_id = node_id_from_value(child_value, context)?;
-
-    let belongs = with_dom(|dom| dom.parent(child_id) == Some(parent_id)).unwrap_or(false);
-    if !belongs {
-        return Err(type_error("removeChild: node is not a child of this element"));
-    }
-
-    let _ = with_dom_mut(|dom| dom.remove_child(parent_id, child_id));
-    mark_dirty();
-
-    Ok(child_value.clone())
-}
+// `appendChild` / `removeChild` previously lived here as own
+// properties on each Element wrapper. They now live on
+// `Node.prototype` (see `super::node_class`) and resolve
+// through the prototype chain on every `el.appendChild(...)`
+// call. The implementations themselves are unchanged — moving
+// them just shares the function objects across every Element
+// (and any other Node wrapper we add later) instead of
+// duplicating per instance.
 
 // ---- scoped selector queries ----
 

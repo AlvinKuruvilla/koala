@@ -69,40 +69,35 @@ pub(crate) const HTML_ELEMENT_PROTO_KEY: &str = "__koala_HTMLElement_proto__";
 /// any of the proto keys.
 const INTERFACES_REGISTERED_KEY: &str = "__koala_dom_interfaces_registered__";
 
-/// Build the DOM interface prototype chain and expose the
-/// constructor stubs as globals. Idempotency is not promised —
-/// call this once per [`crate::JsRuntime`], from
+/// Build the still-hand-rolled half of the DOM interface
+/// prototype chain (`Element`, `HTMLElement`) and expose them as
+/// global constructors. Idempotency is not promised — call this
+/// once per [`crate::JsRuntime`], from
 /// [`super::register_globals`].
 ///
-/// Caller contract: `EventTarget` must already be registered (by
+/// Caller contract: `Node` (and transitively `EventTarget`) must
+/// already be registered (by
+/// [`super::node_class::register_node_class`] and
 /// [`super::event_target_class::register_event_target_class`])
-/// before this runs, because `Node.prototype`'s `[[Prototype]]`
-/// slot points at `EventTarget.prototype`. The single registered
-/// `EventTarget` class is the source of truth — we look its
+/// before this runs, because `Element.prototype`'s
+/// `[[Prototype]]` slot points at `Node.prototype`. The single
+/// registered `Node` class is the source of truth — we look its
 /// prototype up from the global object rather than holding our
-/// own copy here, so `Object.getPrototypeOf(Node.prototype) ===
-/// EventTarget.prototype` works automatically.
+/// own copy here, so `Object.getPrototypeOf(Element.prototype)
+/// === Node.prototype` works automatically.
 pub(super) fn register_dom_interfaces(context: &mut Context) {
-    let event_target_proto = event_target_prototype(context)
-        .expect("EventTarget must be registered before register_dom_interfaces");
+    let node_proto = node_prototype(context)
+        .expect("Node must be registered before register_dom_interfaces");
 
-    // Prototypes are built top-down (Node first) so each child
-    // can set its parent as `__proto__` immediately after
-    // creation, before anything reads it.
-    let node_proto = ObjectInitializer::new(context).build();
     let element_proto = ObjectInitializer::new(context).build();
     let html_element_proto = ObjectInitializer::new(context).build();
 
-    // Stitch the prototype chain. `set_prototype` is the IDL
-    // [[Prototype]] slot setter; returns `false` on failure
-    // (typically when the prototype would be cyclic) but our
-    // fresh objects can't be cyclic, so we don't bother
-    // surfacing that as an error.
-    let _ = node_proto.set_prototype(Some(event_target_proto));
-    let _ = element_proto.set_prototype(Some(node_proto.clone()));
+    // Stitch Element.prototype -> Node.prototype ->
+    // EventTarget.prototype (the last link was set when the
+    // `node_class` module registered Node).
+    let _ = element_proto.set_prototype(Some(node_proto));
     let _ = html_element_proto.set_prototype(Some(element_proto.clone()));
 
-    register_interface(context, "Node", &node_proto);
     register_interface(context, "Element", &element_proto);
     register_interface(context, "HTMLElement", &html_element_proto);
 
@@ -126,15 +121,15 @@ pub(super) fn register_dom_interfaces(context: &mut Context) {
         .expect("dom interfaces sentinel should not already be registered");
 }
 
-/// Fetch the (Class-trait-registered) `EventTarget.prototype` so
-/// the hand-rolled `Node` / `Element` / `HTMLElement` chain can
-/// hang off it. Used by [`register_dom_interfaces`]; will go
-/// away once the rest of the chain also migrates to [`Class`].
+/// Fetch the (Class-trait-registered) `Node.prototype` so the
+/// hand-rolled `Element` / `HTMLElement` chain can hang off it.
+/// Used by [`register_dom_interfaces`]; will go away once the
+/// rest of the chain also migrates to [`Class`].
 ///
 /// [`Class`]: boa_engine::class::Class
-fn event_target_prototype(context: &mut Context) -> Option<JsObject> {
+fn node_prototype(context: &mut Context) -> Option<JsObject> {
     let global = context.global_object();
-    let ctor = global.get(js_string!("EventTarget"), context).ok()?;
+    let ctor = global.get(js_string!("Node"), context).ok()?;
     let ctor_obj = ctor.as_object()?;
     let proto = ctor_obj.get(js_string!("prototype"), context).ok()?;
     proto.as_object().cloned()
