@@ -616,6 +616,101 @@ fn event_target_is_constructible() {
     assert_eq!(rt.eval_to_string("fired").unwrap(), "2");
 }
 
+// ---- DOMException (Tier 1.5) ----
+
+#[test]
+fn dom_exception_constructor_defaults() {
+    // Per WebIDL § 3:
+    //   constructor(optional DOMString message = "",
+    //               optional DOMString name = "Error");
+    // Both args default; the legacy `code` for "Error" is 0.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt.execute("var e = new DOMException();").unwrap();
+    assert_eq!(rt.eval_to_string("e.name").unwrap(), "Error");
+    assert_eq!(rt.eval_to_string("e.message").unwrap(), "");
+    assert_eq!(rt.eval_to_string("e.code").unwrap(), "0");
+    assert_eq!(
+        rt.eval_to_string("e instanceof DOMException").unwrap(),
+        "true",
+    );
+}
+
+#[test]
+fn dom_exception_constructor_with_args() {
+    // Real-world shape WPT uses inside `assert_throws_dom`:
+    //   new DOMException("bad operation", "InvalidStateError")
+    // The legacy code for InvalidStateError is 11 per the
+    // WebIDL exception table.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt
+        .execute(r#"var e = new DOMException("bad op", "InvalidStateError");"#)
+        .unwrap();
+    assert_eq!(rt.eval_to_string("e.name").unwrap(), "InvalidStateError");
+    assert_eq!(rt.eval_to_string("e.message").unwrap(), "bad op");
+    assert_eq!(rt.eval_to_string("e.code").unwrap(), "11");
+}
+
+#[test]
+fn dom_exception_unknown_name_has_zero_code() {
+    // Names not on the legacy code table resolve to code === 0
+    // per the spec — newer error names are name-only.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt
+        .execute(r#"var e = new DOMException("custom", "TotallyMadeUpError");"#)
+        .unwrap();
+    assert_eq!(rt.eval_to_string("e.name").unwrap(), "TotallyMadeUpError");
+    assert_eq!(rt.eval_to_string("e.code").unwrap(), "0");
+}
+
+#[test]
+fn dom_exception_accessors_live_on_prototype() {
+    // The `name` / `message` / `code` IDL attributes must be
+    // accessors on `DOMException.prototype`, not own properties.
+    // Real WPT assertions use
+    // `Object.getOwnPropertyDescriptor(DOMException.prototype, …)`
+    // to check the descriptor shape.
+    let mut rt = JsRuntime::new(fixture());
+    for attr in ["name", "message", "code"] {
+        let descriptor_kind = rt
+            .eval_to_string(&format!(
+                "typeof Object.getOwnPropertyDescriptor(DOMException.prototype, '{attr}').get"
+            ))
+            .unwrap();
+        assert_eq!(
+            descriptor_kind, "function",
+            "DOMException.prototype.{attr} should be an accessor",
+        );
+    }
+}
+
+#[test]
+fn dom_exception_can_be_thrown_and_caught() {
+    // End-to-end: throw a DOMException from user code, catch
+    // it, and verify the catch sees the original object with
+    // its fields intact. This is the path `assert_throws_dom`
+    // tests in WPT take.
+    let mut rt = JsRuntime::new(fixture());
+    let _ = rt
+        .execute(
+            r#"
+        var caught = null;
+        try {
+            throw new DOMException("oops", "NotFoundError");
+        } catch (e) {
+            caught = e;
+        }
+        "#,
+        )
+        .unwrap();
+    assert_eq!(
+        rt.eval_to_string("caught instanceof DOMException").unwrap(),
+        "true",
+    );
+    assert_eq!(rt.eval_to_string("caught.name").unwrap(), "NotFoundError");
+    assert_eq!(rt.eval_to_string("caught.message").unwrap(), "oops");
+    assert_eq!(rt.eval_to_string("caught.code").unwrap(), "8");
+}
+
 // ---- Element / HTMLElement prototype migration (Tier 1) ----
 
 #[test]

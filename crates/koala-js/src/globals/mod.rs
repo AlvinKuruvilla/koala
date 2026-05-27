@@ -32,6 +32,7 @@ pub(crate) mod macros;
 
 mod console;
 pub(crate) mod document;
+pub(crate) mod dom_exception;
 pub(crate) mod element;
 pub(crate) mod element_class;
 pub(crate) mod event_target_class;
@@ -72,6 +73,7 @@ pub fn register_globals(context: &mut Context) {
     node_class::register_node_class(context);
     element_class::register_element_class(context);
     element_class::register_html_element_class(context);
+    dom_exception::register_dom_exception_class(context);
 
     console::register_console(context);
     document::register_document(context);

@@ -50,16 +50,25 @@
 //! }
 //! ```
 //!
-//! When `constructible: true`, the data type must define
-//! `impl $data { fn new() -> Self { … } }`. The macro's
-//! `data_constructor` body is unconditionally `Ok(Self::new())`
-//! — argument inspection lives on the user's `new`, which keeps
-//! the macro IDL-free.
+//! Three constructor modes are accepted via the
+//! `constructible:` field:
 //!
-//! When `constructible: false`, the generated `data_constructor`
-//! throws `TypeError: Illegal constructor: <name> is not
-//! constructible` and `Self::new()` is never called. The data
-//! type can be a zero-sized marker.
+//! - `constructible: false` — abstract / illegal. The generated
+//!   `data_constructor` throws `TypeError: Illegal constructor:
+//!   <name> is not constructible`. The data type can be a
+//!   zero-sized marker.
+//! - `constructible: true` — constructible with no inspection
+//!   of arguments. The data type must define
+//!   `impl $data { fn new() -> Self { … } }`; the macro's
+//!   `data_constructor` body is `Ok(Self::new())`.
+//! - `constructible: (some_fn_path)` — constructible with args.
+//!   The parens wrap the function path so it arrives at the
+//!   internal `@class` dispatch as a single token tree. The
+//!   user function has signature
+//!   `fn(args: &[JsValue], context: &mut Context) ->
+//!   JsResult<Self>` and owns both arg-coercion and any
+//!   spec-defined throwing (e.g. `DOMException`'s
+//!   `optional DOMString message = ""`).
 //!
 //! # Tuple syntax for `methods:` and `accessors:`
 //!
@@ -206,7 +215,10 @@ macro_rules! __dom_interface_impl {
         }
     };
 
-    // ---- Class impl with constructible constructor ----
+    // ---- Class impl with constructible (no-args) constructor ----
+    //
+    // Calls `<$data>::new()`. The user must provide `impl $data
+    // { fn new() -> Self }`.
     (@class $data:ty, $name:literal, true) => {
         impl ::boa_engine::class::Class for $data {
             const NAME: &'static str = $name;
@@ -218,6 +230,41 @@ macro_rules! __dom_interface_impl {
                 _context: &mut ::boa_engine::Context,
             ) -> ::boa_engine::JsResult<Self> {
                 Ok(<$data>::new())
+            }
+
+            fn init(
+                class: &mut ::boa_engine::class::ClassBuilder<'_>,
+            ) -> ::boa_engine::JsResult<()> {
+                <$data>::__dom_interface_init(class)
+            }
+        }
+    };
+
+    // ---- Class impl with constructible-with-args constructor ----
+    //
+    // The user provides a free function with signature
+    //     fn(args: &[JsValue], context: &mut Context) -> JsResult<$data>
+    // and passes its path in parens:  `constructible: (my_fn)`.
+    // The parens are syntactic glue — they wrap the path so it
+    // arrives at this `@class` arm as a single token tree, which
+    // is the only shape `$tt`-based dispatch can route on.
+    //
+    // The constructor body forwards both `args` and `context` to
+    // the user function, so engine-side helpers like
+    // `koala_js::globals::dom_exception::dom_exception_construct`
+    // can do their own arg coercion and error throwing without
+    // the macro having to know IDL types.
+    (@class $data:ty, $name:literal, ( $ctor_fn:path )) => {
+        impl ::boa_engine::class::Class for $data {
+            const NAME: &'static str = $name;
+            const LENGTH: usize = 0;
+
+            fn data_constructor(
+                _new_target: &::boa_engine::JsValue,
+                args: &[::boa_engine::JsValue],
+                context: &mut ::boa_engine::Context,
+            ) -> ::boa_engine::JsResult<Self> {
+                $ctor_fn(args, context)
             }
 
             fn init(
