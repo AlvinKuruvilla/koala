@@ -1504,6 +1504,7 @@ dependencies = [
  "koala-css",
  "koala-dom",
  "koala-html",
+ "koala-wpt",
  "libc",
  "owo-colors",
  "serde",

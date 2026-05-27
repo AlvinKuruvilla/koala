@@ -18,6 +18,7 @@ koala-browser.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true
+koala-wpt.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 owo-colors.workspace = true

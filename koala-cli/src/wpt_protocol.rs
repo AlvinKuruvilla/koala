@@ -15,7 +15,8 @@
 //! `koala-cli --wpt-protocol` mode" for the canonical schema.
 
 use anyhow::{Context, Result};
-use koala_browser::{FontProvider, load_document};
+use koala_browser::{FontProvider, JsHooks, load_document, load_document_with_hooks};
+use koala_browser::js::JsRuntime;
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -41,8 +42,46 @@ enum Command {
         #[serde(default)]
         viewport: Option<[u32; 2]>,
     },
+    /// Load a URL, drive its scripts through the koala-wpt
+    /// testharness bridge, and emit the captured per-test
+    /// results plus the harness-level completion payload.
+    Testharness {
+        /// Absolute URL or local file path to load.
+        url: String,
+    },
     /// Exit the loop cleanly.
     Shutdown,
+}
+
+/// A single test result frame emitted as part of
+/// [`Event::TestharnessComplete`]. Mirrors
+/// [`koala_wpt::TestharnessResult`] but flattened into a serde
+/// type so the JSON-line protocol stays decoupled from the
+/// underlying Rust struct.
+#[derive(Debug, Serialize)]
+struct TestharnessResultPayload {
+    /// Test name (the string passed to `test()` / `async_test()`).
+    name: String,
+    /// Numeric WPT status code: 0 = PASS, 1 = FAIL, 2 = TIMEOUT,
+    /// 3 = NOTRUN, 4 = PRECONDITION_FAILED.
+    status: u32,
+    /// Assertion failure detail or empty when the test passed.
+    message: String,
+    /// JS stack at the failure point, when available.
+    stack: String,
+}
+
+/// Harness-level completion payload mirroring
+/// [`koala_wpt::TestharnessCompletion`]. `None` when the harness
+/// never reached its completion callback (i.e. the document
+/// loaded but didn't run testharness.js).
+#[derive(Debug, Serialize)]
+struct TestharnessCompletionPayload {
+    /// Numeric harness status: 0 = OK, 1 = ERROR, 2 = TIMEOUT,
+    /// 3 = PRECONDITION_FAILED.
+    status: u32,
+    /// Diagnostic message; empty in the clean OK case.
+    message: String,
 }
 
 /// One event written to stdout.
@@ -65,6 +104,18 @@ enum Event {
         url: String,
         /// Human-readable error chain (anyhow `{:#}` formatting).
         error: String,
+    },
+    /// A testharness run finished — the document loaded and its
+    /// scripts (including testharness.js if present) ran to
+    /// completion. Emitted once per `testharness` command.
+    TestharnessComplete {
+        /// Echo of the requested URL so wptrunner can correlate.
+        url: String,
+        /// Captured per-test results in emission order.
+        results: Vec<TestharnessResultPayload>,
+        /// Harness-level completion payload, `None` when the
+        /// harness completion callback never fired.
+        completion: Option<TestharnessCompletionPayload>,
     },
     /// A malformed command was received. The loop continues to
     /// read further commands.
@@ -124,6 +175,20 @@ pub(crate) fn run() -> Result<()> {
         };
 
         match command {
+            Command::Testharness { url } => {
+                let event = match run_testharness(&url) {
+                    Ok((results, completion)) => Event::TestharnessComplete {
+                        url,
+                        results,
+                        completion,
+                    },
+                    Err(e) => Event::LoadFailed {
+                        url,
+                        error: format!("{e:#}"),
+                    },
+                };
+                emit(&event)?;
+            }
             Command::Render { url, viewport } => {
                 counter = counter.saturating_add(1);
                 let path = screenshot_path(counter);
@@ -167,6 +232,78 @@ fn render_url(
     render_document_to_path(&doc, output_path, width, height, font_provider)
 }
 
+/// Load `url`, run its scripts through the koala-wpt testharness
+/// bridge, and return the captured results.
+///
+/// Returns `(results, completion)` where `results` is the list
+/// of per-test outcomes in emission order and `completion` is
+/// the harness-level completion payload (or `None` when the
+/// harness never reached its completion callback).
+fn run_testharness(
+    url: &str,
+) -> Result<(Vec<TestharnessResultPayload>, Option<TestharnessCompletionPayload>)> {
+    let mut hook = TestharnessHook::default();
+    let _doc = load_document_with_hooks(url, &mut hook)
+        .context("while attempting to load testharness document")?;
+    Ok((hook.results, hook.completion))
+}
+
+/// JS-runtime hook that installs the koala-wpt testharness
+/// bridge before any document script runs and drains the
+/// captured buffers once the post-`load` pump returns. Lives in
+/// koala-cli rather than koala-wpt itself because the hook trait
+/// is a koala-browser concept and would otherwise leak that
+/// dependency upstream.
+#[derive(Default)]
+struct TestharnessHook {
+    results: Vec<TestharnessResultPayload>,
+    completion: Option<TestharnessCompletionPayload>,
+}
+
+impl JsHooks for TestharnessHook {
+    fn before_scripts(&mut self, rt: &mut JsRuntime) {
+        koala_wpt::install(rt);
+    }
+
+    fn after_settled(&mut self, rt: &mut JsRuntime) {
+        // Drain results. Errors here can only come from a
+        // malicious script clobbering the hidden buffer slot,
+        // which we don't try to recover from — log via stderr
+        // (the protocol channel reserves stdout) and surface an
+        // empty result set so the caller still gets a frame.
+        match koala_wpt::take_test_results(rt) {
+            Ok(results) => {
+                self.results = results
+                    .into_iter()
+                    .map(|r| TestharnessResultPayload {
+                        name: r.name,
+                        status: r.status,
+                        message: r.message,
+                        stack: r.stack,
+                    })
+                    .collect();
+            }
+            Err(e) => {
+                eprintln!(
+                    "[koala-cli] testharness drain failed: {e}; continuing with empty result set"
+                );
+            }
+        }
+        match koala_wpt::take_test_completion(rt) {
+            Ok(Some(c)) => {
+                self.completion = Some(TestharnessCompletionPayload {
+                    status: c.status,
+                    message: c.message,
+                });
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("[koala-cli] testharness completion drain failed: {e}");
+            }
+        }
+    }
+}
+
 /// Serialize one event and write it as a single JSON line.
 /// Flushes after every event so wptrunner sees output promptly.
 fn emit(event: &Event) -> Result<()> {
@@ -185,7 +322,9 @@ fn emit(event: &Event) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Event};
+    use super::{
+        Command, Event, TestharnessCompletionPayload, TestharnessResultPayload,
+    };
 
     #[test]
     fn parses_render_command_without_viewport() {
@@ -241,6 +380,54 @@ mod tests {
         assert_eq!(
             json,
             r#"{"event":"rendered","url":"http://example.com/","screenshot":"/tmp/koala-wpt-1-1.png"}"#
+        );
+    }
+
+    #[test]
+    fn parses_testharness_command() {
+        let cmd: Command = serde_json::from_str(
+            r#"{"cmd":"testharness","url":"http://web-platform.test:8000/dom/foo.html"}"#,
+        )
+        .expect("testharness command should parse");
+        let Command::Testharness { url } = cmd else {
+            panic!("expected Testharness, got {cmd:?}");
+        };
+        assert_eq!(url, "http://web-platform.test:8000/dom/foo.html");
+    }
+
+    #[test]
+    fn serializes_testharness_complete_event_with_results() {
+        let json = serde_json::to_string(&Event::TestharnessComplete {
+            url: "http://example.com/t.html".to_owned(),
+            results: vec![TestharnessResultPayload {
+                name: "first".to_owned(),
+                status: 0,
+                message: String::new(),
+                stack: String::new(),
+            }],
+            completion: Some(TestharnessCompletionPayload {
+                status: 0,
+                message: String::new(),
+            }),
+        })
+        .expect("testharness_complete should serialize");
+        assert_eq!(
+            json,
+            r#"{"event":"testharness_complete","url":"http://example.com/t.html","results":[{"name":"first","status":0,"message":"","stack":""}],"completion":{"status":0,"message":""}}"#
+        );
+    }
+
+    #[test]
+    fn serializes_testharness_complete_event_with_no_completion() {
+        let json = serde_json::to_string(&Event::TestharnessComplete {
+            url: "http://example.com/t.html".to_owned(),
+            results: vec![],
+            completion: None,
+        })
+        .expect("testharness_complete should serialize");
+        assert_eq!(
+            json,
+            r#"{"event":"testharness_complete","url":"http://example.com/t.html","results":[],"completion":null}"#
         );
     }
 
