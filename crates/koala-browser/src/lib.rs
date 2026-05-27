@@ -193,12 +193,19 @@ pub fn load_document_with_hooks<H: JsHooks>(
     path: &str,
     hooks: &mut H,
 ) -> Result<LoadedDocument, LoadError> {
-    // Fetch or read the HTML source
+    // Fetch or read the HTML source.
+    //
+    // `file://` URLs strip down to a plain absolute path before
+    // hitting `fs::read_to_string`. Supporting them is mostly for
+    // host-side tooling (the koala-cli WPT protocol passes URLs
+    // verbatim, and `file:///path` is the natural way to point at
+    // a local fixture from a JSON command).
     let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
         let text = koala_common::net::fetch_text(path)?;
         (text, Some(path))
     } else {
-        let content = fs::read_to_string(path).map_err(|e| LoadError::FileRead {
+        let fs_path = path.strip_prefix("file://").unwrap_or(path);
+        let content = fs::read_to_string(fs_path).map_err(|e| LoadError::FileRead {
             path: path.to_string(),
             source: e,
         })?;
@@ -555,7 +562,11 @@ fn fetch_script_source(resolved_url: &str) -> Result<String, String> {
         koala_common::net::fetch_bytes_from_data_url(resolved_url)
             .map_err(|e| e.to_string())?
     } else {
-        fs::read(resolved_url).map_err(|e| format!("{resolved_url}: {e}"))?
+        // Strip the `file://` scheme for fs access — same shape
+        // as the top-level document loader. Plain absolute paths
+        // pass through unchanged.
+        let fs_path = resolved_url.strip_prefix("file://").unwrap_or(resolved_url);
+        fs::read(fs_path).map_err(|e| format!("{resolved_url}: {e}"))?
     };
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
