@@ -18,7 +18,11 @@ from wptrunner.executors.base import (
     RefTestImplementation,
     TestharnessExecutor,
 )
-from wptrunner.executors.protocol import Protocol, ProtocolPart
+from wptrunner.executors.protocol import (
+    ConnectionlessBaseProtocolPart,
+    Protocol,
+    ProtocolPart,
+)
 
 
 # koala-js encodes testharness.js's `Test.status` enum as a
@@ -260,7 +264,20 @@ class KoalaErrorsPart(ProtocolPart):
 
 
 class KoalaProtocol(Protocol):
-    implements = [KoalaRenderPart, KoalaTestharnessPart, KoalaErrorsPart]
+    # `ConnectionlessBaseProtocolPart` supplies the no-op `base`
+    # accessor wptrunner's TestharnessExecutor calls into
+    # (`protocol.base.wait()` after each test). Without it the
+    # executor raises AttributeError on teardown. Our subprocess
+    # protocol doesn't model browser windows, navigation, or
+    # script execution from the outside, so the connectionless
+    # variant — which no-ops every base method — is the right
+    # fit.
+    implements = [
+        ConnectionlessBaseProtocolPart,
+        KoalaRenderPart,
+        KoalaTestharnessPart,
+        KoalaErrorsPart,
+    ]
 
     def connect(self):
         # No connection — the executor talks directly to the
