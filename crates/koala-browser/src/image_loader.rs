@@ -17,7 +17,6 @@
 
 use koala_common::image::LoadedImage;
 use koala_common::warning::warn_once;
-use std::fs;
 
 /// Error type for image fetch and decode operations.
 #[derive(Debug, thiserror::Error)]
@@ -25,16 +24,6 @@ pub enum ImageError {
     /// Image bytes could not be fetched (network, data-URL, or file error).
     #[error(transparent)]
     Fetch(#[from] koala_common::net::FetchError),
-
-    /// A local file could not be read.
-    #[error("failed to read '{path}': {source}")]
-    FileRead {
-        /// The resolved filesystem path.
-        path: String,
-        /// The underlying I/O error.
-        #[source]
-        source: std::io::Error,
-    },
 
     /// SVG parsing failed.
     #[error("failed to parse SVG: {0}")]
@@ -224,26 +213,15 @@ impl ImageDecoder for RasterDecoder {
     }
 }
 
-/// Fetch image bytes from `resolved_url`.
-///
-/// Consolidates the three-way fetch (HTTP, data URL, local file) into one
-/// function.
+/// Fetch image bytes from `resolved_url`. The active
+/// [`koala_common::net::RequestSender`] decides whether to hit the
+/// network, decode a `data:` URL, or read a local file.
 ///
 /// # Errors
 ///
-/// Returns an [`ImageError`] if the fetch fails (network error, file not found,
-/// or invalid data URL).
+/// Returns an [`ImageError`] if the fetch fails.
 pub fn fetch_image_bytes(resolved_url: &str) -> Result<Vec<u8>, ImageError> {
-    if resolved_url.starts_with("http://") || resolved_url.starts_with("https://") {
-        Ok(koala_common::net::fetch_bytes(resolved_url)?)
-    } else if resolved_url.starts_with("data:") {
-        Ok(koala_common::net::fetch_bytes_from_data_url(resolved_url)?)
-    } else {
-        fs::read(resolved_url).map_err(|e| ImageError::FileRead {
-            path: resolved_url.to_string(),
-            source: e,
-        })
-    }
+    Ok(koala_common::net::fetch_bytes(resolved_url)?)
 }
 
 /// Image loading pipeline that detects format and dispatches to the

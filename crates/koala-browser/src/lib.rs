@@ -37,6 +37,12 @@ pub use koala_common::hosts;
 /// Engine-wide diagnostic-warning system, plus the process-wide
 /// quiet flag toggled by `koala-cli --wpt-protocol`.
 pub use koala_common::warning;
+/// Re-exported fetch layer. Callers can install a custom
+/// [`net::RequestSender`] (e.g. a [`net::MappedSender`] wrapping
+/// [`net::DefaultSender`]) before [`load_document`] runs to
+/// substitute local files for specific URLs without touching the
+/// loaders.
+pub use koala_common::net;
 
 use image_loader::{
     ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations,
@@ -49,7 +55,6 @@ use koala_dom::{DomTree, NodeId};
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
 use koala_js::JsRuntime;
 use std::collections::HashMap;
-use std::fs;
 
 /// A fully loaded and parsed document.
 ///
@@ -91,22 +96,14 @@ pub struct LoadedDocument {
     pub images: HashMap<String, LoadedImage>,
 }
 
-/// Error type for document loading.
+/// Error type for document loading. Every fetch path (HTTP, `data:`,
+/// local file) flows through [`koala_common::net`], so a single
+/// `Fetch` variant covers all of them.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
-    /// Failed to read a local file.
-    #[error("failed to read '{path}': {source}")]
-    FileRead {
-        /// The filesystem path that could not be read.
-        path: String,
-        /// The underlying I/O error.
-        #[source]
-        source: std::io::Error,
-    },
-
-    /// Failed to fetch a URL.
+    /// Failed to fetch the requested URL or file.
     #[error(transparent)]
-    Fetch(#[from] koala_common::net::FetchError),
+    Fetch(#[from] net::FetchError),
 }
 
 /// Extension points into the JS lifecycle for callers who need
@@ -172,9 +169,9 @@ impl JsHooks for () {}
 ///
 /// # Errors
 ///
-/// Returns [`LoadError::FileRead`] if the path is a local file that cannot
-/// be read, or [`LoadError::Fetch`] if it is a URL that cannot be
-/// fetched.
+/// Returns [`LoadError::Fetch`] if the resource cannot be fetched —
+/// HTTP failure, missing file, malformed `data:` URL, all flow through
+/// the unified fetch layer.
 pub fn load_document(path: &str) -> Result<LoadedDocument, LoadError> {
     load_document_with_hooks(path, &mut ())
 }
@@ -195,24 +192,18 @@ pub fn load_document_with_hooks<H: JsHooks>(
     path: &str,
     hooks: &mut H,
 ) -> Result<LoadedDocument, LoadError> {
-    // Fetch or read the HTML source.
+    // Fetch the HTML source. The active `RequestSender` dispatches
+    // on URL scheme — `http(s)://` over the network, `file://` and
+    // plain paths off the filesystem, `data:` decoded in-process —
+    // so the loader just hands it the address and gets bytes back.
     //
-    // `file://` URLs strip down to a plain absolute path before
-    // hitting `fs::read_to_string`. Supporting them is mostly for
-    // host-side tooling (the koala-cli WPT protocol passes URLs
-    // verbatim, and `file:///path` is the natural way to point at
-    // a local fixture from a JSON command).
-    let (html_source, base_url) = if path.starts_with("http://") || path.starts_with("https://") {
-        let text = koala_common::net::fetch_text(path)?;
-        (text, Some(path))
-    } else {
-        let fs_path = path.strip_prefix("file://").unwrap_or(path);
-        let content = fs::read_to_string(fs_path).map_err(|e| LoadError::FileRead {
-            path: path.to_string(),
-            source: e,
-        })?;
-        (content, None)
-    };
+    // Whether to expose `base_url` to the downstream stylesheet /
+    // script / image loaders is still decided here: relative URLs
+    // resolve against an http base, but a file path has no base
+    // that makes sense to follow.
+    let is_remote = path.starts_with("http://") || path.starts_with("https://");
+    let html_source = net::fetch_text(path)?;
+    let base_url = if is_remote { Some(path) } else { None };
 
     // Parse the document with base URL for resolving external stylesheets
     let mut doc = parse_html_with_base_url(&html_source, base_url, hooks);
@@ -290,8 +281,6 @@ fn parse_html_with_base_url<H: JsHooks>(
     }
 }
 
-// --- Setup phases ---
-//
 // Each phase below is a small named function decorated with
 // `#[tracing::instrument]`. The instrumentation is invisible at
 // the call site (see `parse_html_with_base_url` above): the
@@ -361,7 +350,7 @@ fn recompute_styles_and_layout(
     (post_styles, post_layout)
 }
 
-// --- JS lifecycle phases ---
+// JS lifecycle phases
 //
 // HTML § 13.2.6 "Stop parsing" lifecycle:
 //   1. Run sync scripts
@@ -671,25 +660,13 @@ fn load_scripts(
 
 /// Fetch the body of an external script as a UTF-8 string.
 ///
-/// Mirrors `image_loader::fetch_image_bytes` but stays in UTF-8
-/// land — `<script>` resources are always character data per
-/// HTML § 4.12.1.1.6 ("Decoding the response's body as
-/// UTF-8"). Invalid UTF-8 is replaced with `U+FFFD` rather than
-/// rejected, matching the spec's lossy decode.
+/// `<script>` resources are always character data per HTML
+/// § 4.12.1.1.6 ("Decoding the response's body as UTF-8"). Invalid
+/// UTF-8 is replaced with `U+FFFD` rather than rejected, matching
+/// the spec's lossy decode. URL-scheme dispatch (HTTP, `data:`,
+/// local file) is delegated to [`koala_common::net`].
 fn fetch_script_source(resolved_url: &str) -> Result<String, String> {
-    let bytes = if resolved_url.starts_with("http://") || resolved_url.starts_with("https://")
-    {
-        koala_common::net::fetch_bytes(resolved_url).map_err(|e| e.to_string())?
-    } else if resolved_url.starts_with("data:") {
-        koala_common::net::fetch_bytes_from_data_url(resolved_url)
-            .map_err(|e| e.to_string())?
-    } else {
-        // Strip the `file://` scheme for fs access — same shape
-        // as the top-level document loader. Plain absolute paths
-        // pass through unchanged.
-        let fs_path = resolved_url.strip_prefix("file://").unwrap_or(resolved_url);
-        fs::read(fs_path).map_err(|e| format!("{resolved_url}: {e}"))?
-    };
+    let bytes = net::fetch_bytes(resolved_url).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
