@@ -200,14 +200,15 @@ impl Renderer {
         images: HashMap<String, LoadedImage>,
         fonts: RendererFonts,
     ) -> Self {
-        // Per the rasterizer-future-work backlog this allocation is
-        // ~30 ms for a 2560×1488 buffer and ~80 % of `Renderer::new`'s
-        // wall time. Spanned separately from the rest of the
-        // constructor so the buffer-pool optimisation (Tier 1 item #1)
-        // can be verified against this exact number once it lands.
-        let buffer = tracing::info_span!("renderer_alloc").in_scope(|| {
-            ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]))
-        });
+        // `allocate_buffer` is its own function so its
+        // `#[tracing::instrument]` can name the span — the
+        // allocation is the dominant cost of constructing a
+        // Renderer (~30 ms for a 2560×1488 buffer per the
+        // rasterizer-future-work backlog) and we want it
+        // separated from the rest of the constructor for the
+        // buffer-pool optimisation (Tier 1 item #1) to verify
+        // against.
+        let buffer = allocate_buffer(width, height);
 
         Self {
             buffer,
@@ -937,6 +938,15 @@ impl Renderer {
         })?;
         Ok(())
     }
+}
+
+/// Allocate the RGBA pixel buffer, prefilled with opaque white.
+/// Its own function so `#[tracing::instrument]` can name the span
+/// for the buffer-pool optimisation work (Tier 1 item #1 in the
+/// rasterizer-future-work backlog).
+#[tracing::instrument(name = "renderer_alloc", skip_all)]
+fn allocate_buffer(width: u32, height: u32) -> RgbaImage {
+    ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]))
 }
 
 /// Alpha blend a foreground color onto a background color.

@@ -7,19 +7,23 @@
 //! lives in [`render_document_once`] so all three call sites
 //! cannot drift.
 //!
-//! [`render_document_once`] is also where the per-stage
-//! `tracing` spans live. The spans are always emitted; when no
-//! subscriber is registered (the screenshot / WPT paths), dispatch
-//! is a few atomic loads and a function pointer call — negligible.
-//! The bench harness installs a `Layer` that collects span timings
-//! into a per-stage stats map (see `bench.rs`).
+//! Per-stage `tracing` instrumentation lives on the small phase
+//! helpers below (each `#[tracing::instrument(name = "...", skip_all)]`).
+//! The orchestrator reads as a sequence of named function calls;
+//! the spans are invisible at the call site. When no subscriber is
+//! registered (the screenshot / WPT paths) `tracing` dispatch is
+//! a few atomic loads — negligible. The bench harness installs a
+//! `Layer` that collects span timings into a per-stage stats map
+//! (see `bench.rs`).
 
 use anyhow::{Context, Result};
 use koala_browser::{
     FontProvider, LoadedDocument,
     renderer::{Renderer, RendererFonts},
 };
-use koala_css::DisplayListBuilder;
+use koala_css::{ComputedStyle, DisplayList, DisplayListBuilder, LayoutBox, Rect};
+use koala_dom::NodeId;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -46,13 +50,11 @@ fn cached_renderer_fonts() -> &'static RendererFonts {
 /// Per-stage span breakdown (recorded under any subscriber that
 /// matches `info`-level spans):
 ///
-/// - `render_total` — the whole pipeline, recorded last because
-///   `tracing` closes spans in reverse-enter order.
-/// - `layout_clone` — defensive clone of the cached layout tree
-///   before the in-place layout pass mutates it.
-/// - `layout_pass` — recompute box dimensions for the given viewport.
+/// - `render_total` — the whole pipeline.
+/// - `layout_clone` — defensive clone of the cached layout tree.
+/// - `layout_pass` — recompute box dimensions for the viewport.
 /// - `display_list` — walk the laid-out tree, emit paint commands.
-/// - `renderer_alloc` — RGBA buffer allocation (inside `Renderer::new`).
+/// - `renderer_alloc` — RGBA buffer allocation (inside `Renderer::new_with_fonts`).
 /// - `rasterize` — execute the display list against the pixel buffer.
 ///
 /// # Errors
@@ -67,7 +69,7 @@ pub(crate) fn render_document_once(
     height: u32,
     font_provider: &FontProvider,
 ) -> Result<Renderer> {
-    let viewport = koala_css::Rect {
+    let viewport = Rect {
         x: 0.0,
         y: 0.0,
         width: width as f32,
@@ -79,27 +81,13 @@ pub(crate) fn render_document_once(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no layout tree available"))?;
 
-    let mut layout = tracing::info_span!("layout_clone").in_scope(|| layout_tree.clone());
-
-    tracing::info_span!("layout_pass").in_scope(|| {
-        let font_metrics = font_provider.metrics();
-        layout.layout(viewport, viewport, &*font_metrics, viewport);
-    });
-
-    let display_list = tracing::info_span!("display_list").in_scope(|| {
-        let builder = DisplayListBuilder::new(&doc.styles);
-        builder.build(&layout)
-    });
+    let mut layout = clone_layout_tree(layout_tree);
+    apply_layout_pass(&mut layout, viewport, font_provider);
+    let display_list = build_display_list(&layout, &doc.styles);
 
     // `Renderer::new_with_fonts` records its own `renderer_alloc`
     // span (the buffer allocation lives inside it). `Renderer::render`
-    // records `rasterize`. We don't wrap either call here — that
-    // would double-count.
-    //
-    // The font argument is cached process-wide; subsequent calls
-    // skip the ~25 ms disk-read path that `Renderer::new` would
-    // otherwise take. Without this, bench mode spent ~90 % of each
-    // iteration loading fonts that the GUI loads exactly once.
+    // records `rasterize`. No span wrappers needed here.
     let mut renderer = Renderer::new_with_fonts(
         width,
         height,
@@ -109,6 +97,34 @@ pub(crate) fn render_document_once(
     renderer.render(&display_list);
 
     Ok(renderer)
+}
+
+/// Defensive clone of the cached layout tree before the in-place
+/// layout pass mutates it.
+#[tracing::instrument(name = "layout_clone", skip_all)]
+fn clone_layout_tree(tree: &LayoutBox) -> LayoutBox {
+    tree.clone()
+}
+
+/// Recompute box dimensions for the given viewport. Runs every
+/// render — the cached layout tree from parse time only has the
+/// box structure, not the dimensions, which depend on viewport
+/// size and font metrics.
+#[tracing::instrument(name = "layout_pass", skip_all)]
+fn apply_layout_pass(layout: &mut LayoutBox, viewport: Rect, font_provider: &FontProvider) {
+    let font_metrics = font_provider.metrics();
+    layout.layout(viewport, viewport, &*font_metrics, viewport);
+}
+
+/// Walk the laid-out tree and emit the paint command list the
+/// renderer executes.
+#[tracing::instrument(name = "display_list", skip_all)]
+fn build_display_list(
+    layout: &LayoutBox,
+    styles: &HashMap<NodeId, ComputedStyle>,
+) -> DisplayList {
+    let builder = DisplayListBuilder::new(styles);
+    builder.build(layout)
 }
 
 /// Lay out `doc` at the given viewport, paint the resulting display
