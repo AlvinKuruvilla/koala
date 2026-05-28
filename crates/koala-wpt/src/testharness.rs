@@ -333,7 +333,7 @@ fn lookup_callback_array(
 ) -> JsResult<JsArray> {
     let global = context.global_object();
     let value = global.get(boa_engine::JsString::from(key), context)?;
-    let object = value.as_object().cloned().ok_or_else(|| {
+    let object = value.as_object().ok_or_else(|| {
         boa_engine::JsError::from_native(
             boa_engine::JsNativeError::typ()
                 .with_message(format!("{key} is missing or not an object")),

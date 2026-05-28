@@ -244,7 +244,7 @@ fn clear_handle(
 pub(crate) fn timer_args_array(context: &mut Context) -> JsResult<JsArray> {
     let global = context.global_object();
     let value = global.get(js_string!(TIMER_ARGS_KEY), context)?;
-    let object = value.as_object().cloned().ok_or_else(|| {
+    let object = value.as_object().ok_or_else(|| {
         JsError::from_native(
             JsNativeError::typ()
                 .with_message("__koala_timer_args__ is missing or not an object"),
@@ -258,7 +258,7 @@ pub(crate) fn timer_args_array(context: &mut Context) -> JsResult<JsArray> {
 pub(crate) fn timers_array(context: &mut Context) -> JsResult<JsArray> {
     let global = context.global_object();
     let value = global.get(js_string!(TIMERS_KEY), context)?;
-    let object = value.as_object().cloned().ok_or_else(|| {
+    let object = value.as_object().ok_or_else(|| {
         JsError::from_native(
             JsNativeError::typ()
                 .with_message("__koala_timers__ is missing or not an object"),

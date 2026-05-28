@@ -358,7 +358,7 @@ macro_rules! __dom_interface_impl {
                     ::boa_engine::js_string!("prototype"),
                     cx,
                 ).ok()?;
-                proto.as_object().cloned()
+                proto.as_object()
             };
             let child_proto = lookup_proto($name, $context)
                 .unwrap_or_else(|| panic!(

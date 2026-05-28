@@ -58,10 +58,13 @@ polish the look.
 
 ## Other observations
 
-- **Grid layout panics on real-world sites** — `grid.rs:502`
-  slice out-of-bounds when rendering overleaf.com. Worked
-  around by catching panics in the render worker (task #12);
-  the actual bug in the grid formatting context is still open.
+- **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
+  bump fixed the 46 GB for-in OOM but the page still returns 6
+  JS parse errors from the inline-script pump. They don't break
+  rendering; they're a backlog of real-world JS constructs Boa
+  doesn't yet accept. Look at `parse_issues` on a fresh
+  `oom_probe https://www.overleaf.com` run when work toward
+  better real-site fidelity resumes.
 
 - **Native form control rendering** — `<input>`, `<select>`,
   `<textarea>`, `<button>`, and friends currently lay out from

@@ -47,7 +47,7 @@ pub(super) fn node_id_from_this(
     let obj = this
         .as_object()
         .ok_or_else(|| type_error("method called on a non-object value"))?;
-    node_id_from_object(obj, context)
+    node_id_from_object(&obj, context)
 }
 
 /// Read `__nodeId` from a passed-in argument value (an Element or
@@ -60,7 +60,7 @@ pub(super) fn node_id_from_value(
     let obj = value
         .as_object()
         .ok_or_else(|| type_error("expected a node, got a non-object value"))?;
-    node_id_from_object(obj, context)
+    node_id_from_object(&obj, context)
 }
 
 fn node_id_from_object(obj: &JsObject, context: &mut Context) -> JsResult<NodeId> {

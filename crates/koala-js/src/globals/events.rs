@@ -427,7 +427,7 @@ fn lookup_bucket(
 fn listeners_storage(context: &mut Context) -> JsResult<JsObject> {
     let global = context.global_object();
     let value = global.get(js_string!(LISTENERS_KEY), context)?;
-    value.as_object().cloned().ok_or_else(|| {
+    value.as_object().ok_or_else(|| {
         JsError::from_native(
             JsNativeError::typ()
                 .with_message("__koala_listeners__ is missing or not an object"),

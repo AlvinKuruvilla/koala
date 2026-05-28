@@ -147,7 +147,7 @@ pub fn take_test_results(
     runtime.with_context_mut(|context| {
         let global = context.global_object();
         let value = global.get(js_string!(testharness::RESULTS_KEY), context)?;
-        let object = value.as_object().cloned().ok_or_else(|| {
+        let object = value.as_object().ok_or_else(|| {
             JsError::from_native(
                 boa_engine::JsNativeError::typ()
                     .with_message("__koala_test_results__ is missing or not an object"),
@@ -159,7 +159,7 @@ pub fn take_test_results(
         let mut out = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
         for i in 0..len {
             let entry_value = array.get(i, context)?;
-            let entry = entry_value.as_object().cloned().ok_or_else(|| {
+            let entry = entry_value.as_object().ok_or_else(|| {
                 JsError::from_native(
                     boa_engine::JsNativeError::typ()
                         .with_message("test result entry is not an object"),
@@ -230,7 +230,7 @@ pub fn take_test_completion(
         if value.is_null_or_undefined() {
             return Ok(None);
         }
-        let entry = value.as_object().cloned().ok_or_else(|| {
+        let entry = value.as_object().ok_or_else(|| {
             JsError::from_native(
                 boa_engine::JsNativeError::typ()
                     .with_message("__koala_test_completion__ must be null or an object"),

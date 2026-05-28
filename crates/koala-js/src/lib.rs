@@ -394,7 +394,7 @@ impl JsRuntime {
         if cb_value.is_null_or_undefined() {
             return Ok(());
         }
-        let Some(cb_obj) = cb_value.as_object().cloned() else {
+        let Some(cb_obj) = cb_value.as_object() else {
             return Ok(());
         };
         if !cb_obj.is_callable() {

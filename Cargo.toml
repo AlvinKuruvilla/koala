@@ -12,6 +12,13 @@ members = [
     "koala-cli",
     "koala-ui",
 ]
+# Boa lives at `crates/boa/` as a nested workspace — its own
+# `[workspace]` table stays intact so Boa's lints, profile, and
+# inter-crate path deps don't have to be reconciled with Koala's.
+# The `boa_engine` / `boa_gc` path entries below cross the
+# boundary explicitly. Vendored from upstream v0.21.1; we expect
+# to diverge over time.
+exclude = ["crates/boa"]
 
 [workspace.package]
 version = "0.1.0"
@@ -39,7 +46,7 @@ strum = "0.26"
 strum_macros = "0.26"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 thiserror = "2"
-boa_engine = "0.20"
+boa_engine = { path = "crates/boa/core/engine" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 

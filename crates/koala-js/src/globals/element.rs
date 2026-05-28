@@ -122,7 +122,6 @@ fn html_element_prototype(context: &mut Context) -> JsResult<boa_engine::JsObjec
     let proto = ctor_obj.get(js_string!("prototype"), context)?;
     proto
         .as_object()
-        .cloned()
         .ok_or_else(|| type_error("HTMLElement.prototype is not an object"))
 }
 
