@@ -32,16 +32,24 @@ impl<'a> FontdueFontMetrics<'a> {
 }
 
 impl FontMetrics for FontdueFontMetrics<'_> {
-    fn text_width(&self, text: &str, font_size: f32) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    fn text_width(&self, text: &str, font_size: f32, letter_spacing: f32) -> f32 {
         // Sum per-character advance widths, matching the cursor advancement
-        // used in Renderer::draw_text (renderer.rs).
+        // used in Renderer::draw_text (renderer.rs). Adds
+        // `(n_chars - 1) * letter_spacing` between adjacent glyphs;
+        // the count and the sum iterate the same control-filter chain
+        // so the returned width matches what `draw_text` will actually
+        // advance through.
         //
         // Uses Font::metrics() instead of Font::rasterize() to avoid
         // generating bitmaps when only measurements are needed.
-        text.chars()
-            .filter(|ch| !ch.is_control())
-            .map(|ch| self.font.metrics(ch, font_size).advance_width)
-            .sum()
+        let mut sum: f32 = 0.0;
+        let mut n: usize = 0;
+        for ch in text.chars().filter(|ch| !ch.is_control()) {
+            sum += self.font.metrics(ch, font_size).advance_width;
+            n += 1;
+        }
+        sum + n.saturating_sub(1) as f32 * letter_spacing
     }
 
     fn line_height(&self, font_size: f32) -> f32 {

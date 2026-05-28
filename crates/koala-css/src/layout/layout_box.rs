@@ -94,6 +94,7 @@ fn layout_inline_content(
     inherited_font_weight: u16,
     inherited_font_style: FontStyle,
     inherited_text_decoration: TextDecorationLine,
+    inherited_letter_spacing: f32,
     viewport: Rect,
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
@@ -140,6 +141,7 @@ fn layout_inline_content(
                     inherited_font_weight,
                     inherited_font_style,
                     inherited_text_decoration,
+                    inherited_letter_spacing,
                     font_metrics,
                 );
             }
@@ -241,6 +243,7 @@ fn layout_inline_content(
                     child.font_weight,
                     child.font_style,
                     child.text_decoration,
+                    child.letter_spacing,
                     viewport,
                     font_metrics,
                     content_rect,
@@ -450,6 +453,14 @@ pub struct LayoutBox {
     /// "Specifies what line decorations, if any, are added to the element."
     /// Propagated through inline formatting context to text runs.
     pub text_decoration: TextDecorationLine,
+
+    /// [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+    ///
+    /// Additional space (in px) inserted between adjacent characters of
+    /// text descended from this box. Resolved at LayoutBox-build time
+    /// from `ComputedStyle.letter_spacing`, falling back to the
+    /// inherited value (and ultimately `0.0` for `normal`).
+    pub letter_spacing: f32,
 
     /// [§ 9.4.2 Inline formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
     ///
@@ -928,7 +939,7 @@ impl LayoutBox {
     ) -> f32 {
         // Case 1: Text nodes — measure text width on a single line (max-content).
         if let BoxType::AnonymousInline(ref text) = self.box_type {
-            return font_metrics.text_width(text, self.font_size);
+            return font_metrics.text_width(text, self.font_size, self.letter_spacing);
         }
 
         // Case 2: Replaced elements — use intrinsic width or fallback.
@@ -1046,6 +1057,7 @@ impl LayoutBox {
                     font_weight: 400,
                     font_style: FontStyle::Normal,
                     text_decoration: TextDecorationLine::default(),
+                    letter_spacing: 0.0,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -1145,8 +1157,7 @@ impl LayoutBox {
                 // Most browsers default to black.
                 let color = style
                     .and_then(|s| s.color.as_ref())
-                    .cloned()
-                    .unwrap_or(ColorValue::BLACK);
+                    .unwrap_or(&ColorValue::BLACK);
 
                 // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
                 //
@@ -1172,6 +1183,14 @@ impl LayoutBox {
                 let text_decoration = style
                     .and_then(|s| s.text_decoration_line)
                     .unwrap_or_default();
+
+                // [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+                //
+                // The cascade already inherits this for elements with a
+                // ComputedStyle; the `unwrap_or(0.0)` only triggers for
+                // root-with-no-cascaded-value, where the initial value
+                // `normal` collapses to zero.
+                let letter_spacing = style.and_then(|s| s.letter_spacing).unwrap_or(0.0);
 
                 // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
                 let flex_direction = style.and_then(|s| s.flex_direction).unwrap_or_default();
@@ -1399,11 +1418,12 @@ impl LayoutBox {
                     min_height,
                     max_height,
                     font_size,
-                    color,
+                    color: color.clone(),
                     text_align,
                     font_weight,
                     font_style,
                     text_decoration,
+                    letter_spacing,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -1504,6 +1524,7 @@ impl LayoutBox {
                     font_weight: 400,
                     font_style: FontStyle::Normal,
                     text_decoration: TextDecorationLine::default(),
+                    letter_spacing: 0.0,
                     line_boxes: Vec::new(),
                     collapsed_margin_top: None,
                     collapsed_margin_bottom: None,
@@ -3006,6 +3027,7 @@ impl LayoutBox {
             font_weight: 400,
             font_style: FontStyle::Normal,
             text_decoration: TextDecorationLine::default(),
+            letter_spacing: 0.0,
             line_boxes: Vec::new(),
             collapsed_margin_top: None,
             collapsed_margin_bottom: None,
@@ -3203,6 +3225,7 @@ impl LayoutBox {
                 self.font_weight,
                 self.font_style,
                 self.text_decoration,
+                self.letter_spacing,
                 font_metrics,
             );
         }
@@ -3217,6 +3240,7 @@ impl LayoutBox {
             self.font_weight,
             self.font_style,
             self.text_decoration,
+            self.letter_spacing,
             viewport,
             font_metrics,
             content_rect,

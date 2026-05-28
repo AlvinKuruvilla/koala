@@ -25,4 +25,4 @@ pub use length::{
     parse_single_auto_length, parse_single_length,
 };
 pub use position::PositionType;
-pub use text::{TextAlign, TextDecorationLine};
+pub use text::{TextAlign, TextDecorationLine, parse_letter_spacing};

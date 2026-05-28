@@ -3,10 +3,13 @@
 //! [§ 4.4 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
 //! "The computed value is the result of resolving the specified value..."
 
-use std::collections::HashMap;
-
-use serde::Serialize;
-
+use super::display::{DisplayValue, is_display_none, parse_display_value};
+use super::values::{
+    DEFAULT_FONT_SIZE_PX, parse_auto_length_value, parse_color_value, parse_font_family,
+    parse_font_weight, parse_length_value, parse_letter_spacing, parse_line_height,
+    parse_single_auto_length, parse_single_color, parse_single_length,
+};
+use super::writing_mode::{PhysicalSide, WritingMode, parse_writing_mode};
 use crate::parser::{ComponentValue, Declaration};
 use crate::style::substitute::{contains_var, substitute_var};
 use crate::style::values::{
@@ -15,6 +18,8 @@ use crate::style::values::{
 use crate::tokenizer::CSSToken;
 use crate::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
+use serde::Serialize;
+use std::collections::HashMap;
 
 /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
 ///
@@ -302,15 +307,6 @@ pub enum ListStyleType {
     /// No marker.
     None,
 }
-
-use super::display::{DisplayValue, is_display_none, parse_display_value};
-use super::values::{
-    DEFAULT_FONT_SIZE_PX, parse_auto_length_value, parse_color_value, parse_font_family,
-    parse_font_weight, parse_length_value, parse_line_height, parse_single_auto_length,
-    parse_single_color, parse_single_length,
-};
-use super::writing_mode::{PhysicalSide, WritingMode, parse_writing_mode};
-
 /// Computed styles for an element.
 ///
 /// [§ 4.4 Computed Values](https://www.w3.org/TR/css-cascade-4/#computed)
@@ -372,6 +368,14 @@ pub struct ComputedStyle {
 
     /// [§ 4.2 'line-height'](https://www.w3.org/TR/css-inline-3/#line-height-property)
     pub line_height: Option<f64>,
+
+    /// [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+    ///
+    /// Stored as the additional space in pixels to insert between
+    /// adjacent characters in a text run. `None` means the cascade
+    /// hasn't resolved a value yet; after inheritance the initial
+    /// value `normal` collapses to `Some(0.0)`.
+    pub letter_spacing: Option<f32>,
 
     /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
     ///
@@ -543,7 +547,6 @@ pub struct ComputedStyle {
     pub flex_wrap: Option<FlexWrap>,
 
     // ===== Grid layout properties =====
-
     /// [§ 7.2 'grid-template-columns'](https://www.w3.org/TR/css-grid-1/#track-sizing)
     ///
     /// "These properties specify, as a space-separated track list, the line
@@ -847,6 +850,11 @@ impl ComputedStyle {
             "line-height" => {
                 if let Some(lh) = parse_line_height(values) {
                     self.line_height = Some(lh);
+                }
+            }
+            "letter-spacing" => {
+                if let Some(ls) = parse_letter_spacing(values) {
+                    self.letter_spacing = Some(ls);
                 }
             }
             // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
@@ -1359,8 +1367,7 @@ impl ComputedStyle {
             // `<number>`. Negative values are invalid."
             #[allow(clippy::cast_possible_truncation)]
             "flex-grow" => {
-                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
-                    values.first()
+                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) = values.first()
                 {
                     let val = *value as f32;
                     if val >= 0.0 {
@@ -1374,8 +1381,7 @@ impl ComputedStyle {
             // `<number>`. Negative values are invalid."
             #[allow(clippy::cast_possible_truncation)]
             "flex-shrink" => {
-                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
-                    values.first()
+                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) = values.first()
                 {
                     let val = *value as f32;
                     if val >= 0.0 {
@@ -1592,8 +1598,7 @@ impl ComputedStyle {
             // "Clamped to the range [0, 1]"
             #[allow(clippy::cast_possible_truncation)]
             "opacity" => {
-                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) =
-                    values.first()
+                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) = values.first()
                 {
                     self.opacity = Some((*value as f32).clamp(0.0, 1.0));
                 }
@@ -1629,7 +1634,11 @@ impl ComputedStyle {
             // [§ 5.1 'border-top-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-left-radius)
             #[allow(clippy::cast_possible_truncation)]
             "border-top-left-radius" => {
-                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                if let Some(len) = parse_single_length(
+                    values
+                        .first()
+                        .unwrap_or(&ComponentValue::Token(CSSToken::Whitespace)),
+                ) {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.top_left = resolved;
@@ -1638,7 +1647,11 @@ impl ComputedStyle {
             // [§ 5.2 'border-top-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-right-radius)
             #[allow(clippy::cast_possible_truncation)]
             "border-top-right-radius" => {
-                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                if let Some(len) = parse_single_length(
+                    values
+                        .first()
+                        .unwrap_or(&ComponentValue::Token(CSSToken::Whitespace)),
+                ) {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.top_right = resolved;
@@ -1647,7 +1660,11 @@ impl ComputedStyle {
             // [§ 5.3 'border-bottom-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-right-radius)
             #[allow(clippy::cast_possible_truncation)]
             "border-bottom-right-radius" => {
-                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                if let Some(len) = parse_single_length(
+                    values
+                        .first()
+                        .unwrap_or(&ComponentValue::Token(CSSToken::Whitespace)),
+                ) {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.bottom_right = resolved;
@@ -1656,7 +1673,11 @@ impl ComputedStyle {
             // [§ 5.4 'border-bottom-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-left-radius)
             #[allow(clippy::cast_possible_truncation)]
             "border-bottom-left-radius" => {
-                if let Some(len) = parse_single_length(values.first().unwrap_or(&ComponentValue::Token(CSSToken::Whitespace))) {
+                if let Some(len) = parse_single_length(
+                    values
+                        .first()
+                        .unwrap_or(&ComponentValue::Token(CSSToken::Whitespace)),
+                ) {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.bottom_left = resolved;
@@ -2204,12 +2225,7 @@ impl ComputedStyle {
             let lower = ident.to_ascii_lowercase();
             if matches!(
                 lower.as_str(),
-                "caption"
-                    | "icon"
-                    | "menu"
-                    | "message-box"
-                    | "small-caption"
-                    | "status-bar"
+                "caption" | "icon" | "menu" | "message-box" | "small-caption" | "status-bar"
             ) {
                 return;
             }
@@ -2231,9 +2247,7 @@ impl ComputedStyle {
             if let ComponentValue::Token(CSSToken::Ident(ident)) = tokens[i] {
                 let lower = ident.to_ascii_lowercase();
                 // Check if this is a font-style keyword
-                if parsed_style.is_none()
-                    && matches!(lower.as_str(), "italic" | "oblique")
-                {
+                if parsed_style.is_none() && matches!(lower.as_str(), "italic" | "oblique") {
                     parsed_style = Some(match lower.as_str() {
                         "italic" => FontStyle::Italic,
                         "oblique" => FontStyle::Oblique,
@@ -2294,9 +2308,7 @@ impl ComputedStyle {
         // "The optional '/' and 'line-height' can be used to set the
         // line height"
         let mut parsed_line_height = None;
-        if i < tokens.len()
-            && matches!(tokens[i], ComponentValue::Token(CSSToken::Delim('/')))
-        {
+        if i < tokens.len() && matches!(tokens[i], ComponentValue::Token(CSSToken::Delim('/'))) {
             i += 1;
             if i < tokens.len() {
                 // line-height can be a number, length, or "normal"
@@ -2685,9 +2697,9 @@ impl ComputedStyle {
             match arg {
                 // The repeat count
                 #[allow(clippy::cast_sign_loss)]
-                ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })
-                    if count.is_none() && *n > 0 =>
-                {
+                ComponentValue::Token(CSSToken::Number {
+                    int_value: Some(n), ..
+                }) if count.is_none() && *n > 0 => {
                     count = Some(*n as u32);
                 }
                 // Comma separator between count and track sizes
@@ -2755,8 +2767,9 @@ impl ComputedStyle {
             }
             // "span <integer>"
             if lower == "span" {
-                if let Some(ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })) =
-                    tokens.get(1)
+                if let Some(ComponentValue::Token(CSSToken::Number {
+                    int_value: Some(n), ..
+                })) = tokens.get(1)
                     && *n > 0
                 {
                     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
@@ -2767,8 +2780,9 @@ impl ComputedStyle {
         }
 
         // <integer> (line number)
-        if let Some(ComponentValue::Token(CSSToken::Number { int_value: Some(n), .. })) =
-            tokens.first()
+        if let Some(ComponentValue::Token(CSSToken::Number {
+            int_value: Some(n), ..
+        })) = tokens.first()
             && *n != 0
         {
             #[allow(clippy::cast_possible_truncation)]
@@ -2889,9 +2903,7 @@ impl ComputedStyle {
                 ComponentValue::Token(CSSToken::Number { value, .. }) => {
                     numbers.push(*value as f32);
                 }
-                ComponentValue::Token(
-                    CSSToken::Dimension { .. } | CSSToken::Percentage { .. },
-                ) => {
+                ComponentValue::Token(CSSToken::Dimension { .. } | CSSToken::Percentage { .. }) => {
                     if let Some(auto_len) = parse_single_auto_length(token) {
                         basis = Some(self.resolve_auto_length(auto_len));
                     }

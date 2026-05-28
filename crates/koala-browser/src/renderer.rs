@@ -366,6 +366,7 @@ impl Renderer {
                 font_weight,
                 font_style,
                 text_decoration,
+                letter_spacing,
             } => {
                 self.draw_text(
                     text,
@@ -376,6 +377,7 @@ impl Renderer {
                     *font_weight,
                     *font_style,
                     *text_decoration,
+                    *letter_spacing,
                 );
             }
             DisplayCommand::PushClip {
@@ -597,6 +599,7 @@ impl Renderer {
         font_weight: u16,
         font_style: FontStyle,
         text_decoration: TextDecorationLine,
+        letter_spacing: f32,
     ) {
         // Select the best available font for the given weight and style,
         // falling back through: exact match → partial match → regular.
@@ -622,15 +625,21 @@ impl Renderer {
         let mut cursor_x = x;
         let cursor_y = y;
 
-        for ch in text.chars() {
-            // Skip control characters and newlines for now
-            if ch.is_control() {
-                if ch == '\n' {
-                    // TODO: Handle line breaks properly
-                }
-                continue;
-            }
-
+        // Control characters (newlines, tabs, …) are filtered out
+        // here rather than inside the loop body — line breaks come
+        // from fragment positioning, not from in-string newlines,
+        // so the renderer never has to handle them. The filter also
+        // makes `chars.peek()` reflect "is there another *printable*
+        // character coming?" which is what the letter-spacing rule
+        // wants.
+        //
+        // TODO: CSS Text 3 § 4.1.1 "Phase I: Collapsing and
+        // Transformation" should collapse newlines into spaces
+        // upstream during white-space processing; we filter them
+        // defensively here because that phase isn't fully
+        // implemented yet.
+        let mut chars = text.chars().filter(|ch| !ch.is_control()).peekable();
+        while let Some(ch) = chars.next() {
             // Rasterize the character
             let (metrics, bitmap) = font.rasterize(ch, font_size);
 
@@ -662,8 +671,15 @@ impl Renderer {
                 }
             }
 
-            // Advance cursor
+            // Advance cursor by the glyph's advance width, then add
+            // letter-spacing only when another glyph follows — this
+            // mirrors the `(n - 1) * letter_spacing` term in
+            // FontMetrics::text_width, so `total_advance` matches the
+            // fragment's `bounds.width`.
             cursor_x += metrics.advance_width;
+            if chars.peek().is_some() {
+                cursor_x += letter_spacing;
+            }
         }
 
         // [§ 3 Text Decoration Lines](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)

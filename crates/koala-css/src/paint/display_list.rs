@@ -112,6 +112,14 @@ pub enum DisplayCommand {
         font_style: FontStyle,
         /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
         text_decoration: TextDecorationLine,
+        /// [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+        ///
+        /// Additional pixels inserted between adjacent glyph advances
+        /// when the renderer draws this command. Already factored into
+        /// the originating fragment's `bounds.width`, so the painter
+        /// must not re-add it to layout calculations — only to the
+        /// glyph cursor.
+        letter_spacing: f32,
     },
 
     /// Push a clip rectangle onto the clip stack.

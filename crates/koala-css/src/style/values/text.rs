@@ -5,6 +5,8 @@
 
 use serde::Serialize;
 
+use crate::{CSSToken, ComponentValue};
+
 /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
 ///
 /// "This property describes how inline-level content of a block
@@ -58,4 +60,31 @@ pub struct TextDecorationLine {
     pub overline: bool,
     /// "Each line of text has a line through the middle."
     pub line_through: bool,
+}
+
+/// [§ 9.3 `letter-spacing`](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+///
+/// Parse `letter-spacing` as either `normal` (zero additional space) or
+/// a `<length>`. Only the `px` unit is recognized today; `em` and
+/// percentages need a font-size context that isn't available at this
+/// layer (TODO).
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn parse_letter_spacing(values: &[ComponentValue]) -> Option<f32> {
+    for v in values {
+        match v {
+            ComponentValue::Token(CSSToken::Ident(ident))
+                if ident.eq_ignore_ascii_case("normal") =>
+            {
+                return Some(0.0);
+            }
+            ComponentValue::Token(CSSToken::Dimension { value, unit, .. })
+                if unit.eq_ignore_ascii_case("px") =>
+            {
+                return Some(*value as f32);
+            }
+            _ => {}
+        }
+    }
+    None
 }

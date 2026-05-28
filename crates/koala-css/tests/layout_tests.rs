@@ -4228,3 +4228,165 @@ fn test_text_size_adjust_and_webkit_text_size_adjust_are_noops() {
         p.dimensions.content.width
     );
 }
+
+// letter-spacing tests
+//
+// [CSS Text Module Level 3 § 9.3 letter-spacing](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+//
+// Verify that the value propagates through the layout pipeline:
+//   ComputedStyle.letter_spacing
+//       → LayoutBox.letter_spacing
+//           → FontMetrics::text_width (sum + (n-1) × spacing)
+//               → LineFragment.bounds.width / TextRun.width
+//
+// All assertions use `ApproximateFontMetrics`, where each glyph is
+// `font_size × 0.6` wide. With the default 16px font that means
+// every character contributes 9.6px of advance, so "Hello" alone is
+// 5 × 9.6 = 48.0px, and "Hello" with `letter-spacing: 2px` is
+// 48.0 + (5-1) × 2 = 56.0px.
+
+/// Width of a text fragment must include `(n - 1) * letter_spacing`.
+/// Spacing applies *between* adjacent characters, not after the last,
+/// so a 5-character word grows by 4 × spacing, not 5 × spacing.
+#[test]
+fn test_letter_spacing_widens_text_fragment() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         p { width: 500px; letter-spacing: 2px; }\
+         </style>\
+         <p>Hello</p>\
+         </body></html>",
+    );
+
+    let p = box_at_depth(&root, 3);
+    let runs = collect_text_runs(p);
+    assert_eq!(runs.len(), 1, "expected exactly one text run for 'Hello'");
+
+    // 5 chars × 0.6 × 16.0 + (5 - 1) × 2.0 = 56.0
+    let expected = 5.0 * 0.6 * 16.0 + 4.0 * 2.0;
+    assert!(
+        (runs[0].width - expected).abs() < 0.001,
+        "expected text run width {expected:.3}, got {:.3}",
+        runs[0].width,
+    );
+}
+
+/// `letter-spacing: normal` is the spec-mandated initial value and must
+/// resolve to `0.0`. The text width should equal the bare sum of glyph
+/// advances — same answer the engine produced before letter-spacing
+/// existed.
+#[test]
+fn test_letter_spacing_normal_resolves_to_zero() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         p { width: 500px; letter-spacing: normal; }\
+         </style>\
+         <p>Hello</p>\
+         </body></html>",
+    );
+
+    let p = box_at_depth(&root, 3);
+    let runs = collect_text_runs(p);
+    assert_eq!(runs.len(), 1);
+
+    // No spacing contribution: 5 × 0.6 × 16.0 = 48.0.
+    let expected = 5.0 * 0.6 * 16.0;
+    assert!(
+        (runs[0].width - expected).abs() < 0.001,
+        "expected text run width {expected:.3}, got {:.3}",
+        runs[0].width,
+    );
+}
+
+/// A single-character text run has no adjacent characters, so
+/// `(n - 1) × spacing` is `0` and the width must equal the bare
+/// glyph advance regardless of the declared `letter-spacing`. This
+/// is what the `saturating_sub(1)` in the formula guards.
+#[test]
+fn test_letter_spacing_single_character_run_unaffected() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; }\
+         p { width: 500px; letter-spacing: 10px; }\
+         </style>\
+         <p>X</p>\
+         </body></html>",
+    );
+
+    let p = box_at_depth(&root, 3);
+    let runs = collect_text_runs(p);
+    assert_eq!(runs.len(), 1);
+
+    // Just the glyph advance: 1 × 0.6 × 16.0 = 9.6. The 10px spacing
+    // must contribute nothing here.
+    let expected = 0.6 * 16.0;
+    assert!(
+        (runs[0].width - expected).abs() < 0.001,
+        "expected text run width {expected:.3}, got {:.3}",
+        runs[0].width,
+    );
+}
+
+/// Letter-spacing is an inherited property. Setting it on the body
+/// must reach every descendant text run unless an intermediate
+/// element overrides it.
+#[test]
+fn test_letter_spacing_inherits_to_descendants() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; letter-spacing: 3px; }\
+         </style>\
+         <p>Hi</p>\
+         </body></html>",
+    );
+
+    let p = box_at_depth(&root, 3);
+    let runs = collect_text_runs(p);
+    assert_eq!(runs.len(), 1);
+
+    // 2 chars × 0.6 × 16.0 + (2 - 1) × 3.0 = 19.2 + 3.0 = 22.2
+    let expected = 2.0 * 0.6 * 16.0 + 3.0;
+    assert!(
+        (runs[0].width - expected).abs() < 0.001,
+        "letter-spacing on <body> should reach <p>'s text run; \
+         expected {expected:.3}, got {:.3}",
+        runs[0].width,
+    );
+}
+
+/// A child element setting its own `letter-spacing` must *override*
+/// the inherited parent value, not stack on top of it.
+///
+/// Note the explicit `0px` rather than just `0`: the parser accepts
+/// `normal` or a `<length>` with a unit, deliberately not a unitless
+/// `0` (per the design call documented in `parse_letter_spacing`).
+/// A unitless `0` returns `None` from the parser, which collapses
+/// to inheritance — that's the *opposite* of what this test
+/// exercises, so we use `0px` to actually pin a value of zero on
+/// the `<p>` and confirm it wins over the body's `3px`.
+#[test]
+fn test_letter_spacing_child_overrides_parent() {
+    let root = layout_html(
+        "<html><body><style>\
+         body { margin: 0; letter-spacing: 3px; }\
+         p { letter-spacing: 0px; }\
+         </style>\
+         <p>Hi</p>\
+         </body></html>",
+    );
+
+    let p = box_at_depth(&root, 3);
+    let runs = collect_text_runs(p);
+    assert_eq!(runs.len(), 1);
+
+    // The <p>'s explicit `0px` must win, dropping the body's 3px
+    // entirely: 2 × 0.6 × 16.0 = 19.2.
+    let expected = 2.0 * 0.6 * 16.0;
+    assert!(
+        (runs[0].width - expected).abs() < 0.001,
+        "child override expected width {expected:.3}, got {:.3}",
+        runs[0].width,
+    );
+}

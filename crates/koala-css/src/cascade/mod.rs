@@ -271,6 +271,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: yes"
         line_height: parent.line_height,
 
+        // [§ 9.3 letter-spacing](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+        // "Inherited: yes"
+        letter_spacing: parent.letter_spacing,
+
         // [§ 2 writing-mode](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
         // "Inherited: yes"
         writing_mode: parent.writing_mode,

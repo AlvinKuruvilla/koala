@@ -213,3 +213,80 @@ fn test_ch_resolves_the_same_via_viewport_and_containing_block() {
     assert_eq!(ch.to_px_with_viewport(1280.0, 720.0), 80.0);
     assert_eq!(ch.to_px_with_containing_block(500.0, 1280.0, 720.0), 80.0);
 }
+
+// letter-spacing parser
+//
+// [§ 9.3 letter-spacing](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+//
+// The helper accepts `normal` and `<length>` in px. Other length
+// units (em, %, …) are deliberately a TODO at this layer because
+// resolving them needs a font-size context the parser doesn't
+// have; the tests pin those down as `None` so a future regression
+// (accepting em without resolving it) shows up immediately.
+
+#[test]
+fn test_letter_spacing_normal_is_zero() {
+    use koala_css::parser::ComponentValue;
+    use koala_css::parse_letter_spacing;
+    use koala_css::tokenizer::CSSToken;
+
+    let values = [ComponentValue::Token(CSSToken::Ident("normal".to_owned()))];
+    assert_eq!(parse_letter_spacing(&values), Some(0.0));
+}
+
+#[test]
+fn test_letter_spacing_px_dimension() {
+    use koala_css::parser::ComponentValue;
+    use koala_css::parse_letter_spacing;
+    use koala_css::tokenizer::CSSToken;
+
+    let values = [ComponentValue::Token(CSSToken::Dimension {
+        value: 2.0,
+        int_value: None,
+        unit: "px".to_owned(),
+        numeric_type: koala_css::tokenizer::NumericType::Number,
+    })];
+    assert_eq!(parse_letter_spacing(&values), Some(2.0));
+}
+
+#[test]
+fn test_letter_spacing_normal_is_case_insensitive() {
+    use koala_css::parser::ComponentValue;
+    use koala_css::parse_letter_spacing;
+    use koala_css::tokenizer::CSSToken;
+
+    let values = [ComponentValue::Token(CSSToken::Ident("NoRmAl".to_owned()))];
+    assert_eq!(parse_letter_spacing(&values), Some(0.0));
+}
+
+#[test]
+fn test_letter_spacing_em_is_unsupported_for_now() {
+    // `em` would need a font-size context the parser doesn't have
+    // at this layer. Until that's wired in, the helper deliberately
+    // returns `None` so the cascade falls back to inheritance or
+    // the initial value rather than silently dropping the unit.
+    use koala_css::parser::ComponentValue;
+    use koala_css::parse_letter_spacing;
+    use koala_css::tokenizer::CSSToken;
+
+    let values = [ComponentValue::Token(CSSToken::Dimension {
+        value: 2.0,
+        int_value: None,
+        unit: "em".to_owned(),
+        numeric_type: koala_css::tokenizer::NumericType::Number,
+    })];
+    assert_eq!(parse_letter_spacing(&values), None);
+}
+
+#[test]
+fn test_letter_spacing_rejects_unknown_keyword() {
+    // Anything other than `normal` (or a valid `<length>`) must
+    // return `None` so the cascade can fall back; otherwise we'd
+    // silently accept typos as zero.
+    use koala_css::parser::ComponentValue;
+    use koala_css::parse_letter_spacing;
+    use koala_css::tokenizer::CSSToken;
+
+    let values = [ComponentValue::Token(CSSToken::Ident("wide".to_owned()))];
+    assert_eq!(parse_letter_spacing(&values), None);
+}

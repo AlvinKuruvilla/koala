@@ -29,11 +29,17 @@ use super::box_model::Rect;
 /// height values needed for inline layout. The layout engine calls
 /// these methods to measure text for line breaking and fragment placement.
 pub trait FontMetrics {
-    /// Measure the total advance width of a text string at the given font size.
+    /// Measure the total advance width of a text string at the given font size,
+    /// including any inter-character `letter_spacing` (in px).
     ///
-    /// This should sum the advance width of each glyph in the string,
-    /// matching the cursor advancement used during text rendering.
-    fn text_width(&self, text: &str, font_size: f32) -> f32;
+    /// The returned value sums per-glyph advance widths plus
+    /// `(n_chars - 1) * letter_spacing` — i.e. spacing applies
+    /// *between* adjacent characters, not after the last. An empty
+    /// or single-character string contributes no spacing. Negative
+    /// `letter_spacing` is allowed and may produce a total smaller
+    /// than the sum of glyph widths (or even negative); callers
+    /// must not clamp.
+    fn text_width(&self, text: &str, font_size: f32, letter_spacing: f32) -> f32;
 
     /// Calculate the line height for a given font size.
     ///
@@ -62,9 +68,11 @@ pub struct ApproximateFontMetrics;
 
 impl FontMetrics for ApproximateFontMetrics {
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-    fn text_width(&self, text: &str, font_size: f32) -> f32 {
+    fn text_width(&self, text: &str, font_size: f32, letter_spacing: f32) -> f32 {
         const CHAR_WIDTH_RATIO: f32 = 0.6;
-        text.chars().count() as f32 * font_size * CHAR_WIDTH_RATIO
+        let n = text.chars().count();
+        n as f32 * font_size * CHAR_WIDTH_RATIO
+            + n.saturating_sub(1) as f32 * letter_spacing
     }
 
     fn line_height(&self, font_size: f32) -> f32 {
@@ -180,6 +188,13 @@ pub struct TextRun {
     pub font_style: FontStyle,
     /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
     pub text_decoration: TextDecorationLine,
+
+    /// [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+    ///
+    /// Inter-character spacing in pixels, used by the renderer to
+    /// advance the cursor by `glyph_advance + letter_spacing` for
+    /// every glyph except the last in the run.
+    pub letter_spacing: f32,
 }
 
 /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
@@ -349,6 +364,7 @@ impl InlineLayout {
         font_weight: u16,
         font_style: FontStyle,
         text_decoration: TextDecorationLine,
+        letter_spacing: f32,
         font_metrics: &dyn FontMetrics,
     ) {
         // STEP 0: Handle preserved newlines.
@@ -375,6 +391,7 @@ impl InlineLayout {
                         font_weight,
                         font_style,
                         text_decoration,
+                        letter_spacing,
                         font_metrics,
                     );
                 }
@@ -390,6 +407,7 @@ impl InlineLayout {
                         font_weight,
                         font_style,
                         text_decoration,
+                        letter_spacing,
                         font_metrics,
                     );
                 }
@@ -404,7 +422,7 @@ impl InlineLayout {
         //
         // The width comes from summing per-glyph advance widths via FontMetrics.
         // The height contribution is the line-height from FontMetrics.
-        let text_width = font_metrics.text_width(text, font_size);
+        let text_width = font_metrics.text_width(text, font_size, letter_spacing);
         let line_height = font_metrics.line_height(font_size);
 
         // STEP 2: Check if text fits on the current line.
@@ -440,9 +458,13 @@ impl InlineLayout {
             // Try to find a soft wrap opportunity that fits on the current line.
             let remaining_width = self.available_width - self.current_x;
 
-            if let Some(break_idx) =
-                Self::find_break_opportunity(text, remaining_width, font_size, font_metrics)
-            {
+            if let Some(break_idx) = Self::find_break_opportunity(
+                text,
+                remaining_width,
+                font_size,
+                letter_spacing,
+                font_metrics,
+            ) {
                 // Split at the break point: place the first part on the
                 // current line, then recurse for the remainder.
                 let (first, rest) = text.split_at(break_idx);
@@ -460,6 +482,7 @@ impl InlineLayout {
                         font_weight,
                         font_style,
                         text_decoration,
+                        letter_spacing,
                         font_metrics,
                     );
                 }
@@ -478,6 +501,7 @@ impl InlineLayout {
                         font_weight,
                         font_style,
                         text_decoration,
+                        letter_spacing,
                         font_metrics,
                     );
                 }
@@ -497,6 +521,7 @@ impl InlineLayout {
                 font_weight,
                 font_style,
                 text_decoration,
+                letter_spacing,
                 font_metrics,
             );
             return;
@@ -511,6 +536,7 @@ impl InlineLayout {
             font_weight,
             font_style,
             text_decoration,
+            letter_spacing,
             font_metrics,
         );
     }
@@ -529,9 +555,10 @@ impl InlineLayout {
         font_weight: u16,
         font_style: FontStyle,
         text_decoration: TextDecorationLine,
+        letter_spacing: f32,
         font_metrics: &dyn FontMetrics,
     ) {
-        let text_width = font_metrics.text_width(text, font_size);
+        let text_width = font_metrics.text_width(text, font_size, letter_spacing);
 
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
@@ -556,6 +583,7 @@ impl InlineLayout {
                 font_weight,
                 font_style,
                 text_decoration,
+                letter_spacing
             }),
             vertical_align: VerticalAlign::Baseline,
         };
@@ -790,6 +818,9 @@ impl InlineLayout {
                     font_weight: 400,
                     font_style: FontStyle::Normal,
                     text_decoration: TextDecorationLine::default(),
+                    // A strut carries no visible glyphs, so there's
+                    // no inter-character spacing to apply.
+                    letter_spacing: 0.0,
                 }),
                 vertical_align: VerticalAlign::Baseline,
             };
@@ -1028,6 +1059,7 @@ impl InlineLayout {
         text: &str,
         max_width: f32,
         font_size: f32,
+        letter_spacing: f32,
         font_metrics: &dyn FontMetrics,
     ) -> Option<usize> {
         // STEP 1: Find all soft wrap opportunities.
@@ -1053,7 +1085,8 @@ impl InlineLayout {
             // A break opportunity exists at the transition from whitespace
             // to non-whitespace (i.e., the start of a new word).
             if !is_whitespace && prev_was_whitespace {
-                let prefix_width = font_metrics.text_width(&text[..byte_idx], font_size);
+                let prefix_width =
+                    font_metrics.text_width(&text[..byte_idx], font_size, letter_spacing);
                 if prefix_width <= max_width {
                     last_fitting_break = Some(byte_idx);
                 } else {
@@ -1067,7 +1100,7 @@ impl InlineLayout {
 
         // Also consider breaking at the end of trailing whitespace.
         if prev_was_whitespace {
-            let prefix_width = font_metrics.text_width(text, font_size);
+            let prefix_width = font_metrics.text_width(text, font_size, letter_spacing);
             if prefix_width <= max_width {
                 last_fitting_break = Some(text.len());
             }
