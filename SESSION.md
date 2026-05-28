@@ -5,6 +5,23 @@ fixing but shouldn't block the current task. Per the global
 CLAUDE.md convention: write observations here, don't fix them
 inline unless they block progress.
 
+## Perf harness — deferred items
+
+- **`--live` escape hatch for `just bench`.** The harness
+  auto-caches remote URLs to `.bench-cache/<slug>.html` and uses
+  the cached copy on subsequent runs (stable engine signal
+  decoupled from network / page-content drift). A `--live` flag
+  to bypass the cache for one-off "what does real google.com
+  look like right now?" checks would be useful but isn't built
+  yet. Adding it = one branch in the bench recipe.
+- **`just bench-diff` for comparing JSON reports.** `just bench`
+  emits structured JSON to stdout; comparing two reports today
+  is manual (`diff`, `jq`, eyeballing). A small Rust subcommand
+  (`koala --bench-diff before.json after.json`) that prints
+  per-stage % deltas with red/green highlighting would close the
+  regression-detection loop. Defer until we have enough bench
+  runs that manual diffing gets cumbersome.
+
 ## koala-css gaps surfaced by the landing / error page redesign
 
 The landing page (`koala-qt/res/landing.html`) and error page

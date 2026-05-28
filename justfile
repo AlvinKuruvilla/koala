@@ -15,6 +15,86 @@ cli url screenshot="":
         cargo run --bin koala -- -S "{{screenshot}}" "{{url}}"; \
     fi
 
+# Bench the render pipeline against `url` (file path or HTTP URL)
+# and emit a JSON timing report on stdout. URLs auto-cache to
+# `.bench-cache/<slug>.html` on first use so subsequent runs are
+# decoupled from network / page-content drift; refresh with
+# `just bench-refresh`. File paths bypass the cache and are used
+# directly (so the bundled landing page always runs against the
+# current `res/landing.html`).
+#
+# Always uses `--features bench` (which transitively enables
+# `koala-browser/render-trace`) and `--release` (so optimized code
+# is what gets measured). Per-stage timings live in the `render`
+# section of the JSON; `setup_us` is the one-time load cost.
+#
+#   just bench                                  # bench landing page
+#   just bench https://example.com              # bench live URL (auto-cached)
+#   just bench res/test.html                    # bench a local file
+#   just bench .bench-cache/google_com.html     # bench a manually-named snapshot
+#   just bench https://example.com > out.json   # capture for diffing
+bench url="koala-ui/res/landing.html":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "{{url}}" =~ ^https?:// ]]; then
+        slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
+        target=".bench-cache/${slug}.html"
+        if [ ! -f "$target" ]; then
+            mkdir -p .bench-cache
+            curl -sL "{{url}}" > "$target"
+        fi
+    else
+        target="{{url}}"
+    fi
+    # 2048×1536 matches the koala-ui default window (1024×768
+    # logical) at 2× retina. Fixed for reproducibility across
+    # machines; edit here if a different shape becomes the
+    # canonical comparison target.
+    cargo run --release --features bench --bin koala -- \
+        --bench "$target" --width 2048 --height 1536
+
+# Re-fetch a remote URL into `.bench-cache/` so the next `just bench`
+# against it sees fresh content. No-op for file paths (they're
+# never cached).
+#
+#   just bench-refresh https://example.com
+bench-refresh url:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
+    mkdir -p .bench-cache
+    curl -sL "{{url}}" > ".bench-cache/${slug}.html"
+    echo "Refreshed .bench-cache/${slug}.html"
+
+# Profile a render with `cargo flamegraph` and open the resulting
+# SVG. macOS needs `sudo` for dtrace; the flag prompts once. Runs
+# with `--features bench --release`, the same configuration as
+# `just bench`, so the profile matches what the bench harness
+# measures. Output lands in `flamegraph.svg` (gitignored).
+#
+# Requires `cargo install flamegraph` once.
+#
+#   just flame                          # profile landing page
+#   just flame https://example.com      # profile live URL (auto-cached)
+#   just flame res/test.html            # profile a local file
+flame url="koala-ui/res/landing.html":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "{{url}}" =~ ^https?:// ]]; then
+        slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
+        target=".bench-cache/${slug}.html"
+        if [ ! -f "$target" ]; then
+            mkdir -p .bench-cache
+            curl -sL "{{url}}" > "$target"
+        fi
+    else
+        target="{{url}}"
+    fi
+    sudo cargo flamegraph --release --features bench --bin koala \
+        -- --bench "$target" --bench-iterations 10 --bench-warmup 2 \
+           --width 2048 --height 1536 > /dev/null
+    echo "Flamegraph written to flamegraph.svg"
+
 # One-time setup for the WPT integration: creates `.venv-wpt/`,
 # installs the koala wptrunner plugin, and pulls in wpt's Python
 # requirements. Safe to re-run; pip will no-op when versions match.

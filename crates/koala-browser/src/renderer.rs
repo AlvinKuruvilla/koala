@@ -200,7 +200,14 @@ impl Renderer {
         images: HashMap<String, LoadedImage>,
         fonts: RendererFonts,
     ) -> Self {
-        let buffer = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
+        // Per the rasterizer-future-work backlog this allocation is
+        // ~30 ms for a 2560×1488 buffer and ~80 % of `Renderer::new`'s
+        // wall time. Spanned separately from the rest of the
+        // constructor so the buffer-pool optimisation (Tier 1 item #1)
+        // can be verified against this exact number once it lands.
+        let buffer = tracing::info_span!("renderer_alloc").in_scope(|| {
+            ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]))
+        });
 
         Self {
             buffer,
@@ -240,6 +247,14 @@ impl Renderer {
     ///
     /// Commands are executed in order (back to front), which is the correct
     /// painting order established by `DisplayListBuilder`.
+    ///
+    /// ~180 ms for the landing page per the rasterizer-future-work
+    /// backlog (glyph rasterization dominates). The single span here
+    /// is enough to track the headline number — finer-grained
+    /// breakdowns (per-command-type via `command.span_name()`,
+    /// glyph vs fill vs image) ride on the existing enum dispatch
+    /// when we start the glyph-cache work.
+    #[tracing::instrument(name = "rasterize", skip_all)]
     pub fn render(&mut self, display_list: &DisplayList) {
         for command in display_list.commands() {
             self.execute_command(command);

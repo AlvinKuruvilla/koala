@@ -40,6 +40,8 @@ strum_macros = "0.26"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 thiserror = "2"
 boa_engine = "0.20"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
 [workspace.lints.rust]
 # All warnings as errors
@@ -74,3 +76,10 @@ nursery = { level = "warn", priority = -1 }
 # Specific overrides for pragmatic reasons
 module_name_repetitions = "allow"
 too_many_lines = "allow"
+
+# Release builds keep line-table debug info so `cargo flamegraph` (via
+# dtrace on macOS) and other sampling profilers can resolve function
+# symbols. ~5% binary size, no runtime cost. Without this, flamegraphs
+# bottom out at `koala-cli::main` and aren't useful for hot-path triage.
+[profile.release]
+debug = "line-tables-only"

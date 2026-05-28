@@ -2,6 +2,8 @@
 //!
 //! Renders HTML/CSS to images with CSS 2.1 compliant layout.
 
+#[cfg(feature = "bench")]
+mod bench;
 mod render;
 mod wpt_protocol;
 
@@ -86,6 +88,30 @@ struct Cli {
     /// `--wpt-protocol`.
     #[arg(long, value_name = "FILE")]
     hosts_file: Option<PathBuf>,
+
+    /// Perf-harness mode: load the page once, render it N+warmup
+    /// times, emit a per-stage timing JSON report on stdout.
+    /// Requires the `bench` cargo feature (which enables the
+    /// `render-trace` spans). The `just bench` recipe wires this
+    /// up; ad-hoc invocations need `cargo run --release --features
+    /// bench --bin koala -- --bench <path>`.
+    #[arg(
+        long,
+        conflicts_with_all = ["html", "layout", "screenshot", "wpt_protocol"]
+    )]
+    bench: bool,
+
+    /// Sample iteration count for `--bench`. Default 30 is enough
+    /// for the per-stage means to stabilise below ~5 % run-to-run
+    /// variance on the landing page.
+    #[arg(long, default_value = "30", value_name = "N")]
+    bench_iterations: u32,
+
+    /// Discard-iteration count for `--bench`. Default 3 lets the
+    /// OS page in glyph data and warms any lazy caches before the
+    /// sampled iterations start.
+    #[arg(long, default_value = "3", value_name = "N")]
+    bench_warmup: u32,
 }
 
 fn main() -> Result<()> {
@@ -122,6 +148,35 @@ fn main() -> Result<()> {
     // dispatch before any CLI-style argument validation runs.
     if cli.wpt_protocol {
         return wpt_protocol::run();
+    }
+
+    // Bench mode similarly owns its own pipeline (no screenshot
+    // save, repeated render). Dispatch before screenshot
+    // validation since it doesn't take an output path.
+    if cli.bench {
+        let path = cli
+            .path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("--bench requires a path/URL argument"))?;
+        #[cfg(feature = "bench")]
+        {
+            return bench::run(
+                path,
+                cli.width,
+                cli.height,
+                cli.bench_iterations,
+                cli.bench_warmup,
+            );
+        }
+        #[cfg(not(feature = "bench"))]
+        {
+            let _ = path;
+            anyhow::bail!(
+                "--bench requires the `bench` cargo feature. \
+                 Run `just bench`, or rebuild with \
+                 `cargo run --release --features bench --bin koala -- ...`."
+            );
+        }
     }
 
     // Validate screenshot output path before doing any expensive work.

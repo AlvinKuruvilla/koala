@@ -11,6 +11,12 @@ path = "src/main.rs"
 
 [features]
 layout-trace = ["koala-css/layout-trace"]
+# `--bench` mode and the `tracing-subscriber` Layer that drains the
+# render-pipeline spans into per-stage stats. The spans themselves
+# are always-on (cheap no-op when no subscriber is registered);
+# only the harness module + its subscriber dep are gated behind
+# this feature so non-bench builds stay light.
+bench = ["dep:tracing-subscriber"]
 
 [dependencies]
 libc = "0.2"
@@ -24,6 +30,8 @@ clap = { version = "4", features = ["derive"] }
 owo-colors.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 
 [lints]
 workspace = true

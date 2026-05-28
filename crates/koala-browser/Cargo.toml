@@ -13,6 +13,12 @@ koala-css.workspace = true
 koala-js.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
+# `tracing` is always linked: spans dispatch through a global
+# dispatcher that's a no-op when no subscriber is registered (the
+# GUI case), so per-frame overhead is ~tens of ns total across all
+# active spans. Only the bench harness installs a subscriber; the
+# rest of the time the spans cost nothing measurable.
+tracing.workspace = true
 fontdue = "0.9"
 image = "0.25"
 resvg = "0.44"

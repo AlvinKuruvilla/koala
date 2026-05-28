@@ -19,3 +19,9 @@ DerivedData/
 screenshot.png
 .venv-wpt/
 wptrunner_koala.egg-info
+
+# Perf harness: auto-cached page snapshots for `just bench`,
+# flamegraph output from `just flame`, sampling profiler data.
+.bench-cache/
+flamegraph.svg
+perf.data*
