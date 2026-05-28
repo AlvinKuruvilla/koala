@@ -53,6 +53,24 @@ bench url="koala-ui/res/landing.html":
     cargo run --release --features bench --bin koala -- \
         --bench "$target" --width 2048 --height 1536
 
+# Same as `just bench` but skips the cache and passes the URL
+# straight through, so `koala-cli` fetches it live. The harness
+# still loads once and renders N times — only the one-time setup
+# cost includes network I/O. The diff between `setup_us` from
+# `just bench-live` vs `just bench` against the same URL is the
+# end-to-end network + external-resource fetch cost (HTML,
+# external CSS, external scripts, images, fonts).
+#
+# Use when you want realistic first-paint numbers and accept the
+# network variance; use `just bench` when you want repeatable
+# engine-only numbers across runs.
+#
+#   just bench-live https://google.com
+#   just bench-live https://example.com > /tmp/live.json
+bench-live url:
+    cargo run --release --features bench --bin koala -- \
+        --bench "{{url}}" --width 2048 --height 1536
+
 # Re-fetch a remote URL into `.bench-cache/` so the next `just bench`
 # against it sees fresh content. No-op for file paths (they're
 # never cached).
@@ -92,6 +110,21 @@ flame url="koala-ui/res/landing.html":
     fi
     sudo cargo flamegraph --release --features bench --bin koala \
         -- --bench "$target" --bench-iterations 10 --bench-warmup 2 \
+           --width 2048 --height 1536 > /dev/null
+    echo "Flamegraph written to flamegraph.svg"
+
+# Live counterpart of `just flame` — profiles a URL with the full
+# network + JS pipeline included (no caching). Iterations are
+# capped at 1 because the setup cost dominates by orders of
+# magnitude on real pages; we want call-stack coverage of the
+# load, not statistical convergence of the cheap per-render work.
+#
+# Requires sudo on macOS (dtrace). Requires `cargo install flamegraph`.
+#
+#   just flame-live https://google.com
+flame-live url:
+    sudo cargo flamegraph --release --features bench --bin koala \
+        -- --bench "{{url}}" --bench-iterations 1 --bench-warmup 0 \
            --width 2048 --height 1536 > /dev/null
     echo "Flamegraph written to flamegraph.svg"
 

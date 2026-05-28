@@ -236,37 +236,48 @@ fn parse_html_with_base_url<H: JsHooks>(
     base_url: Option<&str>,
     hooks: &mut H,
 ) -> LoadedDocument {
-    // Tokenize HTML
-    let mut tokenizer = HTMLTokenizer::new(html.to_string());
-    tokenizer.run();
-    let tokens = tokenizer.into_tokens();
+    // Tokenize + parse HTML. One span for the whole DOM-building
+    // pipeline — tokenize alone is fast, the tree-builder dominates.
+    let (tokens, dom, mut parse_issues) = tracing::info_span!("html_parse").in_scope(|| {
+        let mut tokenizer = HTMLTokenizer::new(html.to_string());
+        tokenizer.run();
+        let tokens = tokenizer.into_tokens();
+        let parser = HTMLParser::new(tokens.clone());
+        let (dom, issues) = parser.run_with_issues();
+        let parse_issues: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
+        (tokens, dom, parse_issues)
+    });
 
-    // Parse HTML
-    let parser = HTMLParser::new(tokens.clone());
-    let (dom, issues) = parser.run_with_issues();
-    let mut parse_issues: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
+    // Extract and parse CSS (including external stylesheets).
+    // TODO: Implement proper Fetch Standard and CSSOM spec compliance.
+    // `css_extract` covers external-stylesheet HTTP fetches; on real
+    // pages that's often the dominant per-page network cost.
+    let stylesheet = tracing::info_span!("css_extract").in_scope(|| {
+        let doc_stylesheets = extract_all_stylesheets(&dom, base_url);
+        doc_stylesheets.into_merged_stylesheet()
+    });
 
-    // Extract and parse CSS (including external stylesheets)
-    // TODO: Implement proper Fetch Standard and CSSOM spec compliance
-    let doc_stylesheets = extract_all_stylesheets(&dom, base_url);
-    let stylesheet = doc_stylesheets.into_merged_stylesheet();
-
-    // Keep inline CSS text for debugging
+    // Keep inline CSS text for debugging.
     let css_text = extract_style_content(&dom);
 
-    // Compute styles
+    // Compute styles.
     // [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
     //
     // "Each style rule has a cascade origin... User-Agent origin rules have
     // the lowest priority."
     let ua = koala_css::ua_stylesheet::ua_stylesheet();
-    let styles = compute_styles(&dom, ua, &stylesheet);
+    let styles =
+        tracing::info_span!("css_cascade").in_scope(|| compute_styles(&dom, ua, &stylesheet));
 
-    // Load images referenced by <img> elements
-    let (images, image_dims) = load_images(&dom, base_url);
+    // Load images referenced by <img> elements. Includes per-image
+    // HTTP fetches; on image-heavy pages this dominates the
+    // network portion of setup.
+    let (images, image_dims) =
+        tracing::info_span!("image_loading").in_scope(|| load_images(&dom, base_url));
 
-    // Build layout tree
-    let layout_tree = LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims);
+    // Build layout tree.
+    let layout_tree = tracing::info_span!("layout_tree_build")
+        .in_scope(|| LayoutBox::build_layout_tree(&dom, &styles, dom.root(), &image_dims));
 
     // Execute JavaScript.
     // [§ 4.12.1.1 Processing model](https://html.spec.whatwg.org/multipage/scripting.html)
@@ -276,38 +287,54 @@ fn parse_html_with_base_url<H: JsHooks>(
     // DOM-bridge globals. After the runtime is dropped its handle
     // clone drops with it, leaving the Rc unique — `into_inner`
     // recovers the owned `DomTree` for `LoadedDocument`.
-    let scripts = load_scripts(&dom, base_url, &mut parse_issues);
+    //
+    // Split into two spans because external script fetches and JS
+    // execution are very different costs and may need to be
+    // optimised separately. `script_loading` is HTTP-bound;
+    // `js_execute` is CPU-bound inside Boa.
+    let scripts = tracing::info_span!("script_loading")
+        .in_scope(|| load_scripts(&dom, base_url, &mut parse_issues));
     let dom_cell = std::rc::Rc::new(std::cell::RefCell::new(dom));
-    let dom_was_mutated = {
-        let mut js_runtime = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
-        // Plumb the document's source URL into `location.href` so
-        // scripts that read it (and testharness.js's self-reporting
-        // path in particular) see the real URL instead of the
-        // default `about:blank`.
-        if let Some(url) = base_url {
-            js_runtime.set_location(url);
-        }
-        // Hook point: callers that need to install extra JS-side
-        // globals (e.g. the WPT testharness bridge) get one chance
-        // to do so before any document script runs.
-        hooks.before_scripts(&mut js_runtime);
-        for script in scripts {
-            if let Err(e) = js_runtime.execute(&script.source) {
-                let message = format!(
-                    "JavaScript error (in {label}): {e}",
-                    label = script.label,
-                );
-                // Make the error observable to JS via
-                // `window.addEventListener('error', …)` so
-                // testharness.js's failure path triggers. Then
-                // record the issue for human consumption.
-                if let Err(dispatch_err) = js_runtime.dispatch_error(&message) {
-                    parse_issues
-                        .push(format!("JavaScript error (in error handler): {dispatch_err}"));
-                }
-                parse_issues.push(message);
+    let dom_was_mutated = tracing::info_span!("js_execute").in_scope(|| {
+        // Runtime construction + URL plumb + the before_scripts
+        // hook. Plumb the document's source URL into
+        // `location.href` so scripts that read it (and
+        // testharness.js's self-reporting path in particular) see
+        // the real URL instead of the default `about:blank`.
+        let mut js_runtime = tracing::info_span!("js_runtime_init").in_scope(|| {
+            let mut rt = JsRuntime::new(std::rc::Rc::clone(&dom_cell));
+            if let Some(url) = base_url {
+                rt.set_location(url);
             }
-        }
+            // Hook point: callers that need to install extra
+            // JS-side globals (e.g. the WPT testharness bridge)
+            // get one chance to do so before any document script
+            // runs.
+            hooks.before_scripts(&mut rt);
+            rt
+        });
+
+        // Execute each <script>'s body in document order.
+        tracing::info_span!("js_script_execute").in_scope(|| {
+            for script in scripts {
+                if let Err(e) = js_runtime.execute(&script.source) {
+                    let message = format!(
+                        "JavaScript error (in {label}): {e}",
+                        label = script.label,
+                    );
+                    // Make the error observable to JS via
+                    // `window.addEventListener('error', …)` so
+                    // testharness.js's failure path triggers.
+                    // Then record the issue for human consumption.
+                    if let Err(dispatch_err) = js_runtime.dispatch_error(&message) {
+                        parse_issues
+                            .push(format!("JavaScript error (in error handler): {dispatch_err}"));
+                    }
+                    parse_issues.push(message);
+                }
+            }
+        });
+
         // HTML § 13.2.6 "Stop parsing" lifecycle:
         //   1. Run sync scripts (above)
         //   2. Fire DOMContentLoaded at the document
@@ -329,25 +356,41 @@ fn parse_html_with_base_url<H: JsHooks>(
         // 5) is where future-timer waiting belongs, and it's
         // also where `should_stop_pumping` can exit early once
         // a hook signals it's done.
-        if let Err(e) = js_runtime.dispatch_dom_content_loaded() {
-            parse_issues.push(format!("JavaScript error (in DOMContentLoaded): {e}"));
-        }
-        if let Err(e) = js_runtime.drain_due_tasks() {
-            parse_issues.push(format!("JavaScript error (in timer): {e}"));
-        }
-        if let Err(e) = js_runtime.dispatch_load() {
-            parse_issues.push(format!("JavaScript error (in load): {e}"));
-        }
-        let pump_result = js_runtime.pump_until_idle_or(|rt| hooks.should_stop_pumping(rt));
-        if let Err(e) = pump_result {
-            parse_issues.push(format!("JavaScript error (in timer): {e}"));
-        }
+        tracing::info_span!("js_dispatch_dcl").in_scope(|| {
+            if let Err(e) = js_runtime.dispatch_dom_content_loaded() {
+                parse_issues.push(format!("JavaScript error (in DOMContentLoaded): {e}"));
+            }
+        });
+        tracing::info_span!("js_drain_due_tasks").in_scope(|| {
+            if let Err(e) = js_runtime.drain_due_tasks() {
+                parse_issues.push(format!("JavaScript error (in timer): {e}"));
+            }
+        });
+        tracing::info_span!("js_dispatch_load").in_scope(|| {
+            if let Err(e) = js_runtime.dispatch_load() {
+                parse_issues.push(format!("JavaScript error (in load): {e}"));
+            }
+        });
+        // The pump is the prime suspect for long-tail JS time:
+        // any `setTimeout(fn, N)` scheduled by document scripts
+        // causes the pump to sleep until N elapses (or until
+        // `should_stop_pumping` returns true). On real pages
+        // with watchdog timers this can dominate.
+        tracing::info_span!("js_pump_until_idle").in_scope(|| {
+            let pump_result =
+                js_runtime.pump_until_idle_or(|rt| hooks.should_stop_pumping(rt));
+            if let Err(e) = pump_result {
+                parse_issues.push(format!("JavaScript error (in timer): {e}"));
+            }
+        });
         // Hook point: caller drains any state it accumulated
         // during script execution (testharness results, custom
         // globals, etc.) before the runtime drops.
-        hooks.after_settled(&mut js_runtime);
+        tracing::info_span!("js_after_settled")
+            .in_scope(|| hooks.after_settled(&mut js_runtime));
+
         js_runtime.take_dom_dirty()
-    };
+    });
     let dom = std::rc::Rc::try_unwrap(dom_cell)
         .expect("JsRuntime is dropped above; no other holders of the DOM handle")
         .into_inner();
@@ -360,10 +403,12 @@ fn parse_html_with_base_url<H: JsHooks>(
     // image loads are network-bound and the post-script DOM rarely
     // adds <img> tags pointing to never-fetched URLs in practice.
     let (styles, layout_tree) = if dom_was_mutated {
-        let post_styles = compute_styles(&dom, ua, &stylesheet);
-        let post_layout =
-            LayoutBox::build_layout_tree(&dom, &post_styles, dom.root(), &image_dims);
-        (post_styles, post_layout)
+        tracing::info_span!("post_js_relayout").in_scope(|| {
+            let post_styles = compute_styles(&dom, ua, &stylesheet);
+            let post_layout =
+                LayoutBox::build_layout_tree(&dom, &post_styles, dom.root(), &image_dims);
+            (post_styles, post_layout)
+        })
     } else {
         (styles, layout_tree)
     };

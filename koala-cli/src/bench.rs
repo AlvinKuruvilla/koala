@@ -71,10 +71,23 @@ pub(crate) fn run(
     let doc = load_document(url).with_context(|| format!("loading {url}"))?;
     let setup_us = setup_start.elapsed().as_micros() as u64;
 
+    // Setup spans (html_parse, css_extract, css_cascade,
+    // image_loading, layout_tree_build, script_loading,
+    // js_execute, possibly post_js_relayout). Aggregated by name
+    // and summed because a stage like image_loading may fire once
+    // overall but cover many images — the sum is what matters,
+    // not per-call stats.
+    let setup_events = take_events();
+    let mut setup_stages: BTreeMap<String, u64> = BTreeMap::new();
+    for ev in setup_events {
+        *setup_stages.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
+    }
+
     let font_provider = FontProvider::load();
 
-    // Drain any spans recorded during setup (font load is the big
-    // one — ~250 ms uncached) so they don't pollute iteration 0.
+    // Drain any spans from font loading so they don't pollute the
+    // render samples below. In the cached-fonts path this is a
+    // no-op past the first invocation, but it's a defensive drain.
     let _ = take_events();
 
     for _ in 0..warmup {
@@ -101,6 +114,7 @@ pub(crate) fn run(
         iterations,
         warmup,
         setup_us,
+        setup_stages,
         render,
     };
 
@@ -199,15 +213,20 @@ struct BenchReport {
     iterations: u32,
     warmup: u32,
     /// Wall-clock cost of one `load_document` call — fetch, parse,
-    /// cascade, layout-tree build, JS execution. Single number,
-    /// not iterated; out-of-scope for the optimization backlog
-    /// (which targets per-render cost), but useful to keep visible
-    /// so we notice if loading regresses.
+    /// cascade, layout-tree build, JS execution. Single end-to-end
+    /// number; see `setup_stages` for the breakdown.
     setup_us: u64,
-    /// Per-stage aggregated samples, keyed by the span name.
-    /// `BTreeMap` so JSON output is alphabetically stable across
-    /// runs — easier to diff with plain `diff` than a hash-ordered
-    /// map.
+    /// Per-stage breakdown of the one-time setup, keyed by span
+    /// name (`html_parse`, `css_extract`, `css_cascade`,
+    /// `image_loading`, `layout_tree_build`, `script_loading`,
+    /// `js_execute`, optionally `post_js_relayout`). Values are
+    /// total microseconds for that stage; a stage that fires
+    /// multiple times (image_loading fetching N images) has its
+    /// per-call durations summed.
+    setup_stages: BTreeMap<String, u64>,
+    /// Per-stage aggregated samples for the render loop, keyed by
+    /// span name. `BTreeMap` so JSON output is alphabetically
+    /// stable across runs.
     render: BTreeMap<String, StageStats>,
 }
 
