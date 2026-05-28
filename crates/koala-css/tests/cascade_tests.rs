@@ -714,11 +714,8 @@ fn test_inline_style_standalone() {
     assert!(div_style.padding_top.is_some());
 }
 
-// ---------------------------------------------------------------------------
 // Border longhand property tests
-//
 // [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_border_top_color_longhand() {
@@ -853,13 +850,10 @@ fn test_border_color_shorthand() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // CSS Custom Properties (Variables) tests
 //
 // [CSS Custom Properties for Cascading Variables Module Level 1]
 // (https://www.w3.org/TR/css-variables-1/)
-// ---------------------------------------------------------------------------
-
 /// [§ 2](https://www.w3.org/TR/css-variables-1/#defining-variables)
 ///
 /// Basic custom property definition and var() substitution for color.

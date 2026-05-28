@@ -507,11 +507,9 @@ fn test_scope_checking_basic() {
     assert!(full_text.contains("text"));
 }
 
-// ---------------------------------------------------------------------------
 // List element parsing tests
 //
 // [§ 13.2.6.4.7 "in body"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-// ---------------------------------------------------------------------------
 
 /// Helper to collect all direct element children with a given tag name.
 fn element_children(tree: &DomTree, parent: NodeId, tag: &str) -> Vec<NodeId> {

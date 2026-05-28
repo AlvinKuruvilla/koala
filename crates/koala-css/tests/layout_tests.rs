@@ -45,14 +45,12 @@ fn test_default_display_none() {
     assert_eq!(default_display_for_element("head"), None);
 }
 
-// ---------------------------------------------------------------------------
 // Margin collapsing tests
 //
 // [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
 //
 // "When two or more margins collapse, the resulting margin width is the
 // maximum of the collapsing margins' widths."
-// ---------------------------------------------------------------------------
 
 /// Helper: parse HTML via koala-browser, build and compute layout, return the
 /// root layout box with dimensions filled in.
@@ -215,7 +213,6 @@ fn test_auto_height_with_collapsed_margins() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Parent-child margin collapsing tests
 //
 // [§ 8.3.1 Collapsing margins](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
@@ -223,7 +220,6 @@ fn test_auto_height_with_collapsed_margins() {
 // "The top margin of an in-flow block element collapses with its first
 // in-flow block-level child's top margin value if the element has no
 // top border, no top padding, and the child has no clearance."
-// ---------------------------------------------------------------------------
 
 /// [§ 8.3.1](https://www.w3.org/TR/CSS2/box.html#collapsing-margins)
 ///
@@ -314,11 +310,9 @@ fn test_parent_child_bottom_margin_collapsing() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Flexbox layout tests
 //
 // [§ 9 Flex Layout Algorithm](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
-// ---------------------------------------------------------------------------
 
 /// [§ 9 Flex Layout](https://www.w3.org/TR/css-flexbox-1/#layout-algorithm)
 ///
@@ -654,14 +648,13 @@ fn test_flex_content_based_sizing() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Relative positioning tests
 //
 // [§ 9.4.3 Relative positioning](https://www.w3.org/TR/CSS2/visuren.html#relative-positioning)
 //
 // "Once a box has been laid out according to the normal flow, it may be
 // shifted relative to its normal position."
-// ---------------------------------------------------------------------------
+
 
 /// position: relative with left offset shifts the box to the right.
 #[test]
@@ -855,14 +848,14 @@ fn test_relative_position_overconstrained_vertical() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // Absolute positioning tests
 //
 // [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
 //
 // "In the absolute positioning model, a box is removed from the normal
 // flow entirely and assigned a position with respect to a containing block."
-// ---------------------------------------------------------------------------
+
 
 /// [§ 10.3.7 / § 10.6.4](https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width)
 ///
@@ -1104,12 +1097,12 @@ fn test_absolute_auto_margins_centering() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // min-width / max-width / min-height / max-height tests
 //
 // [§ 10.4 Minimum and maximum widths](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
 // [§ 10.7 Minimum and maximum heights](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
-// ---------------------------------------------------------------------------
+
 
 /// [§ 10.4](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
 ///
@@ -1262,7 +1255,7 @@ fn test_min_height_expands() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // Containing block ancestor walk tests
 //
 // [§ 10.1 Definition of "containing block"](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
@@ -1270,7 +1263,7 @@ fn test_min_height_expands() {
 // "If the element has 'position: absolute', the containing block is
 // established by the nearest ancestor with a 'position' of 'absolute',
 // 'relative', 'fixed', or 'sticky'."
-// ---------------------------------------------------------------------------
+
 
 /// [§ 10.1](https://www.w3.org/TR/CSS2/visudet.html#containing-block-details)
 ///
@@ -1350,7 +1343,7 @@ fn test_absolute_no_positioned_ancestor_uses_viewport() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // box-sizing: border-box tests
 //
 // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
@@ -1358,7 +1351,7 @@ fn test_absolute_no_positioned_ancestor_uses_viewport() {
 // "The box-sizing property defines whether the width and height (and
 // respective min/max properties) on an element include padding and
 // borders or not."
-// ---------------------------------------------------------------------------
+
 
 /// [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
 ///
@@ -1521,7 +1514,7 @@ fn test_border_box_max_width() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // Float layout tests
 //
 // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
@@ -1529,7 +1522,7 @@ fn test_border_box_max_width() {
 // "A float is a box that is shifted to the left or right on the current line.
 // The most interesting characteristic of a float is that content may flow along
 // its side (or be prohibited from doing so by the 'clear' property)."
-// ---------------------------------------------------------------------------
+
 
 /// Helper: find the first child box with float_side set.
 fn find_float_child(parent: &LayoutBox) -> &LayoutBox {
@@ -1765,7 +1758,7 @@ fn test_multiple_floats_stack() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // Inline-block tests
 //
 // [§ 10.3.9 'Inline-block', non-replaced elements in normal flow](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
@@ -1773,7 +1766,7 @@ fn test_multiple_floats_stack() {
 // "This value causes an element to generate an inline-level block
 // container. The inside of an inline-block is formatted as a block box,
 // and the element itself is formatted as an atomic inline-level box."
-// ---------------------------------------------------------------------------
+
 
 /// [§ 10.3.9](https://www.w3.org/TR/CSS2/visudet.html#inlineblock-width)
 ///
@@ -1975,12 +1968,12 @@ fn test_inline_block_text_align_center() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // List item / marker tests
 //
 // [§ 2.5 List Items](https://www.w3.org/TR/css-display-3/#list-items)
 // [§ 3 Markers](https://www.w3.org/TR/css-lists-3/#markers)
-// ---------------------------------------------------------------------------
+
 
 #[test]
 fn test_list_item_display() {
@@ -2094,14 +2087,14 @@ fn test_ol_start_attribute() {
     assert_eq!(li2.marker_text.as_deref(), Some("6. "));
 }
 
-// ---------------------------------------------------------------------------
+
 // Overflow clipping tests
 //
 // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
 //
 // "This property specifies whether content of a block container element
 // is clipped when it overflows the element's box."
-// ---------------------------------------------------------------------------
+
 
 /// Helper: parse HTML, build layout + styles, paint, and return the display list.
 fn paint_html(html: &str) -> koala_css::DisplayList {
@@ -2356,11 +2349,11 @@ fn test_flex_align_items_stretch() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // Form element rendering tests
 //
 // [§ 15.5.12–15.5.15 Form controls](https://html.spec.whatwg.org/multipage/rendering.html)
-// ---------------------------------------------------------------------------
+
 
 /// Verify <input> gets inline-block display and replaced-element intrinsic
 /// dimensions (~173px wide, ~20px tall for text inputs).
@@ -2474,11 +2467,11 @@ fn test_input_checkbox_intrinsic_size() {
     );
 }
 
-// ===========================================================================
+
 // CSS Grid Layout tests
 //
 // [§ 12 Grid Sizing](https://www.w3.org/TR/css-grid-1/#layout-algorithm)
-// ===========================================================================
+
 
 /// Regression test for a slice-out-of-bounds panic in
 /// `is_area_free` / `mark_occupied`. A default 1-column grid
@@ -2923,13 +2916,13 @@ fn test_grid_auto_rows() {
     }
 }
 
-// ---------------------------------------------------------------------------
+
 // Table layout tests
 //
 // [§ 17 Tables](https://www.w3.org/TR/CSS2/tables.html)
 //
 // Tests for automatic table layout algorithm (§ 17.5.2).
-// ---------------------------------------------------------------------------
+
 
 /// [§ 17.5.2 Automatic table layout](https://www.w3.org/TR/CSS2/tables.html#auto-table-layout)
 ///
@@ -3301,13 +3294,13 @@ fn test_table_th_bold() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // box-shadow tests
 //
 // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
 //
 // "The 'box-shadow' property attaches one or more drop-shadows to the box."
-// ---------------------------------------------------------------------------
+
 
 /// `box-shadow: none` should produce an empty shadow vec.
 #[test]
@@ -3430,10 +3423,10 @@ fn test_box_shadow_not_inherited() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // CSS border-radius layout tests
 // [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
-// ---------------------------------------------------------------------------
+
 
 /// `border-radius: 10px` sets all 4 corners to 10.0.
 #[test]
@@ -3529,12 +3522,12 @@ fn test_border_radius_default_zero() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // CSS Custom Properties (Variables) layout tests
 //
 // [CSS Custom Properties for Cascading Variables Module Level 1]
 // (https://www.w3.org/TR/css-variables-1/)
-// ---------------------------------------------------------------------------
+
 
 /// [§ 3](https://www.w3.org/TR/css-variables-1/#using-variables)
 ///
@@ -3615,13 +3608,13 @@ fn test_var_fallback_in_padding() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // text-decoration tests
 //
 // [CSS Text Decoration Level 3 § 3](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
 //
 // "`text-decoration-line`: `none | [ underline || overline || line-through ]`"
-// ---------------------------------------------------------------------------
+
 
 /// Helper: collect all `TextRun`s from a `LayoutBox` tree (depth-first).
 fn collect_text_runs(layout_box: &LayoutBox) -> Vec<&TextRun> {
@@ -3859,13 +3852,13 @@ fn test_text_decoration_on_layout_box() {
     );
 }
 
-// ---------------------------------------------------------------------------
+
 // <br> element tests
 //
 // [§ 4.5.27 The br element](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
 //
 // "The br element represents a line break."
-// ---------------------------------------------------------------------------
+
 
 /// [§ 4.5.27](https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element)
 ///
@@ -3965,14 +3958,12 @@ fn test_br_at_start_of_paragraph() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // white-space: pre tests
 //
 // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
 //
 // "This value prevents user agents from collapsing sequences of white
 // space. Lines are only broken at preserved newline characters."
-// ---------------------------------------------------------------------------
 
 /// [§ 16.6](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
 ///
@@ -4078,7 +4069,6 @@ fn test_normal_whitespace_collapses_newlines() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // WebKit vendor-prefix aliases and no-op properties
 //
 // Real-world stylesheets routinely set `-webkit-text-decoration`,
@@ -4086,7 +4076,6 @@ fn test_normal_whitespace_collapses_newlines() {
 // modern counterparts. We accept the prefixed forms (and their unprefixed
 // standards where applicable) without falling through to the unknown-
 // property warning path. These tests pin down that behaviour.
-// ---------------------------------------------------------------------------
 
 /// `-webkit-text-decoration: underline` should behave identically to the
 /// unprefixed `text-decoration: underline` — both route to the same arm
