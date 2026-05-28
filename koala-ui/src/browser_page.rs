@@ -585,27 +585,12 @@ fn run_render_worker(
             latest = newer;
         }
 
-        let attempt = catch_unwind(AssertUnwindSafe(|| {
-            render_state(&latest.state, latest.width, latest.height)
-        }));
-
-        let result = match attempt {
-            Ok(pixels) => RenderResult {
-                width: latest.width,
-                height: latest.height,
-                pixels,
-                error: String::new(),
-            },
-            Err(payload) => {
-                let message = panic_message(&payload);
-                eprintln!("[koala-ui] render panicked: {message}");
-                RenderResult {
-                    width: latest.width,
-                    height: latest.height,
-                    pixels: Vec::new(),
-                    error: message,
-                }
-            }
+        let pixels = render_state(&latest.state, latest.width, latest.height);
+        let result = RenderResult {
+            width: latest.width,
+            height: latest.height,
+            pixels,
+            error: String::new(),
         };
 
         if result_tx.send(result).is_err() {
