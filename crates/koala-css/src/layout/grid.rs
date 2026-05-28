@@ -287,6 +287,24 @@ fn place_grid_items(
             let re = row_end
                 .unwrap_or_else(|| resolve_span_end(child.grid_row_end, rs, occupancy.len()));
 
+            // § 8.3.1 placement-error fixup: when *both* lines on an
+            // axis were definite (i.e. `col_end` / `row_end` came
+            // back as `Some(_)` rather than the `span 1` fallback)
+            // the author may have given them in inverted or equal
+            // order. Normalize so the downstream `mark_occupied`
+            // slices `[start..end]` with `start < end` and we don't
+            // panic on e.g. `row[2..0]`.
+            let (cs, ce) = if col_end.is_some() {
+                normalize_line_pair(cs, ce)
+            } else {
+                (cs, ce)
+            };
+            let (rs, re) = if row_end.is_some() {
+                normalize_line_pair(rs, re)
+            } else {
+                (rs, re)
+            };
+
             // Grow in both dimensions. `ce` may exceed
             // `current_num_cols` when the author used a
             // `grid-column` value that reaches past the explicit
@@ -468,16 +486,44 @@ fn resolve_definite_line(line: GridLine, track_count: usize) -> Option<usize> {
     match line {
         GridLine::Line(n) if n > 0 => Some((n - 1) as usize),
         GridLine::Line(n) if n < 0 => {
-            // Negative line: count from end.
-            // -1 = last line = track_count, so track index = track_count + n
-            let idx = track_count as i32 + n;
+            // Negative line: count back from the end of the explicit
+            // grid. The explicit grid has `track_count + 1` lines
+            // (numbered 1..=track_count+1 in 1-based form); per § 8.3
+            // line `-1` is the last line, `-2` the line before, etc.
+            // So the 1-based line number is `(track_count + 1) + (n + 1)`
+            // = `track_count + n + 2`, and the 0-based track index is
+            // one less, `track_count + n + 1`.
+            let idx = track_count as i32 + n + 1;
             if idx >= 0 {
                 Some(idx as usize)
             } else {
+                // Lines past the start of the explicit grid clamp to
+                // line 1 (track index 0). Full implicit-grid handling
+                // for negative-direction overflow is deferred.
                 Some(0)
             }
         }
         _ => None,
+    }
+}
+
+/// Normalize an explicit `(start, end)` pair of resolved 0-based
+/// track indices per [§ 8.3.1](https://www.w3.org/TR/css-grid-1/#grid-placement-errors).
+///
+/// "If the placement contains two lines, and the start line is
+/// further end-ward than the end line, swap the two lines. If the
+/// start line is equal to the end line, remove the end line."
+///
+/// With both lines definite the "remove the end line" case
+/// collapses to a span of 1 from the start. After this helper
+/// `start < end` is guaranteed.
+const fn normalize_line_pair(start: usize, end: usize) -> (usize, usize) {
+    if start < end {
+        (start, end)
+    } else if start > end {
+        (end, start)
+    } else {
+        (start, start + 1)
     }
 }
 

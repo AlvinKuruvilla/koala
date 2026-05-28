@@ -2525,6 +2525,54 @@ fn test_grid_auto_placed_span_wider_than_grid_does_not_panic() {
     assert_eq!(grid.children.len(), 1);
 }
 
+/// Regression test for a slice-OOB in `mark_occupied` when
+/// STEP-1 explicit placement saw inverted lines like
+/// `grid-column: 3 / 1`. Per § 8.3.1 such lines must be swapped;
+/// before the fix `row[2..0]` panicked.
+#[test]
+fn test_grid_inverted_explicit_lines_do_not_panic() {
+    let root = layout_html(
+        "<html><head><style>\
+         .grid { display: grid; grid-template-columns: 100px 100px 100px; grid-template-rows: 50px 50px; width: 300px; }\
+         .rev { grid-column: 3 / 1; grid-row: 1 / 2; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='rev'>r</div>\
+         </div></body></html>",
+    );
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    assert_eq!(grid.children.len(), 1);
+    // After the § 8.3.1 swap the item occupies tracks 0..2 (lines 1..3).
+    let item = &grid.children[0];
+    assert_eq!(item.dimensions.content.x, grid.dimensions.content.x);
+    assert!(item.dimensions.content.width >= 200.0);
+}
+
+/// `grid-column: 1 / -1` ("span all columns") is the common
+/// idiom for stretching across a grid. With three explicit
+/// columns the end line `-1` is the line *after* the last
+/// track, so the item must span all three. The pre-fix resolver
+/// returned `track_count + n` = 2, dropping one column.
+#[test]
+fn test_grid_negative_end_line_spans_to_end() {
+    let root = layout_html(
+        "<html><head><style>\
+         .grid { display: grid; grid-template-columns: 100px 100px 100px; width: 300px; }\
+         .full { grid-column: 1 / -1; grid-row: 1; }\
+         </style></head>\
+         <body><div class='grid'>\
+            <div class='full'>f</div>\
+         </div></body></html>",
+    );
+    let body = box_at_depth(&root, 2);
+    let grid = &body.children[0];
+    assert_eq!(grid.children.len(), 1);
+    let item = &grid.children[0];
+    // Spans all three 100px columns.
+    assert!(item.dimensions.content.width >= 300.0);
+}
+
 /// `display: grid` produces a grid container with the correct display value.
 #[test]
 fn test_grid_container_recognized() {
