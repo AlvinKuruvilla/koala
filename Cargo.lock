@@ -3068,6 +3068,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "koala-debug"
+version = "0.1.0"
+dependencies = [
+ "koala-browser",
+ "koala-dom",
+ "koala-js",
+ "libc",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "koala-dom"
 version = "0.1.0"
 

@@ -9,6 +9,7 @@ members = [
     "crates/koala-std",
     "crates/koala-wpt",
     "crates/koala-browser",
+    "crates/koala-debug",
     "koala-cli",
     "koala-ui",
 ]

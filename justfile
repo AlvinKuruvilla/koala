@@ -128,6 +128,30 @@ flame-live url:
            --width 2048 --height 1536 > /dev/null
     echo "Flamegraph written to flamegraph.svg"
 
+# Per-stage allocation probe. Loads `url` through
+# `koala_browser::load_document` with a `tracing` layer that
+# reports peak resident memory at every span enter / exit; the
+# stream of `enter`/`close` lines on stderr shows which pipeline
+# stage is allocating. Stack `--map URL=PATH` overrides to swap
+# fetched scripts / CSS for instrumented local copies.
+#
+#   just probe-oom https://example.com
+#   just probe-oom https://example.com --map URL=/tmp/x.js
+#   just probe-oom https://example.com 2> /tmp/trail.log
+probe-oom url *MAPS:
+    cargo run --release --bin oom-probe -- {{MAPS}} "{{url}}"
+
+# Minimal-repro harness for "does this JS file misbehave in Boa
+# on its own?" Runs each `<file>` through a single fresh
+# `JsRuntime` against an empty DOM and reports wall-time +
+# peak-RSS per script. Pass multiple files to test order /
+# interaction effects.
+#
+#   just probe-boa tmp/script-12.js
+#   just probe-boa tmp/scripts/script-0{0..7}.js
+probe-boa +FILES:
+    cargo run --release --bin boa-isolate -- {{FILES}}
+
 # One-time setup for the WPT integration: creates `.venv-wpt/`,
 # installs the koala wptrunner plugin, and pulls in wpt's Python
 # requirements. Safe to re-run; pip will no-op when versions match.
