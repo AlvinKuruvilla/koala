@@ -355,6 +355,151 @@ fn test_flex_row_basic() {
     );
 }
 
+/// [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+///
+/// "column: The flex container's main axis has the same orientation
+/// as the block axis of the current writing mode."
+///
+/// Minimal repro for the landing page's overlapping-rows problem:
+/// `.capabilities` and `.bindings` containers are
+/// `display: flex; flex-direction: column;` wrappers around several
+/// child rows. When they stack at the same `y` the page mashes
+/// together (`koala-ui/res/landing.html`). This test asserts the
+/// fundamental contract — children of a column-direction flex
+/// container must be positioned one below the next.
+#[test]
+fn test_flex_column_stacks_vertically() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .col { display: flex; flex-direction: column; width: 200px; }\
+         .row { height: 40px; }\
+         </style></head>\
+         <body><div class='col'>\
+            <div class='row'>A</div>\
+            <div class='row'>B</div>\
+            <div class='row'>C</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let flex_container = &body.children[0];
+    assert!(
+        flex_container.children.len() >= 3,
+        "column flex container should have 3 children, got {}",
+        flex_container.children.len()
+    );
+
+    let a = &flex_container.children[0];
+    let b = &flex_container.children[1];
+    let c = &flex_container.children[2];
+
+    // Items must have the same x (they're vertically stacked, so all
+    // share the container's left edge) and strictly increasing y.
+    assert!(
+        (a.dimensions.content.x - b.dimensions.content.x).abs() < 1.0
+            && (b.dimensions.content.x - c.dimensions.content.x).abs() < 1.0,
+        "column-flex items must share an x-coordinate; got A.x={:.1}, B.x={:.1}, C.x={:.1}",
+        a.dimensions.content.x,
+        b.dimensions.content.x,
+        c.dimensions.content.x,
+    );
+    assert!(
+        b.dimensions.content.y >= a.dimensions.content.y + 40.0 - 1.0,
+        "B must sit at least one A-height below A; got A.y={:.1}, B.y={:.1}",
+        a.dimensions.content.y,
+        b.dimensions.content.y,
+    );
+    assert!(
+        c.dimensions.content.y >= b.dimensions.content.y + 40.0 - 1.0,
+        "C must sit at least one B-height below B; got B.y={:.1}, C.y={:.1}",
+        b.dimensions.content.y,
+        c.dimensions.content.y,
+    );
+}
+
+/// [§ 5.1 flex-direction row-reverse](https://drafts.csswg.org/css-flexbox-1/#valdef-flex-direction-row-reverse)
+///
+/// "Same as row, except the main-start and main-end directions are swapped."
+///
+/// Items must be laid out in REVERSE order along the main axis. With
+/// three 50px items in a 300px container, the *first* item in DOM
+/// order should land at the right (x = 300 - 50 = 250), and the
+/// *last* item should land further left.
+#[test]
+fn test_flex_row_reverse_lays_items_right_to_left() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .row { display: flex; flex-direction: row-reverse; width: 300px; }\
+         .item { width: 50px; height: 20px; }\
+         </style></head>\
+         <body><div class='row'>\
+            <div class='item'>A</div>\
+            <div class='item'>B</div>\
+            <div class='item'>C</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let row = &body.children[0];
+    assert!(row.children.len() >= 3);
+
+    let a = &row.children[0];
+    let b = &row.children[1];
+    let c = &row.children[2];
+
+    // A (first in DOM) sits furthest right; C (last in DOM) sits
+    // furthest left. Each item is 50px wide.
+    assert!(
+        a.dimensions.content.x > b.dimensions.content.x,
+        "row-reverse: A (first DOM child) must be right of B; got A.x={:.1}, B.x={:.1}",
+        a.dimensions.content.x, b.dimensions.content.x,
+    );
+    assert!(
+        b.dimensions.content.x > c.dimensions.content.x,
+        "row-reverse: B must be right of C; got B.x={:.1}, C.x={:.1}",
+        b.dimensions.content.x, c.dimensions.content.x,
+    );
+}
+
+/// [§ 9.4 algo-cross-line single-line definite cross](https://drafts.csswg.org/css-flexbox-1/#algo-cross-line)
+///
+/// "If the flex container is single-line and has a definite cross
+/// size, the cross size of the flex line is the flex container's
+/// inner cross size."
+///
+/// For column direction the cross axis is `width`. A single-line
+/// column container with `width: 200px` and `align-items: center`
+/// must center each item against 200px — not against the line's
+/// max-item-cross-size, which is the explicit item width of 50px.
+/// An item that's 50px wide should land at x = (200 - 50) / 2 = 75.
+#[test]
+fn test_flex_column_single_line_definite_cross_centers_against_container() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .col { display: flex; flex-direction: column; align-items: center; \
+                width: 200px; }\
+         .item { width: 50px; height: 40px; }\
+         </style></head>\
+         <body><div class='col'>\
+            <div class='item'>A</div>\
+         </div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let col = &body.children[0];
+    let a = &col.children[0];
+
+    // (200 − 50) / 2 = 75, +/- 1 for any rounding seam.
+    assert!(
+        (a.dimensions.content.x - 75.0).abs() < 1.0,
+        "centered item in column with definite width should be at x=75; got {:.1}",
+        a.dimensions.content.x,
+    );
+}
+
 /// [§ 9.7 Resolving Flexible Lengths](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)
 ///
 /// Container width 300px, two items with flex-grow 1 and 2.
