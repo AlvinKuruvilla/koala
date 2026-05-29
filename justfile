@@ -15,6 +15,44 @@ cli url screenshot="":
         cargo run --bin koala -- -S "{{screenshot}}" "{{url}}"; \
     fi
 
+# Fetch a page and pretty-print it with Prettier, expanding any
+# minified embedded <style>/<script> blocks into readable, indented
+# code. Handy for eyeballing a real page's markup + CSS or for
+# seeding a hand-edited test fixture from a live site.
+#
+# Output defaults to `tmp/prettify/<slug>.html` (gitignored scratch);
+# pass a second argument to write elsewhere (e.g. a res/ fixture).
+# The path is echoed on success.
+#
+# Prettier runs via `npx --yes prettier@3`, so only Node/npx need to
+# be on PATH — no global Prettier install required.
+#
+#   just prettify https://discord.com
+#   just prettify https://discord.com res/fixtures/discord.html
+prettify url out="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! "{{url}}" =~ ^https?:// ]]; then
+        echo "error: expected an http(s) URL, got '{{url}}'" >&2
+        exit 1
+    fi
+    out="{{out}}"
+    if [ -z "$out" ]; then
+        slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
+        out="tmp/prettify/${slug}.html"
+    fi
+    mkdir -p "$(dirname "$out")"
+    # Fetch to a temp first so a failed download never leaves a
+    # half-written or stale file at the destination. A desktop UA
+    # keeps sites from serving stripped-down no-JS markup.
+    raw=$(mktemp)
+    trap 'rm -f "$raw"' EXIT
+    curl -sL --fail --max-time 30 \
+        -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
+        "{{url}}" -o "$raw"
+    npx --yes prettier@3 --parser html "$raw" > "$out"
+    echo "Wrote $out ($(wc -l < "$out" | tr -d ' ') lines)"
+
 # Bench the render pipeline against `url` (file path or HTTP URL)
 # and emit a JSON timing report on stdout. URLs auto-cache to
 # `.bench-cache/<slug>.html` on first use so subsequent runs are
