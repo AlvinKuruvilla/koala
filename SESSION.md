@@ -184,6 +184,135 @@ polish the look.
   flex `§ 9.x` deviation comments to the new tag, write
   the aggregator + justfile recipe.
 
+- **Widen `Request` type when the request layer evolves,
+  don't multiply senders** — the current
+  `koala_common::net::RequestSender` trait takes a bare URL
+  (`fn fetch(&self, url: &str) -> …`). When the project
+  hits one of two triggers — async load (likely first,
+  driven by the WPT path or multi-tab perf), or a need for
+  per-resource-kind policy (caching, prioritization,
+  blocking semantics) — the temptation will be to install
+  multiple senders or use the existing `MappedSender`
+  composition for kind-based routing. Don't. Real browsers
+  (Chrome `URLLoaderFactory`, Firefox `nsIChannel`, Servo
+  `CoreResourceManager`) all converged on the *same*
+  answer: **one uniform trait surface, with a smart
+  subsystem that specializes internally based on request
+  metadata.** Call sites stay simple; everything about
+  *how* (cache, threading, transport, priority) lives in
+  the impl.
+
+  ### Future-state trait shape
+
+  ```rust
+  enum ResourceKind { Html, Stylesheet, Script, Image, Font, Generic }
+  enum Priority { High, Normal, Low }
+  enum CacheMode { Default, NoStore, ReloadIgnoringCache }
+
+  struct Request {
+      url: String,
+      kind: ResourceKind,
+      blocking: bool,        // does load block render / parser?
+      priority: Priority,
+      cache: CacheMode,
+      // room to grow: integrity hash, CORS mode, referrer, …
+  }
+
+  trait RequestSender {
+      // Sync today; becomes `async fn` when koala-browser goes async.
+      fn fetch(&self, req: Request) -> Result<Vec<u8>, FetchError>;
+  }
+  ```
+
+  ### Worked example: `@font-face` URL load
+
+  Inside `DefaultSender`, the dispatch fans out by kind
+  and each branch implements the right policy:
+
+  ```rust
+  fn fetch(&self, req: Request) -> Result<Vec<u8>, FetchError> {
+      match req.kind {
+          ResourceKind::Font => self.fetch_font(&req),
+          ResourceKind::Image => self.fetch_image(&req),
+          ResourceKind::Stylesheet | ResourceKind::Script
+              => self.fetch_blocking_text(&req),
+          _ => self.fetch_generic(&req),
+      }
+  }
+
+  fn fetch_font(&self, req: &Request) -> Result<Vec<u8>, FetchError> {
+      if let Some(bytes) = self.font_cache.get(&req.url) {
+          return Ok((*bytes).clone());        // Arc clone is cheap
+      }
+      let bytes = self.network_pool.get(&req.url, req.priority)?;
+      if !is_valid_font_magic(&bytes) {
+          return Err(FetchError::InvalidFont { url: req.url.clone() });
+      }
+      self.font_cache.insert(req.url.clone(), Arc::new(bytes.clone()));
+      Ok(bytes)
+  }
+  ```
+
+  Things only the font branch does (justifying the
+  per-kind dispatch): font-magic validation, a process-wide
+  font cache keyed by URL (fonts are reused across pages),
+  low priority hint (fonts don't block render — FOUT). The
+  image / script / stylesheet branches each have their own
+  specifics (image format detection, script CORS + integrity,
+  parser-blocking stylesheet semantics).
+
+  ### Font cache shape
+
+  ```rust
+  struct FontCache {
+      map: RwLock<HashMap<String, Arc<Vec<u8>>>>,
+      lru: Mutex<LruOrder<String>>,
+      max_bytes: usize,                  // ~50 MB ceiling
+      current_bytes: AtomicUsize,
+  }
+  ```
+
+  Decisions worth pinning down in the actual commit:
+  canonicalize URL keys (lowercase scheme/host) so
+  `Example.com/foo.woff` and `example.com/foo.woff` aren't
+  two slots; share via `Arc<Vec<u8>>` so CSS + renderer +
+  glyph atlas don't copy 500 KB × N times; use a coalescing
+  `Arc<OnceLock<Vec<u8>>>` per slot so two threads
+  requesting the same uncached font don't both fetch.
+  Optional disk layer is safe because fonts are
+  content-addressed by URL.
+
+  ### Async transition is trivial
+
+  Sync `let b = self.network_pool.get(&url, Priority::Low)?;`
+  becomes `let b = self.network_pool.get(&url, Priority::Low).await?;`.
+  Cache lookup stays sync (just a hashmap read). Call sites
+  add `.await` once; nothing else changes.
+
+  ### Migration trigger
+
+  Do this when *either* (a) koala-browser's load pipeline
+  goes async — likely driven by the WPT path or by needing
+  multiple concurrent subresource loads, or (b) a real
+  per-kind policy need surfaces (e.g. "fonts should cache
+  across pages but images shouldn't"). Both are plausible
+  within the next handful of milestones. The migration
+  itself is bounded: widen the trait + Request type,
+  update the ~10 call sites in koala-browser/koala-css to
+  pass `kind`, leave `DefaultSender` impl simple at first
+  (one cache, no priority queue) and grow it as needs
+  emerge.
+
+  ### Sibling concern
+
+  `koala-js::dom_handle` uses the same thread-local +
+  RAII-guard pattern. If we migrate the sender to
+  Request-style injection, we should think about
+  `dom_handle` at the same time — they'll either both stay
+  thread-local forever, or both move to context-struct
+  injection together. Picking the pattern for one
+  effectively picks for the other.
+
 - **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
   bump fixed the 46 GB for-in OOM but the page still returns 6
   JS parse errors from the inline-script pump. They don't break
