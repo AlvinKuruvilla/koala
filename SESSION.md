@@ -159,6 +159,31 @@ polish the look.
   (HarfBuzz-equivalent, the koala way) or vendoring decision
   is its own conversation.
 
+- **`IDIOSYNCRASY` convention + aggregator** — for engine
+  divergences that *accept* input but handle it
+  approximately or incompletely. This is the silent class
+  of bug: not a parse failure (those already surface as CSS
+  warnings / parse_issues), not a panic, just "wrong but
+  plausible" output. Examples: `letter-spacing: 2em`
+  returns `None`, `font-feature-settings` parses but never
+  reaches the rasterizer, box-shadow approximated with
+  concentric-circle blur, margin-collapsing chains beyond
+  parent-child, flex stretch sets `content.X` directly
+  instead of re-running child layout. Other browsers
+  handle this with DevTools "Issues" panel + WPT scoreboard
+  (silent at render, queryable at inspection). Our
+  equivalent should be the same: a `// IDIOSYNCRASY(cat):
+  message` source-tag convention with categories
+  `spec-deviation` / `approximation` / `unimplemented` /
+  `partial`, plus a `koala-debug` binary that walks the
+  workspace and emits a categorized report (`just
+  probe-idiosync`). Static-time only — runtime accounting
+  is the next graduation. First commit when picked up:
+  add the convention to CLAUDE.md, convert ~4–6 existing
+  `TODO(letter-spacing)` / `TODO(content-main-size)` /
+  flex `§ 9.x` deviation comments to the new tag, write
+  the aggregator + justfile recipe.
+
 - **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
   bump fixed the 46 GB for-in OOM but the page still returns 6
   JS parse errors from the inline-script pump. They don't break
