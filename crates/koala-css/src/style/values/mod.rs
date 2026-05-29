@@ -12,6 +12,7 @@ mod border;
 mod color;
 mod float;
 mod font;
+mod helpers;
 mod length;
 mod position;
 mod text;
@@ -20,6 +21,9 @@ pub use border::{BorderRadius, BorderValue, BoxShadow};
 pub use color::{ColorValue, parse_color_value, parse_single_color};
 pub use float::{ClearSide, FloatSide};
 pub use font::{FontStyle, parse_font_family, parse_font_weight, parse_line_height};
+pub use helpers::{
+    contains_keyword, first_keyword, first_number, first_percentage, first_px_length,
+};
 pub use length::{
     AutoLength, DEFAULT_FONT_SIZE_PX, LengthValue, parse_auto_length_value, parse_length_value,
     parse_single_auto_length, parse_single_length,

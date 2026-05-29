@@ -5,7 +5,8 @@
 
 use serde::Serialize;
 
-use crate::{CSSToken, ComponentValue};
+use crate::ComponentValue;
+use crate::style::values::helpers::{contains_keyword, first_px_length};
 
 /// [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
 ///
@@ -69,22 +70,9 @@ pub struct TextDecorationLine {
 /// percentages need a font-size context that isn't available at this
 /// layer (TODO).
 #[must_use]
-#[allow(clippy::cast_possible_truncation)]
 pub fn parse_letter_spacing(values: &[ComponentValue]) -> Option<f32> {
-    for v in values {
-        match v {
-            ComponentValue::Token(CSSToken::Ident(ident))
-                if ident.eq_ignore_ascii_case("normal") =>
-            {
-                return Some(0.0);
-            }
-            ComponentValue::Token(CSSToken::Dimension { value, unit, .. })
-                if unit.eq_ignore_ascii_case("px") =>
-            {
-                return Some(*value as f32);
-            }
-            _ => {}
-        }
+    if contains_keyword(values, "normal") {
+        return Some(0.0);
     }
-    None
+    first_px_length(values)
 }
