@@ -305,13 +305,146 @@ polish the look.
 
   ### Sibling concern
 
-  `koala-js::dom_handle` uses the same thread-local +
-  RAII-guard pattern. If we migrate the sender to
-  Request-style injection, we should think about
-  `dom_handle` at the same time — they'll either both stay
-  thread-local forever, or both move to context-struct
-  injection together. Picking the pattern for one
-  effectively picks for the other.
+  `koala-js::dom_handle` and the koala-js scheduler use the
+  same thread-local + RAII-guard pattern and share the same
+  async-trigger. Their destination is different — Boa's
+  `HostDefined` on the `Context`, not Request-widening —
+  but the work will surface at the same moment. See the
+  next entry for the worked migration plan.
+
+- **Migrate `koala-js::dom_handle` and the scheduler to
+  Boa `HostDefined`** — sibling to the `RequestSender`
+  evolution above, with the same trigger (async / off-main-
+  thread JS) but a different destination because the
+  problem isn't "ambient context for call sites," it's
+  "Boa native callbacks are `Fn + Copy + 'static` and
+  can't capture references to host state." The thread-local
+  pattern exists today as the workaround for that callback
+  shape, not as a general-purpose ambient state choice.
+
+  ### The destination: `Context::host_defined_mut()`
+
+  Boa ships a typed slot map *on every `Context`*
+  specifically for stashing host-side Rust state that
+  callbacks need. We already depend on it — the
+  `get_many_mut` → `get_disjoint_mut` patch in
+  `crates/boa/core/engine/src/host_defined.rs` (commit
+  `302922a`) is in that file. The migration shape:
+
+  ```rust
+  // Today (dom_handle.rs):
+  thread_local! {
+      static CURRENT: RefCell<Option<DomContext>> = const { RefCell::new(None) };
+  }
+  // … install via guard before every `runtime.execute(source)`.
+
+  // After: install once on `JsRuntime::new`.
+  context.host_defined_mut().insert(DomHandle::new(dom));
+  context.host_defined_mut().insert(Scheduler::new());
+
+  // Inside any native callback:
+  fn document_query_selector(
+      _this: &JsValue,
+      args: &[JsValue],
+      cx: &mut Context,
+  ) -> JsResult<JsValue> {
+      let dom = cx.host_defined().get::<DomHandle>().unwrap();
+      // … same logic as today, just sourced from Context instead
+      // of the thread-local.
+  }
+  ```
+
+  Key property: `HostDefined` lives on the `Context`, so
+  wherever the `Context` moves (off-main-thread execution,
+  multiple concurrent contexts in the same process), the
+  host state moves with it. **Thread-affinity becomes a
+  non-issue** without async ceremony — this is the
+  async-safe answer for koala-js the same way
+  `tokio::task_local!` would be the async-safe answer for
+  `RequestSender`.
+
+  Cost: every callback pays one
+  `cx.host_defined().get::<T>()` lookup (typed slot-map
+  query) instead of a thread-local read. For the call
+  rates real pages hit (a few thousand DOM ops + timer
+  schedules per page load) immeasurable. The
+  `pattern_thread_local_guard` memory entry will be
+  retired the same day this lands — the pattern stops
+  being our recommended idiom because Boa has a more
+  appropriate primitive.
+
+  ### Scheduler gets *both* widenings
+
+  `dom_handle` is "just" the HostDefined migration — DOM
+  operations are *already* specialized (`querySelector`,
+  `getElementById`, `appendChild` are different paths in
+  the host code), so there's no analogous "widen the type"
+  story.
+
+  The scheduler is different. Today koala-js has
+  `setTimeout` + `setInterval`. The spec-compliant browser
+  surface also includes:
+
+  - `queueMicrotask` — microtasks (different queue, runs
+    at end of current task; load-bearing for Promise
+    behaviour we don't fully have yet).
+  - `requestAnimationFrame` — runs before next paint,
+    priority class of its own.
+  - `requestIdleCallback` — runs when CPU idle.
+
+  Each is a different priority class with different
+  ordering rules. The natural shape:
+
+  ```rust
+  enum ScheduledKind {
+      Timeout { delay_ms: i32 },
+      Interval { interval_ms: i32 },
+      Microtask,
+      AnimationFrame,
+      IdleCallback,
+  }
+
+  struct Scheduled {
+      kind: ScheduledKind,
+      callback_id: TimerId,
+  }
+
+  impl Scheduler {
+      fn schedule(&mut self, sched: Scheduled) { … }
+      // Pump drains per-kind queues in the spec order:
+      // microtasks first, then due timers, then rAF, then idle.
+  }
+  ```
+
+  So the scheduler gets both: HostDefined migration *and*
+  Request-style metadata enrichment. They're independent —
+  could land in separate commits — but they'll be ready
+  for each other.
+
+  ### Migration trigger and ordering
+
+  All three (sender, dom_handle, scheduler) become
+  async-relevant at the same moment: when the load
+  pipeline or JS execution goes off the main thread.
+  Likely first driver is the WPT path (real-browser
+  parity) or multi-tab perf. When that happens:
+
+  1. Land the `koala_common::net::RequestSender` widening
+     first (smallest blast radius, doesn't depend on
+     Boa internals).
+  2. Migrate `dom_handle` to `HostDefined` — minimal
+     surface, mechanical change, retires
+     `pattern_thread_local_guard`.
+  3. Migrate the scheduler to `HostDefined`, then in a
+     follow-up widen `Scheduled` with `ScheduledKind` and
+     add the per-kind queues. Splitting the migration
+     from the widening keeps each commit's diff
+     reviewable.
+
+  None of this is speculative work — the triggers are
+  visible on the roadmap, the destinations are forced by
+  Boa's existing primitives, and the migration steps are
+  bounded.
 
 - **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
   bump fixed the 46 GB for-in OOM but the page still returns 6
