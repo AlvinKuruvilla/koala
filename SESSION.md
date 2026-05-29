@@ -74,21 +74,40 @@ polish the look.
   — not worth doing in that single-property commit, but the
   next text property is a natural trigger.
 
-- **Value-extraction helpers in `style/values/`** — every
-  property parser currently writes the same `for v in values
-  { match v { … } }` ceremony, the same struct-variant
-  `Dimension { value, unit, .. } if unit.eq_ignore_ascii_case
-  ("px")` shape, the same `*value as f32` deref-cast, and the
-  same case-insensitive ident comparison. Worth adding a
-  small set of helpers — `first_px_length(values)`,
-  `contains_keyword(values, "normal")`, etc. — that hide the
-  syntactic warts in one place and let each property parser
-  read like the CSS spec: `if contains_keyword(values,
-  "normal") { return Some(0.0); } first_px_length(values)`.
-  Considered for the letter-spacing commit but kept out so
-  the change stayed property-focused. Land as a standalone
-  refactor with `parse_letter_spacing` as the first customer;
-  every subsequent length-or-keyword property is a one-liner.
+- **Migrate remaining property parsers to
+  `style/values/helpers.rs`** — the helpers (`contains_keyword`,
+  `first_keyword`, `first_px_length`, `first_number`,
+  `first_percentage`) landed in commit `a18aff4` and
+  `parse_letter_spacing` is the proof-of-concept customer.
+  The codebase still has ~10 sites doing the old `for v in
+  values { match v { … } }` dance that the helpers fully
+  subsume. Inventory:
+
+  - `style/values/font.rs` — three sites: `parse_line_height`
+    (px), `parse_font_weight` (`normal` / `bold`).
+  - `style/values/length.rs` line 247 — `parse_single_auto_length`
+    `auto` keyword. (Lines 203–211 stay inline; they're the
+    foundation `first_px_length` wraps.)
+  - `style/display.rs` line 230 — `none` keyword.
+  - `style/computed.rs` — lines 1271 / 1293 / 1613 (`none`
+    checks), 2321 / 2327 (another `normal | <length-px>`
+    parser, direct copy of letter-spacing), 2461 (`inset`
+    for box-shadow), 2658 / 2724 / 2912 (`auto` scattered
+    through track sizing).
+
+  Recommended as a single sweep commit when next in the
+  area — the helpers are stable, the sites are small, and
+  per-parser consistency is the win.
+
+  Outside the helpers' current vocabulary (would need new
+  helpers first):
+  - Grid track sizing in `computed.rs:2643-2715` matches
+    `fr` / `px` / `em` in sequence. Needs a multi-unit
+    length helper or an `fr` companion.
+  - Function-name matching (`computed.rs:2664` `repeat(…)`,
+    `style/substitute.rs` `var(…)`) is a different shape
+    (`ComponentValue::Function { name, … }`) and would want
+    its own `first_function_call(values, name)` helper.
 
 - **Split `renderer.rs` along concern lines** — file is 980
   lines mixing four self-contained chunks: font search
