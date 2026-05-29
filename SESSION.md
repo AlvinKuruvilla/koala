@@ -58,6 +58,88 @@ polish the look.
 
 ## Other observations
 
+- **`InheritedTextProps` bundle for `layout_inline_content`** —
+  the inline-layout entry point now takes nine arguments
+  (`inherited_font_size`, `inherited_color`, `inherited_font_weight`,
+  `inherited_font_style`, `inherited_text_decoration`,
+  `inherited_letter_spacing`, plus viewport/font_metrics/etc.) and
+  grows one per new text property. The `add_text` /
+  `place_text_fragment` / `find_break_opportunity` trio takes
+  overlapping subsets of the same cluster. Worth wrapping the
+  text-shaping subset in an `InheritedTextProps` struct so the
+  next property (word-spacing, text-indent) adds one field
+  instead of one parameter in five places. Same shape would
+  collapse the four `LayoutBox` constructor sites where the
+  cluster is duplicated. Surfaced while adding `letter-spacing`
+  — not worth doing in that single-property commit, but the
+  next text property is a natural trigger.
+
+- **Value-extraction helpers in `style/values/`** — every
+  property parser currently writes the same `for v in values
+  { match v { … } }` ceremony, the same struct-variant
+  `Dimension { value, unit, .. } if unit.eq_ignore_ascii_case
+  ("px")` shape, the same `*value as f32` deref-cast, and the
+  same case-insensitive ident comparison. Worth adding a
+  small set of helpers — `first_px_length(values)`,
+  `contains_keyword(values, "normal")`, etc. — that hide the
+  syntactic warts in one place and let each property parser
+  read like the CSS spec: `if contains_keyword(values,
+  "normal") { return Some(0.0); } first_px_length(values)`.
+  Considered for the letter-spacing commit but kept out so
+  the change stayed property-focused. Land as a standalone
+  refactor with `parse_letter_spacing` as the first customer;
+  every subsequent length-or-keyword property is a one-liner.
+
+- **Split `renderer.rs` along concern lines** — file is 980
+  lines mixing four self-contained chunks: font search
+  paths + `RendererFonts` loading (~150 lines), `draw_text`
+  (~140), `draw_box_shadow` + its outer/inset helpers (~225),
+  and the shared primitives (`fill_rect`, `is_visible`,
+  buffer helpers). The mixing isn't tangled — each chunk is
+  internally cohesive with negligible cross-coupling — so
+  this is honest cleanup, not detangling. The split worth
+  doing is `renderer/fonts.rs`, `renderer/shadow.rs`,
+  `renderer/text.rs`, leaving `fill_rect` / `is_visible` /
+  `draw_image` in the parent `renderer/mod.rs` as the
+  shared primitives everything calls back to. Doesn't change
+  the API or address the real structural smell (every paint
+  method is `&mut self` on a god-object); a proper `Painter`
+  trait extraction is a separate, bigger conversation.
+  Low-risk, medium-reward, cosmetic.
+
+- **Split `computed.rs` along property families** — the file
+  is ~3000 lines and the property dispatcher is one giant
+  `match` arm-per-property. Every new property has to land
+  somewhere in that match, and finding the right
+  neighbourhood today means scrolling thousands of lines.
+  Splitting into `computed/text.rs`, `computed/font.rs`,
+  `computed/box.rs`, `computed/flex.rs`, `computed/grid.rs`
+  (one file per CSS module, mirroring the spec's own
+  organisation) lets the dispatcher delegate to per-family
+  handlers and tells you where any new arm belongs without
+  thinking. Doesn't speed up the *first* property after the
+  split; speeds up every subsequent property and makes PR
+  diffs scoped to their family. Bigger lift than the
+  renderer split because the dispatcher has more shared
+  state to thread (the `ComputedStyle` it writes into, the
+  cascade context), but mechanically straightforward — the
+  big-match-statement-to-jump-table pattern is well-trodden.
+
+- **`koala-shape` crate is missing** — currently we
+  rasterise codepoints directly through `fontdue`, which has
+  no concept of OpenType feature tags, shaping, ligatures,
+  contextual alternates, or complex scripts (Arabic,
+  Devanagari, etc.). This is the gap that blocks
+  `font-feature-settings`, `font-variant-*`,
+  `font-variation-settings`, and a large swath of typography
+  work generally. Already referenced as a future
+  spec-implementation track in project memory; flagging it
+  in SESSION so it's visible when typography requests come
+  up — those requests can't be partially served; they need
+  shaping infrastructure to exist first. Build-from-scratch
+  (HarfBuzz-equivalent, the koala way) or vendoring decision
+  is its own conversation.
+
 - **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
   bump fixed the 46 GB for-in OOM but the page still returns 6
   JS parse errors from the inline-script pump. They don't break
