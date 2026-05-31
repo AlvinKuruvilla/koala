@@ -162,6 +162,175 @@ impl<K, V> Bucket<K, V> {
     pub(super) const fn is_empty(&self) -> bool {
         self.raw_state == 0
     }
+
+    // Probe-driving primitives for `HashMap`.
+    //
+    // `HashMap` owns the Robin Hood probe loops, displacement, and
+    // backshift deletion, but it drives them through these methods
+    // rather than touching `Bucket`'s fields directly. The point of the
+    // boundary is that the two error-prone things in this type — the
+    // `raw_state` probe-length encoding (the `+1` offset and the `255`
+    // recompute sentinel) and the `MaybeUninit` entry access — each live
+    // in exactly one reviewed place here instead of being duplicated
+    // across `insert` / `get` / `remove`.
+
+    /// The cached low-32-bits hash fragment for this slot.
+    ///
+    /// Only meaningful when the slot is live (`!is_empty()`); the value
+    /// on an empty slot is whatever the zeroed allocation left behind.
+    /// Reading it is never UB regardless — `u32` accepts any bit
+    /// pattern — so this is a plain accessor.
+    #[inline]
+    pub(super) const fn hash_fragment(&self) -> u32 {
+        self.hash_fragment
+    }
+
+    /// Encode a probe length into the `raw_state` byte.
+    ///
+    /// The inverse of the `BucketState` decode: probe lengths `0..=253`
+    /// store inline as `probe_length + 1` (so `0` stays the `Empty`
+    /// marker), and anything longer collapses to the `255`
+    /// `OccupiedRecompute` sentinel, whose true length is recovered from
+    /// the bucket index and `hash_fragment` on demand.
+    ///
+    /// Can be marked `const fn` once implemented — the range match is
+    /// const-compatible; it is non-const here only so the `todo!()`
+    /// placeholder compiles.
+    #[inline]
+    fn encode_state(probe_length: usize) -> u8 {
+        match u8::try_from(probe_length) {
+            // Inline: store `probe_length + 1` so 0 stays the `Empty`
+            // marker. `pl <= 253` ⇒ `pl + 1` is in 1..=254 — valid u8
+            // arithmetic, no cast, no overflow.
+            Ok(pl) if pl <= 253 => pl + 1,
+            // 254, 255, or anything too large for a u8 → the recompute
+            // sentinel. The byte-budget overflow *is* the sentinel
+            // condition, so it collapses to one branch.
+            _ => 255,
+        }
+    }
+
+    /// The probe length of this (live) slot: how many positions past its
+    /// home (`hash & mask`) the entry sits.
+    ///
+    /// For an inline slot this is just `raw_state - 1`. For the `255`
+    /// recompute sentinel it is derived from the slot's own index and
+    /// cached fragment:
+    ///
+    /// ```text
+    /// home         = (hash_fragment as usize) & mask
+    /// probe_length = index.wrapping_sub(home) & mask
+    /// ```
+    ///
+    /// `index` is this bucket's position in the array and `mask` is
+    /// `capacity - 1`. Calling this on an empty slot is meaningless;
+    /// callers must check `is_empty()` first (debug-asserted).
+    #[inline]
+    pub(super) fn probe_length(&self, index: usize, mask: usize) -> usize {
+        debug_assert!(self.raw_state != 0, "probe_length on an empty slot");
+        match self.state() {
+            BucketState::Empty => unreachable!(),
+            BucketState::OccupiedInline(pl) => pl,
+            BucketState::OccupiedRecompute => {
+                let home = (self.hash_fragment as usize) & mask;
+                index.wrapping_sub(home) & mask
+            }
+        }
+    }
+
+    /// Shared reference to this slot's key.
+    ///
+    /// # Safety
+    ///
+    /// The slot must be live (`!is_empty()`); reading `entry` on an
+    /// empty slot is undefined behavior because it is uninitialized.
+    #[inline]
+    pub(super) unsafe fn key(&self) -> &K {
+        debug_assert!(self.raw_state != 0, "key() on an empty slot");
+        // SAFETY: The `debug_assert!` above validates that it is not being called
+        //         on an empty state, therefore it is safe to retrieve the key
+        unsafe { &self.entry.assume_init_ref().0 }
+    }
+
+    /// Shared reference to this slot's value.
+    ///
+    /// # Safety
+    ///
+    /// The slot must be live (`!is_empty()`).
+    #[inline]
+    pub(super) unsafe fn value(&self) -> &V {
+        debug_assert!(self.raw_state != 0, "value() on an empty slot");
+        // SAFETY: The `debug_assert!` above validates that it is not being called
+        //         on an empty state, therefore it is safe to retrieve the value
+        unsafe { &self.entry.assume_init_ref().1 }
+    }
+
+    /// Mutable reference to this slot's value (for `get_mut` and the
+    /// existing-key overwrite path of `insert`).
+    ///
+    /// # Safety
+    ///
+    /// The slot must be live (`!is_empty()`).
+    #[inline]
+    pub(super) unsafe fn value_mut(&mut self) -> &mut V {
+        debug_assert!(self.raw_state != 0, "value_mut() on an empty slot");
+        // SAFETY: The `debug_assert!` above validates that it is not being called
+        //         on an empty state, therefore it is safe to retrieve the value
+        unsafe { &mut self.entry.assume_init_mut().1 }
+    }
+
+    /// Write a fresh entry into this slot, encoding `probe_length` into
+    /// `raw_state` and caching `fragment`.
+    ///
+    /// This overwrites `entry` *without dropping* whatever was there, so
+    /// the caller must guarantee the slot holds no live value — either
+    /// it is `Empty`, or its previous entry was already moved out with
+    /// [`take_occupied`](Self::take_occupied) (the displacement path).
+    #[inline]
+    pub(super) fn init(&mut self, probe_length: usize, fragment: u32, entry: (K, V)) {
+        self.raw_state = Self::encode_state(probe_length);
+        self.hash_fragment = fragment;
+        self.entry = MaybeUninit::new(entry);
+    }
+
+    /// Re-encode this (live) slot's probe length, e.g. after a backshift
+    /// move pulls the entry one position closer to home.
+    ///
+    /// Does not touch the entry or fragment — only `raw_state`.
+    #[inline]
+    pub(super) fn set_probe_length(&mut self, probe_length: usize) {
+        debug_assert!(self.raw_state != 0, "set_probe_length on an empty slot");
+        self.raw_state = Self::encode_state(probe_length);
+    }
+
+    /// Move the entry out of this slot, returning its cached fragment and
+    /// the `(K, V)` pair.
+    ///
+    /// Leaves `raw_state` unchanged — the slot's bytes are now stale, and
+    /// the caller is responsible for either overwriting it
+    /// ([`init`](Self::init), or a `RawTable::copy_bucket` over it) or
+    /// marking it [`set_empty`](Self::set_empty). Reading the slot's
+    /// entry again before one of those happens is a use-after-move.
+    ///
+    /// # Safety
+    ///
+    /// The slot must be live (`!is_empty()`).
+    #[inline]
+    pub(super) unsafe fn take_occupied(&mut self) -> (u32, (K, V)) {
+        debug_assert!(self.raw_state != 0, "take_occupied on an empty slot");
+        let fragment = self.hash_fragment;
+        // SAFETY: caller guarantees the slot is live (debug_assert above), so
+        // `entry` is initialized and can be moved out exactly once.
+        unsafe { (fragment, self.entry.assume_init_read()) }
+    }
+
+    /// Mark this slot empty. Does not drop or move the entry — the caller
+    /// must have already taken ownership of any live value (the final
+    /// step of a backshift, where the vacated tail slot is a stale copy).
+    #[inline]
+    pub(super) fn set_empty(&mut self) {
+        self.raw_state = 0;
+    }
 }
 
 /// Allocation-owning backing for the Robin Hood hash table.
@@ -435,6 +604,40 @@ impl<K, V> RawTable<K, V> {
         };
         // Change self to point to the new table and return the old one
         mem::replace(self, new_table)
+    }
+
+    /// Bitwise-move the bucket at `from` over the bucket at `to`.
+    ///
+    /// This is the backshift primitive: during `HashMap::remove`, each
+    /// displaced entry is pulled one slot back toward its home by copying
+    /// its whole bucket — state byte, fragment, and `(K, V)` — into the
+    /// preceding slot. It is a raw move, not a clone: afterwards `to`
+    /// owns the entry and `from` holds a stale duplicate that must be
+    /// overwritten by the next copy or marked empty. Nothing is dropped.
+    ///
+    /// Both slots are accessed through the backing pointer directly
+    /// rather than two `bucket_mut` borrows, because two simultaneous
+    /// `&mut Bucket` into the same array would alias.
+    ///
+    /// # Safety
+    ///
+    /// - `from` and `to` must both be `< capacity` and must differ
+    ///   (`from != to`).
+    /// - `to`'s current contents must not be a live value the caller
+    ///   still needs dropped — `remove` guarantees this (the destination
+    ///   was either just vacated or a slot already copied forward).
+    #[inline]
+    pub(super) unsafe fn copy_bucket(&mut self, from: usize, to: usize) {
+        debug_assert!(from < self.capacity && to < self.capacity);
+        debug_assert!(from != to, "copy_bucket requires distinct slots");
+        let src = unsafe { self.buckets.as_ptr().add(from) };
+        let dst = unsafe { self.buckets.as_ptr().add(to) };
+        // SAFETY: both indices are < capacity (debug_assert) so the offsets stay in
+        // the one allocation, the buckets are aligned (alloc_array), and from != to
+        // so source and destination don't overlap. This is a raw move,
+        // not a clone — the safety contract obliges the caller to ensure `to` holds
+        // no value that will be dropped elsewhere, which `remove`'s backshift upholds.
+        unsafe { ptr::copy_nonoverlapping(src, dst, 1) };
     }
 }
 
@@ -729,5 +932,123 @@ mod tests {
         assert_eq!(table.capacity(), 16);
         put(&mut table, 0, ((), ()));
         assert_eq!(table.len(), 1);
+    }
+
+    // 3a primitive-surface tests: the probe-length encode/decode and the
+    // take+init / copy_bucket mechanics, exercised in isolation before
+    // `HashMap` drives them for real.
+
+    #[test]
+    fn probe_length_inline_round_trips() {
+        // Inline encoding covers 0..=253; decode ignores index/mask for it.
+        let mut table = RawTable::<u32, u32>::with_capacity(8);
+        let bucket = unsafe { table.bucket_mut(0) };
+        for pl in [0usize, 1, 2, 100, 253] {
+            bucket.init(pl, 0xABCD, (1, 2));
+            assert!(matches!(bucket.state(), BucketState::OccupiedInline(p) if p == pl));
+            assert_eq!(bucket.probe_length(0, 7), pl);
+        }
+    }
+
+    #[test]
+    fn probe_length_boundary_between_inline_and_sentinel() {
+        let mut table = RawTable::<u32, u32>::with_capacity(8);
+        let bucket = unsafe { table.bucket_mut(0) };
+        // 253 is the largest inline probe length.
+        bucket.init(253, 0, (1, 2));
+        assert!(matches!(bucket.state(), BucketState::OccupiedInline(253)));
+        // 254 is the first that overflows into the recompute sentinel.
+        bucket.init(254, 0, (1, 2));
+        assert!(matches!(bucket.state(), BucketState::OccupiedRecompute));
+    }
+
+    #[test]
+    fn probe_length_recompute_sentinel_path() {
+        // The corner the Phase-2 tests never reached: a probe length too
+        // large to store inline, recovered from the slot's index and
+        // cached fragment. capacity 512 lets us place an entry 300 slots
+        // from its home (300 >= 254 → the sentinel).
+        let mut table = RawTable::<u32, u32>::with_capacity(300);
+        assert_eq!(table.capacity(), 512);
+        let mask = table.capacity() - 1;
+        let index = 300;
+
+        // fragment 0 → home = 0 & mask = 0, so geometric distance == index.
+        let bucket = unsafe { table.bucket_mut(index) };
+        bucket.init(index, 0, (7, 8));
+        assert!(matches!(bucket.state(), BucketState::OccupiedRecompute));
+        // Decoded from position, not from the value passed to `init`.
+        assert_eq!(bucket.probe_length(index, mask), 300);
+
+        // Mark empty again so the table's Drop doesn't read the lone slot
+        // as live (the (u32, u32) entry has no destructor, but keep the
+        // invariant honest).
+        unsafe { table.bucket_mut(index) }.set_empty();
+    }
+
+    #[test]
+    fn take_then_init_is_a_move_not_a_drop() {
+        // The insert displacement step: take the resident out, write the
+        // incoming over the slot. Taking must not drop the entry (the
+        // caller now owns it), and re-init must not drop the stale bytes.
+        let counter = Rc::new(Cell::new(0));
+        let mut table = RawTable::<Probe, u32>::with_capacity(8);
+
+        unsafe { table.bucket_mut(0) }.init(2, 0xAB, (Probe::Plain(counter.clone()), 99));
+
+        let (fragment, (key, value)) = unsafe { table.bucket_mut(0).take_occupied() };
+        assert_eq!(fragment, 0xAB);
+        assert_eq!(value, 99);
+        assert_eq!(counter.get(), 0, "take_occupied moves, it must not drop");
+
+        // Write a different entry over the now-stale slot.
+        unsafe { table.bucket_mut(0) }.init(5, 0xCD, (Probe::Plain(counter.clone()), 7));
+        assert!(matches!(
+            unsafe { table.bucket(0) }.state(),
+            BucketState::OccupiedInline(5)
+        ));
+
+        // The taken-out key is ours; dropping it is the only drop so far.
+        drop(key);
+        assert_eq!(counter.get(), 1);
+
+        // Table drop destroys the re-init'd slot-0 entry exactly once.
+        drop(table);
+        assert_eq!(counter.get(), 2);
+    }
+
+    #[test]
+    fn copy_bucket_backshift_does_not_double_drop() {
+        // One backshift step in isolation: remove slot 0, shift slot 1's
+        // entry back into it, vacate slot 1. The shifted entry must end up
+        // owned by exactly one slot — no leak, no double-drop.
+        let counter = Rc::new(Cell::new(0));
+        let mut table = RawTable::<Probe, u32>::with_capacity(8);
+        let mask = table.capacity() - 1;
+
+        unsafe { table.bucket_mut(0) }.init(0, 0x10, (Probe::Plain(counter.clone()), 100));
+        unsafe { table.bucket_mut(1) }.init(1, 0x20, (Probe::Plain(counter.clone()), 200));
+
+        // Remove slot 0: move its entry out and drop it.
+        let (_frag, entry0) = unsafe { table.bucket_mut(0).take_occupied() };
+        drop(entry0);
+        assert_eq!(counter.get(), 1);
+
+        // Backshift slot 1 → slot 0, decrementing the moved entry's probe
+        // length, then vacate the stale tail slot.
+        let pl1 = unsafe { table.bucket(1) }.probe_length(1, mask);
+        unsafe { table.copy_bucket(1, 0) };
+        unsafe { table.bucket_mut(0) }.set_probe_length(pl1 - 1);
+        unsafe { table.bucket_mut(1) }.set_empty();
+
+        assert!(!unsafe { table.bucket(0) }.is_empty());
+        assert_eq!(unsafe { table.bucket(0) }.probe_length(0, mask), 0);
+        assert_eq!(unsafe { *table.bucket(0).value() }, 200);
+        assert!(unsafe { table.bucket(1) }.is_empty());
+        assert_eq!(counter.get(), 1, "the bitwise move must not drop anything");
+
+        // Only the shifted entry remains live; it drops exactly once.
+        drop(table);
+        assert_eq!(counter.get(), 2);
     }
 }
