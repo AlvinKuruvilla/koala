@@ -563,15 +563,21 @@ pub(super) enum BucketState {
     ///
     /// ```text
     /// home_index   = (hash_fragment as usize) & mask
-    /// probe_length = (bucket_index - home_index) & mask
+    /// probe_length = bucket_index.wrapping_sub(home_index) & mask
     /// ```
+    ///
+    /// `wrapping_sub` is load-bearing: when an entry has
+    /// wrapped around the end of the bucket array, plain
+    /// unsigned subtraction (`bucket_index - home_index`)
+    /// panics in debug builds on underflow. `wrapping_sub` is
+    /// a no-op in release and wraps explicitly in debug; the
+    /// subsequent `& mask` folds the wrapped value back into
+    /// the `0..capacity` probe-length range.
     ///
     /// Using the 32-bit fragment is sufficient because `mask`
     /// is always less than `2^32` in practice — a
     /// `usize::MAX`-capacity `HashMap` is not a thing we
-    /// support. The `& mask` on `probe_length` handles the
-    /// case where the entry wrapped around the end of the
-    /// bucket array.
+    /// support.
     ///
     /// This variant is pathological: a Robin Hood table at
     /// 70% load with FxHash essentially never produces probe

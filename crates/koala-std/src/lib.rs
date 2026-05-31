@@ -96,3 +96,10 @@ mod raw;
 mod vec;
 
 pub mod hash;
+
+// Hash-based collections: `HashMap`, `HashSet`, and the private
+// Robin Hood table that backs both. Milestone-1 flagship. See
+// `collections/mod.rs` for the module-level framing and
+// `project-memory/koala-std-hashmap-design.md` for the full
+// locked design.
+pub mod collections;
