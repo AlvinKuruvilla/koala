@@ -764,6 +764,54 @@ wrong." The assertion exists because the 24-byte figure is cited
 in decision #5 above and we want the doc claim and the code to
 move together.
 
+## Implementation status (updated 2026-05-31)
+
+Work is on branch `koala-std/hashmap-phase2-rawtable` (not yet merged
+to `master`). Landed, each its own commit, all `clippy`-clean and
+`cargo +nightly miri test`-clean:
+
+- **Phase 1 (hash)** — `FxHasher` / `FxBuildHasher` in
+  `src/hash/{fx,mod}.rs`. Done (pre-existing this session).
+- **Phase 2 (`RawTable`)** — `new`/`with_capacity`/`grow_to`,
+  panic-safe `Drop` via a resume-and-dealloc guard, and the shared
+  `raw::dealloc_array` helper. In `src/collections/raw_table.rs`.
+- **Phase 3a (bucket probe primitives)** — *not in the original
+  checklist*; added because Option A (encapsulated methods, not
+  `pub(super)` fields) is how `HashMap` reaches the backing.
+  On `Bucket`: `hash_fragment`, `probe_length`, `key`/`value`/
+  `value_mut`, `init`, `set_probe_length`, `take_occupied`,
+  `set_empty`. On `RawTable`: `copy_bucket`, `set_len`. Displacement
+  is expressed as take + init (no monolithic swap).
+- **Phase 3b-i** — `HashMap` struct, `new`/`with_capacity`/
+  `with_hasher`/`with_capacity_and_hasher`, `Default`, `len`/
+  `is_empty`/`capacity`. `capacity()` returns *entry* capacity
+  (`buckets * 7 / 10`), not bucket count.
+- **Phase 3b-ii** — `insert` (Robin Hood search-or-insert),
+  `place_from` (displacement chain), `grow` (double + rehash), `hash`
+  (`hash_one`), `split_hash`, `load_capacity`. Validated differentially
+  against `std` for return values + `len`; deep value-readback waits on
+  `get`.
+
+### Deviations from the phase plan as originally written
+
+1. **Phase 3a inserted** before 3b. The original checklist had `HashMap`
+   reach into `RawTable` via bare `bucket`/`bucket_mut`, but `Bucket`'s
+   fields are private to `raw_table`, so a small encapsulated primitive
+   layer was needed first.
+2. **Internal grow+rehash pulled into Phase 3b-ii** (with `insert`)
+   rather than Phase 4. `insert` is incorrect without growth, so it
+   can't be written or tested in isolation. Phase 4 keeps only the
+   *public* `reserve` / `shrink_to_fit`.
+
+### Next up
+
+- **Phase 3b-iii** — `get` / `get_mut` / `contains_key` (the lookup
+  walk; reuse `split_hash` and the Robin Hood early-out). First thing
+  to add: the value-readback differential test against `std` that
+  3b-ii could not do.
+- **Phase 3b-iv** — `remove` + backshift deletion (the `copy_bucket`
+  primitive's first real caller).
+
 ## Implementation checklist
 
 Work items grouped by phase. Check off each box as it lands. Each
