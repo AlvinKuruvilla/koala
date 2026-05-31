@@ -84,6 +84,11 @@
 
 extern crate alloc;
 
+// Low-level allocation primitives (`alloc_array`, `capacity_overflow`)
+// shared by the `RawVec` and `RawTable` backing stores. Private to
+// the crate; see `raw.rs` for the policy/primitive split rationale.
+mod raw;
+
 // Vec-family types. Milestone 1 ships nothing public here; the
 // `RawVec<T>` allocation primitive survives as `pub(crate)` so the
 // milestone-3 vector types can consume it unchanged. See

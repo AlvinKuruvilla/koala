@@ -33,6 +33,8 @@ use core::ptr::NonNull;
 
 use alloc::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 
+use crate::raw::{alloc_array, capacity_overflow};
+
 /// The backing allocation for a `Vec<T>`-like collection.
 ///
 /// Owns `cap * size_of::<T>()` bytes of heap storage, properly aligned
@@ -80,11 +82,7 @@ impl<T> RawVec<T> {
     ///
     /// *O*(1).
     pub(crate) const fn new() -> Self {
-        let cap = if size_of::<T>() == 0 {
-            usize::MAX
-        } else {
-            0
-        };
+        let cap = if size_of::<T>() == 0 { usize::MAX } else { 0 };
         Self {
             ptr: NonNull::dangling(),
             cap,
@@ -108,20 +106,7 @@ impl<T> RawVec<T> {
         if size_of::<T>() == 0 || requested == 0 {
             return Self::new();
         }
-
-        let Ok(layout) = Layout::array::<T>(requested) else {
-            capacity_overflow();
-        };
-
-        // SAFETY: `layout` has non-zero size because `T` is non-ZST and
-        // `requested > 0`, both checked above. `alloc` may return null
-        // on allocation failure; we handle that via `handle_alloc_error`
-        // on the next line.
-        let raw_ptr = unsafe { alloc(layout) };
-        let Some(ptr) = NonNull::new(raw_ptr.cast::<T>()) else {
-            handle_alloc_error(layout);
-        };
-
+        let ptr = alloc_array(requested, false);
         Self {
             ptr,
             cap: requested,
@@ -400,19 +385,6 @@ impl<T> Drop for RawVec<T> {
 // aliasing that would violate `T`'s own `Send`/`Sync` guarantees.
 unsafe impl<T: Send> Send for RawVec<T> {}
 unsafe impl<T: Sync> Sync for RawVec<T> {}
-
-/// Panic on capacity overflow.
-///
-/// Factored out into a `#[cold]` + `#[inline(never)]` function so that
-/// the overflow check on the hot path is a single conditional branch
-/// without inline panic machinery. The attributes hint to LLVM that
-/// this is the unlikely branch and should not be inlined, keeping the
-/// hot path tight.
-#[cold]
-#[inline(never)]
-fn capacity_overflow() -> ! {
-    panic!("koala_std::RawVec: capacity overflow");
-}
 
 #[cfg(test)]
 mod tests {
