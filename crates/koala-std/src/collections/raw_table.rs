@@ -486,6 +486,24 @@ impl<K, V> RawTable<K, V> {
         self.len
     }
 
+    /// Set the cached live-entry count.
+    ///
+    /// `RawTable` cannot compute its own length — it has no view of
+    /// which slot writes are net additions vs. displacements — so the
+    /// probing layer (`HashMap`) is the source of truth and reports the
+    /// count through this setter after each `insert` / `remove` / rehash.
+    /// The caller must keep `len` in step with the number of live buckets;
+    /// a `debug_assert` guards the obvious `len <= capacity` invariant.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
+    #[inline]
+    pub(super) fn set_len(&mut self, len: usize) {
+        debug_assert!(len <= self.capacity, "len cannot exceed capacity");
+        self.len = len;
+    }
+
     /// Returns `true` when the table holds no live entries.
     ///
     /// Note that `is_empty()` can return `true` while
