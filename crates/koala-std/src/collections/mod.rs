@@ -22,9 +22,13 @@
 //!
 //! # Current state
 //!
-//! Phase 2 of the implementation plan: the `raw_table`
-//! submodule holds the `Bucket<K, V>` / `RawTable<K, V>`
-//! primitives. `HashMap<K, V>` (Phase 3) and `HashSet<T>`
+//! Phase 3b-i: the `raw_table` submodule holds the
+//! `Bucket<K, V>` / `RawTable<K, V>` primitives, and `HashMap<K, V>`
+//! exists with its struct, constructors, and size accessors. The
+//! probing methods (`insert` / `get` / `remove`) and `HashSet<T>`
 //! (Phase 6) do not exist yet.
 
+mod hash_map;
 mod raw_table;
+
+pub use hash_map::HashMap;
