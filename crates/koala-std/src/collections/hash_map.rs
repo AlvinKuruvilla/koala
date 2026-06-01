@@ -536,4 +536,121 @@ where
     {
         self.find_index(key).is_some()
     }
+
+    /// Removes a key from the map, returning its value if the key was
+    /// present.
+    ///
+    /// The key may be any borrowed form of the map's key type, with the
+    /// same `Hash`/`Eq` correspondence as [`get`](Self::get).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// assert_eq!(map.remove("a"), Some(1));
+    /// assert_eq!(map.remove("a"), None);
+    /// assert!(map.is_empty());
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1): the lookup plus a backshift over the deleted
+    /// entry's displaced run, whose length Robin Hood keeps short.
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        // STEP 1: locate the slot; a miss is `None`.
+        let index = self.find_index(key)?;
+
+        // STEP 2: move the entry out *before* the backshift overwrites the
+        // slot. `take_occupied` leaves the slot's `raw_state` reading
+        // "occupied" but its bytes stale — the backshift's first copy (or
+        // the final `set_empty`) is what makes the table consistent again.
+        //
+        // Panic safety: `_key` is bound (not `_`) so the owned key's
+        // destructor runs at scope end — *after* the table is whole again
+        // (backshift done, slot emptied, len decremented). If we dropped it
+        // here and `K::drop` panicked, unwinding would leave a stale slot
+        // marked occupied for `RawTable::drop` to re-read. `value` is
+        // likewise handed back only once the table is consistent.
+        //
+        // SAFETY: `find_index` only returns occupied indices, so the slot
+        // is live and its entry can be moved out exactly once.
+        let (_frag, (_key, value)) = unsafe { self.table.bucket_mut(index).take_occupied() };
+
+        // STEP 3: close the gap, then account for the removed entry.
+        self.backshift_from(index);
+        self.table.set_len(self.table.len() - 1);
+        Some(value)
+    }
+
+    /// Restore the Robin Hood invariant after the entry at `from` has been
+    /// moved out, leaving its slot stale-occupied.
+    ///
+    /// Walks forward pulling each displaced resident (probe length > 0)
+    /// one slot back toward its home, then marks the final vacated slot
+    /// empty. This is decision #4's backshift: it stops at the first slot
+    /// that is empty or already at home (probe length 0), because nothing
+    /// past such a slot probed *through* `from`.
+    ///
+    /// The probe-length subtlety: an inline-encoded slot stores its probe
+    /// length absolutely (independent of position), so moving it one slot
+    /// back must *decrement* the stored value; the recompute-sentinel
+    /// encoding derives the length from the slot index instead. Going
+    /// through [`set_probe_length`](super::raw_table) with the
+    /// freshly-read length keeps both encodings correct without a special
+    /// case — read the moved resident's length, then re-encode it minus one
+    /// at the destination.
+    fn backshift_from(&mut self, mut from: usize) {
+        let mask = self.table.capacity() - 1;
+        // `from` is in bounds on entry (`find_index` returned it) and every
+        // reassignment sets it to a masked `next`, so `from < capacity` holds
+        // for the whole walk; every `next` is masked too. Both indices feeding
+        // the `unsafe` accessors below are therefore always `< capacity`.
+        loop {
+            // STEP 1: walk forward from `from`. At each step look at `next`:
+            //   - empty slot               → stop (nothing displaced past here)
+            //   - resident at home (pl 0)  → stop (it never probed through us)
+            //   - otherwise                → copy it back into the current slot,
+            //     set its probe length to (its length − 1), advance.
+            let next = (from + 1) & mask;
+            // SAFETY: `next = (from + 1) & mask`, so `next <= mask < capacity`.
+            if unsafe { self.table.bucket(next).is_empty() } {
+                break;
+            }
+            // SAFETY: `next < capacity` (masked), and the slot is non-empty —
+            // the `is_empty` check above would have broken otherwise — so
+            // `probe_length` reads a live slot.
+            if unsafe { self.table.bucket(next).probe_length(next, mask) } == 0 {
+                break;
+            }
+            // SAFETY: both indices are `< capacity`; they differ because the
+            // table holds at least 8 buckets, so `(from + 1) & mask != from`;
+            // and `from` holds no live entry — it is either the slot `remove`
+            // moved out of, or one already copied a step back earlier in this
+            // walk — so the raw overwrite drops nothing.
+            unsafe {
+                self.table.copy_bucket(next, from);
+            }
+            // The entry now lives at `from`, one slot closer to home, so its
+            // probe length drops by one. `next` is untouched by the copy, so
+            // re-reading it yields the pre-move length; re-encoding it at
+            // `from` is correct for both the inline and recompute encodings.
+            // SAFETY: `next < capacity` (masked) and still live.
+            let new_len = unsafe { self.table.bucket(next).probe_length(next, mask) } - 1;
+            // SAFETY: `from < capacity` (loop invariant above).
+            unsafe { self.table.bucket_mut(from).set_probe_length(new_len) }
+            from = next;
+        }
+        // STEP 2: the slot the walk ended on is a stale duplicate of the entry
+        // that moved back (or the original moved-out slot, if nothing shifted)
+        // — mark it empty so it is not re-read as live.
+        // SAFETY: `from < capacity` (loop invariant); the slot holds no live
+        // entry, so emptying it drops nothing.
+        unsafe { self.table.bucket_mut(from).set_empty() };
+    }
 }

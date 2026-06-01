@@ -764,7 +764,7 @@ wrong." The assertion exists because the 24-byte figure is cited
 in decision #5 above and we want the doc claim and the code to
 move together.
 
-## Implementation status (updated 2026-05-31)
+## Implementation status (updated 2026-06-01)
 
 Work is on branch `koala-std/hashmap-phase2-rawtable` (not yet merged
 to `master`). Landed, each its own commit, all `clippy`-clean and
@@ -791,6 +791,24 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
   (`hash_one`), `split_hash`, `load_capacity`. Validated differentially
   against `std` for return values + `len`; deep value-readback waits on
   `get`.
+- **Phase 3b-iii** — `get` / `get_mut` / `contains_key` over a private
+  `find_index` (the Robin Hood search walk: empty / poorer-resident
+  early-out / fragment+key match), the three callers re-borrowing the
+  returned bucket index. Lookup compares in the *borrowed* domain
+  (`key().borrow() == q`), so the bound stays `K: Borrow<Q>, Q: Hash +
+  Eq + ?Sized` — `K: PartialEq<Q>` is unsatisfiable for the canonical
+  `String`/`str` case. `hash_map_lookup.rs` adds the value-readback and
+  `get`-vs-`std` differential the insert suite deferred.
+- **Phase 3b-iv** — `remove` over a private `backshift_from`
+  (decision #4's no-tombstone backshift; first caller of `copy_bucket`
+  and `set_probe_length`). Panic-safe: the moved-out key is bound so its
+  destructor runs only after the table is whole again, and the shift
+  window contains no panicking / dropping op. The probe-length decrement
+  re-encodes the moved resident's length at the *destination* slot,
+  correct for both the inline and recompute encodings. `hash_map_remove.rs`
+  stresses neighbor preservation (delete half a displaced table, demand
+  the rest still resolve) and a mixed insert/remove/get differential
+  against `std`, boxed values under miri.
 
 ### Deviations from the phase plan as originally written
 
@@ -805,12 +823,18 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
 
 ### Next up
 
-- **Phase 3b-iii** — `get` / `get_mut` / `contains_key` (the lookup
-  walk; reuse `split_hash` and the Robin Hood early-out). First thing
-  to add: the value-readback differential test against `std` that
-  3b-ii could not do.
-- **Phase 3b-iv** — `remove` + backshift deletion (the `copy_bucket`
-  primitive's first real caller).
+The basic-API phase (Phase 3) is now complete: every method on the
+Phase 3 checklist (`insert`, `get`, `get_mut`, `contains_key`, `remove`)
+exists, is differentially validated against `std`, and is miri-clean.
+
+- **Phase 4** — *public* `reserve` / `shrink_to_fit`. The internal
+  grow+rehash already landed with `insert` (3b-ii), so this is the
+  caller-facing capacity surface plus a `grow_to(new_capacity)` that
+  honors an explicit target rather than the doubling default.
+- **Phase 5** — iterators (`Iter` / `IterMut` / `IntoIter`), the
+  `entry` API, and the trait impls (`FromIterator`, `Extend`, `Index`,
+  `Debug`, `PartialEq`). The bucket walk that skips empty slots is the
+  shared primitive under all the iterators.
 
 ## Implementation checklist
 
