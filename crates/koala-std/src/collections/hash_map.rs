@@ -816,6 +816,68 @@ impl<K, V, S> HashMap<K, V, S> {
             remaining,
         }
     }
+
+    /// An iterator visiting every key as `&K`, in arbitrary order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// let sum: usize = map.keys().map(|k| k.len()).sum();
+    /// assert_eq!(sum, 2);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Construction is *O*(1); a full walk is *O*(*capacity*).
+    pub fn keys(&self) -> Keys<'_, K, V> {
+        Keys { inner: self.iter() }
+    }
+
+    /// An iterator visiting every value as `&V`, in arbitrary order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// let sum: i32 = map.values().sum();
+    /// assert_eq!(sum, 3);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Construction is *O*(1); a full walk is *O*(*capacity*).
+    pub fn values(&self) -> Values<'_, K, V> {
+        Values { inner: self.iter() }
+    }
+
+    /// An iterator visiting every value as `&mut V`, in arbitrary order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// for v in map.values_mut() {
+    ///     *v += 100;
+    /// }
+    /// assert_eq!(map.get("a"), Some(&101));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Construction is *O*(1); a full walk is *O*(*capacity*).
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
+        ValuesMut { inner: self.iter_mut() }
+    }
 }
 
 /// A borrowed iterator over a [`HashMap`]'s entries, yielding `(&K, &V)`.
@@ -986,3 +1048,77 @@ impl<'a, K, V, S> IntoIterator for &'a mut HashMap<K, V, S> {
         self.iter_mut()
     }
 }
+
+/// An iterator over a [`HashMap`]'s keys, yielding `&K`.
+///
+/// Created by [`HashMap::keys`]. A thin projection of [`Iter`] onto the
+/// key half; order is arbitrary.
+#[derive(Clone)]
+pub struct Keys<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for Keys<'a, K, V> {
+    type Item = &'a K;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Delegate to the entry iterator and keep the key half.
+        self.inner.next().map(|(k, _)| k)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<K, V> ExactSizeIterator for Keys<'_, K, V> {}
+impl<K, V> FusedIterator for Keys<'_, K, V> {}
+
+/// An iterator over a [`HashMap`]'s values, yielding `&V`.
+///
+/// Created by [`HashMap::values`]. A thin projection of [`Iter`] onto the
+/// value half; order is arbitrary.
+#[derive(Clone)]
+pub struct Values<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for Values<'a, K, V> {
+    type Item = &'a V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Delegate to the entry iterator and keep the value half.
+        self.inner.next().map(|(_, v)| v)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<K, V> ExactSizeIterator for Values<'_, K, V> {}
+impl<K, V> FusedIterator for Values<'_, K, V> {}
+
+/// A mutable iterator over a [`HashMap`]'s values, yielding `&mut V`.
+///
+/// Created by [`HashMap::values_mut`]. A thin projection of [`IterMut`]
+/// onto the value half; order is arbitrary.
+pub struct ValuesMut<'a, K, V> {
+    inner: IterMut<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
+    type Item = &'a mut V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Delegate to the mutable entry iterator and keep the value half.
+        self.inner.next().map(|(_, v)| v)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<K, V> ExactSizeIterator for ValuesMut<'_, K, V> {}
+impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}

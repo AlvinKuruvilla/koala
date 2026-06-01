@@ -837,8 +837,15 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
   `hash_map_iter.rs` covers full traversal, exact size, in-place
   mutation, the reference `IntoIterator` forms, fuse/clone, and — under
   miri — partial `IntoIter` consumption + drop (no leak / double-free).
-  Still outstanding in Phase 5: `keys` / `values` / `values_mut`, the
-  `entry` API, and the remaining trait impls.
+- **Phase 5b (key/value projections)** — `keys` / `values` /
+  `values_mut`, returning named `Keys` / `Values` / `ValuesMut` types
+  that wrap `Iter` / `IterMut` and project `next` onto one half of the
+  pair (`.0` for keys, `.1` for values). `size_hint` delegates to the
+  inner iterator, so `ExactSizeIterator` is exact for free; no `unsafe`
+  (the entry iterators already did the bucket/lifetime work).
+  `hash_map_keys_values.rs` covers projection correctness, exact size,
+  in-place mutation through `values_mut`, empty maps, and clone.
+  Still outstanding in Phase 5: the `entry` API and the trait impls.
 
 ### Deviations from the phase plan as originally written
 
@@ -856,15 +863,13 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
 Phases 3 (basic API) and 4 (capacity management) are complete, and
 Phase 5 has started: every method on the 3/4 checklists (`insert`,
 `get`, `get_mut`, `contains_key`, `remove`, `reserve`, `shrink_to_fit`)
-plus the iterator surface (`iter` / `iter_mut` / `IntoIterator`) exists,
-is differentially validated against `std` where applicable, and is
+plus the iterator surface (`iter` / `iter_mut` / `IntoIterator`) and the
+key/value projections (`keys` / `values` / `values_mut`) exist, are
+differentially validated against `std` where applicable, and are
 miri-clean.
 
 Remaining Phase 5 chunks, in intended order:
 
-- **5b** — `keys` / `values` / `values_mut`, thin wrappers over the
-  three iterators (named `Keys` / `Values` / `ValuesMut` types to mirror
-  `std`, each delegating `next` / `size_hint` to the inner iterator).
 - **5c** — the `entry` API: `Entry` / `OccupiedEntry` / `VacantEntry`,
   `HashMap::entry`, and the `or_insert` / `or_insert_with` /
   `and_modify` methods. This is its own sub-design — the entry holds a
