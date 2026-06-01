@@ -384,4 +384,156 @@ where
         }
         self.table.set_len(old.len());
     }
+
+    /// Locate the bucket holding `key`, or `None` if it is absent.
+    ///
+    /// The shared lookup walk behind [`get`](Self::get),
+    /// [`get_mut`](Self::get_mut), and [`contains_key`](Self::contains_key).
+    /// Returns a bucket index rather than a reference so the three callers
+    /// can re-borrow `self.table` at whatever mutability each needs — the
+    /// immutable borrow taken here ends with the returned `usize`.
+    ///
+    /// This is the *search* half of [`insert`](Self::insert)'s loop with the
+    /// displacement removed: it probes from the key's home and stops on one
+    /// of three conditions — empty slot, a resident poorer than the current
+    /// probe length (Robin Hood's absence guarantee), or a fragment-and-key
+    /// match.
+    fn find_index<Q>(&self, key: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        // STEP 1: an unallocated table holds nothing — answer before
+        // computing `capacity - 1` (which would underflow at capacity 0).
+        if self.table.is_empty() {
+            return None;
+        }
+        // STEP 2: locate the home slot via `self.hash(key)` + `split_hash`.
+        let mask = self.table.capacity() - 1;
+        let (fragment, mut index) = Self::split_hash(self.hash(key), mask);
+        let mut probe_length = 0;
+
+        // STEP 3: probe forward. On each step decide between the three
+        // terminating conditions (empty / richer resident / match) and the
+        // "keep walking" case, masking the index and bumping the probe
+        // length exactly as `insert`'s search loop does.
+        loop {
+            let (is_empty, resident_pl, key_matches) = {
+                // SAFETY: `index` is always masked with `& mask`, so `< capacity`.
+                let bucket = unsafe { self.table.bucket(index) };
+                if bucket.is_empty() {
+                    (true, 0, false)
+                } else {
+                    let resident_pl = bucket.probe_length(index, mask);
+                    // Only do the key compare when the
+                    // resident is poor enough to *be* our key AND the cheap
+                    // fragment matches.
+                    let matches = resident_pl >= probe_length
+                        && bucket.hash_fragment() == fragment
+                        && unsafe { bucket.key() }.borrow() == key;
+                    (false, resident_pl, matches)
+                }
+            };
+
+            // cases 1 + 2: empty slot, or a richer resident → key absent,
+            if is_empty || resident_pl < probe_length {
+                return None;
+            }
+
+            // case 3: key already present → return the index.
+            if key_matches {
+                return Some(index);
+            }
+
+            // case 4: occupied, not ours, resident not richer → keep walking.
+            index = (index + 1) & mask;
+            probe_length += 1;
+        }
+    }
+
+    /// Returns a reference to the value for `key`, or `None` if the key is
+    /// not present.
+    ///
+    /// The key may be any borrowed form of the map's key type, as long as
+    /// the borrowed form [`Hash`](core::hash::Hash) and [`Eq`](Eq) match
+    /// those of the key type — so a `HashMap<String, _>` can be queried with
+    /// a `&str` without allocating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// assert_eq!(map.get("a"), Some(&1));
+    /// assert_eq!(map.get("b"), None);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1). Robin Hood hashing bounds the probe-length variance,
+    /// so even the worst-case walk stays short for a well-distributed hash.
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        // SAFETY: `find_index` only returns indices of occupied buckets, so
+        // the entry behind it is initialized.
+        self.find_index(key)
+            .map(|index| unsafe { self.table.bucket(index).value() })
+    }
+
+    /// Returns a mutable reference to the value for `key`, or `None` if the
+    /// key is not present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// if let Some(v) = map.get_mut("a") {
+    ///     *v += 10;
+    /// }
+    /// assert_eq!(map.get("a"), Some(&11));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1), as for [`get`](Self::get).
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let index = self.find_index(key)?;
+        // SAFETY: `find_index` only returns indices of occupied buckets, so
+        // the entry behind it is initialized.
+        Some(unsafe { self.table.bucket_mut(index).value_mut() })
+    }
+
+    /// Returns `true` if the map contains a value for `key`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// assert!(map.contains_key("a"));
+    /// assert!(!map.contains_key("b"));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1), as for [`get`](Self::get).
+    #[must_use]
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.find_index(key).is_some()
+    }
 }
