@@ -396,6 +396,21 @@ pub(super) struct RawTable<K, V> {
     len: usize,
     _marker: PhantomData<(K, V)>,
 }
+
+// A `RawTable` is morally `Box<[Bucket<K, V>]>` — it uniquely owns its
+// heap allocation, holds no interior mutability (every mutating method
+// takes `&mut self`; `&self` only ever reads), and introduces no
+// aliasing of its own. Its thread-safety is therefore exactly that of
+// its entries: safe to move to another thread when `K`/`V` are `Send`,
+// and safe to share by `&` when `K`/`V` are `Sync` (a shared `&`
+// permits only reads, which cannot race). These impls are written
+// manually rather than derived because the `NonNull<Bucket<K, V>>`
+// field is `!Send + !Sync` regardless of `K`/`V`, which suppresses the
+// automatic derivation; the wrapping `HashMap { table, hasher: S }`
+// then auto-derives `Send`/`Sync` from this plus `S`.
+unsafe impl<K: Send, V: Send> Send for RawTable<K, V> {}
+unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
+
 impl<K, V> RawTable<K, V> {
     /// Construct an empty `RawTable` with no heap allocation.
     ///
