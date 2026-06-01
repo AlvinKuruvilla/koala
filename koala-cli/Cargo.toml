@@ -20,6 +20,7 @@ bench = ["dep:tracing-subscriber"]
 
 [dependencies]
 libc = "0.2"
+koala-common.workspace = true
 koala-browser.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true

@@ -114,18 +114,14 @@ fn parse_base(base: &str) -> Option<BaseParts<'_>> {
     // [§ 3.2] Authority terminates at the first '/' (start of
     // path), '?' (start of query), '#' (start of fragment), or
     // end-of-string.
-    let auth_end = rest
-        .find(|c: char| matches!(c, '/' | '?' | '#'))
-        .unwrap_or(rest.len());
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..auth_end];
 
     // [§ 3.3] Path begins at the authority terminator and runs
     // up to the next '?' or '#'. The leading '/' (if any) is
     // part of the path.
     let after_auth = &rest[auth_end..];
-    let path_end = after_auth
-        .find(|c: char| matches!(c, '?' | '#'))
-        .unwrap_or(after_auth.len());
+    let path_end = after_auth.find(['?', '#']).unwrap_or(after_auth.len());
     let path = &after_auth[..path_end];
 
     Some(BaseParts {
@@ -197,7 +193,7 @@ fn has_scheme(href: &str) -> bool {
     for (_, c) in chars {
         match c {
             ':' => return true,
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '+' | '-' | '.' => continue,
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '+' | '-' | '.' => {}
             _ => return false,
         }
     }

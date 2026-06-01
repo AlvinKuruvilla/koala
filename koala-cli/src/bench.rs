@@ -26,6 +26,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use koala_browser::{FontProvider, load_document, warning};
+use koala_common::alloc_count::{reset_peak, snapshot};
 use serde::Serialize;
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
@@ -67,9 +68,16 @@ pub(crate) fn run(
 
     install_subscriber();
 
+    // Bracket the load with an allocation snapshot. `reset_peak`
+    // pins the high-water baseline to whatever is live now (subscriber
+    // + counters), so `setup_alloc.peak_live_bytes` reflects only the
+    // load itself.
+    let alloc_before_setup = snapshot();
+    reset_peak();
     let setup_start = Instant::now();
     let doc = load_document(url).with_context(|| format!("loading {url}"))?;
     let setup_us = setup_start.elapsed().as_micros() as u64;
+    let setup_alloc = AllocDelta::between(alloc_before_setup, snapshot());
 
     // Setup spans (html_parse, css_extract, css_cascade,
     // image_loading, layout_tree_build, script_loading,
@@ -96,8 +104,20 @@ pub(crate) fn run(
     }
 
     let mut per_stage: BTreeMap<&'static str, Vec<u64>> = BTreeMap::new();
+    // One allocation delta per render iteration, transposed into
+    // per-metric sample vectors below. Render of the same document is
+    // near-deterministic in its allocation behavior, so these usually
+    // show tiny variance — but we aggregate like the timings so an
+    // outlier (e.g. a resize that only trips on some iterations) is
+    // visible rather than averaged away.
+    let mut alloc_samples: Vec<AllocDelta> = Vec::with_capacity(iterations as usize);
     for _ in 0..iterations {
+        let alloc_before = snapshot();
+        reset_peak();
         let _ = render_document_once(&doc, width, height, &font_provider)?;
+        // Snapshot before draining timing events so the drain's own
+        // allocations don't land in this iteration's render delta.
+        alloc_samples.push(AllocDelta::between(alloc_before, snapshot()));
         for ev in take_events() {
             per_stage.entry(ev.name).or_default().push(ev.duration_us);
         }
@@ -115,7 +135,9 @@ pub(crate) fn run(
         warmup,
         setup_us,
         setup_stages,
+        setup_alloc,
         render,
+        render_alloc: RenderAlloc::aggregate(&alloc_samples),
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -224,10 +246,16 @@ struct BenchReport {
     /// multiple times (image_loading fetching N images) has its
     /// per-call durations summed.
     setup_stages: BTreeMap<String, u64>,
+    /// Heap activity attributable to the single `load_document` call
+    /// (the `setup_us` region). See [`AllocDelta`].
+    setup_alloc: AllocDelta,
     /// Per-stage aggregated samples for the render loop, keyed by
     /// span name. `BTreeMap` so JSON output is alphabetically
     /// stable across runs.
     render: BTreeMap<String, StageStats>,
+    /// Heap activity per render iteration, aggregated across the
+    /// sample loop. See [`RenderAlloc`].
+    render_alloc: RenderAlloc,
 }
 
 #[derive(Serialize)]
@@ -270,5 +298,105 @@ fn stats(samples: &[u64]) -> StageStats {
         p95_us,
         min_us: sorted[0],
         max_us: sorted[n - 1],
+    }
+}
+
+/// Heap activity over one measured region, in *requested* bytes (see
+/// `koala_common::alloc_count`). Computed as the delta between two
+/// snapshots; never negative because the counters are monotonic and
+/// `peak` is reset to baseline before the region.
+#[derive(Serialize, Clone, Copy)]
+struct AllocDelta {
+    /// Bytes requested during the region (allocation churn).
+    bytes_allocated: u64,
+    /// Bytes returned during the region.
+    bytes_freed: u64,
+    /// Number of allocation calls during the region.
+    alloc_calls: u64,
+    /// Net live-byte change (`bytes_allocated − bytes_freed`); can be
+    /// negative if the region frees more than it allocates, so it is
+    /// signed.
+    net_live_bytes: i64,
+    /// Maximum live bytes reached during the region, measured above
+    /// the footprint that was live at its start.
+    peak_live_bytes: u64,
+}
+
+impl AllocDelta {
+    /// Difference between a starting and ending snapshot. `reset_peak`
+    /// is expected to have run at the `before` point so `end.peak`
+    /// reflects this region's high-water mark.
+    fn between(
+        before: koala_common::alloc_count::AllocSnapshot,
+        end: koala_common::alloc_count::AllocSnapshot,
+    ) -> Self {
+        let bytes_allocated = (end.total_allocated - before.total_allocated) as u64;
+        let bytes_freed = (end.total_freed - before.total_freed) as u64;
+        AllocDelta {
+            bytes_allocated,
+            bytes_freed,
+            alloc_calls: (end.alloc_calls - before.alloc_calls) as u64,
+            net_live_bytes: bytes_allocated as i64 - bytes_freed as i64,
+            // `peak` was reset to the live baseline before the region,
+            // so subtracting that baseline yields the extra heap held
+            // at the worst moment. `saturating_sub` guards the
+            // degenerate case where nothing allocated.
+            peak_live_bytes: (end.peak.saturating_sub(before.live)) as u64,
+        }
+    }
+}
+
+/// Render-loop heap activity, aggregated across all sample
+/// iterations. Each field summarizes one [`AllocDelta`] metric the
+/// same way [`StageStats`] summarizes timings, so an iteration that
+/// allocates anomalously (a capacity resize that only some renders
+/// trip) is visible rather than averaged away.
+#[derive(Serialize)]
+struct RenderAlloc {
+    bytes_allocated: Summary,
+    alloc_calls: Summary,
+    peak_live_bytes: Summary,
+}
+
+impl RenderAlloc {
+    fn aggregate(samples: &[AllocDelta]) -> Self {
+        let bytes: Vec<u64> = samples.iter().map(|d| d.bytes_allocated).collect();
+        let calls: Vec<u64> = samples.iter().map(|d| d.alloc_calls).collect();
+        let peak: Vec<u64> = samples.iter().map(|d| d.peak_live_bytes).collect();
+        RenderAlloc {
+            bytes_allocated: summarize(&bytes),
+            alloc_calls: summarize(&calls),
+            peak_live_bytes: summarize(&peak),
+        }
+    }
+}
+
+/// Unit-agnostic summary of a sample vector. Mirrors [`StageStats`]'s
+/// statistics but with neutral field names, since these bins hold
+/// bytes and counts rather than microseconds.
+#[derive(Serialize)]
+struct Summary {
+    samples: usize,
+    mean: u64,
+    p50: u64,
+    p95: u64,
+    min: u64,
+    max: u64,
+}
+
+/// Summary statistics for a non-time sample vector. Same percentile
+/// convention as [`stats`].
+fn summarize(samples: &[u64]) -> Summary {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    let sum: u64 = sorted.iter().sum();
+    Summary {
+        samples: n,
+        mean: sum / n as u64,
+        p50: sorted[n / 2],
+        p95: sorted[(n * 95 / 100).min(n - 1)],
+        min: sorted[0],
+        max: sorted[n - 1],
     }
 }

@@ -3036,6 +3036,7 @@ dependencies = [
  "anyhow",
  "clap",
  "koala-browser",
+ "koala-common",
  "koala-css",
  "koala-dom",
  "koala-html",

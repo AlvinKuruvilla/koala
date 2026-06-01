@@ -5,6 +5,15 @@
 #[cfg(feature = "bench")]
 mod bench;
 mod render;
+
+// Heap accounting for `--bench` mode. Installed only under the
+// `bench` feature so the shipping renderer keeps the system
+// allocator untouched and pays nothing for the counters.
+#[cfg(feature = "bench")]
+#[global_allocator]
+static GLOBAL: koala_common::alloc_count::CountingAllocator =
+    koala_common::alloc_count::CountingAllocator;
+
 mod wpt_protocol;
 
 use anyhow::Result;
