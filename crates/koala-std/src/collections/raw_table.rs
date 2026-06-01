@@ -33,6 +33,7 @@ use core::marker::PhantomData;
 use core::mem;
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
+use core::slice;
 
 use crate::raw::{alloc_array, capacity_overflow, dealloc_array};
 
@@ -277,6 +278,25 @@ impl<K, V> Bucket<K, V> {
         // SAFETY: The `debug_assert!` above validates that it is not being called
         //         on an empty state, therefore it is safe to retrieve the value
         unsafe { &mut self.entry.assume_init_mut().1 }
+    }
+
+    /// A shared reference to the key paired with a mutable reference to the
+    /// value — the split `IterMut` needs, which neither `key` nor
+    /// `value_mut` can give alone (one borrows the bucket shared, the other
+    /// mutably). Splitting the single `&mut (K, V)` into its disjoint fields
+    /// hands out both at once.
+    ///
+    /// # Safety
+    ///
+    /// The slot must be live (`!is_empty()`).
+    #[inline]
+    pub(super) unsafe fn key_value_mut(&mut self) -> (&K, &mut V) {
+        debug_assert!(self.raw_state != 0, "key_value_mut() on an empty slot");
+        // SAFETY: live slot (debug_assert above), so `entry` is initialized.
+        // The `&mut (K, V)` is split into `&.0` and `&mut .1`, two references
+        // to disjoint fields, which the borrow checker permits simultaneously.
+        let pair = unsafe { self.entry.assume_init_mut() };
+        (&pair.0, &mut pair.1)
     }
 
     /// Write a fresh entry into this slot, encoding `probe_length` into
@@ -599,6 +619,37 @@ impl<K, V> RawTable<K, V> {
         // other reference to the same or another bucket can
         // alias it for the duration of the returned borrow.
         unsafe { &mut *self.buckets.as_ptr().add(i) }
+    }
+
+    /// The whole backing as a bucket slice, empty and occupied alike.
+    ///
+    /// The iterator types walk this and skip empty slots themselves; a
+    /// slice hands them a cursor with a real lifetime, so the borrowed
+    /// `&K` / `&V` they hand out are tied to `&self` without the manual
+    /// pointer-lifetime juggling a raw walk would need.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
+    #[inline]
+    pub(super) fn as_slice(&self) -> &[Bucket<K, V>] {
+        // SAFETY: `buckets` points to `capacity` consecutive initialized
+        // `Bucket`s (a zeroed bucket is a valid bucket). At `capacity == 0`
+        // the pointer is dangling but well-aligned and the length is 0,
+        // which `from_raw_parts` explicitly permits.
+        unsafe { slice::from_raw_parts(self.buckets.as_ptr(), self.capacity) }
+    }
+
+    /// The whole backing as a mutable bucket slice, for `IterMut`.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
+    #[inline]
+    pub(super) fn as_mut_slice(&mut self) -> &mut [Bucket<K, V>] {
+        // SAFETY: as in `as_slice`; the `&mut self` borrow makes the
+        // returned slice the unique path to every bucket for its duration.
+        unsafe { slice::from_raw_parts_mut(self.buckets.as_ptr(), self.capacity) }
     }
 
     /// Replace the backing array with a fresh, zeroed array of

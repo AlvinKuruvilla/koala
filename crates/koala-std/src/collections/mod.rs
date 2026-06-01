@@ -31,4 +31,4 @@
 mod hash_map;
 mod raw_table;
 
-pub use hash_map::HashMap;
+pub use hash_map::{HashMap, IntoIter, Iter, IterMut};

@@ -821,6 +821,24 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
   rather than deallocating to 0. `hash_map_capacity.rs` checks headroom,
   no-op guards, idempotence, and entry preservation across an explicit-
   target re-home in both directions (boxed values under miri).
+- **Phase 5a (iterators)** — `Iter` / `IterMut` / `IntoIter`, the
+  `iter` / `iter_mut` accessors, and the three `IntoIterator` impls
+  (owned / `&` / `&mut`). The borrowed iterators wrap a
+  `core::slice::Iter` / `IterMut` over the backing (new
+  `RawTable::as_slice` / `as_mut_slice`), so the slice cursor owns the
+  lifetime and the yielded `&K` / `&mut V` fall out without manual
+  pointer juggling; each skips empty slots in `next` and carries a
+  `remaining` counter for an exact `size_hint` (`ExactSizeIterator` +
+  `FusedIterator`). `IterMut` materializes its pair via a new
+  `Bucket::key_value_mut` (the split `&K` + `&mut V` that `key()` /
+  `value_mut()` can't give at once). `IntoIter` owns the table and
+  drains it with `take_occupied` + `set_empty` per slot, leaning on
+  `RawTable::drop` for the unyielded remainder (no `Drop` of its own).
+  `hash_map_iter.rs` covers full traversal, exact size, in-place
+  mutation, the reference `IntoIterator` forms, fuse/clone, and — under
+  miri — partial `IntoIter` consumption + drop (no leak / double-free).
+  Still outstanding in Phase 5: `keys` / `values` / `values_mut`, the
+  `entry` API, and the remaining trait impls.
 
 ### Deviations from the phase plan as originally written
 
@@ -835,10 +853,25 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
 
 ### Next up
 
-Phases 3 (basic API) and 4 (capacity management) are complete: every
-method on both checklists (`insert`, `get`, `get_mut`, `contains_key`,
-`remove`, `reserve`, `shrink_to_fit`) exists, is differentially validated
-against `std`, and is miri-clean.
+Phases 3 (basic API) and 4 (capacity management) are complete, and
+Phase 5 has started: every method on the 3/4 checklists (`insert`,
+`get`, `get_mut`, `contains_key`, `remove`, `reserve`, `shrink_to_fit`)
+plus the iterator surface (`iter` / `iter_mut` / `IntoIterator`) exists,
+is differentially validated against `std` where applicable, and is
+miri-clean.
+
+Remaining Phase 5 chunks, in intended order:
+
+- **5b** — `keys` / `values` / `values_mut`, thin wrappers over the
+  three iterators (named `Keys` / `Values` / `ValuesMut` types to mirror
+  `std`, each delegating `next` / `size_hint` to the inner iterator).
+- **5c** — the `entry` API: `Entry` / `OccupiedEntry` / `VacantEntry`,
+  `HashMap::entry`, and the `or_insert` / `or_insert_with` /
+  `and_modify` methods. This is its own sub-design — the entry holds a
+  located bucket index across the borrow and has to cope with a resize
+  on the vacant-insert path.
+- **5d** — trait impls: `Debug`, `Clone` (where `K: Clone, V: Clone`),
+  `PartialEq` / `Eq`, `Extend<(K, V)>`, `FromIterator<(K, V)>`.
 
 - **Phase 5** — iterators (`Iter` / `IterMut` / `IntoIter`), the
   `entry` API, and the trait impls (`FromIterator`, `Extend`, `Index`,

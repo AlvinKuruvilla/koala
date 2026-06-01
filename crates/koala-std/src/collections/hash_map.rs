@@ -28,12 +28,14 @@
 
 use core::borrow::Borrow;
 use core::hash::{BuildHasher, Hash};
+use core::iter::FusedIterator;
 use core::mem;
+use core::slice;
 
 use crate::hash::FxBuildHasher;
 use crate::raw::capacity_overflow;
 
-use super::raw_table::RawTable;
+use super::raw_table::{Bucket, RawTable};
 
 /// A hash map with Robin Hood probing and a default 70% load factor.
 ///
@@ -755,5 +757,232 @@ where
         if target_buckets < self.table.capacity() {
             self.resize_to(target_buckets);
         }
+    }
+}
+
+/// Iteration accessors. These walk the backing without hashing, so they
+/// need no bound on `K` or `S`.
+impl<K, V, S> HashMap<K, V, S> {
+    /// An iterator visiting every entry as `(&K, &V)`, in arbitrary order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// // Order is unspecified, so check order-independent facts.
+    /// assert_eq!(map.iter().count(), 2);
+    /// let sum: i32 = map.iter().map(|(_, v)| *v).sum();
+    /// assert_eq!(sum, 3);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Construction is *O*(1); a full walk is *O*(*capacity*) — every
+    /// bucket is visited, empty ones skipped.
+    pub fn iter(&self) -> Iter<'_, K, V> {
+        Iter {
+            buckets: self.table.as_slice().iter(),
+            remaining: self.table.len(),
+        }
+    }
+
+    /// An iterator visiting every entry as `(&K, &mut V)`, in arbitrary
+    /// order, allowing the values to be modified in place.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// for (_, v) in map.iter_mut() {
+    ///     *v *= 10;
+    /// }
+    /// assert_eq!(map.get("a"), Some(&10));
+    /// assert_eq!(map.get("b"), Some(&20));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Construction is *O*(1); a full walk is *O*(*capacity*).
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
+        let remaining = self.table.len();
+        IterMut {
+            buckets: self.table.as_mut_slice().iter_mut(),
+            remaining,
+        }
+    }
+}
+
+/// A borrowed iterator over a [`HashMap`]'s entries, yielding `(&K, &V)`.
+///
+/// Created by [`HashMap::iter`] (and by `&HashMap`'s [`IntoIterator`]).
+/// The order is arbitrary and must not be relied upon.
+#[derive(Clone)]
+pub struct Iter<'a, K, V> {
+    /// Cursor over the whole backing; `next` skips the empty buckets.
+    buckets: slice::Iter<'a, Bucket<K, V>>,
+    /// Live entries not yet yielded — drives the exact `size_hint`.
+    remaining: usize,
+}
+
+impl<'a, K, V> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Advance the slice cursor until a live bucket appears; `by_ref` keeps
+        // the cursor's position across calls. The empties between entries are
+        // skipped here, not by the caller.
+        for bucket in self.buckets.by_ref() {
+            if !bucket.is_empty() {
+                self.remaining -= 1;
+                // SAFETY: the slot is live (the `is_empty` check above), so its
+                // entry is initialized and `key`/`value` read valid data. Each
+                // `&Bucket` the slice cursor yields carries the `'a` lifetime, so
+                // the returned `(&'a K, &'a V)` cannot outlive the borrowed map.
+                return Some(unsafe { (bucket.key(), bucket.value()) });
+            }
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<K, V> ExactSizeIterator for Iter<'_, K, V> {}
+impl<K, V> FusedIterator for Iter<'_, K, V> {}
+
+/// A borrowed iterator over a [`HashMap`]'s entries, yielding
+/// `(&K, &mut V)`.
+///
+/// Created by [`HashMap::iter_mut`] (and by `&mut HashMap`'s
+/// [`IntoIterator`]). The order is arbitrary.
+pub struct IterMut<'a, K, V> {
+    buckets: slice::IterMut<'a, Bucket<K, V>>,
+    remaining: usize,
+}
+
+impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // STEP: the same skip-empty walk as `Iter::next`, but materialize the
+        // pair through `Bucket::key_value_mut` — `key()` + `value_mut()`
+        // can't both borrow the bucket at once, which is the whole reason
+        // that split primitive exists.
+        for bucket in self.buckets.by_ref() {
+            if !bucket.is_empty() {
+                self.remaining -= 1;
+                // SAFETY: the slot is live (the `is_empty` check above), so its
+                // entry is initialized. `key_value_mut` splits the one
+                // `&mut (K, V)` into references to disjoint fields, so the `&K`
+                // and `&mut V` do not alias. The slice cursor yields
+                // `&'a mut Bucket`, so the pair carries `'a` and cannot outlive
+                // the borrowed map.
+                return Some(unsafe { bucket.key_value_mut() });
+            }
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<K, V> ExactSizeIterator for IterMut<'_, K, V> {}
+impl<K, V> FusedIterator for IterMut<'_, K, V> {}
+
+/// A consuming iterator over a [`HashMap`], yielding owned `(K, V)` pairs.
+///
+/// Created by `HashMap`'s [`IntoIterator`]. It owns the backing table and
+/// yields entries by moving them out; any entries left unyielded when the
+/// `IntoIter` drops are destroyed by the table's own `Drop` — so this type
+/// needs no `Drop` of its own, provided each yielded slot is marked empty
+/// as it is taken.
+pub struct IntoIter<K, V> {
+    /// The moved-out backing; `next` drains it slot by slot.
+    table: RawTable<K, V>,
+    /// Next bucket index to inspect.
+    index: usize,
+    /// Live entries not yet yielded — drives the exact `size_hint`.
+    remaining: usize,
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < self.table.capacity() {
+            let i = self.index;
+            self.index += 1;
+            // SAFETY: `i < self.table.capacity()` (the loop condition).
+            let bucket = unsafe { self.table.bucket_mut(i) };
+            if bucket.is_empty() {
+                continue;
+            }
+            // SAFETY: the slot is live (the `is_empty` check above), so its
+            // entry is initialized and can be moved out exactly once.
+            let (_fragment, entry) = unsafe { bucket.take_occupied() };
+            // Mark the slot empty so the table's `Drop` does not re-drop the
+            // entry we just moved out — `take_occupied` leaves `raw_state`
+            // reading "occupied", and `IntoIter` has no `Drop` of its own.
+            bucket.set_empty();
+            self.remaining -= 1;
+            return Some(entry);
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
+impl<K, V> FusedIterator for IntoIter<K, V> {}
+
+/// Consuming iteration moves every entry out of the map.
+impl<K, V, S> IntoIterator for HashMap<K, V, S> {
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+
+    fn into_iter(self) -> IntoIter<K, V> {
+        // Move the backing out; the hasher `S` is dropped here. `HashMap` has
+        // no `Drop`, so this destructuring move is allowed.
+        let Self { table, .. } = self;
+        let remaining = table.len();
+        IntoIter {
+            table,
+            index: 0,
+            remaining,
+        }
+    }
+}
+
+/// `for (k, v) in &map` — borrowed iteration, equivalent to [`HashMap::iter`].
+impl<'a, K, V, S> IntoIterator for &'a HashMap<K, V, S> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = Iter<'a, K, V>;
+
+    fn into_iter(self) -> Iter<'a, K, V> {
+        self.iter()
+    }
+}
+
+/// `for (k, v) in &mut map` — mutable iteration, equivalent to
+/// [`HashMap::iter_mut`].
+impl<'a, K, V, S> IntoIterator for &'a mut HashMap<K, V, S> {
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = IterMut<'a, K, V>;
+
+    fn into_iter(self) -> IterMut<'a, K, V> {
+        self.iter_mut()
     }
 }
