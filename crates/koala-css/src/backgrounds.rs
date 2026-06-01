@@ -5,7 +5,7 @@
 //! This module implements background-related computations, including the special
 //! rules for canvas background propagation.
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 use koala_dom::{DomTree, NodeId};
 

@@ -62,7 +62,7 @@ fn layout_html(html: &str) -> LayoutBox {
 fn layout_html_with_viewport(html: &str, vw: f32, vh: f32) -> LayoutBox {
     use koala_css::cascade::compute_styles;
     use koala_css::{CSSParser, CSSTokenizer, Stylesheet};
-    use std::collections::HashMap;
+    use koala_std::collections::HashMap;
     let mut tokenizer = koala_html::HTMLTokenizer::new(html.to_string());
     tokenizer.run();
     let parser = koala_html::HTMLParser::new(tokenizer.into_tokens());
@@ -2245,7 +2245,7 @@ fn test_ol_start_attribute() {
 fn paint_html(html: &str) -> koala_css::DisplayList {
     use koala_css::cascade::compute_styles;
     use koala_css::{CSSParser, CSSTokenizer, DisplayListBuilder, Stylesheet};
-    use std::collections::HashMap;
+    use koala_std::collections::HashMap;
 
     let mut tokenizer = koala_html::HTMLTokenizer::new(html.to_string());
     tokenizer.run();

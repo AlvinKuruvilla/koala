@@ -19,7 +19,7 @@
 //! adds, so a passing test confirms the layout and render layers
 //! agree on text width.
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 use std::sync::Arc;
 
 use fontdue::{Font, FontSettings};

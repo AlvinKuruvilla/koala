@@ -33,6 +33,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
+koala-std.workspace = true
 
 [lints]
 workspace = true

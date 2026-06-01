@@ -54,7 +54,7 @@ use koala_css::{
 use koala_dom::{DomTree, NodeId};
 use koala_html::{HTMLParser, HTMLTokenizer, Token};
 use koala_js::JsRuntime;
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 /// A fully loaded and parsed document.
 ///

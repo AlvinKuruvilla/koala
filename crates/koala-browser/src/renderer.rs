@@ -21,7 +21,7 @@ use image::{ImageBuffer, Rgba, RgbaImage};
 use koala_css::{
     BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle, TextDecorationLine,
 };
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 

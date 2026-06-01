@@ -7,7 +7,7 @@
 //! assumed to be valid at parse time. It is only syntax-checked at
 //! computed-value time, after `var()` functions have been substituted."
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 use crate::parser::ComponentValue;
 use crate::tokenizer::CSSToken;

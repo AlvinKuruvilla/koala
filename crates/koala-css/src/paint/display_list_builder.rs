@@ -8,7 +8,7 @@
 //! play one layer down. This module's job is to *build* a display list,
 //! not to touch pixels — hence the current name.
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 use koala_dom::NodeId;
 

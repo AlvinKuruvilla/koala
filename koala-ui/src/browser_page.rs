@@ -101,9 +101,9 @@ struct RenderResult {
 /// without copying the underlying data.
 struct PageState {
     dom: DomTree,
-    styles: std::collections::HashMap<NodeId, ComputedStyle>,
+    styles: koala_std::collections::HashMap<NodeId, ComputedStyle>,
     layout_tree: LayoutBox,
-    images: std::collections::HashMap<String, LoadedImage>,
+    images: koala_std::collections::HashMap<String, LoadedImage>,
     // The document's `<title>` text content, trimmed. Empty when
     // the document has no `<title>` element or its text is
     // whitespace-only. Used to set the tab label.
