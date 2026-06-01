@@ -445,14 +445,7 @@ impl<K, V> RawTable<K, V> {
     /// *O*(*n*) in the derived bucket count, dominated by the
     /// zeroing of the backing array.
     pub(super) fn with_capacity(entries: usize) -> Self {
-        // Scale by 100 before dividing by 70 so the 70%-load math
-        // stays in integers; the `+ 69` rounds the division up so the
-        // table can actually hold `entries` before it grows.
-        let Some(scaled) = entries.checked_mul(100).and_then(|x| x.checked_add(69)) else {
-            capacity_overflow();
-        };
-        let min_buckets = scaled / 70;
-        let capacity = core::cmp::max(8, min_buckets).next_power_of_two();
+        let capacity = Self::buckets_for(entries);
         let buckets = alloc_array::<Bucket<K, V>>(capacity, true);
         Self {
             buckets,
@@ -460,6 +453,30 @@ impl<K, V> RawTable<K, V> {
             len: 0, // No entries in the table yet.
             _marker: PhantomData,
         }
+    }
+
+    /// The bucket count needed to hold `entries` live entries under the
+    /// 70% load factor: the smallest power of two `>= 8` whose
+    /// [`HashMap`](super::hash_map) entry-capacity covers `entries`.
+    ///
+    /// Shared by [`with_capacity`](Self::with_capacity) and the
+    /// `HashMap::{reserve, shrink_to_fit}` resize targets so all three
+    /// derive the same backing size from a desired entry count. Panics
+    /// (via `capacity_overflow`) if `entries` is large enough that the
+    /// load-factor scaling overflows `usize`.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
+    pub(super) fn buckets_for(entries: usize) -> usize {
+        // Scale by 100 before dividing by 70 so the 70%-load math
+        // stays in integers; the `+ 69` rounds the division up so the
+        // table can actually hold `entries` before it grows.
+        let Some(scaled) = entries.checked_mul(100).and_then(|x| x.checked_add(69)) else {
+            capacity_overflow();
+        };
+        let min_buckets = scaled / 70;
+        core::cmp::max(8, min_buckets).next_power_of_two()
     }
 
     /// Number of bucket slots in the backing array.
@@ -607,8 +624,9 @@ impl<K, V> RawTable<K, V> {
     /// caller's cost, not counted here.
     #[must_use = "the returned table still owns its entries; drain it before it drops"]
     pub(super) fn grow_to(&mut self, new_capacity: usize) -> RawTable<K, V> {
-        // Trust, don't round. The sole caller passes `capacity * 2` of an
-        // already-valid power of two; rounding here would mask a caller bug.
+        // Trust, don't round. Every caller (`HashMap::resize_to`, reached
+        // from grow / reserve / shrink_to_fit) passes a power-of-two target
+        // derived from `buckets_for`; rounding here would mask a caller bug.
         debug_assert!(
             new_capacity.is_power_of_two() && new_capacity >= 8,
             "grow_to needs a power-of-two capacity >= 8"

@@ -31,6 +31,7 @@ use core::hash::{BuildHasher, Hash};
 use core::mem;
 
 use crate::hash::FxBuildHasher;
+use crate::raw::capacity_overflow;
 
 use super::raw_table::RawTable;
 
@@ -361,6 +362,25 @@ where
         } else {
             self.table.capacity() * 2
         };
+        self.resize_to(new_capacity);
+    }
+
+    /// Reallocate the backing to exactly `new_capacity` buckets and re-home
+    /// every entry into the fresh table.
+    ///
+    /// `new_capacity` must be a power of two `>= 8` (a `RawTable::grow_to`
+    /// debug-assert enforces this) and large enough to hold the current
+    /// entries under the load factor — every caller derives it from
+    /// [`RawTable::buckets_for`], so this holds for both growth and
+    /// shrinkage.
+    ///
+    /// Shared by [`grow`](Self::grow) (doubling), [`reserve`](Self::reserve),
+    /// and [`shrink_to_fit`](Self::shrink_to_fit); they differ only in how
+    /// they choose `new_capacity`. The rehash runs no user code — each home
+    /// is recomputed from the cached `u32` fragment and displacement does no
+    /// `K::eq` — so there is no panic point mid-loop and no drop guard is
+    /// needed.
+    fn resize_to(&mut self, new_capacity: usize) {
         let mut old = self.table.grow_to(new_capacity);
         // Now `self.table` is the new, empty backing; `old` still owns every entry.
         let new_mask = new_capacity - 1;
@@ -652,5 +672,88 @@ where
         // SAFETY: `from < capacity` (loop invariant); the slot holds no live
         // entry, so emptying it drops nothing.
         unsafe { self.table.bucket_mut(from).set_empty() };
+    }
+
+    /// Reserves room for at least `additional` more entries to be inserted
+    /// without reallocating.
+    ///
+    /// After this call the map can hold `len() + additional` entries before
+    /// the next resize. If it already can, this is a no-op.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new entry count overflows `usize`, or if the derived
+    /// bucket count exceeds what the allocator can serve.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map: HashMap<i32, i32> = HashMap::new();
+    /// map.reserve(100);
+    /// let cap = map.capacity();
+    /// assert!(cap >= 100);
+    /// // Filling up to the reserved capacity does not resize again.
+    /// for i in 0..cap as i32 {
+    ///     map.insert(i, i);
+    /// }
+    /// assert_eq!(map.capacity(), cap);
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) when a resize happens (every current entry is re-homed),
+    /// *O*(1) when the capacity already suffices.
+    pub fn reserve(&mut self, additional: usize) {
+        // STEP 1: the entry count we must be able to hold without resizing.
+        // A `usize` overflow here means an unserviceable request, so it
+        // routes through the same panic path as the rest of the capacity math.
+        let Some(required) = self.len().checked_add(additional) else {
+            capacity_overflow();
+        };
+
+        // STEP 2: if the current *entry* capacity already covers that, there
+        // is nothing to do — `reserve` never shrinks.
+        if self.capacity() >= required {
+            return;
+        }
+
+        // STEP 3: otherwise resize to the bucket count `RawTable::buckets_for`
+        // derives for the target entry count.
+        self.resize_to(RawTable::<K, V>::buckets_for(required));
+    }
+
+    /// Shrinks the capacity of the map as much as possible while still
+    /// holding its current entries under the load factor.
+    ///
+    /// The backing is reduced to the smallest power-of-two bucket count
+    /// (minimum 8) that holds [`len`](Self::len) entries. A map already at
+    /// that size is left untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map: HashMap<i32, i32> = HashMap::with_capacity(1000);
+    /// map.insert(1, 1);
+    /// let before = map.capacity();
+    /// map.shrink_to_fit();
+    /// assert!(map.capacity() <= before);
+    /// assert_eq!(map.get(&1), Some(&1));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) when a resize happens, *O*(1) otherwise.
+    pub fn shrink_to_fit(&mut self) {
+        // STEP 1: the smallest backing that still holds `len()` entries.
+        let target_buckets = RawTable::<K, V>::buckets_for(self.table.len());
+
+        // STEP 2: resize only if that is strictly smaller than the current
+        // bucket count (`self.table.capacity()`, the bucket count — not the
+        // entry capacity `self.capacity()`).
+        if target_buckets < self.table.capacity() {
+            self.resize_to(target_buckets);
+        }
     }
 }

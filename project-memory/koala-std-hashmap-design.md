@@ -809,6 +809,18 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
   stresses neighbor preservation (delete half a displaced table, demand
   the rest still resolve) and a mixed insert/remove/get differential
   against `std`, boxed values under miri.
+- **Phase 4 (grow and rehash)** — public `reserve` / `shrink_to_fit`.
+  The doubling rehash already landed with `insert` (3b-ii), so this
+  refactored that body into a target-honoring `resize_to(new_capacity)`
+  (shared by `grow`, `reserve`, `shrink_to_fit`) and extracted the
+  entry→bucket-count math into `RawTable::buckets_for` (now the single
+  source of truth for `with_capacity` + both capacity methods). `reserve`
+  reasons in the entry domain (`capacity() >= len + additional`, the add
+  guarded by `capacity_overflow`); `shrink_to_fit` reasons in the bucket
+  domain (`buckets_for(len) < table.capacity()`), flooring at 8 buckets
+  rather than deallocating to 0. `hash_map_capacity.rs` checks headroom,
+  no-op guards, idempotence, and entry preservation across an explicit-
+  target re-home in both directions (boxed values under miri).
 
 ### Deviations from the phase plan as originally written
 
@@ -823,18 +835,17 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
 
 ### Next up
 
-The basic-API phase (Phase 3) is now complete: every method on the
-Phase 3 checklist (`insert`, `get`, `get_mut`, `contains_key`, `remove`)
-exists, is differentially validated against `std`, and is miri-clean.
+Phases 3 (basic API) and 4 (capacity management) are complete: every
+method on both checklists (`insert`, `get`, `get_mut`, `contains_key`,
+`remove`, `reserve`, `shrink_to_fit`) exists, is differentially validated
+against `std`, and is miri-clean.
 
-- **Phase 4** — *public* `reserve` / `shrink_to_fit`. The internal
-  grow+rehash already landed with `insert` (3b-ii), so this is the
-  caller-facing capacity surface plus a `grow_to(new_capacity)` that
-  honors an explicit target rather than the doubling default.
 - **Phase 5** — iterators (`Iter` / `IterMut` / `IntoIter`), the
   `entry` API, and the trait impls (`FromIterator`, `Extend`, `Index`,
   `Debug`, `PartialEq`). The bucket walk that skips empty slots is the
   shared primitive under all the iterators.
+- **Phase 6** — `HashSet<T>` as a thin `HashMap<T, ()>` wrapper, once
+  the iterator + entry surface it leans on exists.
 
 ## Implementation checklist
 
