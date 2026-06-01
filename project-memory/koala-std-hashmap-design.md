@@ -1126,6 +1126,70 @@ It is a v2 item — we build the Robin Hood baseline first, ship it,
 use it, *then* layer on the elastic sibling type once there is
 something real to compare it against.
 
+### Beyond-std API extensions (recorded 2026-06-01)
+
+`HashMap` is feature-complete *against std's surface*. koala-std is
+free of std's stability and API-review constraints, so it can offer
+methods std omits — but the discipline line is: **every beyond-std
+method must have either a roadmap consumer or a teaching/validation
+payoff, not "std lacks it so we could."** Beyond-std methods also
+cannot be differential-tested against std (no oracle), which is the
+project's main correctness net, so each one carries extra
+test-design cost. Captured here so the reasoning survives; none are
+committed work yet.
+
+**Tier 1 — roadmap-driven (Milestone-2 prerequisites).** Build these
+when the browser-string work starts, shaped by a real consumer rather
+than speculatively. (hashbrown's multi-year `raw_entry` → `HashTable`
+evolution is the cautionary tale for designing a low-level API with no
+caller in hand.)
+
+- **`entry_ref` — a hash-keyed entry that probes by `&Q` and only
+  clones the key on the vacant (miss) path.**
+  ```rust
+  pub fn entry_ref<Q>(&mut self, key: &Q) -> EntryRef<'_, K, V>
+  where K: Borrow<Q>, Q: Hash + Eq + ToOwned<Owned = K> + ?Sized
+  ```
+  *The* feature `FlyString` interning needs: hold a `&str`, find-or-
+  insert an interned `Rc<str>` keyed by content, hashing once and
+  allocating the owned key only on a miss. std forces an owned-key
+  allocation just to *probe*, even on the common hit path. hashbrown
+  has it. Highest value/effort ratio.
+- **A minimal hash-keyed / raw find** (precomputed hash, custom
+  equality) if the intern table wants finer control than `entry_ref`.
+  Scope carefully — this is where hashbrown spent years; only build
+  the slice of it `FlyString` actually exercises.
+
+**Tier 2 — cheap, self-contained, testable without a std oracle (their
+contracts are checkable directly). Good post-Milestone-1 nice-to-haves.**
+
+- **`insert_unique_unchecked(key, value) -> &mut V`** — the bulk-load
+  fast path that skips the find when the caller guarantees the key is
+  absent. The internal primitive already exists (`insert_known_absent`);
+  exposing it with a documented contract is nearly free. hashbrown ships
+  this.
+- **`try_insert(key, value) -> Result<&mut V, OccupiedError<…>>`** — a
+  no-clobber insert returning the existing value on conflict. Trivial
+  over the entry API. std-nightly only.
+- **`get_disjoint_mut<const N>(keys: [&Q; N]) -> [Option<&mut V>; N]`** —
+  N distinct keys, N mutable refs at once. Robin Hood makes it clean
+  (probe each to an index, assert pairwise-distinct, return the array).
+  std only stabilized this in 1.86.
+- **`pop() -> Option<(K, V)>`** and **`extract_if(pred)`** — arbitrary-
+  entry removal (worklist patterns) and filtered draining.
+
+**Tier 3 — koala-flavored transparency (the one std would never do).**
+
+- **Probe-length introspection:** `max_probe_length()`,
+  `probe_histogram()`, `load_factor()`. For a *learning* container this
+  is a feature, not a leak — it makes Robin Hood's behavior observable,
+  fits the project's observability ethos (the `IDIOSYNCRASY` idea in
+  SESSION.md), and the data already sits in the buckets. **Worth pulling
+  forward into Phase 7 as a test asset**: a hardening test can assert
+  "max probe length stays bounded under a random op stream," a real
+  Robin Hood invariant currently unchecked. This is the single
+  beyond-std item with a near-term payoff.
+
 ### Milestone 3 implications
 
 The HashMap work in milestone 1 feeds directly into milestone 2 and
