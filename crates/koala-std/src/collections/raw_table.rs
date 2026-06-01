@@ -802,6 +802,50 @@ impl<K, V> Drop for DropGuard<K, V> {
     }
 }
 
+impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
+    /// Duplicate the table, preserving each entry's exact bucket position,
+    /// probe length, and cached fragment — a structural copy, not a rehash,
+    /// so the clone needs no hasher and only `K: Clone, V: Clone`.
+    ///
+    /// Panic safety: the new table is a fully-formed `RawTable` from the
+    /// first allocation, so if a `K` or `V` clone panics partway through,
+    /// unwinding drops it and frees the entries cloned so far — no leak.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*capacity*) — every slot is visited, occupied ones cloned.
+    fn clone(&self) -> Self {
+        if self.capacity == 0 {
+            return Self::new();
+        }
+        let buckets = alloc_array::<Bucket<K, V>>(self.capacity, true);
+        let mut new = Self {
+            buckets,
+            capacity: self.capacity,
+            len: 0,
+            _marker: PhantomData,
+        };
+        let mask = self.capacity - 1;
+        for i in 0..self.capacity {
+            // SAFETY: `i < self.capacity`.
+            let src = unsafe { self.bucket(i) };
+            if src.is_empty() {
+                continue;
+            }
+            let probe_length = src.probe_length(i, mask);
+            let fragment = src.hash_fragment();
+            // SAFETY: the slot is live, so its key and value are initialized.
+            let entry = unsafe { (src.key().clone(), src.value().clone()) };
+            // SAFETY: `i < self.capacity`, and the destination slot was zeroed
+            // by `alloc_array`, so it holds no live value for `init` to leak.
+            unsafe { new.bucket_mut(i).init(probe_length, fragment, entry) };
+            new.len += 1;
+        }
+        debug_assert_eq!(new.len, self.len, "clone must preserve the entry count");
+        new
+    }
+}
+
 impl<K, V> Drop for RawTable<K, V> {
     fn drop(&mut self) {
         // A capacity-0 table (`new()`, or the old table handed back by

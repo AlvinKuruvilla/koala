@@ -845,7 +845,20 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
   (the entry iterators already did the bucket/lifetime work).
   `hash_map_keys_values.rs` covers projection correctness, exact size,
   in-place mutation through `values_mut`, empty maps, and clone.
-  Still outstanding in Phase 5: the `entry` API and the trait impls.
+- **Phase 5d (trait impls)** — `Clone`, `Debug`, `PartialEq` / `Eq`,
+  `Extend` (owned `(K, V)` plus the `(&K, &V)` Copy variant), and
+  `FromIterator`. `Clone` is *layout-preserving*: a new `impl Clone for
+  RawTable` structurally copies the backing (same bucket positions,
+  probe lengths, fragments; clones live entries in place), so
+  `HashMap: Clone` needs only `K: Clone, V: Clone, S: Clone` — no
+  rehash, no `Hash`/`Eq` — matching std's bound. It is panic-safe for
+  free (the half-built `RawTable` drops and frees on a panicking entry
+  clone). `PartialEq` is the `len()`-equal + `iter`/`get` set-equality
+  walk; `Extend` pre-reserves off `size_hint`; `FromIterator` is
+  `with_hasher(S::default())` + `extend`. `hash_map_traits.rs` covers
+  clone independence (boxed values under miri), order-independent
+  equality, the inequality cases, extend/overwrite, and collect.
+  Still outstanding in Phase 5: only the `entry` API (5c).
 
 ### Deviations from the phase plan as originally written
 
@@ -861,29 +874,21 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
 ### Next up
 
 Phases 3 (basic API) and 4 (capacity management) are complete, and
-Phase 5 has started: every method on the 3/4 checklists (`insert`,
-`get`, `get_mut`, `contains_key`, `remove`, `reserve`, `shrink_to_fit`)
-plus the iterator surface (`iter` / `iter_mut` / `IntoIterator`) and the
-key/value projections (`keys` / `values` / `values_mut`) exist, are
-differentially validated against `std` where applicable, and are
-miri-clean.
+Phase 5 is all but done: every method on the 3/4 checklists (`insert`,
+`get`, `get_mut`, `contains_key`, `remove`, `reserve`, `shrink_to_fit`),
+the iterator surface (`iter` / `iter_mut` / `IntoIterator`), the
+key/value projections (`keys` / `values` / `values_mut`), and the trait
+impls (`Clone`, `Debug`, `PartialEq` / `Eq`, `Extend`, `FromIterator`)
+exist, are differentially validated against `std` where applicable, and
+are miri-clean.
 
-Remaining Phase 5 chunks, in intended order:
-
-- **5c** — the `entry` API: `Entry` / `OccupiedEntry` / `VacantEntry`,
-  `HashMap::entry`, and the `or_insert` / `or_insert_with` /
-  `and_modify` methods. This is its own sub-design — the entry holds a
-  located bucket index across the borrow and has to cope with a resize
-  on the vacant-insert path.
-- **5d** — trait impls: `Debug`, `Clone` (where `K: Clone, V: Clone`),
-  `PartialEq` / `Eq`, `Extend<(K, V)>`, `FromIterator<(K, V)>`.
-
-- **Phase 5** — iterators (`Iter` / `IterMut` / `IntoIter`), the
-  `entry` API, and the trait impls (`FromIterator`, `Extend`, `Index`,
-  `Debug`, `PartialEq`). The bucket walk that skips empty slots is the
-  shared primitive under all the iterators.
+- **5c** (the only Phase 5 chunk left) — the `entry` API: `Entry` /
+  `OccupiedEntry` / `VacantEntry`, `HashMap::entry`, and the
+  `or_insert` / `or_insert_with` / `and_modify` methods. This is its own
+  sub-design — the entry holds a located bucket position across the
+  borrow and has to cope with a resize on the vacant-insert path.
 - **Phase 6** — `HashSet<T>` as a thin `HashMap<T, ()>` wrapper, once
-  the iterator + entry surface it leans on exists.
+  the `entry` surface it leans on exists.
 
 ## Implementation checklist
 

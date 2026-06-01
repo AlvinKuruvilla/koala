@@ -27,8 +27,9 @@
 //! not exist yet.
 
 use core::borrow::Borrow;
+use core::fmt;
 use core::hash::{BuildHasher, Hash};
-use core::iter::FusedIterator;
+use core::iter::{FromIterator, FusedIterator};
 use core::mem;
 use core::slice;
 
@@ -1122,3 +1123,69 @@ impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
 
 impl<K, V> ExactSizeIterator for ValuesMut<'_, K, V> {}
 impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}
+
+/// Clones the map, preserving its bucket layout — the backing
+/// [`RawTable`] is copied structurally (no rehash), so only `K` and `V`
+/// need be `Clone` (plus the hasher).
+impl<K: Clone, V: Clone, S: Clone> Clone for HashMap<K, V, S> {
+    fn clone(&self) -> Self {
+        Self {
+            table: self.table.clone(),
+            hasher: self.hasher.clone(),
+        }
+    }
+}
+
+/// Formats the map as `{k: v, …}` in arbitrary order, like `std`'s
+/// `HashMap`.
+impl<K: fmt::Debug, V: fmt::Debug, S> fmt::Debug for HashMap<K, V, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+/// Two maps are equal when they hold the same set of key/value pairs,
+/// regardless of insertion order or internal layout.
+impl<K: Eq + Hash, V: PartialEq, S: BuildHasher> PartialEq for HashMap<K, V, S> {
+    fn eq(&self, other: &Self) -> bool {
+        // Equal length plus "every entry of `self` is in `other` with the
+        // same value" implies set equality — no key can be in `other` but
+        // not `self` once the counts match.
+        self.len() == other.len()
+            && self
+                .iter()
+                .all(|(key, value)| other.get(key).is_some_and(|other_value| *value == *other_value))
+    }
+}
+
+impl<K: Eq + Hash, V: Eq, S: BuildHasher> Eq for HashMap<K, V, S> {}
+
+/// Inserts every pair from the iterator, overwriting existing keys.
+impl<K: Eq + Hash, V, S: BuildHasher> Extend<(K, V)> for HashMap<K, V, S> {
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        let iter = iter.into_iter();
+        // Pre-reserve for the iterator's lower bound to avoid repeated grows.
+        self.reserve(iter.size_hint().0);
+        for (key, value) in iter {
+            let _ = self.insert(key, value);
+        }
+    }
+}
+
+/// Inserts every pair from an iterator of references, for `map.extend(&other)`.
+impl<'a, K: Eq + Hash + Copy, V: Copy, S: BuildHasher> Extend<(&'a K, &'a V)>
+    for HashMap<K, V, S>
+{
+    fn extend<T: IntoIterator<Item = (&'a K, &'a V)>>(&mut self, iter: T) {
+        self.extend(iter.into_iter().map(|(&key, &value)| (key, value)));
+    }
+}
+
+/// Builds a map from an iterator of pairs, using the default hasher.
+impl<K: Eq + Hash, V, S: BuildHasher + Default> FromIterator<(K, V)> for HashMap<K, V, S> {
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
+        let mut map = Self::with_hasher(S::default());
+        map.extend(iter);
+        map
+    }
+}
