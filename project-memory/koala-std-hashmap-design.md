@@ -563,15 +563,21 @@ pub(super) enum BucketState {
     ///
     /// ```text
     /// home_index   = (hash_fragment as usize) & mask
-    /// probe_length = (bucket_index - home_index) & mask
+    /// probe_length = bucket_index.wrapping_sub(home_index) & mask
     /// ```
+    ///
+    /// `wrapping_sub` is load-bearing: when an entry has
+    /// wrapped around the end of the bucket array, plain
+    /// unsigned subtraction (`bucket_index - home_index`)
+    /// panics in debug builds on underflow. `wrapping_sub` is
+    /// a no-op in release and wraps explicitly in debug; the
+    /// subsequent `& mask` folds the wrapped value back into
+    /// the `0..capacity` probe-length range.
     ///
     /// Using the 32-bit fragment is sufficient because `mask`
     /// is always less than `2^32` in practice — a
     /// `usize::MAX`-capacity `HashMap` is not a thing we
-    /// support. The `& mask` on `probe_length` handles the
-    /// case where the entry wrapped around the end of the
-    /// bucket array.
+    /// support.
     ///
     /// This variant is pathological: a Robin Hood table at
     /// 70% load with FxHash essentially never produces probe
@@ -757,6 +763,154 @@ signal is "investigate what changed" rather than "the code is
 wrong." The assertion exists because the 24-byte figure is cited
 in decision #5 above and we want the doc claim and the code to
 move together.
+
+## Implementation status (updated 2026-06-01)
+
+Work is on branch `koala-std/hashmap-phase2-rawtable` (not yet merged
+to `master`). Landed, each its own commit, all `clippy`-clean and
+`cargo +nightly miri test`-clean:
+
+- **Phase 1 (hash)** — `FxHasher` / `FxBuildHasher` in
+  `src/hash/{fx,mod}.rs`. Done (pre-existing this session).
+- **Phase 2 (`RawTable`)** — `new`/`with_capacity`/`grow_to`,
+  panic-safe `Drop` via a resume-and-dealloc guard, and the shared
+  `raw::dealloc_array` helper. In `src/collections/raw_table.rs`.
+- **Phase 3a (bucket probe primitives)** — *not in the original
+  checklist*; added because Option A (encapsulated methods, not
+  `pub(super)` fields) is how `HashMap` reaches the backing.
+  On `Bucket`: `hash_fragment`, `probe_length`, `key`/`value`/
+  `value_mut`, `init`, `set_probe_length`, `take_occupied`,
+  `set_empty`. On `RawTable`: `copy_bucket`, `set_len`. Displacement
+  is expressed as take + init (no monolithic swap).
+- **Phase 3b-i** — `HashMap` struct, `new`/`with_capacity`/
+  `with_hasher`/`with_capacity_and_hasher`, `Default`, `len`/
+  `is_empty`/`capacity`. `capacity()` returns *entry* capacity
+  (`buckets * 7 / 10`), not bucket count.
+- **Phase 3b-ii** — `insert` (Robin Hood search-or-insert),
+  `place_from` (displacement chain), `grow` (double + rehash), `hash`
+  (`hash_one`), `split_hash`, `load_capacity`. Validated differentially
+  against `std` for return values + `len`; deep value-readback waits on
+  `get`.
+- **Phase 3b-iii** — `get` / `get_mut` / `contains_key` over a private
+  `find_index` (the Robin Hood search walk: empty / poorer-resident
+  early-out / fragment+key match), the three callers re-borrowing the
+  returned bucket index. Lookup compares in the *borrowed* domain
+  (`key().borrow() == q`), so the bound stays `K: Borrow<Q>, Q: Hash +
+  Eq + ?Sized` — `K: PartialEq<Q>` is unsatisfiable for the canonical
+  `String`/`str` case. `hash_map_lookup.rs` adds the value-readback and
+  `get`-vs-`std` differential the insert suite deferred.
+- **Phase 3b-iv** — `remove` over a private `backshift_from`
+  (decision #4's no-tombstone backshift; first caller of `copy_bucket`
+  and `set_probe_length`). Panic-safe: the moved-out key is bound so its
+  destructor runs only after the table is whole again, and the shift
+  window contains no panicking / dropping op. The probe-length decrement
+  re-encodes the moved resident's length at the *destination* slot,
+  correct for both the inline and recompute encodings. `hash_map_remove.rs`
+  stresses neighbor preservation (delete half a displaced table, demand
+  the rest still resolve) and a mixed insert/remove/get differential
+  against `std`, boxed values under miri.
+- **Phase 4 (grow and rehash)** — public `reserve` / `shrink_to_fit`.
+  The doubling rehash already landed with `insert` (3b-ii), so this
+  refactored that body into a target-honoring `resize_to(new_capacity)`
+  (shared by `grow`, `reserve`, `shrink_to_fit`) and extracted the
+  entry→bucket-count math into `RawTable::buckets_for` (now the single
+  source of truth for `with_capacity` + both capacity methods). `reserve`
+  reasons in the entry domain (`capacity() >= len + additional`, the add
+  guarded by `capacity_overflow`); `shrink_to_fit` reasons in the bucket
+  domain (`buckets_for(len) < table.capacity()`), flooring at 8 buckets
+  rather than deallocating to 0. `hash_map_capacity.rs` checks headroom,
+  no-op guards, idempotence, and entry preservation across an explicit-
+  target re-home in both directions (boxed values under miri).
+- **Phase 5a (iterators)** — `Iter` / `IterMut` / `IntoIter`, the
+  `iter` / `iter_mut` accessors, and the three `IntoIterator` impls
+  (owned / `&` / `&mut`). The borrowed iterators wrap a
+  `core::slice::Iter` / `IterMut` over the backing (new
+  `RawTable::as_slice` / `as_mut_slice`), so the slice cursor owns the
+  lifetime and the yielded `&K` / `&mut V` fall out without manual
+  pointer juggling; each skips empty slots in `next` and carries a
+  `remaining` counter for an exact `size_hint` (`ExactSizeIterator` +
+  `FusedIterator`). `IterMut` materializes its pair via a new
+  `Bucket::key_value_mut` (the split `&K` + `&mut V` that `key()` /
+  `value_mut()` can't give at once). `IntoIter` owns the table and
+  drains it with `take_occupied` + `set_empty` per slot, leaning on
+  `RawTable::drop` for the unyielded remainder (no `Drop` of its own).
+  `hash_map_iter.rs` covers full traversal, exact size, in-place
+  mutation, the reference `IntoIterator` forms, fuse/clone, and — under
+  miri — partial `IntoIter` consumption + drop (no leak / double-free).
+- **Phase 5b (key/value projections)** — `keys` / `values` /
+  `values_mut`, returning named `Keys` / `Values` / `ValuesMut` types
+  that wrap `Iter` / `IterMut` and project `next` onto one half of the
+  pair (`.0` for keys, `.1` for values). `size_hint` delegates to the
+  inner iterator, so `ExactSizeIterator` is exact for free; no `unsafe`
+  (the entry iterators already did the bucket/lifetime work).
+  `hash_map_keys_values.rs` covers projection correctness, exact size,
+  in-place mutation through `values_mut`, empty maps, and clone.
+- **Phase 5d (trait impls)** — `Clone`, `Debug`, `PartialEq` / `Eq`,
+  `Extend` (owned `(K, V)` plus the `(&K, &V)` Copy variant), and
+  `FromIterator`. `Clone` is *layout-preserving*: a new `impl Clone for
+  RawTable` structurally copies the backing (same bucket positions,
+  probe lengths, fragments; clones live entries in place), so
+  `HashMap: Clone` needs only `K: Clone, V: Clone, S: Clone` — no
+  rehash, no `Hash`/`Eq` — matching std's bound. It is panic-safe for
+  free (the half-built `RawTable` drops and frees on a panicking entry
+  clone). `PartialEq` is the `len()`-equal + `iter`/`get` set-equality
+  walk; `Extend` pre-reserves off `size_hint`; `FromIterator` is
+  `with_hasher(S::default())` + `extend`. `hash_map_traits.rs` covers
+  clone independence (boxed values under miri), order-independent
+  equality, the inequality cases, extend/overwrite, and collect.
+- **Phase 5c (`entry` API)** — `Entry` / `OccupiedEntry` / `VacantEntry`,
+  `HashMap::entry`, and `or_insert` / `or_insert_with` /
+  `or_insert_with_key` / `or_default` / `key` / `and_modify` plus the
+  occupied (`get` / `get_mut` / `into_mut` / `insert` / `remove` /
+  `remove_entry`) and vacant (`key` / `into_key` / `insert`) methods.
+  The design is *asymmetric capture*: `OccupiedEntry` holds the bucket
+  index (safe — the exclusive `&mut map` borrow freezes the table so the
+  slot can't move), while `VacantEntry` holds the owned key, never a
+  slot, because its insert may grow and re-home everything. The crux:
+  Robin Hood displacement means a vacant insert's value doesn't land at
+  its home, and the key is moved into the table so it can't be re-probed
+  — so `place_from` now *returns the landing index* (first slot the
+  incoming entry settles into), which is what lets `VacantEntry::insert`
+  hand back a correct `&mut V`. Removal goes through a new `remove_at`
+  extracted from `remove`, shared with `OccupiedEntry::remove`.
+  `hash_map_entry.rs` covers the occupied/vacant surface, the combinators,
+  the word-count idiom, and the load-bearing
+  `vacant_insert_survives_a_resize` (500 fresh inserts, each asserting
+  the returned reference holds the right value through every grow).
+  **Phase 5 is now complete.**
+
+### Deviations from the phase plan as originally written
+
+1. **Phase 3a inserted** before 3b. The original checklist had `HashMap`
+   reach into `RawTable` via bare `bucket`/`bucket_mut`, but `Bucket`'s
+   fields are private to `raw_table`, so a small encapsulated primitive
+   layer was needed first.
+2. **Internal grow+rehash pulled into Phase 3b-ii** (with `insert`)
+   rather than Phase 4. `insert` is incorrect without growth, so it
+   can't be written or tested in isolation. Phase 4 keeps only the
+   *public* `reserve` / `shrink_to_fit`.
+
+### Next up
+
+Phases 3 (basic API), 4 (capacity management), and 5 (iterators,
+projections, trait impls, and the `entry` API) are all complete. Every
+method across those checklists exists, is differentially validated
+against `std` where applicable, and is miri-clean. `HashMap` is
+feature-complete.
+
+- **Phase 6** — `HashSet<T>` as a thin `HashMap<T, ()>` wrapper:
+  `insert`/`contains`/`remove` returning `bool`, the iterator surface,
+  the same trait impls, and the set operations (`intersection`, `union`,
+  `difference`, `symmetric_difference`, `is_subset`, `is_superset`).
+- **Phase 7** — test/miri hardening: a `quickcheck` differential harness
+  (random `Op` sequence vs `std` in lock-step), explicit ZST tests
+  (`HashMap<(), V>`, `HashMap<K, ()>`), drop-ordering tests with a
+  `DropRecorder`, and a `HashMap<String, i32>` cached-fragment test.
+  These are the milestone-1 exit criteria.
+- **Phase 8** — documentation polish: module-level design doc, a
+  doc-test/`# Time complexity` audit, and a roadmap progress-log update
+  (which should also correct `koala-std-roadmap.md`'s stale "linear
+  probing + tombstones" line — the build is Robin Hood + backshift).
 
 ## Implementation checklist
 
@@ -971,6 +1125,70 @@ This is the "novel research angle" item you flagged as interesting.
 It is a v2 item — we build the Robin Hood baseline first, ship it,
 use it, *then* layer on the elastic sibling type once there is
 something real to compare it against.
+
+### Beyond-std API extensions (recorded 2026-06-01)
+
+`HashMap` is feature-complete *against std's surface*. koala-std is
+free of std's stability and API-review constraints, so it can offer
+methods std omits — but the discipline line is: **every beyond-std
+method must have either a roadmap consumer or a teaching/validation
+payoff, not "std lacks it so we could."** Beyond-std methods also
+cannot be differential-tested against std (no oracle), which is the
+project's main correctness net, so each one carries extra
+test-design cost. Captured here so the reasoning survives; none are
+committed work yet.
+
+**Tier 1 — roadmap-driven (Milestone-2 prerequisites).** Build these
+when the browser-string work starts, shaped by a real consumer rather
+than speculatively. (hashbrown's multi-year `raw_entry` → `HashTable`
+evolution is the cautionary tale for designing a low-level API with no
+caller in hand.)
+
+- **`entry_ref` — a hash-keyed entry that probes by `&Q` and only
+  clones the key on the vacant (miss) path.**
+  ```rust
+  pub fn entry_ref<Q>(&mut self, key: &Q) -> EntryRef<'_, K, V>
+  where K: Borrow<Q>, Q: Hash + Eq + ToOwned<Owned = K> + ?Sized
+  ```
+  *The* feature `FlyString` interning needs: hold a `&str`, find-or-
+  insert an interned `Rc<str>` keyed by content, hashing once and
+  allocating the owned key only on a miss. std forces an owned-key
+  allocation just to *probe*, even on the common hit path. hashbrown
+  has it. Highest value/effort ratio.
+- **A minimal hash-keyed / raw find** (precomputed hash, custom
+  equality) if the intern table wants finer control than `entry_ref`.
+  Scope carefully — this is where hashbrown spent years; only build
+  the slice of it `FlyString` actually exercises.
+
+**Tier 2 — cheap, self-contained, testable without a std oracle (their
+contracts are checkable directly). Good post-Milestone-1 nice-to-haves.**
+
+- **`insert_unique_unchecked(key, value) -> &mut V`** — the bulk-load
+  fast path that skips the find when the caller guarantees the key is
+  absent. The internal primitive already exists (`insert_known_absent`);
+  exposing it with a documented contract is nearly free. hashbrown ships
+  this.
+- **`try_insert(key, value) -> Result<&mut V, OccupiedError<…>>`** — a
+  no-clobber insert returning the existing value on conflict. Trivial
+  over the entry API. std-nightly only.
+- **`get_disjoint_mut<const N>(keys: [&Q; N]) -> [Option<&mut V>; N]`** —
+  N distinct keys, N mutable refs at once. Robin Hood makes it clean
+  (probe each to an index, assert pairwise-distinct, return the array).
+  std only stabilized this in 1.86.
+- **`pop() -> Option<(K, V)>`** and **`extract_if(pred)`** — arbitrary-
+  entry removal (worklist patterns) and filtered draining.
+
+**Tier 3 — koala-flavored transparency (the one std would never do).**
+
+- **Probe-length introspection:** `max_probe_length()`,
+  `probe_histogram()`, `load_factor()`. For a *learning* container this
+  is a feature, not a leak — it makes Robin Hood's behavior observable,
+  fits the project's observability ethos (the `IDIOSYNCRASY` idea in
+  SESSION.md), and the data already sits in the buckets. **Worth pulling
+  forward into Phase 7 as a test asset**: a hardening test can assert
+  "max probe length stays bounded under a random op stream," a real
+  Robin Hood invariant currently unchecked. This is the single
+  beyond-std item with a near-term payoff.
 
 ### Milestone 3 implications
 

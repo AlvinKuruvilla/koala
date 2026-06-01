@@ -25,7 +25,7 @@
 
 use core::ptr::NonNull;
 
-use alloc::alloc::{Layout, alloc, alloc_zeroed, handle_alloc_error};
+use alloc::alloc::{Layout, alloc, alloc_zeroed, dealloc, handle_alloc_error};
 
 /// Abort the current operation because a requested capacity cannot
 /// be represented.
@@ -115,4 +115,41 @@ pub(crate) fn alloc_array<T>(count: usize, zeroed: bool) -> NonNull<T> {
         handle_alloc_error(layout);
     };
     ptr
+}
+
+/// Free a `count`-element run of `T` previously obtained from
+/// [`alloc_array`].
+///
+/// This is the inverse of [`alloc_array`]: it reconstructs the exact
+/// `Layout::array::<T>(count)` that the allocation used and returns the
+/// block to the global allocator. Routing both sides of the allocation
+/// through this module means the layout is computed by one piece of
+/// code, so an allocate/free layout mismatch — which is instant
+/// undefined behavior — cannot arise from the two sites drifting apart.
+///
+/// # Safety
+///
+/// - `ptr` must have come from [`alloc_array::<T>`] with the *same*
+///   `count`, and must not have been freed already.
+/// - After this call the allocation is gone: `ptr` is dangling and must
+///   never be read, written, or freed again.
+///
+/// `count` is necessarily the same non-zero value originally passed to
+/// `alloc_array` (a zero count or ZST never allocates), so
+/// `Layout::array::<T>(count)` cannot fail here — the `expect` documents
+/// an unreachable branch rather than a real failure mode.
+///
+/// # Time complexity
+///
+/// *O*(1) plus the allocator's own bookkeeping.
+pub(crate) unsafe fn dealloc_array<T>(ptr: NonNull<T>, count: usize) {
+    let layout =
+        Layout::array::<T>(count).expect("layout was valid when alloc_array succeeded");
+    // SAFETY: by the contract above, `ptr` came from `alloc_array::<T>`
+    // with this same `count` (hence this same layout) and has not been
+    // freed. Casting to `*mut u8` matches what the global allocator
+    // originally handed out.
+    unsafe {
+        dealloc(ptr.as_ptr().cast::<u8>(), layout);
+    }
 }
