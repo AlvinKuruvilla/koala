@@ -245,27 +245,34 @@ where
     }
 
     /// Place a *known-absent* entry into the table by Robin Hood
-    /// displacement, starting the walk at `(index, probe_length)`.
+    /// displacement, starting the walk at `(index, probe_length)`, and
+    /// return the slot the originally-passed entry settled into.
     ///
     /// Does no equality checks — the caller has already established the key
     /// is not present. Does not adjust `len` (the caller does). Shared by
-    /// `insert` (which hands off here once it has located the insertion
-    /// point) and `grow`'s rehash (which calls it at each entry's home).
+    /// `insert` and `resize_to`'s rehash (which both ignore the returned
+    /// index) and by `insert_known_absent` (which uses it to hand the entry
+    /// API a reference to the value just inserted).
+    ///
+    /// The passed entry settles at the *first* slot it is written to; every
+    /// later write in the loop moves a displaced resident, not it. That
+    /// first slot is the returned landing index.
     fn place_from(
         &mut self,
         mut index: usize,
         mut probe_length: usize,
         mut fragment: u32,
         mut entry: (K, V),
-    ) {
+    ) -> usize {
         let mask = self.table.capacity() - 1;
+        let mut landing = None;
         loop {
             // SAFETY: `index` is always masked with `& mask`, so it stays
             // `< capacity`.
             let bucket = unsafe { self.table.bucket_mut(index) };
             if bucket.is_empty() {
                 bucket.init(probe_length, fragment, entry);
-                return;
+                return landing.unwrap_or(index);
             }
             let resident_pl = bucket.probe_length(index, mask);
             if resident_pl < probe_length {
@@ -273,6 +280,9 @@ where
                 // the slot is live and its entry is initialized.
                 let (rich_fragment, rich_entry) = unsafe { bucket.take_occupied() };
                 bucket.init(probe_length, fragment, entry); // incoming settles here
+                if landing.is_none() {
+                    landing = Some(index); // the incoming entry's final home
+                }
                 // carry the evicted (richer) resident onward; it sat at
                 // probe length resident_pl, so it resumes from there.
                 fragment = rich_fragment;
@@ -338,7 +348,7 @@ where
             // cases 1 + 2: empty slot, or a richer resident → key absent,
             // insert here.
             if is_empty || resident_pl < probe_length {
-                self.place_from(index, probe_length, fragment, (key, value));
+                let _ = self.place_from(index, probe_length, fragment, (key, value));
                 self.table.set_len(self.table.len() + 1);
                 return None;
             }
@@ -403,7 +413,7 @@ where
             // `new_mask < 2^32`, the home derived from the fragment equals the
             // one the full hash would give, so no re-hashing is needed.
             let home = (fragment as usize) & new_mask;
-            self.place_from(home, 0, fragment, entry);
+            let _ = self.place_from(home, 0, fragment, entry);
         }
         self.table.set_len(old.len());
     }
@@ -586,29 +596,82 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // STEP 1: locate the slot; a miss is `None`.
+        // Locate the slot; a miss is `None`. The actual removal — move out,
+        // backshift, account — lives in `remove_at`, shared with the entry
+        // API's `OccupiedEntry::remove`.
         let index = self.find_index(key)?;
+        Some(self.remove_at(index).1)
+    }
 
-        // STEP 2: move the entry out *before* the backshift overwrites the
-        // slot. `take_occupied` leaves the slot's `raw_state` reading
-        // "occupied" but its bytes stale — the backshift's first copy (or
-        // the final `set_empty`) is what makes the table consistent again.
-        //
-        // Panic safety: `_key` is bound (not `_`) so the owned key's
-        // destructor runs at scope end — *after* the table is whole again
-        // (backshift done, slot emptied, len decremented). If we dropped it
-        // here and `K::drop` panicked, unwinding would leave a stale slot
-        // marked occupied for `RawTable::drop` to re-read. `value` is
-        // likewise handed back only once the table is consistent.
-        //
-        // SAFETY: `find_index` only returns occupied indices, so the slot
-        // is live and its entry can be moved out exactly once.
-        let (_frag, (_key, value)) = unsafe { self.table.bucket_mut(index).take_occupied() };
-
-        // STEP 3: close the gap, then account for the removed entry.
+    /// Remove the entry at a *known-occupied* `index`, returning the owned
+    /// `(key, value)` pair. Shared by [`remove`](Self::remove) (which has
+    /// just located the slot) and the entry API's `OccupiedEntry::remove`
+    /// (which captured it at `entry` time).
+    ///
+    /// The entry is moved out *before* the backshift overwrites the slot:
+    /// `take_occupied` leaves `raw_state` reading "occupied" but the bytes
+    /// stale, and the backshift's first copy or the final `set_empty` is
+    /// what makes the table consistent again. The moved-out pair is handed
+    /// back to the caller only once the table is whole (backshift done, len
+    /// decremented), so a `K`/`V` destructor that later panics never
+    /// observes a stale-occupied slot.
+    fn remove_at(&mut self, index: usize) -> (K, V) {
+        // SAFETY: the caller guarantees `index` is occupied, so the slot is
+        // live and its entry can be moved out exactly once.
+        let (_frag, entry) = unsafe { self.table.bucket_mut(index).take_occupied() };
         self.backshift_from(index);
         self.table.set_len(self.table.len() - 1);
-        Some(value)
+        entry
+    }
+
+    /// Insert a *known-absent* `(key, value)`, growing first if the table is
+    /// at its load factor, and return the slot the value settled into.
+    ///
+    /// The caller must have already established the key is absent (the entry
+    /// API does so when it returns a [`VacantEntry`]). Used by
+    /// `VacantEntry::insert` to place the entry and then borrow the value
+    /// out of its landing slot.
+    fn insert_known_absent(&mut self, key: K, value: V) -> usize {
+        if self.table.len() >= self.capacity() {
+            self.grow();
+        }
+        let mask = self.table.capacity() - 1;
+        let (fragment, index) = Self::split_hash(self.hash(&key), mask);
+        let landed = self.place_from(index, 0, fragment, (key, value));
+        self.table.set_len(self.table.len() + 1);
+        landed
+    }
+
+    /// Gets the given key's corresponding entry for in-place manipulation.
+    ///
+    /// Probes once and returns a typed [`Entry`] capturing the result: an
+    /// [`OccupiedEntry`] holding the located slot, or a [`VacantEntry`]
+    /// holding the owned key ready to insert.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map: HashMap<&str, i32> = HashMap::new();
+    /// // Insert-or-default, then accumulate in place.
+    /// for word in ["a", "b", "a", "a"] {
+    ///     *map.entry(word).or_insert(0) += 1;
+    /// }
+    /// assert_eq!(map.get("a"), Some(&3));
+    /// assert_eq!(map.get("b"), Some(&1));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1) to probe; a subsequent vacant insert is amortized
+    /// *O*(1) (it may trigger a resize).
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
+        // The lookup borrow ends with the returned `Option<usize>`, freeing
+        // `self` to be moved into whichever entry variant we build.
+        match self.find_index(&key) {
+            Some(index) => Entry::Occupied(OccupiedEntry { map: self, index }),
+            None => Entry::Vacant(VacantEntry { map: self, key }),
+        }
     }
 
     /// Restore the Robin Hood invariant after the entry at `from` has been
@@ -1187,5 +1250,233 @@ impl<K: Eq + Hash, V, S: BuildHasher + Default> FromIterator<(K, V)> for HashMap
         let mut map = Self::with_hasher(S::default());
         map.extend(iter);
         map
+    }
+}
+
+/// A view into a single entry in a [`HashMap`], which may be occupied or
+/// vacant. Constructed by [`HashMap::entry`].
+///
+/// The `S` parameter rides along from the map the entry borrows; it
+/// defaults to [`FxBuildHasher`] like `HashMap` itself.
+pub enum Entry<'a, K, V, S = FxBuildHasher> {
+    /// The key is present in the map.
+    Occupied(OccupiedEntry<'a, K, V, S>),
+    /// The key is absent; the entry owns it, ready to insert.
+    Vacant(VacantEntry<'a, K, V, S>),
+}
+
+/// A view into an occupied entry in a [`HashMap`]. Part of [`Entry`].
+pub struct OccupiedEntry<'a, K, V, S = FxBuildHasher> {
+    map: &'a mut HashMap<K, V, S>,
+    /// The located bucket. It stays valid for the entry's whole lifetime
+    /// because the exclusive `&mut map` borrow prevents any mutation that
+    /// could move or vacate the slot.
+    index: usize,
+}
+
+/// A view into a vacant entry in a [`HashMap`]. Part of [`Entry`].
+///
+/// Holds the owned key rather than a slot: inserting may grow the table
+/// and re-home everything, so any pre-located slot would be invalid by
+/// the time the value goes in.
+pub struct VacantEntry<'a, K, V, S = FxBuildHasher> {
+    map: &'a mut HashMap<K, V, S>,
+    key: K,
+}
+
+impl<'a, K, V, S> Entry<'a, K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    /// Ensures a value is in the entry, inserting `default` if vacant, and
+    /// returns a mutable reference to the resident value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map: HashMap<&str, i32> = HashMap::new();
+    /// *map.entry("a").or_insert(1) += 10;
+    /// assert_eq!(map.get("a"), Some(&11));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Amortized *O*(1).
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    /// Like [`or_insert`](Self::or_insert), but the default is computed
+    /// lazily, only when the entry is vacant.
+    ///
+    /// # Time complexity
+    ///
+    /// Amortized *O*(1) plus the cost of `default`.
+    pub fn or_insert_with<F: FnOnce() -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default()),
+        }
+    }
+
+    /// Like [`or_insert_with`](Self::or_insert_with), but the closure is
+    /// handed the key being inserted.
+    ///
+    /// # Time complexity
+    ///
+    /// Amortized *O*(1) plus the cost of `default`.
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let value = default(entry.key());
+                entry.insert(value)
+            }
+        }
+    }
+
+    /// Returns a reference to this entry's key — the resident key if
+    /// occupied, the to-be-inserted key if vacant.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1).
+    #[must_use]
+    pub fn key(&self) -> &K {
+        match self {
+            Entry::Occupied(entry) => entry.key(),
+            Entry::Vacant(entry) => entry.key(),
+        }
+    }
+
+    /// Runs `f` on the value if the entry is occupied, then returns the
+    /// entry, so it composes ahead of [`or_insert`](Self::or_insert).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use koala_std::collections::HashMap;
+    /// let mut map: HashMap<&str, i32> = HashMap::new();
+    /// map.insert("a", 1);
+    /// map.entry("a").and_modify(|v| *v += 100).or_insert(0);
+    /// map.entry("b").and_modify(|v| *v += 100).or_insert(0);
+    /// assert_eq!(map.get("a"), Some(&101));
+    /// assert_eq!(map.get("b"), Some(&0));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(1) plus the cost of `f`.
+    #[must_use]
+    pub fn and_modify<F: FnOnce(&mut V)>(mut self, f: F) -> Self {
+        if let Entry::Occupied(entry) = &mut self {
+            f(entry.get_mut());
+        }
+        self
+    }
+}
+
+impl<'a, K, V, S> Entry<'a, K, V, S>
+where
+    K: Hash + Eq,
+    V: Default,
+    S: BuildHasher,
+{
+    /// Ensures a value is in the entry, inserting `V::default()` if vacant.
+    ///
+    /// # Time complexity
+    ///
+    /// Amortized *O*(1).
+    pub fn or_default(self) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(V::default()),
+        }
+    }
+}
+
+impl<'a, K, V, S> OccupiedEntry<'a, K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    /// A reference to the key in the map for this entry.
+    #[must_use]
+    pub fn key(&self) -> &K {
+        // SAFETY: `index` was located by `entry` and the exclusive `&mut map`
+        // borrow has prevented any mutation that could vacate it, so the slot
+        // is still live.
+        unsafe { self.map.table.bucket(self.index).key() }
+    }
+
+    /// A reference to the value.
+    #[must_use]
+    pub fn get(&self) -> &V {
+        // SAFETY: as in `key` — the captured slot is still occupied.
+        unsafe { self.map.table.bucket(self.index).value() }
+    }
+
+    /// A mutable reference to the value, borrowed for the entry.
+    pub fn get_mut(&mut self) -> &mut V {
+        // SAFETY: as in `key` — the captured slot is still occupied.
+        unsafe { self.map.table.bucket_mut(self.index).value_mut() }
+    }
+
+    /// Converts the entry into a mutable reference to the value, with the
+    /// map's lifetime rather than the entry's.
+    #[must_use]
+    pub fn into_mut(self) -> &'a mut V {
+        // SAFETY: as in `key` — the captured slot is still occupied.
+        unsafe { self.map.table.bucket_mut(self.index).value_mut() }
+    }
+
+    /// Sets the value of the entry, returning the previous value.
+    pub fn insert(&mut self, value: V) -> V {
+        mem::replace(self.get_mut(), value)
+    }
+
+    /// Removes the entry, returning the value.
+    #[must_use]
+    pub fn remove(self) -> V {
+        self.remove_entry().1
+    }
+
+    /// Removes the entry, returning the owned key and value.
+    #[must_use]
+    pub fn remove_entry(self) -> (K, V) {
+        self.map.remove_at(self.index)
+    }
+}
+
+impl<'a, K, V, S> VacantEntry<'a, K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    /// A reference to the key that would be inserted.
+    #[must_use]
+    pub fn key(&self) -> &K {
+        &self.key
+    }
+
+    /// Takes ownership of the key, leaving the map unchanged.
+    #[must_use]
+    pub fn into_key(self) -> K {
+        self.key
+    }
+
+    /// Inserts the entry's key with `value`, returning a mutable reference
+    /// to the value in its landing slot.
+    pub fn insert(self, value: V) -> &'a mut V {
+        let index = self.map.insert_known_absent(self.key, value);
+        // SAFETY: `insert_known_absent` just placed the entry and returned the
+        // occupied slot it settled into, so the value there is initialized;
+        // `self.map` is `&'a mut`, so the reference carries the map's lifetime.
+        unsafe { self.map.table.bucket_mut(index).value_mut() }
     }
 }

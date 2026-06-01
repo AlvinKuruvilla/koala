@@ -858,7 +858,26 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
   `with_hasher(S::default())` + `extend`. `hash_map_traits.rs` covers
   clone independence (boxed values under miri), order-independent
   equality, the inequality cases, extend/overwrite, and collect.
-  Still outstanding in Phase 5: only the `entry` API (5c).
+- **Phase 5c (`entry` API)** — `Entry` / `OccupiedEntry` / `VacantEntry`,
+  `HashMap::entry`, and `or_insert` / `or_insert_with` /
+  `or_insert_with_key` / `or_default` / `key` / `and_modify` plus the
+  occupied (`get` / `get_mut` / `into_mut` / `insert` / `remove` /
+  `remove_entry`) and vacant (`key` / `into_key` / `insert`) methods.
+  The design is *asymmetric capture*: `OccupiedEntry` holds the bucket
+  index (safe — the exclusive `&mut map` borrow freezes the table so the
+  slot can't move), while `VacantEntry` holds the owned key, never a
+  slot, because its insert may grow and re-home everything. The crux:
+  Robin Hood displacement means a vacant insert's value doesn't land at
+  its home, and the key is moved into the table so it can't be re-probed
+  — so `place_from` now *returns the landing index* (first slot the
+  incoming entry settles into), which is what lets `VacantEntry::insert`
+  hand back a correct `&mut V`. Removal goes through a new `remove_at`
+  extracted from `remove`, shared with `OccupiedEntry::remove`.
+  `hash_map_entry.rs` covers the occupied/vacant surface, the combinators,
+  the word-count idiom, and the load-bearing
+  `vacant_insert_survives_a_resize` (500 fresh inserts, each asserting
+  the returned reference holds the right value through every grow).
+  **Phase 5 is now complete.**
 
 ### Deviations from the phase plan as originally written
 
@@ -873,22 +892,25 @@ to `master`). Landed, each its own commit, all `clippy`-clean and
 
 ### Next up
 
-Phases 3 (basic API) and 4 (capacity management) are complete, and
-Phase 5 is all but done: every method on the 3/4 checklists (`insert`,
-`get`, `get_mut`, `contains_key`, `remove`, `reserve`, `shrink_to_fit`),
-the iterator surface (`iter` / `iter_mut` / `IntoIterator`), the
-key/value projections (`keys` / `values` / `values_mut`), and the trait
-impls (`Clone`, `Debug`, `PartialEq` / `Eq`, `Extend`, `FromIterator`)
-exist, are differentially validated against `std` where applicable, and
-are miri-clean.
+Phases 3 (basic API), 4 (capacity management), and 5 (iterators,
+projections, trait impls, and the `entry` API) are all complete. Every
+method across those checklists exists, is differentially validated
+against `std` where applicable, and is miri-clean. `HashMap` is
+feature-complete.
 
-- **5c** (the only Phase 5 chunk left) — the `entry` API: `Entry` /
-  `OccupiedEntry` / `VacantEntry`, `HashMap::entry`, and the
-  `or_insert` / `or_insert_with` / `and_modify` methods. This is its own
-  sub-design — the entry holds a located bucket position across the
-  borrow and has to cope with a resize on the vacant-insert path.
-- **Phase 6** — `HashSet<T>` as a thin `HashMap<T, ()>` wrapper, once
-  the `entry` surface it leans on exists.
+- **Phase 6** — `HashSet<T>` as a thin `HashMap<T, ()>` wrapper:
+  `insert`/`contains`/`remove` returning `bool`, the iterator surface,
+  the same trait impls, and the set operations (`intersection`, `union`,
+  `difference`, `symmetric_difference`, `is_subset`, `is_superset`).
+- **Phase 7** — test/miri hardening: a `quickcheck` differential harness
+  (random `Op` sequence vs `std` in lock-step), explicit ZST tests
+  (`HashMap<(), V>`, `HashMap<K, ()>`), drop-ordering tests with a
+  `DropRecorder`, and a `HashMap<String, i32>` cached-fragment test.
+  These are the milestone-1 exit criteria.
+- **Phase 8** — documentation polish: module-level design doc, a
+  doc-test/`# Time complexity` audit, and a roadmap progress-log update
+  (which should also correct `koala-std-roadmap.md`'s stale "linear
+  probing + tombstones" line — the build is Robin Hood + backshift).
 
 ## Implementation checklist
 

@@ -31,4 +31,6 @@
 mod hash_map;
 mod raw_table;
 
-pub use hash_map::{HashMap, IntoIter, Iter, IterMut, Keys, Values, ValuesMut};
+pub use hash_map::{
+    Entry, HashMap, IntoIter, Iter, IterMut, Keys, OccupiedEntry, VacantEntry, Values, ValuesMut,
+};
