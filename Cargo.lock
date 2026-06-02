@@ -3127,7 +3127,9 @@ name = "koala-ui"
 version = "0.1.0"
 dependencies = [
  "koala-browser",
+ "koala-common",
  "koala-std",
+ "libc",
  "slint",
  "slint-build",
 ]

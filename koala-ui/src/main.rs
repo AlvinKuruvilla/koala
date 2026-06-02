@@ -34,6 +34,7 @@
 //! a render at the current viewport.
 
 mod browser_page;
+mod devhud;
 mod error_page;
 mod landing;
 mod tab_state;
@@ -48,10 +49,30 @@ use slint::{
 
 use tab_state::TabState;
 
+// The developer HUD reads process-wide heap stats, which requires the
+// counting allocator to be the registered global allocator. It is
+// always installed (not feature-gated) so the HUD is a runtime menu
+// toggle rather than a rebuild: a few relaxed atomic ops per
+// alloc/free, negligible for an interactive browser, and the only way
+// to keep the live-bytes total correct (counting can't be paused at
+// runtime without it going out of sync).
+#[global_allocator]
+static GLOBAL: koala_common::alloc_count::CountingAllocator =
+    koala_common::alloc_count::CountingAllocator;
+
 slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
     let window = MainWindow::new()?;
+
+    // Developer HUD: a second window opened from the View → Developer
+    // HUD menu item (⌘⇧M). Created lazily on first open — *inside* the
+    // running event loop — rather than eagerly here; an up-front,
+    // not-yet-shown second window is an un-idiomatic Slint pattern and
+    // was slow to first paint. The slot is shared between the toggle
+    // (which creates/shows/hides it) and the sample timer (which pushes
+    // frames into it when it exists).
+    let hud: Rc<RefCell<Option<DevHudWindow>>> = Rc::new(RefCell::new(None));
 
     // Tab storage. `Rc<RefCell<Vec<Rc<TabState>>>>` lets the list
     // itself be mutated (new tab / close tab) while each tab can
@@ -86,6 +107,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(i) else { return };
             window.set_url_text(SharedString::from(url.as_str()));
+            window.set_committed_url(SharedString::from(url.as_str()));
             *tab.url_text.borrow_mut() = url.clone();
             tab.page.borrow().request_load(&url);
             tab.expecting_paint.set(true);
@@ -228,6 +250,32 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = slint::quit_event_loop();
     });
 
+    // Toggle the HUD window: create-and-show on first open, then
+    // show/hide on subsequent toggles. Querying the window's own
+    // visibility (rather than tracking a bool) keeps the menu in sync
+    // even if the user closes the HUD via its native close button.
+    {
+        let hud = hud.clone();
+        window.on_toggle_devhud(move || {
+            let mut slot = hud.borrow_mut();
+            match slot.as_ref() {
+                Some(w) if w.window().is_visible() => {
+                    let _ = w.hide();
+                }
+                Some(w) => {
+                    let _ = w.show();
+                }
+                None => match DevHudWindow::new() {
+                    Ok(w) => {
+                        let _ = w.show();
+                        *slot = Some(w);
+                    }
+                    Err(e) => eprintln!("failed to open developer HUD: {e}"),
+                },
+            }
+        });
+    }
+
     let timer = Timer::default();
     let weak = window.as_weak();
     let tabs_for_tick = tabs.clone();
@@ -289,8 +337,36 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // HUD sampler. Runs continuously so the chart carries real history
+    // even before the window is first opened (and across closes); the
+    // frame is only pushed when the window exists. 250 ms keeps the
+    // curve visibly live while still giving stable per-interval rates.
+    let hud_timer = Timer::default();
+    {
+        let hud = hud.clone();
+        let mut sampler = devhud::HudSampler::new();
+        hud_timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
+            let frame = sampler.sample();
+            // `sample()` doesn't touch `hud`, so holding the borrow
+            // across the property pushes is safe (single-threaded loop).
+            let slot = hud.borrow();
+            let Some(w) = slot.as_ref() else { return };
+            w.set_live(SharedString::from(format!("{:.1} MB", frame.live_mb)));
+            w.set_peak(SharedString::from(format!("{:.1} MB", frame.peak_mb)));
+            w.set_alloc_rate(SharedString::from(format!("{:.1} MB/s", frame.alloc_rate_mb_s)));
+            w.set_alloc_calls(SharedString::from(format!("{:.0}/s", frame.alloc_calls_per_s)));
+            w.set_cpu(SharedString::from(format!("{:.0}%", frame.cpu_pct)));
+            w.set_axis_max(SharedString::from(format!("{:.0} MB", frame.axis_max_mb)));
+            w.set_heap_area(SharedString::from(frame.heap_area));
+            w.set_heap_line(SharedString::from(frame.heap_line));
+        });
+    }
+
     window.run()?;
     drop(timer);
+    drop(hud_timer);
+    // Drop any open HUD window after the loop ends.
+    drop(hud);
     Ok(())
 }
 
@@ -333,7 +409,16 @@ fn refresh_tab_entry(model: &VecModel<TabEntry>, index: usize, state: &TabState)
 fn sync_window_to_active_tab(window: &MainWindow, active_idx: usize, tab: &TabState) {
     window.set_active_tab(i32::try_from(active_idx).unwrap_or(0));
     window.set_page_title(SharedString::from(tab.title.borrow().as_str()));
-    window.set_url_text(SharedString::from(tab.url_text.borrow().as_str()));
+    // `committed-url` is the source of truth for Esc / blur reverts,
+    // so it always tracks the loaded address. The visible text, by
+    // contrast, is only refreshed when the user isn't actively
+    // editing — a background load that commits while you're typing a
+    // new address shouldn't wipe what you've entered.
+    let committed = SharedString::from(tab.url_text.borrow().as_str());
+    window.set_committed_url(committed.clone());
+    if !window.get_location_focused() {
+        window.set_url_text(committed);
+    }
     window.set_back_enabled(tab.can_go_back.get());
     window.set_forward_enabled(tab.can_go_forward.get());
     window.set_loading(tab.expecting_paint.get());

@@ -12,7 +12,10 @@ path = "src/main.rs"
 [dependencies]
 slint = "1.16"
 koala-browser.workspace = true
+koala-common.workspace = true
 koala-std.workspace = true
+# Process CPU sampling for the developer HUD (`getrusage`).
+libc = "0.2"
 
 [build-dependencies]
 slint-build = "1.16"

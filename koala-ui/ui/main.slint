@@ -17,8 +17,12 @@ import {
     ProgressIndicator, Palette,
 } from "std-widgets.slint";
 import { TabEntry, TabItem } from "tabs.slint";
+import { DevHudWindow } from "devhud.slint";
 
-export { TabEntry }
+// Re-exported so `slint::include_modules!()` generates the Rust binding
+// for the second window (Slint only publishes bindings for components
+// in the entry module's export list).
+export { TabEntry, DevHudWindow }
 
 export component MainWindow inherits Window {
     title: root.page-title;
@@ -36,6 +40,16 @@ export component MainWindow inherits Window {
     in property <bool> loading: false;
     in-out property <string> url-text;
 
+    // The committed page address — the URL actually loaded. Kept
+    // separate from `url-text` (which tracks live keystrokes through
+    // the two-way binding below) so Esc and click-away can restore
+    // the real URL after a discarded edit.
+    in property <string> committed-url;
+    // True while the location bar holds keyboard focus. Lets the Rust
+    // side avoid stomping an in-progress edit when a background load
+    // commits its URL.
+    out property <bool> location-focused: url-input.has-focus;
+
     out property <length> viewport-width: viewport.width;
     out property <length> viewport-height: viewport.height;
 
@@ -47,6 +61,9 @@ export component MainWindow inherits Window {
     callback tab-closed(int);
     callback new-tab();
     callback quit-requested();
+    // Open/close the developer HUD window. Handled in Rust, which owns
+    // the second window's lifecycle.
+    callback toggle-devhud();
 
     // Application menu bar. Native NSMenu on macOS, in-window
     // strip elsewhere. Must be a direct child of `Window` —
@@ -93,6 +110,11 @@ export component MainWindow inherits Window {
                 title: "Focus Location Bar";
                 shortcut: @keys(Control + L);
                 activated => { url-input.focus(); }
+            }
+            MenuItem {
+                title: "Developer HUD";
+                shortcut: @keys(Control + Shift + M);
+                activated => { root.toggle-devhud(); }
             }
         }
         Menu {
@@ -170,16 +192,33 @@ export component MainWindow inherits Window {
                 text <=> root.url-text;
                 accepted(text) => { root.navigate(text); }
                 changed has-focus => {
-                    // Browser convention: focusing the URL bar
-                    // selects the whole address so the next
-                    // keystroke replaces it. Re-focus also
-                    // re-selects, matching Safari / Chrome /
-                    // Firefox. Click-to-position cursor still
-                    // works on subsequent clicks because
-                    // `has-focus` doesn't change then.
+                    // Browser convention: focusing the URL bar (click
+                    // or ⌘L) selects the whole address so the next
+                    // keystroke replaces it. Click-to-position and
+                    // double-click-to-select-a-word still work once
+                    // focused because `has-focus` doesn't change then.
+                    //
+                    // Losing focus without committing discards the
+                    // edit and snaps back to the loaded URL — Chrome,
+                    // Safari and Firefox all revert a half-typed
+                    // address on blur rather than leaving it in place.
                     if (self.has-focus) {
                         self.select-all();
+                    } else {
+                        self.text = root.committed-url;
                     }
+                }
+                // Esc discards the edit and restores the committed
+                // URL, re-selecting it. This is the first-Esc
+                // behaviour every mainstream browser shares; focus
+                // stays in the bar so the user can keep typing.
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        self.text = root.committed-url;
+                        self.select-all();
+                        return EventResult.accept;
+                    }
+                    return EventResult.reject;
                 }
                 horizontal-stretch: 1;
             }
