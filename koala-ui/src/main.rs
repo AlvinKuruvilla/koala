@@ -86,6 +86,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(i) else { return };
             window.set_url_text(SharedString::from(url.as_str()));
+            window.set_committed_url(SharedString::from(url.as_str()));
             *tab.url_text.borrow_mut() = url.clone();
             tab.page.borrow().request_load(&url);
             tab.expecting_paint.set(true);
@@ -333,7 +334,16 @@ fn refresh_tab_entry(model: &VecModel<TabEntry>, index: usize, state: &TabState)
 fn sync_window_to_active_tab(window: &MainWindow, active_idx: usize, tab: &TabState) {
     window.set_active_tab(i32::try_from(active_idx).unwrap_or(0));
     window.set_page_title(SharedString::from(tab.title.borrow().as_str()));
-    window.set_url_text(SharedString::from(tab.url_text.borrow().as_str()));
+    // `committed-url` is the source of truth for Esc / blur reverts,
+    // so it always tracks the loaded address. The visible text, by
+    // contrast, is only refreshed when the user isn't actively
+    // editing — a background load that commits while you're typing a
+    // new address shouldn't wipe what you've entered.
+    let committed = SharedString::from(tab.url_text.borrow().as_str());
+    window.set_committed_url(committed.clone());
+    if !window.get_location_focused() {
+        window.set_url_text(committed);
+    }
     window.set_back_enabled(tab.can_go_back.get());
     window.set_forward_enabled(tab.can_go_forward.get());
     window.set_loading(tab.expecting_paint.get());
