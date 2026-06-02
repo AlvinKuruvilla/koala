@@ -59,6 +59,26 @@ static FREE_CALLS: AtomicUsize = AtomicUsize::new(0);
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
 
+/// Inclusive upper bounds (bytes) of the allocation-size histogram
+/// buckets; the last is `usize::MAX` (catch-all).
+///
+/// The low buckets straddle the small-string-optimization range — most
+/// SSO string types inline up to ~22–24 bytes — so `≤16` + `≤24`
+/// together answer "what fraction of allocations could an SSO string
+/// have kept off the heap?".
+pub const SIZE_BUCKET_BOUNDS: [usize; 8] = [16, 24, 32, 64, 128, 256, 1024, usize::MAX];
+
+/// Per-bucket allocation counts, parallel to [`SIZE_BUCKET_BOUNDS`].
+static SIZE_BUCKETS: [AtomicUsize; 8] = [const { AtomicUsize::new(0) }; 8];
+
+/// Index of the first bucket whose upper bound covers `size`.
+fn bucket_index(size: usize) -> usize {
+    SIZE_BUCKET_BOUNDS
+        .iter()
+        .position(|&bound| size <= bound)
+        .unwrap_or(SIZE_BUCKET_BOUNDS.len() - 1)
+}
+
 /// A `#[global_allocator]` that forwards every request to the system
 /// allocator and records the byte counts.
 ///
@@ -112,6 +132,18 @@ pub fn snapshot() -> AllocSnapshot {
     }
 }
 
+/// Read the cumulative per-bucket allocation counts, parallel to
+/// [`SIZE_BUCKET_BOUNDS`]. Snapshot before and after a region and
+/// subtract element-wise to get that region's allocation-size profile.
+#[must_use]
+pub fn size_histogram() -> [usize; SIZE_BUCKET_BOUNDS.len()] {
+    let mut out = [0usize; SIZE_BUCKET_BOUNDS.len()];
+    for (slot, bucket) in out.iter_mut().zip(SIZE_BUCKETS.iter()) {
+        *slot = bucket.load(Ordering::Relaxed);
+    }
+    out
+}
+
 /// Reset the peak high-water mark down to the current live footprint.
 ///
 /// Call this immediately before a region you want a clean peak for;
@@ -129,6 +161,7 @@ pub fn reset_peak() {
 fn record_alloc(size: usize) {
     let _ = TOTAL_ALLOCATED.fetch_add(size, Ordering::Relaxed);
     let _ = ALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
+    let _ = SIZE_BUCKETS[bucket_index(size)].fetch_add(1, Ordering::Relaxed);
     let new_live = LIVE.fetch_add(size, Ordering::Relaxed) + size;
 
     let mut peak = PEAK.load(Ordering::Relaxed);
