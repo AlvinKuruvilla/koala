@@ -142,6 +142,17 @@ pub(crate) fn run(
     let setup_alloc = setup_alloc.expect("at least one setup iteration ran");
     let setup_size_histogram = setup_histogram.expect("at least one setup iteration ran");
 
+    // Attribute the small-allocation bucket to call sites. One extra load
+    // under the armed allocator (kept out of the timing/alloc samples
+    // above, since backtrace capture is slow), printing a top-N table to
+    // stderr — the bench JSON on stdout stays clean.
+    #[cfg(feature = "alloc-attribution")]
+    {
+        koala_common::alloc_count::attribution::arm(24);
+        let _ = load_document(url).with_context(|| format!("loading {url}"))?;
+        koala_common::alloc_count::attribution::dump(30);
+    }
+
     let font_provider = FontProvider::load();
 
     // Drain any spans from font loading so they don't pollute the
