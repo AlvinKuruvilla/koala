@@ -106,8 +106,31 @@ bench url="koala-ui/res/landing.html":
 #   just bench-live https://google.com
 #   just bench-live https://example.com > /tmp/live.json
 bench-live url:
+    # `--setup-iterations 1 --setup-warmup 0`: each setup load is a live
+    # network fetch, so the multi-run setup aggregation (default 15 warm +
+    # 10 measured = 25 fetches) would hammer the server. Live numbers are
+    # network-variance-dominated anyway, so a single load is the right
+    # shape here.
     cargo run --release --features bench --bin koala -- \
-        --bench "{{url}}" --width 2048 --height 1536
+        --bench "{{url}}" --width 2048 --height 1536 \
+        --setup-iterations 1 --setup-warmup 0
+
+# Compare two bench JSON reports and print a colored before→after
+# delta table (improvements green, regressions red, noise dimmed).
+# Lower is better for every metric. Capture two reports with
+# `just bench ... > before.json` then `> after.json` across the
+# builds you want to compare.
+#
+# Caveat: allocation deltas are deterministic and trustworthy; setup
+# timing carries a few percent of cross-process variance even with the
+# warmup ramp, so read small timing deltas with that in mind. Capture
+# both reports on an otherwise-idle machine.
+#
+#   just bench tmp/before.json   # (capture, see `just bench` redirect)
+#   just bench-diff tmp/before.json tmp/after.json
+bench-diff before after:
+    cargo run --release --features bench --bin koala -- \
+        --bench-diff "{{before}}" "{{after}}"
 
 # Re-fetch a remote URL into `.bench-cache/` so the next `just bench`
 # against it sees fresh content. No-op for file paths (they're

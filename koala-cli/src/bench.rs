@@ -1,13 +1,15 @@
 //! Per-render timing harness for `--bench` mode.
 //!
-//! Loads the requested document once (timed as a coarse "setup"
-//! number), warms the engine with a few discard-iterations, then
-//! runs N sample iterations of [`render_document_once`]. A
-//! `tracing_subscriber::Layer` installed at startup collects each
-//! span's close-time elapsed into a thread-local event log; the
-//! harness drains the log between samples and bins durations by
-//! span name. The output is a JSON report with per-stage mean /
-//! p50 / p95 / min / max, plus the setup cost.
+//! Loads the requested document `setup_iterations` times (aggregating
+//! the per-load setup stages so they are as comparable as the render
+//! numbers), then warms the engine and runs N sample iterations of
+//! [`render_document_once`]. A `tracing_subscriber::Layer` installed at
+//! startup collects each span's close-time elapsed into a thread-local
+//! event log; the harness drains the log between loads/renders and bins
+//! durations by span name. The output is a JSON report with per-stage
+//! mean / p50 / p95 / min / max for both setup and render, plus heap
+//! accounting. The schema is consumed by `--bench-diff` (see
+//! `bench_diff.rs`).
 //!
 //! Only compiled when the `bench` feature is enabled. The
 //! `tracing` spans themselves live in `koala-browser` and
@@ -21,13 +23,15 @@
 //! event log is sufficient — no cross-thread aggregation needed.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
 use koala_browser::{FontProvider, load_document, warning};
 use koala_common::alloc_count::{reset_peak, snapshot};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use tracing_subscriber::prelude::*;
@@ -58,7 +62,12 @@ pub(crate) fn run(
     height: u32,
     iterations: u32,
     warmup: u32,
+    setup_iterations: u32,
+    setup_warmup: u32,
 ) -> Result<()> {
+    // At least one measured load is required — we keep its document for
+    // the render loop and need a non-empty sample set for `stats`.
+    let setup_iterations = setup_iterations.max(1);
     // Suppress informational stderr noise — font-load lines,
     // image-decode warnings, CSS parser warn_once messages. These
     // are useful for diagnosing real-world rendering, but during a
@@ -68,28 +77,66 @@ pub(crate) fn run(
 
     install_subscriber();
 
-    // Bracket the load with an allocation snapshot. `reset_peak`
-    // pins the high-water baseline to whatever is live now (subscriber
-    // + counters), so `setup_alloc.peak_live_bytes` reflects only the
-    // load itself.
-    let alloc_before_setup = snapshot();
-    reset_peak();
-    let setup_start = Instant::now();
-    let doc = load_document(url).with_context(|| format!("loading {url}"))?;
-    let setup_us = setup_start.elapsed().as_micros() as u64;
-    let setup_alloc = AllocDelta::between(alloc_before_setup, snapshot());
-
-    // Setup spans (html_parse, css_extract, css_cascade,
-    // image_loading, layout_tree_build, script_loading,
-    // js_execute, possibly post_js_relayout). Aggregated by name
-    // and summed because a stage like image_loading may fire once
-    // overall but cover many images — the sum is what matters,
-    // not per-call stats.
-    let setup_events = take_events();
-    let mut setup_stages: BTreeMap<String, u64> = BTreeMap::new();
-    for ev in setup_events {
-        *setup_stages.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
+    // Setup phase. A single load is too noisy to compare across builds —
+    // its stages are measured once, so a 20% run-to-run swing reads as a
+    // regression. Instead we load the document `setup_iterations` times
+    // and aggregate per-stage timings into the same `StageStats` the
+    // render loop produces, making setup numbers diff-worthy. The
+    // `setup_warmup` discard-loads first do double duty: they let lazy
+    // statics (notably the named-entity table) initialize so their
+    // one-time cost stays out of the samples, AND they ramp the CPU /
+    // warm OS caches before measurement. The latter matters more than it
+    // sounds — the measured loads run at process start, so too little
+    // warmup samples the frequency ramp and adds ~20% cross-process
+    // variance, which is exactly the noise `--bench-diff` must not show.
+    //
+    // NOTE: each load re-runs `load_document`, which re-fetches the
+    // source. For the cached-file path `just bench` uses that is a cheap
+    // local read; for a live URL it is a real network round-trip per
+    // iteration, so live benching should pass `--setup-iterations 1`.
+    for _ in 0..setup_warmup {
+        let _ = load_document(url).with_context(|| format!("loading {url}"))?;
+        let _ = take_events();
     }
+
+    let mut setup_us_samples: Vec<u64> = Vec::with_capacity(setup_iterations as usize);
+    let mut setup_stage_samples: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    let mut setup_alloc: Option<AllocDelta> = None;
+    let mut doc = None;
+    for _ in 0..setup_iterations {
+        let alloc_before = snapshot();
+        reset_peak();
+        let start = Instant::now();
+        let loaded = load_document(url).with_context(|| format!("loading {url}"))?;
+        setup_us_samples.push(start.elapsed().as_micros() as u64);
+
+        // Allocation per load is deterministic on a fixed source, so one
+        // representative sample (the first, post-warmup) is enough.
+        if setup_alloc.is_none() {
+            setup_alloc = Some(AllocDelta::between(alloc_before, snapshot()));
+        }
+
+        // A stage may fire more than once per load (e.g. image_loading
+        // per image), so sum within the load, then record that per-load
+        // total as one sample for the stage.
+        let mut this_load: BTreeMap<String, u64> = BTreeMap::new();
+        for ev in take_events() {
+            *this_load.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
+        }
+        for (name, total) in this_load {
+            setup_stage_samples.entry(name).or_default().push(total);
+        }
+
+        doc = Some(loaded);
+    }
+
+    let doc = doc.expect("setup_iterations clamped to >= 1, so the loop ran");
+    let setup_us = stats(&setup_us_samples);
+    let setup_stages: BTreeMap<String, StageStats> = setup_stage_samples
+        .into_iter()
+        .map(|(name, samples)| (name, stats(&samples)))
+        .collect();
+    let setup_alloc = setup_alloc.expect("at least one setup iteration ran");
 
     let font_provider = FontProvider::load();
 
@@ -133,6 +180,8 @@ pub(crate) fn run(
         viewport: Viewport { width, height },
         iterations,
         warmup,
+        setup_iterations,
+        setup_warmup,
         setup_us,
         setup_stages,
         setup_alloc,
@@ -225,7 +274,7 @@ fn install_subscriber() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct BenchReport {
     /// Verbatim path/URL passed on the command line. Useful when
     /// multiple report JSONs are pooled and a downstream tool
@@ -234,20 +283,24 @@ struct BenchReport {
     viewport: Viewport,
     iterations: u32,
     warmup: u32,
+    /// Number of measured setup loads aggregated into `setup_us` /
+    /// `setup_stages`, and the discard-loads run before them.
+    setup_iterations: u32,
+    setup_warmup: u32,
     /// Wall-clock cost of one `load_document` call — fetch, parse,
-    /// cascade, layout-tree build, JS execution. Single end-to-end
-    /// number; see `setup_stages` for the breakdown.
-    setup_us: u64,
-    /// Per-stage breakdown of the one-time setup, keyed by span
-    /// name (`html_parse`, `css_extract`, `css_cascade`,
-    /// `image_loading`, `layout_tree_build`, `script_loading`,
-    /// `js_execute`, optionally `post_js_relayout`). Values are
-    /// total microseconds for that stage; a stage that fires
-    /// multiple times (image_loading fetching N images) has its
-    /// per-call durations summed.
-    setup_stages: BTreeMap<String, u64>,
-    /// Heap activity attributable to the single `load_document` call
-    /// (the `setup_us` region). See [`AllocDelta`].
+    /// cascade, layout-tree build, JS execution — aggregated across
+    /// `setup_iterations` loads. See `setup_stages` for the breakdown.
+    setup_us: StageStats,
+    /// Per-stage breakdown of setup, keyed by span name (`html_parse`,
+    /// `css_extract`, `css_cascade`, `image_loading`,
+    /// `layout_tree_build`, `script_loading`, `js_execute`, optionally
+    /// `post_js_relayout`). Each value aggregates one per-load total per
+    /// measured iteration; a stage that fires multiple times within a
+    /// load (image_loading per image) is summed within that load first.
+    setup_stages: BTreeMap<String, StageStats>,
+    /// Heap activity attributable to a single `load_document` call,
+    /// sampled on the first measured load (deterministic on a fixed
+    /// source). See [`AllocDelta`].
     setup_alloc: AllocDelta,
     /// Per-stage aggregated samples for the render loop, keyed by
     /// span name. `BTreeMap` so JSON output is alphabetically
@@ -258,13 +311,13 @@ struct BenchReport {
     render_alloc: RenderAlloc,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Viewport {
     width: u32,
     height: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct StageStats {
     /// Number of samples in this bin. Equal to `iterations` for
     /// every span that fires exactly once per render. Spans that
@@ -305,7 +358,7 @@ fn stats(samples: &[u64]) -> StageStats {
 /// `koala_common::alloc_count`). Computed as the delta between two
 /// snapshots; never negative because the counters are monotonic and
 /// `peak` is reset to baseline before the region.
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 struct AllocDelta {
     /// Bytes requested during the region (allocation churn).
     bytes_allocated: u64,
@@ -351,7 +404,7 @@ impl AllocDelta {
 /// same way [`StageStats`] summarizes timings, so an iteration that
 /// allocates anomalously (a capacity resize that only some renders
 /// trip) is visible rather than averaged away.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct RenderAlloc {
     bytes_allocated: Summary,
     alloc_calls: Summary,
@@ -374,7 +427,7 @@ impl RenderAlloc {
 /// Unit-agnostic summary of a sample vector. Mirrors [`StageStats`]'s
 /// statistics but with neutral field names, since these bins hold
 /// bytes and counts rather than microseconds.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Summary {
     samples: usize,
     mean: u64,
@@ -399,4 +452,163 @@ fn summarize(samples: &[u64]) -> Summary {
         min: sorted[0],
         max: sorted[n - 1],
     }
+}
+
+// `--bench-diff`: compare two reports
+//
+// Reads two [`BenchReport`] JSONs and prints a per-metric before→after
+// table. Lower is better for every metric (less time, fewer bytes,
+// fewer allocations), so improvements render green and regressions red;
+// changes within the noise band are dimmed so a wall of ±1% noise does
+// not read as signal. Lives here, not in a separate module, so it can
+// deserialize the private report types directly.
+
+/// Percent-change threshold below which a delta is treated as noise and
+/// rendered neutral. Setup stages now aggregate across loads, but a few
+/// percent of run-to-run jitter still survives; only color past it.
+const NOISE_PCT: f64 = 2.0;
+
+/// Compare two bench reports and print a colored delta table.
+///
+/// # Errors
+///
+/// Propagates I/O errors reading either file and `serde_json` errors if
+/// a file is not a valid [`BenchReport`].
+pub(crate) fn diff(before_path: &Path, after_path: &Path) -> Result<()> {
+    let before = read_report(before_path)?;
+    let after = read_report(after_path)?;
+
+    println!("{}", "bench-diff (before → after, lower is better)".bold());
+    println!(
+        "  before: {}  (setup ×{}, render ×{})",
+        before.url, before.setup_iterations, before.iterations
+    );
+    println!(
+        "  after:  {}  (setup ×{}, render ×{})",
+        after.url, after.setup_iterations, after.iterations
+    );
+
+    println!("\n{}", "SETUP — per-stage mean µs".underline());
+    for stage in stage_union(&before.setup_stages, &after.setup_stages) {
+        print_metric(
+            &stage,
+            before.setup_stages.get(&stage).map(|s| s.mean_us),
+            after.setup_stages.get(&stage).map(|s| s.mean_us),
+        );
+    }
+    print_metric(
+        "(total load)",
+        Some(before.setup_us.mean_us),
+        Some(after.setup_us.mean_us),
+    );
+
+    println!("\n{}", "RENDER — per-stage mean µs".underline());
+    for stage in stage_union(&before.render, &after.render) {
+        print_metric(
+            &stage,
+            before.render.get(&stage).map(|s| s.mean_us),
+            after.render.get(&stage).map(|s| s.mean_us),
+        );
+    }
+
+    println!("\n{}", "ALLOCATION — bytes / calls".underline());
+    print_metric(
+        "setup bytes",
+        Some(before.setup_alloc.bytes_allocated),
+        Some(after.setup_alloc.bytes_allocated),
+    );
+    print_metric(
+        "setup alloc calls",
+        Some(before.setup_alloc.alloc_calls),
+        Some(after.setup_alloc.alloc_calls),
+    );
+    print_metric(
+        "setup peak live",
+        Some(before.setup_alloc.peak_live_bytes),
+        Some(after.setup_alloc.peak_live_bytes),
+    );
+    print_metric(
+        "render bytes (mean)",
+        Some(before.render_alloc.bytes_allocated.mean),
+        Some(after.render_alloc.bytes_allocated.mean),
+    );
+    print_metric(
+        "render alloc calls (mean)",
+        Some(before.render_alloc.alloc_calls.mean),
+        Some(after.render_alloc.alloc_calls.mean),
+    );
+    print_metric(
+        "render peak live (mean)",
+        Some(before.render_alloc.peak_live_bytes.mean),
+        Some(after.render_alloc.peak_live_bytes.mean),
+    );
+
+    Ok(())
+}
+
+fn read_report(path: &Path) -> Result<BenchReport> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading bench report '{}'", path.display()))?;
+    serde_json::from_str(&text)
+        .with_context(|| format!("parsing bench report '{}'", path.display()))
+}
+
+/// Sorted union of stage names present in either report, so a stage that
+/// appears in only one side (e.g. `post_js_relayout`) is still shown.
+fn stage_union(a: &BTreeMap<String, StageStats>, b: &BTreeMap<String, StageStats>) -> Vec<String> {
+    a.keys()
+        .chain(b.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Print one `before → after` row, colored by direction once the change
+/// clears the noise band. `None` on either side marks a stage that only
+/// one report has.
+#[allow(clippy::cast_precision_loss)] // counts/durations fit f64 for a ratio
+fn print_metric(label: &str, before: Option<u64>, after: Option<u64>) {
+    let cell = match (before, after) {
+        (Some(b), Some(a)) => {
+            let pct = if b == 0 {
+                if a == 0 { 0.0 } else { 100.0 }
+            } else {
+                (a as f64 - b as f64) / b as f64 * 100.0
+            };
+            let arrow = if a < b {
+                "↓"
+            } else if a > b {
+                "↑"
+            } else {
+                "="
+            };
+            let body = format!("{:>14} → {:>14}  {arrow}{pct:+6.1}%", commas(b), commas(a));
+            if pct.abs() < NOISE_PCT {
+                body.dimmed().to_string()
+            } else if a < b {
+                body.green().to_string()
+            } else {
+                body.red().to_string()
+            }
+        }
+        (None, Some(a)) => format!("{:>14} → {:>14}  (new)", "—", commas(a)),
+        (Some(b), None) => format!("{:>14} → {:>14}  (gone)", commas(b), "—"),
+        (None, None) => return,
+    };
+    println!("  {label:<26} {cell}");
+}
+
+/// Format an integer with thousands separators (`1234567` → `1,234,567`).
+fn commas(n: u64) -> String {
+    let digits = n.to_string();
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
