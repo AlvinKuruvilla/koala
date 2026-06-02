@@ -59,10 +59,10 @@ pub fn contains_keyword(values: &[ComponentValue], name: &str) -> bool {
 #[must_use]
 pub fn first_keyword<'a>(values: &[ComponentValue], names: &[&'a str]) -> Option<&'a str> {
     for v in values {
-        if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
-            if let Some(&name) = names.iter().find(|n| ident.eq_ignore_ascii_case(n)) {
-                return Some(name);
-            }
+        if let ComponentValue::Token(CSSToken::Ident(ident)) = v
+            && let Some(&name) = names.iter().find(|n| ident.eq_ignore_ascii_case(n))
+        {
+            return Some(name);
         }
     }
     None
