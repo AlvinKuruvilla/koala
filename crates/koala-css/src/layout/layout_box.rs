@@ -2,7 +2,7 @@
 //!
 //! [§ 9.2 Controlling box generation](https://www.w3.org/TR/CSS2/visuren.html#box-gen)
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 #[cfg(feature = "layout-trace")]
 use std::cell::Cell;
@@ -3748,7 +3748,7 @@ impl LayoutBox {
 /// [§ 15.5.15 The select element](https://html.spec.whatwg.org/multipage/rendering.html#the-select-element)
 ///
 /// Sizes approximate Chromium/Firefox defaults for common input types.
-fn form_control_intrinsic_size(tag: &str, attrs: &HashMap<String, String>) -> (f32, f32) {
+fn form_control_intrinsic_size(tag: &str, attrs: &koala_dom::AttributesMap) -> (f32, f32) {
     match tag {
         "input" => {
             let input_type = attrs.get("type").map_or("text", |v| v.as_str());

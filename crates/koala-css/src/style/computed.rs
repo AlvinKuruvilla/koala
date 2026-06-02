@@ -19,7 +19,7 @@ use crate::tokenizer::CSSToken;
 use crate::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, LengthValue};
 use koala_common::warning::warn_once;
 use serde::Serialize;
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
 ///
@@ -1832,7 +1832,11 @@ impl ComputedStyle {
     pub fn resolve_custom_properties(&mut self) {
         let keys: Vec<String> = self.custom_properties.keys().cloned().collect();
         for key in keys {
-            let raw_value = self.custom_properties[&key].clone();
+            let raw_value = self
+                .custom_properties
+                .get(&key)
+                .expect("key just read from custom_properties.keys()")
+                .clone();
             if contains_var(&raw_value) {
                 match substitute_var(&raw_value, &self.custom_properties, 0) {
                     Some(resolved) => {

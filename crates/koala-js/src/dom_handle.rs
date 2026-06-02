@@ -20,7 +20,7 @@
 //! [`JsRuntime`]: crate::JsRuntime
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::JsObject;

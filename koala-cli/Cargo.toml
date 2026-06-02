@@ -20,6 +20,7 @@ bench = ["dep:tracing-subscriber"]
 
 [dependencies]
 libc = "0.2"
+koala-common.workspace = true
 koala-browser.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true
@@ -32,6 +33,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
+koala-std.workspace = true
 
 [lints]
 workspace = true

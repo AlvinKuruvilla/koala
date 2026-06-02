@@ -8,8 +8,9 @@
 //!
 //! Generated from <https://html.spec.whatwg.org/entities.json>.
 
-use std::collections::HashMap;
 use std::sync::LazyLock;
+
+use koala_std::collections::HashMap;
 
 /// Entity data as a static array of (name, replacement) pairs.
 /// Names do not include the leading '&'.

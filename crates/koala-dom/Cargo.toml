@@ -6,6 +6,7 @@ license.workspace = true
 description = "Arena-based DOM tree for the Koala renderer"
 
 [dependencies]
+koala-std.workspace = true
 
 [lints]
 workspace = true

@@ -2,7 +2,7 @@
 
 #![allow(clippy::doc_markdown, clippy::inefficient_to_string)]
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 use koala_css::selector::{
     AttributeSelector, Combinator, PseudoClass, SimpleSelector, Specificity, parse_selector,

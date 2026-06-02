@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 slint = "1.16"
 koala-browser.workspace = true
+koala-std.workspace = true
 
 [build-dependencies]
 slint-build = "1.16"

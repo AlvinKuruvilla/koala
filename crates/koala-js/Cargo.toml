@@ -10,6 +10,7 @@ koala-css.workspace = true
 koala-dom.workspace = true
 boa_engine.workspace = true
 boa_gc = { path = "../boa/core/gc" }
+koala-std.workspace = true
 
 [lints]
 workspace = true

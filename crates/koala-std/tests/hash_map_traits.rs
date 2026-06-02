@@ -130,3 +130,59 @@ fn from_iterator_keeps_last_on_duplicate_keys() {
     assert_eq!(map.len(), 1);
     assert_eq!(map.get(&1), Some(&3));
 }
+
+// `Send` + `Sync`, inherited from the manual `RawTable` impls. The
+// engine needs both: a `HashMap` is `move`d into a render worker
+// thread (`Send`), and the HTML named-entity table is a
+// `static LazyLock<HashMap<&'static str, &'static str>>` (`Sync`, since
+// statics must be `Sync`). These tests pin both guarantees so a future
+// change to `RawTable`'s fields that silently broke them would fail
+// here rather than at a distant call site.
+
+/// Compile-time assertion: the call only type-checks if `T: Send + Sync`.
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn hash_map_is_send_and_sync() {
+    assert_send_sync::<HashMap<u64, u64>>();
+    // The exact shape the HTML entity-table static uses.
+    assert_send_sync::<HashMap<&'static str, &'static str>>();
+}
+
+#[test]
+fn hash_map_can_move_to_another_thread() {
+    // `Send`: transfer ownership into a spawned thread and read it back.
+    let map = build(500);
+    let handle = std::thread::spawn(move || {
+        let mut sum = 0u64;
+        for i in 0..500u64 {
+            sum += *map.get(&i).expect("entry present after move across threads");
+        }
+        sum
+    });
+    let sum = handle.join().expect("worker thread did not panic");
+    // sum of i*2 for i in 0..500
+    assert_eq!(sum, (0..500u64).map(|i| i * 2).sum());
+}
+
+#[test]
+fn hash_map_can_be_shared_by_ref_across_threads() {
+    use std::sync::Arc;
+
+    // `Sync`: share a single `&` across several threads doing concurrent
+    // reads. This is the static-table access pattern in miniature.
+    let map = Arc::new(build(1000));
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let map = Arc::clone(&map);
+            std::thread::spawn(move || {
+                for i in 0..1000u64 {
+                    assert_eq!(map.get(&i), Some(&(i * 2)));
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("reader thread did not panic");
+    }
+}

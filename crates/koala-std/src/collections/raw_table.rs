@@ -396,6 +396,21 @@ pub(super) struct RawTable<K, V> {
     len: usize,
     _marker: PhantomData<(K, V)>,
 }
+
+// A `RawTable` is morally `Box<[Bucket<K, V>]>` — it uniquely owns its
+// heap allocation, holds no interior mutability (every mutating method
+// takes `&mut self`; `&self` only ever reads), and introduces no
+// aliasing of its own. Its thread-safety is therefore exactly that of
+// its entries: safe to move to another thread when `K`/`V` are `Send`,
+// and safe to share by `&` when `K`/`V` are `Sync` (a shared `&`
+// permits only reads, which cannot race). These impls are written
+// manually rather than derived because the `NonNull<Bucket<K, V>>`
+// field is `!Send + !Sync` regardless of `K`/`V`, which suppresses the
+// automatic derivation; the wrapping `HashMap { table, hasher: S }`
+// then auto-derives `Send`/`Sync` from this plus `S`.
+unsafe impl<K: Send, V: Send> Send for RawTable<K, V> {}
+unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
+
 impl<K, V> RawTable<K, V> {
     /// Construct an empty `RawTable` with no heap allocation.
     ///
@@ -725,6 +740,47 @@ impl<K, V> RawTable<K, V> {
         // not a clone — the safety contract obliges the caller to ensure `to` holds
         // no value that will be dropped elsewhere, which `remove`'s backshift upholds.
         unsafe { ptr::copy_nonoverlapping(src, dst, 1) };
+    }
+    /// Drop every live entry and reset all slots to empty, keeping the
+    /// allocation for reuse.
+    ///
+    /// This is the [`Drop`] walk minus the deallocation: it runs each
+    /// occupied entry's destructor and marks its slot empty, but leaves
+    /// `buckets` allocated so the table can be refilled without
+    /// reallocating. A capacity-0 table has nothing to walk — the loop
+    /// range is empty and the dangling `buckets` pointer is never
+    /// dereferenced.
+    ///
+    /// Each bucket is marked empty *before* its entry is dropped: if a
+    /// destructor panics, the unwind triggers `RawTable`'s own `Drop`,
+    /// which skips already-emptied slots (`raw_state == 0`) and so never
+    /// double-drops the entry whose destructor just panicked. See the
+    /// "set the length last" note below for why `len` is reset only after
+    /// the walk completes.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*capacity*): every slot is visited regardless of occupancy.
+    pub(super) fn clear(&mut self) {
+        for i in 0..self.capacity {
+            // SAFETY: i < capacity, single allocation, &mut self is unique.
+            let bucket = unsafe { &mut *self.buckets.as_ptr().add(i) };
+            if bucket.raw_state != 0 {
+                // Mark empty before dropping: a panicking destructor must
+                // not leave a slot that `Drop` would drop a second time.
+                bucket.set_empty();
+                // SAFETY: was occupied, so entry is initialized; dropped once.
+                unsafe {
+                    ptr::drop_in_place(bucket.entry.as_mut_ptr());
+                }
+            }
+        }
+        // Set the length last — see the doc comment. Resetting before the
+        // walk would leave `len` lying about occupancy for the duration of
+        // the drop loop; soundness wouldn't break (Drop keys off
+        // `raw_state`, not `len`), but the invariant `len == live buckets`
+        // would be observably false mid-clear.
+        self.len = 0;
     }
 }
 

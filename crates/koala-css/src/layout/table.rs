@@ -543,7 +543,7 @@ fn set_row_group_dimensions(
 ) {
     // Collect row-group info: for each row-group child index, find the
     // min y and max y+height of its rows.
-    use std::collections::HashMap;
+    use koala_std::collections::HashMap;
     let mut group_bounds: HashMap<usize, (f32, f32)> = HashMap::new();
 
     for (row_idx, row) in rows.iter().enumerate() {

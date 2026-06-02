@@ -23,7 +23,7 @@ use koala_browser::{
 };
 use koala_css::{ComputedStyle, DisplayList, DisplayListBuilder, LayoutBox, Rect};
 use koala_dom::NodeId;
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 

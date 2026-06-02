@@ -24,7 +24,7 @@
 //! TODO: Implement proper Fetch Standard (<https://fetch.spec.whatwg.org/>).
 use base64::Engine;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 

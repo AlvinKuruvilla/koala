@@ -3,7 +3,7 @@
 //! This module implements style computation per
 //! [CSS Cascading and Inheritance Level 4](https://www.w3.org/TR/css-cascade-4/).
 
-use std::collections::HashMap;
+use koala_std::collections::HashMap;
 
 use crate::parser::{Rule, StyleRule, Stylesheet};
 use crate::selector::{ParsedSelector, Specificity, parse_selector};

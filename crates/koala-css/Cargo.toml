@@ -8,6 +8,7 @@ description = "CSS tokenizer, parser, layout engine, and cascade for the Koala r
 [dependencies]
 koala-common.workspace = true
 koala-dom.workspace = true
+koala-std.workspace = true
 serde.workspace = true
 
 [features]
