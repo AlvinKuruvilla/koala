@@ -539,6 +539,12 @@ run. Mechanical to fix; bundling them with the next round of
 crate hygiene rather than rolling them into the WPT-fix
 changeset.
 
+Additionally, `koala-css` (lib) has a pre-existing
+`collapsible-if` clippy error that blocks `cargo clippy -p
+koala-cli` (css compiles first in the chain). Surfaced while
+wiring allocation counting into the bench harness; unrelated to
+that work. Same "next round of crate hygiene" bucket.
+
 ## DOM gaps surfaced by the now-working WPT pipeline
 
 With testharness reporting fixed, the first concrete DOM gap
@@ -607,3 +613,48 @@ newer release with broader ES coverage or working around the
 specific syntax. Not blocking koala's WPT path (testharness.js
 doesn't use the offending syntax), but a recurring hit when
 testing against real sites.
+
+## koala-ui location bar — residual selection gap
+
+The URL bar now matches mainstream browsers for focus-select-all,
+Esc/blur revert, and not clobbering in-progress edits. One gesture
+is still imperfect: **double-clicking an *unfocused* URL bar selects
+the whole address rather than the word under the cursor.** Slint's
+`LineEdit` only exposes `changed has-focus` (not the originating
+mouse gesture), so the focus-gain `select-all()` fires before the
+double-click's word selection can take effect and wins. Once the bar
+is already focused, double-click-to-select-a-word works normally.
+Fixing the unfocused case would need lower-level access than the
+`LineEdit` widget gives — defer unless it becomes a real annoyance.
+
+## Developer HUD — deferred feature ideas
+
+The `koala-ui` developer HUD (View → Developer HUD, ⌘⇧M) currently
+graphs process heap + CPU over time. Brainstormed follow-ups, tabled
+2026-06-01:
+
+- **Live per-stage breakdown.** The engine already emits `tracing`
+  spans for every load phase (`html_parse`, `css_cascade`,
+  `js_execute`, `layout_tree_build`, `rasterize`) — the same data
+  `just bench` reads. Surfacing the *last navigation's* per-stage
+  timing live in the HUD would turn it into a "why is this page slow"
+  view without running the bench harness. Cost wrinkle: koala-ui loads
+  run on per-tab **worker threads**, so unlike the single-threaded
+  bench harness this needs a thread-safe span collector
+  (`Mutex`-guarded), not bench.rs's thread-local log.
+- **Per-stage allocation attribution.** Extend the above to bucket heap
+  bytes by the phase that allocated them — a cheap, koala-specific
+  "where does the memory go" (no backtraces). Needs the allocator to
+  read a thread-local "current phase" pushed/popped by a tracing layer.
+  The most interesting memory feature; more plumbing than the timing
+  version.
+- **Leak / growth flag.** Light up when live heap trends monotonically
+  upward over a window — directly serves the long-session motivation.
+  Cheap heuristic.
+- **Reset / pause / always-on-top.** Re-baseline peak + chart per
+  navigation (`alloc_count::reset_peak` exists), freeze the chart to
+  inspect, keep the HUD above the page. Cheap ergonomics.
+- **True heaptrack-style per-call-site attribution.** Backtrace capture
+  per allocation + symbolication. Real overhead; its own project.
+- **Page-complexity counts.** DOM / layout-box / computed-style node
+  counts for the active page; needs koala-browser to expose them.

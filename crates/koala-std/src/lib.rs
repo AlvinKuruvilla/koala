@@ -103,3 +103,8 @@ pub mod hash;
 // `project-memory/koala-std-hashmap-design.md` for the full
 // locked design.
 pub mod collections;
+
+// String family (milestone 2). Currently the interned-string types,
+// `FlyString` + `Interner`. See `string/mod.rs` and
+// `project-memory/koala-std-flystring-design.md`.
+pub mod string;

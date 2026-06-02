@@ -187,7 +187,7 @@ where
     {
         // Keep the `Option` and project to the key — `None` (absent value)
         // must stay `None`, not panic.
-        self.map.get_key_value(value).map(|(k, _)| k)
+        self.map.get_key_value(value).map(|(k, ())| k)
     }
 
     /// Removes `value` from the set. Returns `true` if it was present.
