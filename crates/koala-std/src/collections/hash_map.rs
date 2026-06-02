@@ -824,9 +824,29 @@ where
     }
 }
 
-/// Iteration accessors. These walk the backing without hashing, so they
-/// need no bound on `K` or `S`.
+/// Iteration accessors and bulk operations that walk the backing without
+/// hashing, so they need no bound on `K` or `S`.
 impl<K, V, S> HashMap<K, V, S> {
+    /// Removes all entries, dropping each one, but keeps the allocated
+    /// capacity for reuse.
+    ///
+    /// After `clear`, [`len`](Self::len) is `0` while
+    /// [`capacity`](Self::capacity) is unchanged — matching `std`, so a
+    /// cleared map can be refilled without reallocating.
+    ///
+    /// Needs no bound on `K` or `S`: clearing drops entries and resets
+    /// slots by reading each bucket's state, never by hashing a key. That
+    /// is what lets `HashSet::clear` — which has no `Hash`/`BuildHasher`
+    /// bounds either — delegate straight to it.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*capacity*): every bucket is visited to drop the live entries
+    /// and reset its state, regardless of how many were occupied.
+    pub fn clear(&mut self) {
+        self.table.clear();
+    }
+
     /// An iterator visiting every entry as `(&K, &V)`, in arbitrary order.
     ///
     /// # Examples
@@ -940,7 +960,9 @@ impl<K, V, S> HashMap<K, V, S> {
     ///
     /// Construction is *O*(1); a full walk is *O*(*capacity*).
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
-        ValuesMut { inner: self.iter_mut() }
+        ValuesMut {
+            inner: self.iter_mut(),
+        }
     }
 }
 
@@ -1215,9 +1237,11 @@ impl<K: Eq + Hash, V: PartialEq, S: BuildHasher> PartialEq for HashMap<K, V, S> 
         // same value" implies set equality — no key can be in `other` but
         // not `self` once the counts match.
         self.len() == other.len()
-            && self
-                .iter()
-                .all(|(key, value)| other.get(key).is_some_and(|other_value| *value == *other_value))
+            && self.iter().all(|(key, value)| {
+                other
+                    .get(key)
+                    .is_some_and(|other_value| *value == *other_value)
+            })
     }
 }
 
@@ -1236,9 +1260,7 @@ impl<K: Eq + Hash, V, S: BuildHasher> Extend<(K, V)> for HashMap<K, V, S> {
 }
 
 /// Inserts every pair from an iterator of references, for `map.extend(&other)`.
-impl<'a, K: Eq + Hash + Copy, V: Copy, S: BuildHasher> Extend<(&'a K, &'a V)>
-    for HashMap<K, V, S>
-{
+impl<'a, K: Eq + Hash + Copy, V: Copy, S: BuildHasher> Extend<(&'a K, &'a V)> for HashMap<K, V, S> {
     fn extend<T: IntoIterator<Item = (&'a K, &'a V)>>(&mut self, iter: T) {
         self.extend(iter.into_iter().map(|(&key, &value)| (key, value)));
     }

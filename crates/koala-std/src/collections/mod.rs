@@ -28,9 +28,11 @@
 //! probing methods (`insert` / `get` / `remove`) and `HashSet<T>`
 //! (Phase 6) do not exist yet.
 
-mod hash_map;
+pub mod hash_map;
+pub mod hash_set;
 mod raw_table;
 
 pub use hash_map::{
     Entry, HashMap, IntoIter, Iter, IterMut, Keys, OccupiedEntry, VacantEntry, Values, ValuesMut,
 };
+pub use hash_set::HashSet;
