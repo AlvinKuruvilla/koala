@@ -8,7 +8,7 @@
 //! The tree uses arena allocation with [`NodeId`] indices for all relationships,
 //! providing O(1) access and traversal without borrow checker issues.
 
-use std::collections::{HashMap, HashSet};
+use koala_std::collections::{HashMap, HashSet};
 
 /// Map of attribute names to values for an element.
 ///

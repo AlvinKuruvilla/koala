@@ -8,7 +8,7 @@
 //! gate themselves on [`is_quiet`]. Used by `koala-cli --wpt-protocol`
 //! so per-test stderr stays empty unless a real error fires.
 
-use std::collections::HashSet;
+use koala_std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
