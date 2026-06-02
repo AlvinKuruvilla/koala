@@ -6,7 +6,9 @@ license.workspace = true
 description = "Arena-based DOM tree for the Koala renderer"
 
 [dependencies]
-koala-std.workspace = true
+# `std` feature pulls in `FlyString` (the process-global interner needs
+# `std` sync). ElementData stores tag names as `FlyString`.
+koala-std = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

@@ -283,7 +283,7 @@ fn create_element(
 
     let new_id = with_dom_mut(|dom| {
         dom.alloc(NodeType::Element(ElementData {
-            tag_name: name,
+            tag_name: name.into(),
             attrs: AttributesMap::new(),
         }))
     })

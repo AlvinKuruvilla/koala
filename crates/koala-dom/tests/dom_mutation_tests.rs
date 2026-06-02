@@ -7,7 +7,7 @@ use koala_dom::{DomTree, ElementData, NodeId, NodeType};
 /// Helper to create an element node and return its NodeId.
 fn alloc_element(tree: &mut DomTree, tag: &str) -> NodeId {
     tree.alloc(NodeType::Element(ElementData {
-        tag_name: tag.to_string(),
+        tag_name: tag.into(),
         attrs: Default::default(),
     }))
 }

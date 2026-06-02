@@ -50,7 +50,7 @@ fn make_element_with_attrs(
         let _ = attrs.insert(k.to_string(), v.to_string());
     }
     NodeType::Element(ElementData {
-        tag_name: tag.to_string(),
+        tag_name: tag.into(),
         attrs,
     })
 }
