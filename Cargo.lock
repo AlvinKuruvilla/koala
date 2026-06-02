@@ -1401,6 +1401,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecow"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62bac48c16a993694c703f2991527d422d9efb8ec5625756004ba30e97683720"
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3117,6 +3123,7 @@ dependencies = [
 name = "koala-std"
 version = "0.1.0"
 dependencies = [
+ "ecow",
  "quickcheck",
  "quickcheck_macros",
  "rustc-hash 2.1.1",

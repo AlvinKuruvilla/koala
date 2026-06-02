@@ -23,10 +23,16 @@
 //! koala-{browser, css, html, dom, js, ...}
 //! ```
 //!
-//! The crate is strictly `#![no_std]` and uses only `alloc` for heap
-//! allocation. Importing anything from `std::` inside this crate is a
-//! design violation. Syscall-dependent functionality (files, sockets,
-//! threads) belongs in the future `koala-os` crate, not here.
+//! The collection core is strictly `no_std` and uses only `alloc` for
+//! heap allocation. There is exactly one sanctioned exception: the
+//! **`std` feature** (off by default) unlocks [`string::FlyString`] and
+//! its process-global interner, which genuinely need `std`'s `Mutex` and
+//! `LazyLock` — `core`/`alloc` have atomics but no parking locks. Until a
+//! future `koala-os` crate provides those primitives, gating the interner
+//! behind `std` is the pragmatic stand-in. Outside that feature, importing
+//! anything from `std::` is still a design violation, and other
+//! syscall-dependent functionality (files, sockets, threads) belongs in
+//! `koala-os`, not here.
 //!
 //! # Scope
 //!
@@ -73,7 +79,7 @@
 // test harness pulls in `std` for `#[test]`, so we conditionally
 // disable `no_std` under `cfg(test)`. Production consumers never see
 // `std`.
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 // koala-std is intentionally unsafe-heavy — every collection type in
 // this crate is built on raw pointers and manual allocation. The
 // workspace-wide `unsafe_code = "deny"` lint is overridden here
