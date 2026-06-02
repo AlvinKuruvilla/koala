@@ -204,3 +204,23 @@ fn behaves_like_std_for_random_ops(ops: Vec<(u8, i8)>) -> bool {
         ours.contains(&value) == reference.contains(&value)
     })
 }
+
+// `get` returns the stored element for a present value and `None` for an
+// absent one — the interning primitive. Regression guard: an earlier
+// implementation `.unwrap()`ped and panicked on absent values.
+#[test]
+fn get_returns_stored_element_or_none() {
+    let set = build(&[1, 2, 3]);
+    assert_eq!(set.get(&2), Some(&2));
+    assert_eq!(set.get(&99), None);
+}
+
+#[test]
+fn get_hands_back_the_canonical_stored_copy() {
+    // The interning use case: look up by a borrowed form, get back the
+    // owned stored value (so a caller can clone *that* one).
+    let mut set: HashSet<String> = HashSet::new();
+    let _ = set.insert("div".to_string());
+    let stored = set.get("div").expect("present");
+    assert_eq!(stored, "div");
+}

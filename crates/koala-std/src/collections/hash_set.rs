@@ -170,6 +170,26 @@ where
         self.map.contains_key(value)
     }
 
+    /// Returns a reference to the element equal to `value`, or `None`.
+    ///
+    /// Unlike [`contains`](Self::contains), this hands back the set's
+    /// *stored* element — the canonical copy — which is what string
+    /// interning needs: look up a `&str`, and if it's already in the
+    /// set, clone the stored `Arc<str>` rather than allocate a new one.
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1).
+    pub fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        // Keep the `Option` and project to the key — `None` (absent value)
+        // must stay `None`, not panic.
+        self.map.get_key_value(value).map(|(k, _)| k)
+    }
+
     /// Removes `value` from the set. Returns `true` if it was present.
     ///
     /// # Time complexity

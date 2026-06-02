@@ -517,6 +517,30 @@ where
             .map(|index| unsafe { self.table.bucket(index).value() })
     }
 
+    /// Returns the stored key and its value for `key`, or `None` if not
+    /// present.
+    ///
+    /// Like [`get`](Self::get) but also hands back the key as actually
+    /// stored — the basis for [`HashSet::get`](super::HashSet::get) and
+    /// for string interning, where the caller wants the canonical stored
+    /// copy of an equal query.
+    ///
+    /// # Time complexity
+    ///
+    /// Average *O*(1).
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.find_index(key).map(|index| {
+            // SAFETY: `find_index` only returns indices of occupied buckets,
+            // so the entry behind it is initialized.
+            let bucket = unsafe { self.table.bucket(index) };
+            unsafe { (bucket.key(), bucket.value()) }
+        })
+    }
+
     /// Returns a mutable reference to the value for `key`, or `None` if the
     /// key is not present.
     ///
