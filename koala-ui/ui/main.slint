@@ -17,8 +17,12 @@ import {
     ProgressIndicator, Palette,
 } from "std-widgets.slint";
 import { TabEntry, TabItem } from "tabs.slint";
+import { DevHudWindow } from "devhud.slint";
 
-export { TabEntry }
+// Re-exported so `slint::include_modules!()` generates the Rust binding
+// for the second window (Slint only publishes bindings for components
+// in the entry module's export list).
+export { TabEntry, DevHudWindow }
 
 export component MainWindow inherits Window {
     title: root.page-title;
@@ -57,6 +61,9 @@ export component MainWindow inherits Window {
     callback tab-closed(int);
     callback new-tab();
     callback quit-requested();
+    // Open/close the developer HUD window. Handled in Rust, which owns
+    // the second window's lifecycle.
+    callback toggle-devhud();
 
     // Application menu bar. Native NSMenu on macOS, in-window
     // strip elsewhere. Must be a direct child of `Window` —
@@ -103,6 +110,11 @@ export component MainWindow inherits Window {
                 title: "Focus Location Bar";
                 shortcut: @keys(Control + L);
                 activated => { url-input.focus(); }
+            }
+            MenuItem {
+                title: "Developer HUD";
+                shortcut: @keys(Control + Shift + M);
+                activated => { root.toggle-devhud(); }
             }
         }
         Menu {

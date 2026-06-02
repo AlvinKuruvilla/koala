@@ -1,0 +1,143 @@
+// Developer-HUD window: a heaptrack-style "memory over time" panel.
+// Opened/closed from the View menu; Rust owns the window lifecycle and
+// pushes a fresh frame on a timer. The heap curve is supplied as two
+// pre-built SVG path strings (filled area + top line) in a 1000×1000
+// viewbox, scaled to the chart area; everything else arrives as
+// pre-formatted strings.
+
+// A compact "label / value" stat, stacked, for the footer row.
+component StatCell inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 1px;
+    Text {
+        text: root.label;
+        color: #8a8a96;
+        font-size: 10px;
+    }
+    Text {
+        text: root.value;
+        color: #ffffff;
+        font-size: 13px;
+        font-weight: 700;
+    }
+}
+
+export component DevHudWindow inherits Window {
+    title: "koala — developer HUD";
+    preferred-width: 460px;
+    preferred-height: 300px;
+    min-width: 320px;
+    min-height: 200px;
+
+    in property <string> live;
+    in property <string> peak;
+    in property <string> alloc-rate;
+    in property <string> alloc-calls;
+    in property <string> cpu;
+    in property <string> axis-max;
+    in property <string> heap-area;
+    in property <string> heap-line;
+
+    Rectangle {
+        background: #16161c;
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+
+            // Header: big current live-heap value, peak on the right.
+            HorizontalLayout {
+                VerticalLayout {
+                    spacing: 1px;
+                    Text {
+                        text: "LIVE HEAP";
+                        color: #8a8a96;
+                        font-size: 10px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: root.live;
+                        color: #66ccff;
+                        font-size: 24px;
+                        font-weight: 800;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                VerticalLayout {
+                    spacing: 1px;
+                    alignment: start;
+                    Text {
+                        text: "PEAK";
+                        color: #8a8a96;
+                        font-size: 10px;
+                        horizontal-alignment: right;
+                    }
+                    Text {
+                        text: root.peak;
+                        color: #ffffff;
+                        font-size: 14px;
+                        font-weight: 700;
+                        horizontal-alignment: right;
+                    }
+                }
+            }
+
+            // The chart — the hero. Stretches to fill the window.
+            Rectangle {
+                vertical-stretch: 1;
+                background: #0d0d12;
+                border-radius: 6px;
+                clip: true;
+
+                Path {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    viewbox-width: 1000;
+                    viewbox-height: 1000;
+                    commands: root.heap-area;
+                    fill: #66ccff2e;
+                }
+                Path {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    viewbox-width: 1000;
+                    viewbox-height: 1000;
+                    commands: root.heap-line;
+                    stroke: #66ccff;
+                    stroke-width: 2px;
+                }
+                // Y-axis bounds: peak+headroom at the top, 0 at the
+                // bottom. The curve never touches the top edge, so this
+                // reads as the scale rather than a value label.
+                Text {
+                    x: 8px;
+                    y: 6px;
+                    text: root.axis-max;
+                    color: #6a6a76;
+                    font-size: 9px;
+                }
+                Text {
+                    x: 8px;
+                    y: parent.height - self.height - 6px;
+                    text: "0";
+                    color: #6a6a76;
+                    font-size: 9px;
+                }
+            }
+
+            // Footer: the rate readouts.
+            HorizontalLayout {
+                spacing: 20px;
+                StatCell { label: "cpu"; value: root.cpu; }
+                StatCell { label: "alloc rate"; value: root.alloc-rate; }
+                StatCell { label: "alloc calls"; value: root.alloc-calls; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+}
