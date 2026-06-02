@@ -1832,11 +1832,12 @@ impl ComputedStyle {
     pub fn resolve_custom_properties(&mut self) {
         let keys: Vec<String> = self.custom_properties.keys().cloned().collect();
         for key in keys {
-            let raw_value = self
-                .custom_properties
-                .get(&key)
-                .expect("key just read from custom_properties.keys()")
-                .clone();
+            // `key` was just read from `keys()`, so it is present; the
+            // `else continue` is unreachable in practice but keeps this
+            // panic-free (and out of clippy's `missing_panics_doc`).
+            let Some(raw_value) = self.custom_properties.get(&key).cloned() else {
+                continue;
+            };
             if contains_var(&raw_value) {
                 match substitute_var(&raw_value, &self.custom_properties, 0) {
                     Some(resolved) => {
