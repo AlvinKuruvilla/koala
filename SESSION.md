@@ -658,3 +658,34 @@ graphs process heap + CPU over time. Brainstormed follow-ups, tabled
   per allocation + symbolication. Real overhead; its own project.
 - **Page-complexity counts.** DOM / layout-box / computed-style node
   counts for the active page; needs koala-browser to expose them.
+
+## Pre-existing clippy debt surfaced under `--features bench`
+
+- **koala-js doc-markdown errors.** Running `cargo clippy -p koala-cli
+  --features bench` (or `alloc-attribution`) reports ~22
+  `clippy::doc_markdown` "item in documentation is missing backticks"
+  errors across `koala-js` (`lib.rs`, `dom_handle.rs`,
+  `globals/{macros,dom_exception,...}.rs`), plus a few `unused_must_use`
+  on `self.context.run_jobs()`. Pre-existing and unrelated to the bench
+  tooling; they just become visible because clippy lints the wider graph
+  with the feature on. A quick `cargo clippy --fix` pass on koala-js
+  would clear the doc-markdown ones.
+
+## Profile the FlyString conversion
+
+`perf/alloc-histogram` interns strings at three sites — SSO `FlyString`
+in koala-std (4e80985), DOM tag names (8099830), and CSS cascade
+custom-property keys (150a6a6) — and none of it has been measured.
+Pushed 2026-08-02.
+
+- **The instruments are already on the branch.** The allocation-size
+  histogram (a5451df) and small-allocation call-site attribution
+  (dd57607) were built for this; run both against `master` and the
+  branch head.
+- **Ablate to attribute.** `sample` aggregates by symbol only, so a
+  combined win says nothing about which of the three sites earned it.
+  Revert one site at a time and confirm a known-invariant counter (DOM
+  node count, cascade entry count) is unchanged.
+- **No baseline build survives.** `cargo clean` ran on 2026-08-02, so
+  both sides need rebuilding before any wall-clock number means
+  anything.
