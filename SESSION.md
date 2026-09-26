@@ -723,14 +723,6 @@ stack (boa-dev/boa#5537).
   example ⌘ in Helvetica) draws as an empty box instead of falling back
   to a font that has it.
 
-## Navigations send no `Accept` header
-
-koala's requests carry a browser User-Agent but no `Accept: text/html,...`.
-Some servers pick the response by it: GitHub answers a missing page with
-the 9-byte plain text `Not Found` instead of its HTML 404 page
-(checked 2026-09-26). Document requests should send the navigation
-`Accept` value browsers use; subresources their own.
-
 ## example.com's box: text overflows it, no top margin
 
 Rendering example.com (and its 404 page, which is the same markup) puts

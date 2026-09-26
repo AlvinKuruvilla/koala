@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::http::http_fetch;
-use crate::{DataURL, FetchError, RequestSender};
+use crate::{DataURL, FetchError, Language, Request, RequestSender};
 
 /// Production sender. Dispatches on the URL scheme:
 ///
@@ -17,18 +17,23 @@ use crate::{DataURL, FetchError, RequestSender};
 /// Schemes match ASCII case-insensitively, as the URL Standard requires:
 /// `HTTPS://a.test/` is fetched like `https://a.test/`.
 ///
-/// Stateless. Constructing one is free; you don't need to cache the
-/// instance.
-pub struct DefaultSender;
+/// It holds the user-agent settings that shape requests;
+/// `DefaultSender::default()` uses the defaults. Constructing one is free.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DefaultSender {
+    /// Sent as `Accept-Language` on HTTP requests.
+    pub language: Language,
+}
 
 impl RequestSender for DefaultSender {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         let written = koala_common::url::scheme(url);
         let path = match written.map(str::to_ascii_lowercase).as_deref() {
             None => PathBuf::from(url),
             // `DataURL` expects the lower-case prefix; `data:` is five bytes.
             Some("data") => return DataURL::new(format!("data:{}", &url[5..])).decode(),
-            Some("http" | "https") => return http_fetch(url),
+            Some("http" | "https") => return http_fetch(request, self.language),
             Some("file") => ::url::Url::parse(url)
                 .ok()
                 .and_then(|parsed| parsed.to_file_path().ok())

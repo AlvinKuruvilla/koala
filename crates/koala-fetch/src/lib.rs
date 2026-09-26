@@ -30,34 +30,35 @@ mod error;
 /// WPT-style hosts-file DNS overrides used when running under wptrunner.
 pub mod hosts;
 mod http;
+mod request;
 mod scheme;
 mod sender;
 
 pub use data_url::{DataURL, fetch_bytes_from_data_url};
 pub use error::{FetchCause, FetchError};
+pub use request::{Destination, Language, Request};
 pub use scheme::DefaultSender;
 pub use sender::{MappedSender, RequestSender, SenderGuard, install_sender};
 
 use sender::with_active_sender;
 
-/// Fetch the resource at `url` and return its body as text. Delegates
-/// to the active [`RequestSender`]; bytes are decoded with
-/// [`String::from_utf8_lossy`].
+/// Fetch `request` and return its body as text. Delegates to the active
+/// [`RequestSender`]; bytes are decoded with [`String::from_utf8_lossy`].
 ///
 /// # Errors
 ///
 /// Returns a [`FetchError`] if the underlying fetch fails.
-pub fn fetch_text(url: &str) -> Result<String, FetchError> {
-    let bytes = fetch_bytes(url)?;
+pub fn fetch_text(request: &Request<'_>) -> Result<String, FetchError> {
+    let bytes = fetch_bytes(request)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Fetch the resource at `url` and return its body as raw bytes.
-/// Delegates to the active [`RequestSender`].
+/// Fetch `request` and return its body as raw bytes. Delegates to the
+/// active [`RequestSender`].
 ///
 /// # Errors
 ///
 /// Returns a [`FetchError`] if the underlying fetch fails.
-pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
-    with_active_sender(|s| s.fetch(url))
+pub fn fetch_bytes(request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+    with_active_sender(|s| s.fetch(request))
 }

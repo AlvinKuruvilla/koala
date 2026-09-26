@@ -4,12 +4,13 @@
 //! a body, so the tests control exactly what an error response contains.
 
 use koala_browser::load_document;
-use koala_browser::fetch::{FetchCause, FetchError, RequestSender, install_sender};
+use koala_browser::fetch::{FetchCause, FetchError, Request, RequestSender, install_sender};
 
 struct FakeServer(Vec<(&'static str, u16, &'static str)>);
 
 impl RequestSender for FakeServer {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         let (_, status, body) = self
             .0
             .iter()

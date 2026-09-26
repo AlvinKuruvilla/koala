@@ -3,8 +3,13 @@
 
 use std::path::PathBuf;
 
-use koala_fetch::{DefaultSender, FetchError, RequestSender};
+use koala_fetch::{DefaultSender, Destination, FetchError, Request, RequestSender};
 use koala_common::url::{file_url_from_path, resolve_url};
+
+/// Fetch `url` as a document through the production sender.
+fn fetch(url: &str) -> Result<Vec<u8>, FetchError> {
+    DefaultSender::default().fetch(&Request::new(url, Destination::Document))
+}
 
 /// A fresh directory whose name contains a space, `#`, `%`, and `?`.
 /// Unencoded, `#` would start a fragment, `?` a query, and `%` an
@@ -26,7 +31,7 @@ fn file_url_reads_back_the_same_file() {
     std::fs::write(&page, "<p>hi</p>").expect("temp dir is writable");
 
     let url = file_url_from_path(&page).expect("file exists");
-    let body = DefaultSender.fetch(&url).expect("URL names the file just written");
+    let body = fetch(&url).expect("URL names the file just written");
     std::fs::remove_dir_all(&dir).expect("dir was just created");
     assert_eq!(body, b"<p>hi</p>");
 }
@@ -41,8 +46,7 @@ fn relative_reference_resolves_next_to_the_page() {
     std::fs::write(dir.join("style.css"), "p { color: red }").expect("temp dir is writable");
 
     let base = file_url_from_path(&page).expect("file exists");
-    let css = DefaultSender
-        .fetch(&resolve_url("style.css", Some(&base)))
+    let css = fetch(&resolve_url("style.css", Some(&base)))
         .expect("style.css sits next to page.html");
     std::fs::remove_dir_all(&dir).expect("dir was just created");
     assert_eq!(css, b"p { color: red }");
@@ -53,8 +57,7 @@ fn relative_reference_resolves_next_to_the_page() {
 /// says so rather than reading some unrelated path.
 #[test]
 fn file_url_with_host_is_rejected() {
-    let err = DefaultSender
-        .fetch("file://cdn.example/lib.js")
+    let err = fetch("file://cdn.example/lib.js")
         .expect_err("a file URL with a host is not local");
     assert!(matches!(err, FetchError::InvalidFileUrl { .. }), "got {err}");
 }

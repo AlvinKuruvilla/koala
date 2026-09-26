@@ -221,7 +221,10 @@ impl ImageDecoder for RasterDecoder {
 ///
 /// Returns an [`ImageError`] if the fetch fails.
 pub fn fetch_image_bytes(resolved_url: &str) -> Result<Vec<u8>, ImageError> {
-    Ok(koala_fetch::fetch_bytes(resolved_url)?)
+    Ok(koala_fetch::fetch_bytes(&koala_fetch::Request::new(
+        resolved_url,
+        koala_fetch::Destination::Image,
+    ))?)
 }
 
 /// Image loading pipeline that detects format and dispatches to the

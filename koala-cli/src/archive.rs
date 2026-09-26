@@ -74,7 +74,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use koala_fetch::{DataURL, FetchError, RequestSender};
+use koala_fetch::{DataURL, FetchError, Request, RequestSender};
 
 /// Value of the `format` field; anything else is not an archive.
 const FORMAT: &str = "koala-fetch-archive";
@@ -352,11 +352,12 @@ impl<I: RequestSender> RecordingSender<I> {
 }
 
 impl<I: RequestSender> RequestSender for RecordingSender<I> {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         if url.starts_with("data:") {
             return DataURL::new(url.to_string()).decode();
         }
-        let result = self.inner.fetch(url);
+        let result = self.inner.fetch(request);
         let entry = match &result {
             Ok(bytes) => Entry::Body(bytes.clone()),
             Err(FetchError::HttpStatus { status, body, .. }) => Entry::HttpError {
@@ -450,7 +451,8 @@ impl ReplaySender {
 }
 
 impl RequestSender for ReplaySender {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         if url.starts_with("data:") {
             return DataURL::new(url.to_string()).decode();
         }

@@ -363,7 +363,10 @@ pub fn fetch_external_stylesheet(
     // [§ 4.2.4](https://html.spec.whatwg.org/multipage/semantics.html#the-link-element)
     // "If the resource is not available, the user agent must act as if
     // the resource was an empty style sheet."
-    koala_fetch::fetch_text(&resolved_url)
+    koala_fetch::fetch_text(&koala_fetch::Request::new(
+        &resolved_url,
+        koala_fetch::Destination::Style,
+    ))
 }
 
 /// Extract and collect all stylesheets from the DOM in cascade order.

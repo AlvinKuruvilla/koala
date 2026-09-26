@@ -6,10 +6,15 @@
 
 use std::net::TcpListener;
 
-use koala_fetch::{DefaultSender, FetchCause, RequestSender};
+use koala_fetch::{DefaultSender, Destination, FetchCause, FetchError, Request, RequestSender};
+
+/// Fetch `url` as a document through the production sender.
+fn fetch(url: &str) -> Result<Vec<u8>, FetchError> {
+    DefaultSender::default().fetch(&Request::new(url, Destination::Document))
+}
 
 fn cause_of(url: &str) -> FetchCause {
-    DefaultSender.fetch(url).expect_err("the fetch is meant to fail").cause()
+    fetch(url).expect_err("the fetch is meant to fail").cause()
 }
 
 #[test]

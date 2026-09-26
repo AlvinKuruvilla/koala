@@ -7,7 +7,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::{Archive, ArchiveError, RecordingSender, ReplaySender};
-use koala_fetch::{FetchError, RequestSender, fetch_bytes, install_sender};
+use koala_fetch::{Destination, FetchError, Request, RequestSender, fetch_bytes, install_sender};
+
+/// Fetch `url` as a document through `sender`.
+fn get(sender: &impl RequestSender, url: &str) -> Result<Vec<u8>, FetchError> {
+    sender.fetch(&Request::new(url, Destination::Document))
+}
 
 /// Stand-in for the network: known URLs return their body, a host named
 /// `down.example` cannot be reached, and anything else is a 404 with the
@@ -17,7 +22,8 @@ struct FakeSite(HashMap<&'static str, &'static [u8]>);
 const NOT_FOUND_PAGE: &[u8] = b"<h1>Not Found</h1>";
 
 impl RequestSender for FakeSite {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         if url.contains("down.example") {
             // Any non-HTTP failure will do; the archive keeps only its message.
             return Err(FetchError::InvalidFileUrl { url: url.to_string() });
@@ -50,7 +56,7 @@ fn temp_archive(name: &str) -> PathBuf {
 fn fetch_all(sender: Box<dyn RequestSender>, urls: &[&str]) -> Vec<String> {
     let _guard = install_sender(sender);
     urls.iter()
-        .map(|url| match fetch_bytes(url) {
+        .map(|url| match fetch_bytes(&Request::new(url, Destination::Document)) {
             Ok(body) => format!("ok {body:?}"),
             Err(e) => format!("err {e}"),
         })
@@ -95,14 +101,13 @@ fn replay_reproduces_recorded_load() {
 #[test]
 fn replay_keeps_the_body_of_an_http_error() {
     let recorder = RecordingSender::new(site());
-    let _ = recorder.fetch("https://example.com/missing");
+    let _ = get(&recorder, "https://example.com/missing");
     let path = temp_archive("http-error");
     recorder.archive().save(&path).expect("temp dir is writable");
     let archive = Archive::load(&path).expect("archive was just saved");
     std::fs::remove_file(&path).expect("archive was just saved");
 
-    let err = ReplaySender::new(archive)
-        .fetch("https://example.com/missing")
+    let err = get(&ReplaySender::new(archive), "https://example.com/missing")
         .expect_err("the page was a 404");
     match err {
         FetchError::HttpStatus { status, body, .. } => {
@@ -132,7 +137,7 @@ fn load_accepts_version_1() {
 #[test]
 fn replay_miss_is_an_error() {
     let replay = ReplaySender::new(Archive::new());
-    let err = replay.fetch("https://example.com/new.js").expect_err("archive is empty");
+    let err = get(&replay, "https://example.com/new.js").expect_err("archive is empty");
     assert!(matches!(err, FetchError::NotInArchive { .. }), "got {err}");
 }
 
@@ -141,18 +146,18 @@ fn replay_miss_is_an_error() {
 #[test]
 fn data_urls_bypass_the_archive() {
     let recorder = RecordingSender::new(site());
-    assert_eq!(recorder.fetch("data:,hi").expect("valid data URL"), b"hi");
+    assert_eq!(get(&recorder, "data:,hi").expect("valid data URL"), b"hi");
     assert_eq!(recorder.archive().len(), 0);
 
     let replay = ReplaySender::new(Archive::new());
-    assert_eq!(replay.fetch("data:,hi").expect("valid data URL"), b"hi");
+    assert_eq!(get(&replay, "data:,hi").expect("valid data URL"), b"hi");
 }
 
 /// Record every URL of `site()` and return the resulting archive.
 fn recorded_site() -> Archive {
     let recorder = RecordingSender::new(site());
     for url in ["https://example.com/", "https://example.com/a.css"] {
-        let _ = recorder.fetch(url);
+        let _ = get(&recorder, url);
     }
     let path = temp_archive(&format!("digest-{}", rand_suffix()));
     recorder.archive().save(&path).expect("temp dir is writable");
@@ -174,22 +179,22 @@ fn rand_suffix() -> u64 {
 #[test]
 fn input_digest_tracks_served_inputs() {
     let forward = ReplaySender::new(recorded_site());
-    let _ = forward.fetch("https://example.com/");
-    let _ = forward.fetch("https://example.com/a.css");
+    let _ = get(&forward, "https://example.com/");
+    let _ = get(&forward, "https://example.com/a.css");
 
     let backward = ReplaySender::new(recorded_site());
-    let _ = backward.fetch("https://example.com/a.css");
-    let _ = backward.fetch("https://example.com/");
+    let _ = get(&backward, "https://example.com/a.css");
+    let _ = get(&backward, "https://example.com/");
     assert_eq!(forward.input_digest(), backward.input_digest());
 
     // Serving less changes the digest.
     let partial = ReplaySender::new(recorded_site());
-    let _ = partial.fetch("https://example.com/");
+    let _ = get(&partial, "https://example.com/");
     assert_ne!(forward.input_digest(), partial.input_digest());
 
     // A miss is an input too: a build that requests something new must
     // not look like it consumed the same inputs.
-    let _ = backward.fetch("https://example.com/new.js");
+    let _ = get(&backward, "https://example.com/new.js");
     assert_ne!(forward.input_digest(), backward.input_digest());
 }
 

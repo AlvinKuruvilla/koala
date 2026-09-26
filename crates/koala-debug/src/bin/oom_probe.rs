@@ -158,7 +158,7 @@ fn main() {
     let _sender_guard = if mappings.is_empty() {
         None
     } else {
-        let mut sender = MappedSender::new(DefaultSender);
+        let mut sender = MappedSender::new(DefaultSender::default());
         for (url, path) in &mappings {
             eprintln!("[boa map ] {url} -> {}", path.display());
             sender = sender.map(url.clone(), path.clone());

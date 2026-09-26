@@ -212,7 +212,8 @@ pub fn load_document_with_hooks<H: JsHooks>(
     // `HttpErrorNavigationThrottle`, Firefox's `nsURILoader`). Only the
     // document gets this treatment; a stylesheet, script, or image that
     // comes back with an error status is not used.
-    let html_bytes = match fetch::fetch_bytes(&document_url) {
+    let request = fetch::Request::new(&document_url, fetch::Destination::Document);
+    let html_bytes = match fetch::fetch_bytes(&request) {
         Ok(bytes) => bytes,
         Err(fetch::FetchError::HttpStatus { body, .. }) if !body.is_empty() => body,
         Err(error) => return Err(error.into()),
@@ -683,7 +684,8 @@ fn load_scripts(
 /// the spec's lossy decode. URL-scheme dispatch (HTTP, `data:`,
 /// local file) is delegated to [`koala_fetch`].
 fn fetch_script_source(resolved_url: &str) -> Result<String, String> {
-    let bytes = fetch::fetch_bytes(resolved_url).map_err(|e| e.to_string())?;
+    let request = fetch::Request::new(resolved_url, fetch::Destination::Script);
+    let bytes = fetch::fetch_bytes(&request).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 

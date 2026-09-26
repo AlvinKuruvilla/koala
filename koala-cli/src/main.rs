@@ -306,7 +306,7 @@ fn main() -> Result<()> {
 /// Load `path` once with every fetch recorded, then write the archive to
 /// `archive_path`.
 fn record(path: &str, archive_path: &Path) -> Result<()> {
-    let recorder = RecordingSender::new(DefaultSender);
+    let recorder = RecordingSender::new(DefaultSender::default());
     {
         let _guard = install_sender(Box::new(recorder.clone()));
         let _ = load_document(path).with_context(|| format!("loading {path}"))?;

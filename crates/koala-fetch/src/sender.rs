@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use koala_std::collections::HashMap;
 
-use crate::{DefaultSender, FetchError};
+use crate::{DefaultSender, FetchError, Request};
 
 /// Abstraction over "go get the bytes at this address."
 ///
@@ -18,9 +18,9 @@ use crate::{DefaultSender, FetchError};
 /// Implementations must be safe to call from the thread that installed
 /// them; they don't need to be `Send`.
 pub trait RequestSender {
-    /// Fetch the resource at `url` and return its body as raw bytes.
+    /// Fetch `request.url` and return its body as raw bytes.
     ///
-    /// `url` may be an `http(s)://` URL, a `data:` URL, a `file://` URL,
+    /// The URL may be an `http(s)://` URL, a `data:` URL, a `file://` URL,
     /// or a plain filesystem path — the implementation decides which
     /// schemes it handles.
     ///
@@ -28,7 +28,7 @@ pub trait RequestSender {
     ///
     /// Returns a [`FetchError`] if the resource cannot be fetched,
     /// decoded, or read.
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError>;
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError>;
 }
 
 /// Sender that consults a URL → local-file map before delegating to an
@@ -64,14 +64,14 @@ impl<I: RequestSender> MappedSender<I> {
 }
 
 impl<I: RequestSender> RequestSender for MappedSender<I> {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
-        if let Some(path) = self.overrides.get(url) {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        if let Some(path) = self.overrides.get(request.url) {
             return std::fs::read(path).map_err(|e| FetchError::LocalRead {
                 path: path.to_string_lossy().into_owned(),
                 source: e,
             });
         }
-        self.inner.fetch(url)
+        self.inner.fetch(request)
     }
 }
 
@@ -116,6 +116,6 @@ impl Drop for SenderGuard {
 pub(crate) fn with_active_sender<R>(f: impl FnOnce(&dyn RequestSender) -> R) -> R {
     ACTIVE_SENDER.with_borrow(|slot| match slot {
         Some(sender) => f(&**sender),
-        None => f(&DefaultSender),
+        None => f(&DefaultSender::default()),
     })
 }
