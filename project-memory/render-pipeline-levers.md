@@ -52,7 +52,7 @@ API on `JsRuntime`.
 on google.com would drop from ~30 s to ~500 ms — the actual Boa CPU
 cost of running site scripts.
 
-**Bench signal to confirm:** `just bench-live https://google.com`
+**Bench signal to confirm:** `just bench https://google.com`
 `setup_us` drops from ~31 s to <1 s, with `js_pump_until_idle` no
 longer counted (it now runs in the background between renders).
 
@@ -110,7 +110,7 @@ and Safari do (renderer process vs JS engine thread).
 **Expected impact:** Removes JS / render contention entirely. Long
 synchronous scripts no longer affect frame rate. Real-browser parity.
 
-**Bench signal to confirm:** `just bench-live https://google.com` shows
+**Bench signal to confirm:** `just bench https://google.com` shows
 the same `setup_us` as before, but a separate "interactivity" metric
 (time-to-first-paint, time-to-first-input) drops to constant regardless
 of JS load.
