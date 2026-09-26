@@ -671,21 +671,26 @@ graphs process heap + CPU over time. Brainstormed follow-ups, tabled
   with the feature on. A quick `cargo clippy --fix` pass on koala-js
   would clear the doc-markdown ones.
 
-## Profile the FlyString conversion
+## `--bench-diff` compares means from a single report per side
 
-`perf/alloc-histogram` interns strings at three sites — SSO `FlyString`
-in koala-std (4e80985), DOM tag names (8099830), and CSS cascade
-custom-property keys (150a6a6) — and none of it has been measured.
-Pushed 2026-08-02.
+Measured 2026-09-26 on the landing page, 300 setup loads per report, 5
+reports per build. One base-vs-cascade pair showed `js_runtime_init`
+6.3% faster, and nothing on that branch touches the JS runtime. The
+noise is specific to certain stages, not spread evenly across the harness:
 
-- **The instruments are already on the branch.** The allocation-size
-  histogram (a5451df) and small-allocation call-site attribution
-  (dd57607) were built for this; run both against `master` and the
-  branch head.
-- **Ablate to attribute.** `sample` aggregates by symbol only, so a
-  combined win says nothing about which of the three sites earned it.
-  Revert one site at a time and confirm a known-invariant counter (DOM
-  node count, cascade entry count) is unchanged.
-- **No baseline build survives.** `cargo clean` ran on 2026-08-02, so
-  both sides need rebuilding before any wall-clock number means
-  anything.
+- `html_parse` and `css_cascade` means vary about 1-2% across reports.
+- `js_runtime_init` has a heavy tail (one report: min 113, p50 139,
+  p95 819, max 1110 us), so its mean is dominated by a few slow
+  samples. Even its p50 ranges 119-139 us across reports.
+
+`bench-diff` prints the per-stage *mean* of one report against one
+other. Options, not yet weighed:
+
+- diff p50 instead of (or beside) the mean;
+- accept several reports per side and show the across-report range,
+  as `tmp/bench-flystring.sh` did by hand;
+- flag stages whose p95/p50 ratio makes any single-pair delta
+  meaningless.
+
+The `js_runtime_init` tail itself is unexplained: Boa context creation
+is sometimes 6x slower than usual.
