@@ -9,7 +9,7 @@ description = "JavaScript engine integration for the Koala renderer"
 koala-css.workspace = true
 koala-dom.workspace = true
 boa_engine.workspace = true
-boa_gc = { path = "../boa/core/gc" }
+boa_gc.workspace = true
 koala-std.workspace = true
 
 [lints]

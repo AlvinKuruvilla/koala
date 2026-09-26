@@ -196,7 +196,7 @@ fn query_selector_all(
 ) -> JsResult<JsValue> {
     let parsed = parse_query_arg(args, "querySelectorAll", context)?;
     let Some(parsed) = parsed else {
-        return Ok(boa_engine::object::builtins::JsArray::new(context).into());
+        return Ok(boa_engine::object::builtins::JsArray::new(context)?.into());
     };
 
     let ids: Vec<NodeId> = with_dom(|dom| {
@@ -250,7 +250,7 @@ fn get_elements_by_class_name(
     let raw = required_string_arg(args, 0, "getElementsByClassName", "classNames", context)?;
     let needle: Vec<String> = raw.split_whitespace().map(str::to_string).collect();
     if needle.is_empty() {
-        return Ok(boa_engine::object::builtins::JsArray::new(context).into());
+        return Ok(boa_engine::object::builtins::JsArray::new(context)?.into());
     }
 
     let ids: Vec<NodeId> = with_dom(|dom| {

@@ -326,10 +326,8 @@ polish the look.
 
   Boa ships a typed slot map *on every `Context`*
   specifically for stashing host-side Rust state that
-  callbacks need. We already depend on it — the
-  `get_many_mut` → `get_disjoint_mut` patch in
-  `crates/boa/core/engine/src/host_defined.rs` (commit
-  `302922a`) is in that file. The migration shape:
+  callbacks need (`boa_engine::HostDefined`,
+  `src/host_defined.rs` in the crate). The migration shape:
 
   ```rust
   // Today (dom_handle.rs):
@@ -446,13 +444,17 @@ polish the look.
   Boa's existing primitives, and the migration steps are
   bounded.
 
-- **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
-  bump fixed the 46 GB for-in OOM but the page still returns 6
-  JS parse errors from the inline-script pump. They don't break
-  rendering; they're a backlog of real-world JS constructs Boa
-  doesn't yet accept. Look at `parse_issues` on a fresh
-  `oom_probe https://www.overleaf.com` run when work toward
-  better real-site fidelity resumes.
+- **6 JS runtime errors on overleaf, not parse errors.** Identical
+  on Boa 0.21 and 0.22 (checked 2026-09-26 with `koala
+  https://www.overleaf.com`). All are thrown at run time, so they
+  point at missing host APIs in koala, not at syntax Boa rejects:
+  - `ReferenceError: URLSearchParams is not defined` (tracking.js).
+    A Web API koala has to provide; Boa does not.
+  - `TypeError: cannot convert 'null' or 'undefined' to object` in
+    bootstrap.js, homepage.js, linkedin-insight.js, and one inline
+    script. Probably a DOM or `window` property koala returns as
+    `undefined`; 0.22 reports positions (e.g. `:1:73`) to start from.
+  - `TypeError: not a callable function` in recaptcha's api.js.
 
 - **Native form control rendering** — `<input>`, `<select>`,
   `<textarea>`, `<button>`, and friends currently lay out from

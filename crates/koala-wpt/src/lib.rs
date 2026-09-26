@@ -176,7 +176,7 @@ pub fn take_test_results(
         // Replace the captured array with a fresh empty one. We
         // can't truncate in place via `JsArray` — no `set_length`
         // accessor — and rebinding the slot is the cleanest drain.
-        let fresh = boa_engine::object::builtins::JsArray::new(context);
+        let fresh = boa_engine::object::builtins::JsArray::new(context)?;
         let _ = global.set(
             js_string!(testharness::RESULTS_KEY),
             boa_engine::JsValue::from(fresh),
