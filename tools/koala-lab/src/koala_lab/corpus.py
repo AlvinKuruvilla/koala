@@ -116,9 +116,15 @@ def record(binary: Path, page: Page, dest: Path) -> Recording:
 
 def summarize(archive: Path) -> Recording:
     """Count the responses and failures in a recorded archive."""
-    entries: dict[str, dict[str, str]] = json.loads(archive.read_text())["entries"]
+    entries: dict[str, dict[str, str | int]] = json.loads(archive.read_text())[
+        "entries"
+    ]
+    # A fetch that failed outright has `error`; one the server answered with
+    # an error status (archive version 2) has `status` beside its body.
     failures = [
-        (url, entry["error"]) for url, entry in entries.items() if "error" in entry
+        (url, str(entry["error"]) if "error" in entry else f"HTTP {entry['status']}")
+        for url, entry in entries.items()
+        if "error" in entry or "status" in entry
     ]
     return Recording(
         responses=len(entries),

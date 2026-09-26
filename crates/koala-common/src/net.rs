@@ -60,6 +60,11 @@ pub enum FetchError {
         url: String,
         /// The HTTP status code.
         status: u16,
+        /// The response body: usually the server's own error page, which a
+        /// document load shows in place of the browser's (Chromium's
+        /// `HttpErrorNavigationThrottle`, Firefox's `nsURILoader` do the
+        /// same). Empty when the server sent none or it could not be read.
+        body: Vec<u8>,
     },
 
     /// The response body could not be read.
@@ -493,10 +498,16 @@ fn http_fetch(url: &str) -> Result<Vec<u8>, FetchError> {
             source: e,
         })?;
 
-    if !response.status().is_success() {
+    let status = response.status();
+    if !status.is_success() {
+        // A body that fails to arrive is treated as no body: the status is
+        // the failure being reported, and the caller falls back to its own
+        // error page exactly as for an empty one.
+        let body = response.bytes().map(|b| b.to_vec()).unwrap_or_default();
         return Err(FetchError::HttpStatus {
             url: url.to_string(),
-            status: response.status().as_u16(),
+            status: status.as_u16(),
+            body,
         });
     }
 

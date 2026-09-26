@@ -20,10 +20,11 @@
 //! ```text
 //! {
 //!   "format": "koala-fetch-archive",
-//!   "version": 1,
+//!   "version": 2,
 //!   "entries": {
 //!     "https://example.com/":         { "body": "<base64>", "sha256": "<hex>" },
-//!     "https://example.com/gone.css": { "error": "HTTP 404 for '...'" }
+//!     "https://example.com/missing":  { "body": "<base64>", "sha256": "<hex>", "status": 404 },
+//!     "https://example.com/gone.css": { "error": "request to '...' failed: ..." }
 //!   }
 //! }
 //! ```
@@ -33,6 +34,9 @@
 //! - **`sha256`**: of the decoded body. [`Archive::load`] checks it, so a
 //!   truncated or hand-edited archive is rejected rather than replayed.
 //!   It also lets tools outside koala compare archives without decoding.
+//! - **`status`**: present when the server answered with an error status;
+//!   `body` is then the server's error page. Replay returns the same status
+//!   and body, so a page that loads a server's 404 page still does.
 //! - **`error`**: the fetch failed while recording. Replay fails the same
 //!   fetch with the same message, so a page with a broken stylesheet stays
 //!   broken instead of silently gaining or losing a resource.
@@ -76,7 +80,14 @@ use crate::net::{DataURL, FetchError, RequestSender};
 const FORMAT: &str = "koala-fetch-archive";
 
 /// Current format version. Bump when the file layout changes.
-const VERSION: u32 = 1;
+///
+/// - 1: `body` and `error` entries.
+/// - 2: adds `status` to body entries, for HTTP error responses. Version 1
+///   files are still read: they have no status entries to misread.
+const VERSION: u32 = 2;
+
+/// The oldest version `Archive::load` accepts.
+const OLDEST_VERSION: u32 = 1;
 
 /// Errors reading or writing an [`Archive`] file.
 #[derive(Debug, thiserror::Error)]
@@ -104,7 +115,7 @@ pub enum ArchiveError {
     /// The `format` or `version` field does not match this build.
     #[error(
         "'{path}' has format '{format}' version {version}; this build reads \
-         '{FORMAT}' version {VERSION} (re-record the page)"
+         '{FORMAT}' versions {OLDEST_VERSION} to {VERSION} (re-record the page)"
     )]
     Unsupported {
         /// The archive path.
@@ -141,6 +152,8 @@ pub struct Archive {
 enum Entry {
     /// The fetch succeeded with this body.
     Body(Vec<u8>),
+    /// The server answered with an error status and this body.
+    HttpError { status: u16, body: Vec<u8> },
     /// The fetch failed with this message.
     Failed(String),
 }
@@ -157,7 +170,12 @@ struct WireArchive {
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum WireEntry {
-    Body { body: String, sha256: String },
+    Body {
+        body: String,
+        sha256: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<u16>,
+    },
     Failed { error: String },
 }
 
@@ -180,10 +198,12 @@ impl Archive {
         self.entries.is_empty()
     }
 
-    /// The recorded failures, as `(url, error message)` in URL order.
-    pub fn failures(&self) -> impl Iterator<Item = (&str, &str)> {
+    /// The recorded failures, as `(url, description)` in URL order: fetches
+    /// that failed, and responses with an HTTP error status.
+    pub fn failures(&self) -> impl Iterator<Item = (&str, String)> {
         self.entries.iter().filter_map(|(url, entry)| match entry {
-            Entry::Failed(message) => Some((url.as_str(), message.as_str())),
+            Entry::Failed(message) => Some((url.as_str(), message.clone())),
+            Entry::HttpError { status, .. } => Some((url.as_str(), format!("HTTP {status}"))),
             Entry::Body(_) => None,
         })
     }
@@ -206,7 +226,7 @@ impl Archive {
             path: display.clone(),
             source,
         })?;
-        if wire.format != FORMAT || wire.version != VERSION {
+        if wire.format != FORMAT || !(OLDEST_VERSION..=VERSION).contains(&wire.version) {
             return Err(ArchiveError::Unsupported {
                 path: display,
                 format: wire.format,
@@ -217,7 +237,11 @@ impl Archive {
         let mut entries = BTreeMap::new();
         for (url, wire_entry) in wire.entries {
             let entry = match wire_entry {
-                WireEntry::Body { body, sha256 } => {
+                WireEntry::Body {
+                    body,
+                    sha256,
+                    status,
+                } => {
                     let bytes = BASE64.decode(body).map_err(|e| ArchiveError::Corrupt {
                         path: display.clone(),
                         url: url.clone(),
@@ -231,7 +255,13 @@ impl Archive {
                             reason: format!("body hashes to {actual}, recorded {sha256}"),
                         });
                     }
-                    Entry::Body(bytes)
+                    match status {
+                        None => Entry::Body(bytes),
+                        Some(status) => Entry::HttpError {
+                            status,
+                            body: bytes,
+                        },
+                    }
                 }
                 WireEntry::Failed { error } => Entry::Failed(error),
             };
@@ -262,6 +292,12 @@ impl Archive {
                         Entry::Body(bytes) => WireEntry::Body {
                             body: BASE64.encode(bytes),
                             sha256: sha256_hex(bytes),
+                            status: None,
+                        },
+                        Entry::HttpError { status, body } => WireEntry::Body {
+                            body: BASE64.encode(body),
+                            sha256: sha256_hex(body),
+                            status: Some(*status),
                         },
                         Entry::Failed(message) => WireEntry::Failed {
                             error: message.clone(),
@@ -342,6 +378,10 @@ impl<I: RequestSender> RequestSender for RecordingSender<I> {
         let result = self.inner.fetch(url);
         let entry = match &result {
             Ok(bytes) => Entry::Body(bytes.clone()),
+            Err(FetchError::HttpStatus { status, body, .. }) => Entry::HttpError {
+                status: *status,
+                body: body.clone(),
+            },
             Err(e) => Entry::Failed(e.to_string()),
         };
         let _ = self
@@ -372,6 +412,7 @@ pub struct ReplaySender {
 #[derive(Debug, Clone)]
 enum Served {
     Body(String),
+    HttpError(u16, String),
     Failed(String),
     Missing,
 }
@@ -408,6 +449,10 @@ impl ReplaySender {
                     hasher.update(b"body:");
                     hasher.update(sha256.as_bytes());
                 }
+                Served::HttpError(status, sha256) => {
+                    hasher.update(format!("http {status}:").as_bytes());
+                    hasher.update(sha256.as_bytes());
+                }
                 Served::Failed(message) => {
                     hasher.update(b"error:");
                     hasher.update(message.as_bytes());
@@ -427,6 +472,14 @@ impl RequestSender for ReplaySender {
         }
         let (served, result) = match self.archive.entries.get(url) {
             Some(Entry::Body(bytes)) => (Served::Body(sha256_hex(bytes)), Ok(bytes.clone())),
+            Some(Entry::HttpError { status, body }) => (
+                Served::HttpError(*status, sha256_hex(body)),
+                Err(FetchError::HttpStatus {
+                    url: url.to_string(),
+                    status: *status,
+                    body: body.clone(),
+                }),
+            ),
             Some(Entry::Failed(message)) => (
                 Served::Failed(message.clone()),
                 Err(FetchError::RecordedFailure {
