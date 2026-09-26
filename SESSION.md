@@ -690,3 +690,20 @@ fix, in order:
 
 Suspected first find: Bootstrap's `getDataAttributes` calls
 `Object.keys(element.dataset)`; koala may not implement `dataset`.
+
+## Boa's JS parser can abort the process on deep nesting
+
+Root-caused 2026-09-26 from a koala-ui stack overflow on google.com (debug
+build). Boa parses expressions by recursive descent, about fifteen frames
+per nesting level, with no recursion limit or stack check. google's
+1.1 MB bundle (max nesting 19 brackets) needs 2-4 MiB of stack in debug
+(frames up to 20 KB; `Expression` is 192 B, `Statement` 464 B) and
+256-512 KiB in release. koala-ui's workers now get 16 MiB, which raises
+the threshold only: any script nested deeply enough still overflows, and
+Rust aborts the whole process, taking every tab with it.
+
+The real fix is a guard in the parser that fails the one script
+(JavaScriptCore's parser turns this into a `RangeError`). Options: an
+upstream PR to Boa, or a local patch (which would reverse the
+un-vendoring in PR #10). Boa's own CLI works around it with a 16 MiB
+stack (boa-dev/boa#5537).

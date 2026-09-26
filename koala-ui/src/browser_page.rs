@@ -38,6 +38,25 @@ use std::thread::{self, JoinHandle};
 use koala_browser::css::{
     ComputedStyle, DisplayListBuilder, LayoutBox, Rect, canvas_background,
 };
+
+/// Stack size for the loader and render workers: 16 MiB, the size Boa
+/// gives its own CLI for the same reason (boa-dev/boa#5537).
+///
+/// Boa parses JavaScript by recursive descent with no depth limit, about
+/// fifteen frames per level of expression nesting. Measured 2026-09-26
+/// on google.com's 1.1 MB script bundle, whose deepest nesting is only 19
+/// brackets: a debug build needs 2-4 MiB (frames up to 20 KB each), a
+/// release build 256-512 KiB. Rust's default for spawned threads is
+/// 2 MiB, so debug builds overflowed and aborted the whole process.
+///
+/// 16 MiB leaves 4x headroom over debug google. The size only reserves
+/// address space; memory is committed as the stack is actually used.
+///
+/// NOTE: this raises the threshold, it does not remove it. A script nested
+/// deeply enough still overflows any stack and aborts the process, because
+/// Boa's parser has no recursion guard. The real fix is one in the parser
+/// (JavaScriptCore's turns this into a `RangeError`).
+const WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
 use koala_browser::dom::{DomTree, NodeId};
 use koala_browser::{
     FontProvider, LoadedDocument, LoadedImage, Renderer, RendererFonts, load_document,
@@ -252,6 +271,7 @@ impl BrowserPage {
         let (render_result_tx, render_result_rx) = mpsc::channel::<RenderResult>();
         let render_worker = thread::Builder::new()
             .name("koala-ui-render".to_owned())
+            .stack_size(WORKER_STACK_BYTES)
             .spawn(move || run_render_worker(&render_job_rx, &render_result_tx))
             .expect("failed to spawn koala-ui render worker");
 
@@ -260,6 +280,7 @@ impl BrowserPage {
         let load_result_tx_for_worker = load_result_tx.clone();
         let load_worker = thread::Builder::new()
             .name("koala-ui-loader".to_owned())
+            .stack_size(WORKER_STACK_BYTES)
             .spawn(move || run_load_worker(&load_request_rx, &load_result_tx_for_worker))
             .expect("failed to spawn koala-ui loader worker");
 
