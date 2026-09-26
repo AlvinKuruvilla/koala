@@ -23,5 +23,7 @@ wptrunner_koala.egg-info
 # Perf harness: auto-cached page snapshots for `just bench`,
 # flamegraph output from `just flame`, sampling profiler data.
 .bench-cache/
+# koala-lab state: recorded page archives, per-revision builds, run data.
+/.koala-lab/
 flamegraph.svg
 perf.data*
