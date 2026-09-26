@@ -444,13 +444,17 @@ polish the look.
   Boa's existing primitives, and the migration steps are
   bounded.
 
-- **Boa 0.21+ had 6 `parse_issues` on overleaf** (unchecked on 0.22) — the Boa
-  bump fixed the 46 GB for-in OOM but the page still returns 6
-  JS parse errors from the inline-script pump. They don't break
-  rendering; they're a backlog of real-world JS constructs Boa
-  doesn't yet accept. Look at `parse_issues` on a fresh
-  `oom_probe https://www.overleaf.com` run when work toward
-  better real-site fidelity resumes.
+- **6 JS runtime errors on overleaf, not parse errors.** Identical
+  on Boa 0.21 and 0.22 (checked 2026-09-26 with `koala
+  https://www.overleaf.com`). All are thrown at run time, so they
+  point at missing host APIs in koala, not at syntax Boa rejects:
+  - `ReferenceError: URLSearchParams is not defined` (tracking.js).
+    A Web API koala has to provide; Boa does not.
+  - `TypeError: cannot convert 'null' or 'undefined' to object` in
+    bootstrap.js, homepage.js, linkedin-insight.js, and one inline
+    script. Probably a DOM or `window` property koala returns as
+    `undefined`; 0.22 reports positions (e.g. `:1:73`) to start from.
+  - `TypeError: not a callable function` in recaptcha's api.js.
 
 - **Native form control rendering** — `<input>`, `<select>`,
   `<textarea>`, `<button>`, and friends currently lay out from
