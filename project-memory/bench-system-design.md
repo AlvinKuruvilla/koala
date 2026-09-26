@@ -1,7 +1,7 @@
 ---
 created: 2026-09-26
 area: koala-cli (probe) + new Python orchestrator + dashboard
-status: phase 1 (probe contract) done on bench/measurement-system; phase 2 next
+status: phases 1 (probe contract) and 2 (koala-lab) done; phase 3 next
 last_updated: 2026-09-26
 ---
 
@@ -138,20 +138,36 @@ Consequences:
 
 ### Statistics
 
-- Per process, per stage: p50 of the raw samples. Means are dominated
-  by tails (`js_runtime_init`).
-- Across processes: the median of the per-process p50s, plus its range.
-- Verdict "separated" when every process on one side beat every process
-  on the other: a Mann–Whitney U of 0. With 5 per side that is
-  p = 2 / C(10,5) ≈ 0.008; with 3 per side only 0.1, so the default is
-  5 and fewer than 4 draws a warning.
-- Allocation counts and render hashes are deterministic on a fixed
-  input. They are compared exactly; a disagreement within one side
-  means the runs were not comparable and is an error.
+As built (phase 2), in `tools/koala-lab/src/koala_lab/{stats,report}.py`:
 
-The known weakness: range-separation is the least robust spread; one
-bad round can mask a real effect. Raw samples are kept so a bootstrap
-or a proper U test can replace it without re-running anything.
+- Per process: the p50 of its samples. Means are dominated by tails
+  (`js_runtime_init`).
+- Headline tests: load time and render time per page, each an exact
+  two-sided Mann-Whitney U on the per-process p50s. Samples within one
+  process are never pooled; they share its CPU and allocator state.
+- Holm correction across all headline tests, so a run reports any false
+  change with probability at most 0.05. This decided the default of
+  7 rounds: the smallest possible p with n rounds is `2 / C(2n, n)`,
+  which is 0.0079 at 5 rounds, above the 0.05 / 8 = 0.0063 the first of
+  8 tests must beat. At 7 rounds it is 0.00058, leaving room for a
+  process or two to overlap. A run with too few rounds says how many it
+  needs.
+- Stage timings are shown under a headline that changed, untested:
+  testing ~15 stages per page would push the corrected threshold out of
+  reach.
+- Allocation counts are exact on pages whose scripts behave identically
+  every run, but google's varied by up to 7 in 3.96 M between processes
+  of one build (A/A run, 2026-09-26). A change is reported only when the
+  two builds' ranges do not overlap.
+- Differing input digests or render hashes are warnings printed before
+  the verdicts, not errors: the numbers are still shown, marked as
+  comparing different work.
+
+Validation (2026-09-26): an A/A run (HEAD vs HEAD, 5 rounds) reported no
+change on any page; a positive control (2 ms busy-wait added to the
+cascade) was reported as slower on example.com and hacker news with
+`css_cascade` as the top stage, and was below resolution on the
+350-850 ms pages.
 
 ## Decisions
 
@@ -180,6 +196,9 @@ or a proper U test can replace it without re-running anything.
    Retires `--bench-diff` in the binary and `tmp/bench-flystring.sh`;
    `just bench-diff` goes away or becomes an alias. Done when: the PR #9
    comparison reproduces with one command and matches the hand result.
+   (That turned out impossible: PR #9's commits predate the report
+   format. Validated instead with an A/A run and a positive control; see
+   Statistics.)
 3. **Authored corpus.** Frozen landing page plus pages aimed at the
    cascade, layout, and inline paths.
 4. **Run store and history.** Runs kept as `<timestamp>_<sha>`, as

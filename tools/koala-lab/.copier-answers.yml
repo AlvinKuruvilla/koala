@@ -1,0 +1,18 @@
+# Records the answers given when this project was scaffolded, so the
+# template can be re-applied later with `copier update` (or `aria update`).
+# Managed by Copier — do not edit by hand.
+_src_path: /Users/alvinkuruvilla/Dev/aria/templates/python
+author_email: alvineasokuruvilla@gmail.com
+author_name: Alvin Kuruvilla
+description: Measure koala builds against each other and report what changed
+include_ci: false
+include_docs: false
+include_precommit: false
+include_security_scan: false
+license: none
+package_name: koala_lab
+project_name: koala-lab
+project_slug: koala-lab
+project_type: cli
+python_floor: '3.11'
+type_checker: mypy

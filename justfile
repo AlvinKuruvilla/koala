@@ -53,136 +53,66 @@ prettify url out="":
     npx --yes prettier@3 --parser html "$raw" > "$out"
     echo "Wrote $out ($(wc -l < "$out" | tr -d ' ') lines)"
 
-# Bench the render pipeline against `url` (file path or HTTP URL)
-# and emit a JSON timing report on stdout. URLs auto-cache to
-# `.bench-cache/<slug>.html` on first use so subsequent runs are
-# decoupled from network / page-content drift; refresh with
-# `just bench-refresh`. File paths bypass the cache and are used
-# directly (so the bundled landing page always runs against the
-# current `res/landing.html`).
+# One build's raw `--bench` report as JSON on stdout: every measured load
+# and render, heap accounting, and fingerprints of the input and the
+# rendered frame. To compare builds, use `just lab compare`.
 #
-# Always uses `--features bench` (which transitively enables
-# `koala-browser/render-trace`) and `--release` (so optimized code
-# is what gets measured). Per-stage timings live in the `render`
-# section of the JSON; `setup_us` is the one-time load cost.
+# TARGET is a recorded corpus page (replayed, no network; see
+# `just lab corpus list`), a local file, or a URL (fetched live on every
+# load; see `just bench-live`).
 #
-#   just bench                                  # bench landing page
-#   just bench https://example.com              # bench live URL (auto-cached)
-#   just bench res/test.html                    # bench a local file
-#   just bench .bench-cache/google_com.html     # bench a manually-named snapshot
-#   just bench https://example.com > out.json   # capture for diffing
-bench url="koala-ui/res/landing.html":
+#   just bench                        # the landing page
+#   just bench google                 # a recorded page
+#   just bench res/test.html > out.json
+#
+# One build's raw timing report for a recorded page, file, or URL.
+bench target="koala-ui/res/landing.html":
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ "{{url}}" =~ ^https?:// ]]; then
-        slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
-        target=".bench-cache/${slug}.html"
-        if [ ! -f "$target" ]; then
-            mkdir -p .bench-cache
-            curl -sL "{{url}}" > "$target"
-        fi
-    else
-        target="{{url}}"
-    fi
-    # 2048×1536 matches the koala-ui default window (1024×768
-    # logical) at 2× retina. Fixed for reproducibility across
-    # machines; edit here if a different shape becomes the
-    # canonical comparison target.
+    args=()
+    while IFS= read -r arg; do args+=("$arg"); done < <(just lab corpus args "{{target}}")
     cargo run --release --features bench --bin koala -- \
-        --bench "$target" --width 2048 --height 1536
+        --bench "${args[@]}" --width 2048 --height 1536
 
-# Same as `just bench` but skips the cache and passes the URL
-# straight through, so `koala-cli` fetches it live. The harness
-# still loads once and renders N times — only the one-time setup
-# cost includes network I/O. The diff between `setup_us` from
-# `just bench-live` vs `just bench` against the same URL is the
-# end-to-end network + external-resource fetch cost (HTML,
-# external CSS, external scripts, images, fonts).
+# Same as `just bench` but for a live URL, including network and
+# external-resource fetch cost. `--setup-iterations 1 --setup-warmup 0`
+# because each load is a real fetch: 25 of them would hammer the server,
+# and network variance swamps anything a repeat would average out.
 #
-# Use when you want realistic first-paint numbers and accept the
-# network variance; use `just bench` when you want repeatable
-# engine-only numbers across runs.
+#   just bench-live https://example.com
 #
-#   just bench-live https://google.com
-#   just bench-live https://example.com > /tmp/live.json
+# One build's raw timing report for a live URL, network included.
 bench-live url:
-    # `--setup-iterations 1 --setup-warmup 0`: each setup load is a live
-    # network fetch, so the multi-run setup aggregation (default 15 warm +
-    # 10 measured = 25 fetches) would hammer the server. Live numbers are
-    # network-variance-dominated anyway, so a single load is the right
-    # shape here.
     cargo run --release --features bench --bin koala -- \
         --bench "{{url}}" --width 2048 --height 1536 \
         --setup-iterations 1 --setup-warmup 0
 
-# Compare two bench JSON reports and print a colored before→after
-# delta table (improvements green, regressions red, noise dimmed).
-# Lower is better for every metric. Capture two reports with
-# `just bench ... > before.json` then `> after.json` across the
-# builds you want to compare.
+# Profile the render pipeline with `cargo flamegraph` and write
+# `flamegraph.svg` (gitignored). TARGET is as for `just bench`. macOS
+# needs `sudo` for dtrace; the flag prompts once. Requires
+# `cargo install flamegraph`.
 #
-# Caveat: allocation deltas are deterministic and trustworthy; setup
-# timing carries a few percent of cross-process variance even with the
-# warmup ramp, so read small timing deltas with that in mind. Capture
-# both reports on an otherwise-idle machine.
+#   just flame                        # the landing page
+#   just flame google                 # a recorded page, no network
 #
-#   just bench tmp/before.json   # (capture, see `just bench` redirect)
-#   just bench-diff tmp/before.json tmp/after.json
-bench-diff before after:
-    cargo run --release --features bench --bin koala -- \
-        --bench-diff "{{before}}" "{{after}}"
-
-# Re-fetch a remote URL into `.bench-cache/` so the next `just bench`
-# against it sees fresh content. No-op for file paths (they're
-# never cached).
-#
-#   just bench-refresh https://example.com
-bench-refresh url:
+# Flamegraph of a recorded page, file, or URL.
+flame target="koala-ui/res/landing.html":
     #!/usr/bin/env bash
     set -euo pipefail
-    slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
-    mkdir -p .bench-cache
-    curl -sL "{{url}}" > ".bench-cache/${slug}.html"
-    echo "Refreshed .bench-cache/${slug}.html"
-
-# Profile a render with `cargo flamegraph` and open the resulting
-# SVG. macOS needs `sudo` for dtrace; the flag prompts once. Runs
-# with `--features bench --release`, the same configuration as
-# `just bench`, so the profile matches what the bench harness
-# measures. Output lands in `flamegraph.svg` (gitignored).
-#
-# Requires `cargo install flamegraph` once.
-#
-#   just flame                          # profile landing page
-#   just flame https://example.com      # profile live URL (auto-cached)
-#   just flame res/test.html            # profile a local file
-flame url="koala-ui/res/landing.html":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "{{url}}" =~ ^https?:// ]]; then
-        slug=$(echo "{{url}}" | sed 's|https*://||; s|[^a-zA-Z0-9]|_|g')
-        target=".bench-cache/${slug}.html"
-        if [ ! -f "$target" ]; then
-            mkdir -p .bench-cache
-            curl -sL "{{url}}" > "$target"
-        fi
-    else
-        target="{{url}}"
-    fi
+    args=()
+    while IFS= read -r arg; do args+=("$arg"); done < <(just lab corpus args "{{target}}")
     sudo cargo flamegraph --release --features bench --bin koala \
-        -- --bench "$target" --bench-iterations 10 --bench-warmup 2 \
+        -- --bench "${args[@]}" --bench-iterations 10 --bench-warmup 2 \
            --width 2048 --height 1536 > /dev/null
     echo "Flamegraph written to flamegraph.svg"
 
-# Live counterpart of `just flame` — profiles a URL with the full
-# network + JS pipeline included (no caching). Iterations are
-# capped at 1 because the setup cost dominates by orders of
-# magnitude on real pages; we want call-stack coverage of the
-# load, not statistical convergence of the cheap per-render work.
-#
-# Requires sudo on macOS (dtrace). Requires `cargo install flamegraph`.
+# Live counterpart of `just flame`, network and JS pump included.
+# Iterations are capped at 1 because setup cost dominates; the aim is
+# call-stack coverage of the load, not statistics.
 #
 #   just flame-live https://google.com
+#
+# Flamegraph of one live load, network included.
 flame-live url:
     sudo cargo flamegraph --release --features bench --bin koala \
         -- --bench "{{url}}" --bench-iterations 1 --bench-warmup 0 \
@@ -399,3 +329,22 @@ dashboard-clean:
 wpt-clean:
     rm -rf .venv-wpt
     find /tmp /var/folders -name 'koala-wpt-*.png' -delete 2>/dev/null || true
+
+# Lint, type-check, and test the Python packages: the same commands the
+# `python` CI workflow runs.
+#
+# Lint, type-check, and test the Python packages.
+py-check:
+    cd tools/koala-lab && uv run ruff check && uv run ruff format --check \
+        && uv run mypy src tests && uv run pytest
+
+# Measure koala builds against each other (koala-lab). Common uses:
+#
+#   just lab compare                 # working tree vs where this branch left master
+#   just lab compare master my-branch
+#   just lab show                    # re-print the latest result
+#   just lab corpus record           # (re)record the pages measured
+#
+# Compare koala builds, record pages, show results (koala-lab).
+lab *ARGS:
+    @uv run --project {{justfile_directory()}}/tools/koala-lab koala-lab {{ARGS}}

@@ -1,0 +1,26 @@
+# Pages koala-lab measures.
+#
+# Page content is never committed. `koala-lab corpus record` loads each
+# page once through koala and saves every response to
+# .koala-lab/archives/<name>.json; measurements replay that archive, so
+# every run sees identical input and none touches the network.
+
+[[page]]
+name = "google"
+url = "https://www.google.com/"
+exercises = "1.4 MB of external JS; timers still pending after load"
+
+[[page]]
+name = "wikipedia"
+url = "https://en.wikipedia.org/wiki/Web_browser"
+exercises = "long article; many external stylesheets and images"
+
+[[page]]
+name = "hacker-news"
+url = "https://news.ycombinator.com/"
+exercises = "table layout; small external script"
+
+[[page]]
+name = "example"
+url = "https://example.com/"
+exercises = "near-empty page; the fixed cost of a load"
