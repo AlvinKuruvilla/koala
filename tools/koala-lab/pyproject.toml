@@ -12,6 +12,7 @@ authors = [
     { name = "Alvin Kuruvilla", email = "alvineasokuruvilla@gmail.com" },
 ]
 dependencies = [
+    "rich>=15.0.0",
     "scipy>=1.17.1",
 ]
 
@@ -26,6 +27,7 @@ dev = [
     "syrupy>=4",
     "ruff>=0.9",
     "mypy>=1.13",
+    "scipy-stubs>=1.17.1.5",
 ]
 
 [tool.hatch.build.targets.wheel]

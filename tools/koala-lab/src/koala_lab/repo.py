@@ -45,3 +45,18 @@ def resolve_rev(root: Path, rev: str) -> str:
     if result.returncode != 0:
         raise LabError(f"'{rev}' is not a commit in this repository")
     return result.stdout.strip()
+
+
+def merge_base(root: Path, branch: str) -> str:
+    """The commit where HEAD's history left `branch`."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "HEAD", branch],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise LabError(
+            f"HEAD shares no history with '{branch}'; name the baseline explicitly"
+        )
+    return result.stdout.strip()

@@ -405,3 +405,12 @@ wpt-clean:
 py-check:
     cd tools/koala-lab && uv run ruff check && uv run ruff format --check \
         && uv run mypy src tests && uv run pytest
+
+# Measure koala builds against each other (koala-lab). Common uses:
+#
+#   just lab compare                 # working tree vs where this branch left master
+#   just lab compare master my-branch
+#   just lab show                    # re-print the latest result
+#   just lab corpus record           # (re)record the pages measured
+lab *ARGS:
+    @uv run --project {{justfile_directory()}}/tools/koala-lab koala-lab {{ARGS}}
