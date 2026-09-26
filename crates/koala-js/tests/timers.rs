@@ -145,3 +145,77 @@ fn clear_interval_can_cancel_a_timeout_id() {
     rt.pump_until_idle().unwrap();
     assert_eq!(rt.eval_to_string("globalThis.fired").unwrap(), "false");
 }
+
+// Virtual time: the pump skips the page clock to the next timer instead
+// of sleeping (`koala_js::clock`). These tests would each take seconds
+// or minutes of wall time if it slept.
+
+/// A timer far in the future still fires, without the test waiting for
+/// it, and `Date.now()` inside the callback shows the delay elapsed.
+#[test]
+fn pump_skips_to_future_timer_and_date_now_follows() {
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            "globalThis.start = Date.now();\
+             globalThis.waited = -1;\
+             setTimeout(function() { globalThis.waited = Date.now() - globalThis.start; }, 5000);",
+        )
+        .unwrap();
+    let wall = std::time::Instant::now();
+    rt.pump_until_idle().unwrap();
+    assert!(
+        wall.elapsed() < std::time::Duration::from_secs(1),
+        "pump slept instead of skipping: {:?}",
+        wall.elapsed()
+    );
+    let waited: f64 = rt.eval_to_string("globalThis.waited").unwrap().parse().unwrap();
+    assert!(waited >= 5000.0, "Date.now() advanced only {waited} ms across a 5000 ms timer");
+}
+
+/// Timers due within the budget run; one due after it does not.
+#[test]
+fn pump_stops_at_the_timer_budget() {
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            "globalThis.log = [];\
+             setTimeout(function() { globalThis.log.push('9s'); }, 9000);\
+             setTimeout(function() { globalThis.log.push('11s'); }, 11000);",
+        )
+        .unwrap();
+    rt.pump_until_idle().unwrap();
+    assert_eq!(rt.eval_to_string("globalThis.log.join(',')").unwrap(), "9s");
+}
+
+/// An interval that is never cleared ends at the budget: 10 s at 1 s per
+/// firing is 10 firings, give or take one for where the pump started.
+#[test]
+fn endless_interval_ends_at_the_budget() {
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            "globalThis.ticks = 0;\
+             setInterval(function() { globalThis.ticks += 1; }, 1000);",
+        )
+        .unwrap();
+    rt.pump_until_idle().unwrap();
+    let ticks: u32 = rt.eval_to_string("globalThis.ticks").unwrap().parse().unwrap();
+    assert!((9..=10).contains(&ticks), "expected ~10 ticks, got {ticks}");
+}
+
+/// A zero-delay chain is always due, so the budget never expires; the
+/// task cap stops it.
+#[test]
+fn zero_delay_chain_stops_at_the_task_cap() {
+    let mut rt = JsRuntime::new(list_fixture());
+    let _ = rt
+        .execute(
+            "globalThis.runs = 0;\
+             function again() { globalThis.runs += 1; setTimeout(again, 0); }\
+             setTimeout(again, 0);",
+        )
+        .unwrap();
+    rt.pump_until_idle().unwrap();
+    assert_eq!(rt.eval_to_string("globalThis.runs").unwrap(), "10000");
+}

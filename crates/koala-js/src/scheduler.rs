@@ -26,7 +26,10 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::Duration;
+
+use crate::clock::VirtualClock;
 
 /// Stable identifier returned by `setTimeout` and consumed by
 /// `clearTimeout`. Also doubles as the index into the
@@ -51,12 +54,13 @@ struct PendingTimer {
 /// Ids are assigned by the caller (it's the index into the
 /// JS-side `__koala_timers__` array, offset by +1 so id `0` stays
 /// usable as a "no timer" sentinel for `clearTimeout(undefined)`).
-#[derive(Default)]
 struct Scheduler {
-    /// Timers keyed by their absolute due time. `Vec` per slot
+    /// The page clock due times are measured on.
+    clock: Rc<VirtualClock>,
+    /// Timers keyed by their due time on `clock`. `Vec` per slot
     /// handles the (rare) case of two timers due at the same
     /// instant.
-    pending: BTreeMap<Instant, Vec<PendingTimer>>,
+    pending: BTreeMap<Duration, Vec<PendingTimer>>,
     /// Cancellations applied lazily on pop. Using a `Vec`
     /// (small-N hash-free) since the cancellation rate in practice
     /// is low and lookups during pop hit at most a handful of ids.
@@ -67,12 +71,17 @@ thread_local! {
     static SCHEDULER: RefCell<Option<Scheduler>> = const { RefCell::new(None) };
 }
 
-/// Install an empty scheduler for the calling thread, returning a
-/// [`SchedulerGuard`] that tears it down on drop. Mirrors
-/// [`crate::dom_handle::guard`].
+/// Install an empty scheduler for the calling thread, measuring due
+/// times on `clock`, and return a [`SchedulerGuard`] that tears it down
+/// on drop. Mirrors [`crate::dom_handle::guard`].
 #[must_use = "the guard tears down the scheduler on drop; bind to `_guard`"]
-pub(crate) fn guard() -> SchedulerGuard {
-    let previous = SCHEDULER.with(|cell| cell.borrow_mut().replace(Scheduler::default()));
+pub(crate) fn guard(clock: Rc<VirtualClock>) -> SchedulerGuard {
+    let scheduler = Scheduler {
+        clock,
+        pending: BTreeMap::new(),
+        cancelled: Vec::new(),
+    };
+    let previous = SCHEDULER.with(|cell| cell.borrow_mut().replace(scheduler));
     SchedulerGuard { previous }
 }
 
@@ -89,7 +98,7 @@ impl Drop for SchedulerGuard {
     }
 }
 
-/// Register a timer to fire at `Instant::now() + delay` with the
+/// Register a timer to fire `delay` from now on the page clock, with the
 /// caller-supplied `id`. The id is the JS-visible value returned
 /// from `setTimeout` / `setInterval`; the caller is responsible
 /// for keeping it in sync with whatever storage holds the JS
@@ -104,7 +113,7 @@ pub(crate) fn schedule(id: TimerId, delay: Duration, repeat: Option<Duration>) {
     SCHEDULER.with(|cell| {
         let mut guard = cell.borrow_mut();
         let Some(sched) = guard.as_mut() else { return };
-        let due = Instant::now() + delay;
+        let due = sched.clock.elapsed() + delay;
         sched
             .pending
             .entry(due)
@@ -123,10 +132,10 @@ pub(crate) fn cancel(id: TimerId) {
     });
 }
 
-/// Earliest `Instant` at which any pending timer is due, or `None`
-/// when the queue is empty. Used by the pump loop to decide
-/// whether to sleep.
-pub(crate) fn next_due_time() -> Option<Instant> {
+/// Earliest page-clock time at which any pending timer is due, or
+/// `None` when the queue is empty. Used by the pump loop to decide
+/// how far to skip the clock.
+pub(crate) fn next_due_time() -> Option<Duration> {
     SCHEDULER.with(|cell| {
         cell.borrow()
             .as_ref()
@@ -134,7 +143,7 @@ pub(crate) fn next_due_time() -> Option<Instant> {
     })
 }
 
-/// Pop every timer whose due time is `<= now()`. Filters out
+/// Pop every timer due at or before the page clock's current time. Filters out
 /// cancelled ids. Returns the surviving `(TimerId, repeat)` pairs
 /// in tree (i.e. chronological) order — callers iterate, invoke
 /// each callback, and re-call [`schedule`] for any pair whose
@@ -143,9 +152,9 @@ pub(crate) fn pop_due_now() -> Vec<(TimerId, Option<Duration>)> {
     SCHEDULER.with(|cell| {
         let mut guard = cell.borrow_mut();
         let Some(sched) = guard.as_mut() else { return Vec::new() };
-        let now = Instant::now();
+        let now = sched.clock.elapsed();
 
-        let mut due_keys: Vec<Instant> = Vec::new();
+        let mut due_keys: Vec<Duration> = Vec::new();
         for key in sched.pending.keys() {
             if *key <= now {
                 due_keys.push(*key);
@@ -172,45 +181,59 @@ pub(crate) fn pop_due_now() -> Vec<(TimerId, Option<Duration>)> {
 mod tests {
     use super::*;
 
+    /// A scheduler on a fresh clock. The guard must outlive the test
+    /// body; the clock handle lets the test skip time forward.
+    fn scheduler() -> (SchedulerGuard, Rc<VirtualClock>) {
+        let clock = Rc::new(VirtualClock::new());
+        (guard(Rc::clone(&clock)), clock)
+    }
+
     #[test]
     fn schedule_orders_by_due_time() {
-        let _g = guard();
+        let (_g, clock) = scheduler();
         schedule(1, Duration::from_millis(50), None);
         schedule(2, Duration::from_millis(10), None);
         schedule(3, Duration::from_millis(30), None);
-        let now = Instant::now();
         let next = next_due_time().unwrap();
-        assert!(next >= now);
-        assert!(next - now < Duration::from_millis(50));
+        assert!(next <= clock.elapsed() + Duration::from_millis(10));
     }
 
     #[test]
     fn cancel_skips_callback_on_pop() {
-        let _g = guard();
-        schedule(7, Duration::from_millis(0), None);
+        let (_g, clock) = scheduler();
+        schedule(7, Duration::ZERO, None);
         cancel(7);
-        std::thread::sleep(Duration::from_millis(1));
+        clock.skip_to(clock.elapsed() + Duration::from_millis(1));
         let popped = pop_due_now();
         assert!(popped.is_empty(), "cancelled timer should not pop");
     }
 
     #[test]
     fn pop_due_now_only_returns_passed_due_times() {
-        let _g = guard();
-        schedule(1, Duration::from_millis(0), None);
-        schedule(2, Duration::from_secs(60), None);
-        std::thread::sleep(Duration::from_millis(1));
+        let (_g, clock) = scheduler();
+        schedule(1, Duration::ZERO, None);
+        schedule(2, Duration::from_mins(1), None);
+        clock.skip_to(clock.elapsed() + Duration::from_millis(1));
         let popped = pop_due_now();
         assert_eq!(popped, vec![(1, None)], "only the +0ms timer should be due");
         assert!(next_due_time().is_some(), "+60s timer still pending");
     }
 
+    /// Skipping the clock makes a far-future timer due without waiting.
+    #[test]
+    fn skipping_the_clock_makes_later_timers_due() {
+        let (_g, clock) = scheduler();
+        schedule(4, Duration::from_hours(1), None);
+        clock.skip_to(next_due_time().unwrap());
+        assert_eq!(pop_due_now(), vec![(4, None)]);
+    }
+
     #[test]
     fn pop_due_now_reports_interval_repeat_period() {
-        let _g = guard();
+        let (_g, clock) = scheduler();
         let period = Duration::from_millis(25);
-        schedule(9, Duration::from_millis(0), Some(period));
-        std::thread::sleep(Duration::from_millis(1));
+        schedule(9, Duration::ZERO, Some(period));
+        clock.skip_to(clock.elapsed() + Duration::from_millis(1));
         let popped = pop_due_now();
         assert_eq!(
             popped,

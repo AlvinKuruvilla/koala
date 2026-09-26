@@ -73,6 +73,7 @@
 //!   (`data`, `nodeValue`), `Node.firstChild` /  `nextSibling`
 //!   (need Text/Comment wrappers)
 
+mod clock;
 mod dom_handle;
 mod globals;
 mod scheduler;
@@ -80,7 +81,27 @@ mod scheduler;
 pub use dom_handle::DomHandle;
 
 use std::cell::Cell;
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::Duration;
+
+use clock::VirtualClock;
+
+/// How far past the moment it starts [`JsRuntime::pump_until_idle`]
+/// may move the page clock to run pending timers. Pages typically settle
+/// within a few seconds; 10 s follows the budget commonly passed to
+/// headless Chrome's `--virtual-time-budget`. Raising it lets late timers
+/// run and costs CPU on pages with endless intervals (a 16 ms animation
+/// interval fires ~600 times in 10 s); lowering it drops timers pages rely
+/// on to finish rendering.
+const TIMER_BUDGET: Duration = Duration::from_secs(10);
+
+/// Timer callbacks one pump or drain may run before giving up. Stops a
+/// `setTimeout(f, 0)` chain, which is always due and so never lets the
+/// budget above expire. A count rather than a wall-clock limit so the
+/// same page runs the same callbacks on any machine. Arbitrary: far above
+/// what a real page needs, low enough that a runaway loop ends in about a
+/// second.
+const MAX_TIMER_TASKS: u32 = 10_000;
 
 use boa_engine::{Context, JsError, JsString, JsValue, Source, js_string};
 
@@ -108,6 +129,9 @@ pub struct JsRuntime {
     /// DOM-mutation closures flipped the per-thread dirty flag.
     /// Cleared by [`take_dom_dirty`](Self::take_dom_dirty).
     dom_dirty: Cell<bool>,
+    /// The page clock, shared with Boa (for `Date.now()`) and the
+    /// timer scheduler. See [`clock`].
+    clock: Rc<VirtualClock>,
     /// Installs the timer scheduler in the per-thread slot for the
     /// life of this runtime. Held purely for its `Drop` side effect;
     /// `execute` and `pump_until_idle` read the same thread-local.
@@ -125,6 +149,12 @@ impl JsRuntime {
     /// the new Boa context. The DOM handle is held for the lifetime
     /// of the runtime and re-installed as the thread-current DOM
     /// on every call to [`execute`](Self::execute).
+    ///
+    /// # Panics
+    ///
+    /// Panics if Boa cannot build the context. Boa fails only for a
+    /// context marked `can_block` or when custom host hooks cannot
+    /// create the realm; koala sets neither.
     #[must_use]
     pub fn new(dom: DomHandle) -> Self {
         // Install the per-thread scheduler BEFORE registering
@@ -133,13 +163,18 @@ impl JsRuntime {
         // `setTimeout` calls will. Installing here means the same
         // scheduler instance handles every script + pump cycle for
         // this runtime.
-        let scheduler_guard = scheduler::guard();
-        let mut context = Context::default();
+        let clock = Rc::new(VirtualClock::new());
+        let scheduler_guard = scheduler::guard(Rc::clone(&clock));
+        let mut context = Context::builder()
+            .clock(Rc::clone(&clock))
+            .build()
+            .expect("a context with default settings builds");
         globals::register_globals(&mut context);
         Self {
             context,
             dom,
             dom_dirty: Cell::new(false),
+            clock,
             scheduler_guard,
         }
     }
@@ -206,7 +241,7 @@ impl JsRuntime {
     /// [§ 8.1.6.3 Processing model](https://html.spec.whatwg.org/multipage/webappapis.html#event-loop-processing-model)
     ///
     /// Simplified relative to spec: just "while there's anything
-    /// pending, sleep until it's due, call it, loop." No microtask
+    /// pending, skip the clock to it, call it, loop." No microtask
     /// queue, no rendering between iterations — those land later
     /// when there's an actual event loop coordinated with the
     /// browser pipeline. This is sufficient for `setTimeout`-based
@@ -254,17 +289,10 @@ impl JsRuntime {
     where
         F: FnMut(&mut Self) -> bool,
     {
-        // Belt-and-braces budget so a broken setTimeout(fn, 0) →
-        // setTimeout(fn, 0) loop can't hang the parse path
-        // indefinitely. Honoured wptrunner timeouts will trip
-        // first in practice.
-        let budget = Duration::from_secs(30);
-        let started = Instant::now();
+        let deadline = self.clock.elapsed() + TIMER_BUDGET;
+        let mut tasks_run = 0;
 
         loop {
-            if started.elapsed() > budget {
-                break;
-            }
             if should_stop(self) {
                 break;
             }
@@ -285,16 +313,21 @@ impl JsRuntime {
                 if should_stop(self) {
                     break;
                 }
-                let now = Instant::now();
-                if next > now {
-                    let wait = next.saturating_duration_since(now)
-                        .min(budget.saturating_sub(started.elapsed()));
-                    std::thread::sleep(wait);
+                if next > deadline {
+                    break;
                 }
+                // Nothing is due and nothing else can wake the page, so
+                // jump to the next timer instead of sleeping (see
+                // `clock`).
+                self.clock.skip_to(next);
                 continue;
             }
 
             for (id, repeat) in due_ids {
+                if tasks_run == MAX_TIMER_TASKS {
+                    return Ok(());
+                }
+                tasks_run += 1;
                 self.call_timer_callback(id, repeat.is_some())?;
                 // Re-arm intervals *after* the callback returns. If
                 // the callback called clearInterval(id) on itself
@@ -332,7 +365,7 @@ impl JsRuntime {
     ///
     /// Concretely: pop any `pop_due_now`-eligible timers, run
     /// them, drain Boa's microtask queue, and repeat until no
-    /// timer is currently due. A 5s safety budget guards against
+    /// timer is currently due. [`MAX_TIMER_TASKS`] guards against
     /// a `setTimeout(fn, 0)` → `setTimeout(fn, 0)` loop in a DCL
     /// handler.
     ///
@@ -342,12 +375,8 @@ impl JsRuntime {
     /// abandoning any remaining work. Subsequent calls continue
     /// with whatever's still queued.
     pub fn drain_due_tasks(&mut self) -> Result<(), JsError> {
-        let budget = Duration::from_secs(5);
-        let started = Instant::now();
+        let mut tasks_run = 0;
         loop {
-            if started.elapsed() > budget {
-                break;
-            }
             let dom_guard = dom_handle::guard(self.dom.clone());
             let due_ids = scheduler::pop_due_now();
             if due_ids.is_empty() {
@@ -359,6 +388,10 @@ impl JsRuntime {
                 break;
             }
             for (id, repeat) in due_ids {
+                if tasks_run == MAX_TIMER_TASKS {
+                    return Ok(());
+                }
+                tasks_run += 1;
                 self.call_timer_callback(id, repeat.is_some())?;
                 if let Some(period) = repeat {
                     scheduler::schedule(id, period, Some(period));
