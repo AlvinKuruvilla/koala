@@ -1,7 +1,7 @@
 ---
 created: 2026-09-26
 area: koala-cli (probe) + new Python orchestrator + dashboard
-status: design — not started
+status: phase 1 (probe contract) done on bench/measurement-system; phase 2 next
 last_updated: 2026-09-26
 ---
 
