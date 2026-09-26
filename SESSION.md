@@ -707,3 +707,33 @@ The real fix is a guard in the parser that fails the one script
 upstream PR to Boa, or a local patch (which would reverse the
 un-vendoring in PR #10). Boa's own CLI works around it with a 16 MiB
 stack (boa-dev/boa#5537).
+||||||| 8db80d8
+
+## Rendering bugs found by the new error page (2026-09-26)
+
+- **Inline text breaks into spaced columns.** koala-ui's previous error
+  page split paragraphs into widely spaced chunks that ran past the right
+  edge. Reproduction: `res/fixtures/inline-layout-gaps.html` (render with
+  `just cli res/fixtures/inline-layout-gaps.html shot.png`).
+- **Text after a bold run overlaps it.** The following text starts where
+  the run would end if it were set in the regular face, so it overlaps
+  the bold glyphs and swallows a following space. Reproduction:
+  `res/fixtures/bold-run-overlap.html`.
+- **No font fallback.** A character missing from the chosen font (for
+  example ⌘ in Helvetica) draws as an empty box instead of falling back
+  to a font that has it.
+
+## Navigations send no `Accept` header
+
+koala's requests carry a browser User-Agent but no `Accept: text/html,...`.
+Some servers pick the response by it: GitHub answers a missing page with
+the 9-byte plain text `Not Found` instead of its HTML 404 page
+(checked 2026-09-26). Document requests should send the navigation
+`Accept` value browsers use; subresources their own.
+
+## example.com's box: text overflows it, no top margin
+
+Rendering example.com (and its 404 page, which is the same markup) puts
+the grey `div` flush against the top of the viewport, and the paragraph
+text runs past its right edge. Chrome centers the box with space above
+and keeps the text inside it. Reproduce: `just cli example shot.png`.

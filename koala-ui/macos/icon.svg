@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Koala's app icon. Drawn on Apple's 1024 px grid: the rounded-square
+       body is 824 px, centred, leaving the margin macOS expects around
+       icons. Regenerate Koala.icns after editing: see the comment on
+       `just gui` in the justfile. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fb89a"/>
+      <stop offset="1" stop-color="#3f7d63"/>
+    </linearGradient>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9cdd2"/>
+      <stop offset="1" stop-color="#9aa1a8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <!-- ears -->
+    <circle cx="300" cy="400" r="150" fill="url(#fur)"/>
+    <circle cx="724" cy="400" r="150" fill="url(#fur)"/>
+    <circle cx="300" cy="405" r="92" fill="#eef0f2"/>
+    <circle cx="724" cy="405" r="92" fill="#eef0f2"/>
+    <!-- head -->
+    <ellipse cx="512" cy="560" rx="250" ry="235" fill="url(#fur)"/>
+  </g>
+  <!-- eyes -->
+  <circle cx="420" cy="530" r="24" fill="#2b2f33"/>
+  <circle cx="604" cy="530" r="24" fill="#2b2f33"/>
+  <circle cx="428" cy="522" r="7" fill="#ffffff"/>
+  <circle cx="612" cy="522" r="7" fill="#ffffff"/>
+  <!-- nose -->
+  <path d="M512 520 C 470 520 452 560 456 610 C 460 660 490 690 512 690 C 534 690 564 660 568 610 C 572 560 554 520 512 520 Z" fill="#2b2f33"/>
+  <ellipse cx="496" cy="560" rx="14" ry="22" fill="#4a5056"/>
+</svg>

@@ -76,7 +76,7 @@ if (!latest) {
     <div class="dash-detail" style="margin: 2rem 0;">
       <p style="margin: 0;">
         No runs in <code>dashboard/runs/</code> yet. Record one with
-        <code>just wpt-record /css/CSS2/visudet/</code> and refresh.
+        <code>just wpt /css/CSS2/visudet/ 4 record</code> and refresh.
       </p>
     </div>
   `);

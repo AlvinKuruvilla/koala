@@ -1,19 +1,57 @@
-# Open the browser GUI. The address bar handles URL navigation
-# after launch, so this recipe takes no argument.
-#   just gui
-gui:
-    cargo run --bin koala-ui
+# Recipes are grouped by task. A recipe earns its place by being a daily
+# entry point or by encoding something that would otherwise have to be
+# rediscovered (flags, environment, paths); a variant of an existing task
+# is an argument, not a new recipe.
 
-# Run the headless CLI, optionally saving a screenshot.
+# Debug builds of the GUI and CLI run under lldb in batch mode. A clean
+# run exits with the program's own status; a crash stops, prints the
+# innermost 60 frames of every thread, and exits 134, with no need to
+# reproduce it under a debugger by hand. Rust's own handler prints no
+# backtrace for a stack overflow, which is when this matters most.
+lldb_run := "lldb --batch --no-lldbinit -o run -o 'script import os; os._exit(lldb.process.GetExitStatus())' -k 'thread backtrace all -c 60' -k 'script import os; os._exit(134)' --"
+
+# Open the browser GUI (debug build, under lldb). The address bar
+# handles navigation, so this takes no argument.
+#
+# It runs from target/debug/Koala.app: macOS takes the name and icon in
+# the app switcher, Dock, and menu bar from an app bundle, so a bare
+# executable shows as "koala-ui" with a generic icon. The binary is
+# hard-linked in rather than copied (instant, and a rebuild replaces the
+# file, so it is re-linked each run).
+#
+# The icon is koala-ui/macos/Koala.icns, generated from icon.svg and
+# committed so building needs no SVG tools. After editing the SVG:
+#
+#   set=tmp/Koala.iconset; mkdir -p $set
+#   for s in 16 32 128 256 512; do
+#     rsvg-convert -w $s        koala-ui/macos/icon.svg -o $set/icon_${s}x${s}.png
+#     rsvg-convert -w $((s*2))  koala-ui/macos/icon.svg -o $set/icon_${s}x${s}@2x.png
+#   done
+#   iconutil -c icns $set -o koala-ui/macos/Koala.icns
+[doc("Open the browser GUI under lldb (a crash prints a backtrace)")]
+gui:
+    cargo build --bin koala-ui
+    mkdir -p target/debug/Koala.app/Contents/MacOS target/debug/Koala.app/Contents/Resources
+    cp koala-ui/macos/Info.plist target/debug/Koala.app/Contents/Info.plist
+    cp koala-ui/macos/Koala.icns target/debug/Koala.app/Contents/Resources/Koala.icns
+    ln -f target/debug/koala-ui target/debug/Koala.app/Contents/MacOS/koala-ui
+    {{lldb_run}} target/debug/Koala.app/Contents/MacOS/koala-ui
+
+# Load TARGET in the headless CLI (debug build, under lldb) and print its
+# DOM, or save a screenshot. TARGET is a recorded corpus page (replayed;
+# see `just lab corpus list`), a local file, or a URL.
+#
 #   just cli https://example.com
-#   just cli res/test.html
-#   just cli https://example.com screenshot.png
-cli url screenshot="":
-    @if [ -z "{{screenshot}}" ]; then \
-        cargo run --bin koala -- "{{url}}"; \
-    else \
-        cargo run --bin koala -- -S "{{screenshot}}" "{{url}}"; \
-    fi
+#   just cli google screenshot.png
+[doc("Load a page in the headless CLI under lldb; optionally screenshot it")]
+cli target screenshot="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --bin koala
+    args=()
+    while IFS= read -r arg; do args+=("$arg"); done < <(just lab corpus args "{{target}}")
+    if [ -n "{{screenshot}}" ]; then args=(-S "{{screenshot}}" "${args[@]}"); fi
+    {{lldb_run}} target/debug/koala "${args[@]}"
 
 # Fetch a page and pretty-print it with Prettier, expanding any
 # minified embedded <style>/<script> blocks into readable, indented
@@ -29,6 +67,7 @@ cli url screenshot="":
 #
 #   just prettify https://discord.com
 #   just prettify https://discord.com res/fixtures/discord.html
+[doc("Fetch a page and pretty-print its HTML for reading or as a fixture")]
 prettify url out="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -53,84 +92,58 @@ prettify url out="":
     npx --yes prettier@3 --parser html "$raw" > "$out"
     echo "Wrote $out ($(wc -l < "$out" | tr -d ' ') lines)"
 
-# One build's raw `--bench` report as JSON on stdout: every measured load
+# One build's raw timing report as JSON on stdout: every measured load
 # and render, heap accounting, and fingerprints of the input and the
 # rendered frame. To compare builds, use `just lab compare`.
 #
-# TARGET is a recorded corpus page (replayed, no network; see
-# `just lab corpus list`), a local file, or a URL (fetched live on every
-# load; see `just bench-live`).
+# TARGET is a recorded corpus page (replayed, no network), a local file,
+# or a URL. A URL is fetched live on every load, so it gets one load and
+# no warm-up: repeats would hammer the server, and network variance
+# swamps anything they would average out.
 #
 #   just bench                        # the landing page
 #   just bench google                 # a recorded page
-#   just bench res/test.html > out.json
-#
-# One build's raw timing report for a recorded page, file, or URL.
+#   just bench https://example.com    # live, network included
+[doc("One build's raw timing report for a recorded page, file, or URL")]
 bench target="koala-ui/res/landing.html":
     #!/usr/bin/env bash
     set -euo pipefail
     args=()
     while IFS= read -r arg; do args+=("$arg"); done < <(just lab corpus args "{{target}}")
+    live=()
+    if [[ "${args[0]}" =~ ^https?:// ]]; then live=(--setup-iterations 1 --setup-warmup 0); fi
     cargo run --release --features bench --bin koala -- \
-        --bench "${args[@]}" --width 2048 --height 1536
+        --bench "${args[@]}" --width 2048 --height 1536 ${live[@]+"${live[@]}"}
 
-# Same as `just bench` but for a live URL, including network and
-# external-resource fetch cost. `--setup-iterations 1 --setup-warmup 0`
-# because each load is a real fetch: 25 of them would hammer the server,
-# and network variance swamps anything a repeat would average out.
+# Flamegraph of TARGET (as for `just bench`) written to flamegraph.svg
+# (gitignored). A live URL gets one load and one render: the aim is
+# call-stack coverage, not statistics. macOS needs `sudo` for dtrace.
+# Requires `cargo install flamegraph`.
 #
-#   just bench-live https://example.com
-#
-# One build's raw timing report for a live URL, network included.
-bench-live url:
-    cargo run --release --features bench --bin koala -- \
-        --bench "{{url}}" --width 2048 --height 1536 \
-        --setup-iterations 1 --setup-warmup 0
-
-# Profile the render pipeline with `cargo flamegraph` and write
-# `flamegraph.svg` (gitignored). TARGET is as for `just bench`. macOS
-# needs `sudo` for dtrace; the flag prompts once. Requires
-# `cargo install flamegraph`.
-#
-#   just flame                        # the landing page
-#   just flame google                 # a recorded page, no network
-#
-# Flamegraph of a recorded page, file, or URL.
+#   just flame google
+[doc("Flamegraph of a recorded page, file, or URL")]
 flame target="koala-ui/res/landing.html":
     #!/usr/bin/env bash
     set -euo pipefail
     args=()
     while IFS= read -r arg; do args+=("$arg"); done < <(just lab corpus args "{{target}}")
+    counts=(--bench-iterations 10 --bench-warmup 2)
+    if [[ "${args[0]}" =~ ^https?:// ]]; then
+        counts=(--bench-iterations 1 --bench-warmup 0 --setup-iterations 1 --setup-warmup 0)
+    fi
     sudo cargo flamegraph --release --features bench --bin koala \
-        -- --bench "${args[@]}" --bench-iterations 10 --bench-warmup 2 \
-           --width 2048 --height 1536 > /dev/null
+        -- --bench "${args[@]}" "${counts[@]}" --width 2048 --height 1536 > /dev/null
     echo "Flamegraph written to flamegraph.svg"
 
-# Live counterpart of `just flame`, network and JS pump included.
-# Iterations are capped at 1 because setup cost dominates; the aim is
-# call-stack coverage of the load, not statistics.
+# Measure koala builds against each other (koala-lab).
 #
-#   just flame-live https://google.com
-#
-# Flamegraph of one live load, network included.
-flame-live url:
-    sudo cargo flamegraph --release --features bench --bin koala \
-        -- --bench "{{url}}" --bench-iterations 1 --bench-warmup 0 \
-           --width 2048 --height 1536 > /dev/null
-    echo "Flamegraph written to flamegraph.svg"
-
-# Per-stage allocation probe. Loads `url` through
-# `koala_browser::load_document` with a `tracing` layer that
-# reports peak resident memory at every span enter / exit; the
-# stream of `enter`/`close` lines on stderr shows which pipeline
-# stage is allocating. Stack `--map URL=PATH` overrides to swap
-# fetched scripts / CSS for instrumented local copies.
-#
-#   just probe-oom https://example.com
-#   just probe-oom https://example.com --map URL=/tmp/x.js
-#   just probe-oom https://example.com 2> /tmp/trail.log
-probe-oom url *MAPS:
-    cargo run --release --bin oom-probe -- {{MAPS}} "{{url}}"
+#   just lab compare                 # working tree vs where this branch left master
+#   just lab compare master my-branch
+#   just lab show                    # re-print the latest result
+#   just lab corpus record           # (re)record the pages measured
+[doc("Compare koala builds on the corpus (koala-lab)")]
+lab *ARGS:
+    @uv run --project {{justfile_directory()}}/tools/koala-lab koala-lab {{ARGS}}
 
 # Minimal-repro harness for "does this JS file misbehave in Boa
 # on its own?" Runs each `<file>` through a single fresh
@@ -140,8 +153,16 @@ probe-oom url *MAPS:
 #
 #   just probe-boa tmp/script-12.js
 #   just probe-boa tmp/scripts/script-0{0..7}.js
+[doc("Run JS files through a fresh Boa runtime; time and peak memory each")]
 probe-boa +FILES:
     cargo run --release --bin boa-isolate -- {{FILES}}
+
+# Lint, type-check, and test the Python packages, as the `python` CI
+# workflow does.
+[doc("Lint, type-check, and test the Python packages (as CI does)")]
+py-check:
+    cd tools/koala-lab && uv run ruff check && uv run ruff format --check \
+        && uv run mypy src tests && uv run pytest
 
 # One-time setup for the WPT integration: creates `.venv-wpt/`,
 # installs the koala wptrunner plugin, and pulls in wpt's Python
@@ -152,6 +173,7 @@ probe-boa +FILES:
 # wpt doesn't list it as a hard dependency — without it, every
 # TEST_END line renders monochrome. Adding it here means `just
 # wpt` produces coloured live output out of the box.
+[doc("Create .venv-wpt with the wptrunner plugin and wpt's requirements")]
 wpt-setup:
     python3 -m venv .venv-wpt
     .venv-wpt/bin/pip install --upgrade pip
@@ -164,11 +186,12 @@ wpt-setup:
 # no-op when up to date). The first invocation downloads the WPT
 # manifest (~40MB).
 #
-# Always writes a JSON wptreport to /tmp/koala-wpt.json so a
-# directory run's output is analyzable after the fact (per-test
-# status, subtest results, timing) without standing up the
-# dashboard. Use `just wpt-record` instead if you want the run
-# archived under `dashboard/runs/`.
+# Always writes a JSON wptreport, so a directory run's output is
+# analyzable after the fact (per-test status, subtest results, timing).
+# It goes to /tmp/koala-wpt.json, or with `record` to
+# `dashboard/runs/<timestamp>_<sha>.json`, where the conformance
+# dashboard reads it. Record only runs worth keeping: one-off debugging
+# runs would fill the dashboard with noise.
 #
 # `processes` is the parallel koala-cli count. The current
 # rate-limiter on every directory run is tests that hit wpt's
@@ -185,7 +208,9 @@ wpt-setup:
 #   just wpt /css/CSS2/visudet/content-height-001.html 1    # force serial
 #   just wpt /dom/nodes/                                    # whole dir, 4 parallel
 #   just wpt /dom/nodes/ 8                                  # whole dir, 8 parallel
-wpt test="/css/CSS2/visudet/content-height-001.html" processes="4":
+#   just wpt /css/CSS2/visudet/ 4 record                    # archive for the dashboard
+[doc("Run WPT tests against koala; `record` archives the run for the dashboard")]
+wpt test="/css/CSS2/visudet/content-height-001.html" processes="4" record="":
     #!/usr/bin/env bash
     # Shebang form so we own the whole script and can:
     #   1. Keep going past `wpt run` exiting non-zero (it does
@@ -199,6 +224,14 @@ wpt test="/css/CSS2/visudet/content-height-001.html" processes="4":
     #   3. Propagate wpt's exit code back to just / CI.
     set -uo pipefail
     cargo build --release -p koala-cli
+    report=/tmp/koala-wpt.json
+    if [ "{{record}}" = record ]; then
+        mkdir -p dashboard/runs
+        report="dashboard/runs/$(date -u +%Y-%m-%dT%H-%M-%S)_$(git rev-parse --short HEAD).json"
+    elif [ -n "{{record}}" ]; then
+        echo "error: third argument must be 'record' or empty, got '{{record}}'" >&2
+        exit 2
+    fi
     # PYTHONWARNINGS silences wpt-pinned urllib3 v2's
     # `NotOpenSSLWarning` (Python 3.9 on macOS links against
     # LibreSSL, not OpenSSL). The warning is informational and
@@ -221,7 +254,7 @@ wpt test="/css/CSS2/visudet/content-height-001.html" processes="4":
             --no-pause \
             --no-restart-on-unexpected \
             --log-mach=- --log-mach-level=info \
-            --log-wptreport=/tmp/koala-wpt.json \
+            --log-wptreport="$report" \
             koala "{{test}}" || rc=$?
     # `wpt run` returns once its main thread is done, but its
     # wptserve worker subprocesses keep emitting "Stopped http
@@ -232,13 +265,15 @@ wpt test="/css/CSS2/visudet/content-height-001.html" processes="4":
     # the observed shutdown noise without being noticeable.
     sleep 0.5
     echo
-    .venv-wpt/bin/python -m wptrunner_koala.summary /tmp/koala-wpt.json
+    .venv-wpt/bin/python -m wptrunner_koala.summary "$report"
+    if [ "{{record}}" = record ]; then echo "Archived run to $report"; fi
     exit "$rc"
 
 # List the top-level WPT areas sorted by test-file count, with a
 # hint on how to drive `just wpt` against one. Takes ~10-30s on
 # first run (filesystem walk over ~900MB); fast afterward thanks
 # to the OS file cache.
+[doc("List WPT areas by test count")]
 wpt-list:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -258,93 +293,30 @@ wpt-list:
     echo
     echo "Run a family with:  just wpt /<area>/[<subdir>/]"
 
-# Run wpt against `scope` and archive the JSON report into
-# `dashboard/runs/<timestamp>_<sha>.json`. Use this when you want a
-# run to land in the conformance dashboard. For one-off iteration use
-# `just wpt` instead — it doesn't archive, so the runs/ dir doesn't
-# fill with throwaway debug data.
+# The conformance dashboard (Observable Framework) over the runs archived
+# by `just wpt ... record`:
 #
-# `processes` is the parallel koala-cli count; wptrunner shards the
-# test list across that many subprocesses pulling from one wpt server.
-# A good default is the physical core count; raise it if I/O-bound,
-# lower it to debug. Each koala-cli writes its own hosts file and
-# JSON-protocol streams independently, so they don't share state.
+# - setup: Node dependencies, plus `duckdb` for the parquet loader, into
+#   `.venv-wpt` (run `just wpt-setup` first).
+# - serve: preview on http://127.0.0.1:3000 with hot reload.
+# - build: static site into dashboard/dist/; loaders re-read the runs.
+# - clean: drop Observable's loader cache and the built site, needed
+#   after changing a loader's output shape (a stale shape may be served).
 #
-#   just wpt-record                                       # default scope, 4 processes
-#   just wpt-record /css/CSS2/visudet/                    # whole subdir
-#   just wpt-record /css/ 8                               # /css/ at 8x parallel
-wpt-record scope="/css/CSS2/visudet/" processes="4":
+# `.venv-wpt/bin` goes first on PATH so the loaders' `#!/usr/bin/env
+# python3` shebang finds the venv's `duckdb`, not a system python3.
+#
+#   just dashboard setup
+#   just dashboard
+[doc("Conformance dashboard: setup, serve (default), build, or clean")]
+dashboard action="serve":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p koala-cli
-    mkdir -p dashboard/runs
-    ts=$(date -u +%Y-%m-%dT%H-%M-%S)
-    sha=$(git rev-parse --short HEAD)
-    out="dashboard/runs/${ts}_${sha}.json"
-    .venv-wpt/bin/python third-party/wpt/wpt \
-        --venv .venv-wpt --skip-venv-setup \
-        run \
-            --binary="{{justfile_directory()}}/target/release/koala" \
-            --processes="{{processes}}" \
-            --no-pause \
-            --no-restart-on-unexpected \
-            --log-mach=- --log-mach-level=warning \
-            --log-wptreport="$out" \
-            koala "{{scope}}"
-    echo "Archived run to $out"
-
-# Install the dashboard's Node dependencies (Observable Framework)
-# plus the Python deps the data loaders need (`duckdb` for the
-# parquet emitter). The Python install lands in `.venv-wpt`, which
-# `just wpt-setup` is responsible for creating.
-#   just wpt-setup           # if you haven't already
-#   just dashboard-setup
-dashboard-setup:
-    cd dashboard && npm install
-    .venv-wpt/bin/pip install --quiet duckdb
-
-# Build the static dashboard into dashboard/dist/. Observable's data
-# loaders re-run on every build (they read dashboard/runs/), so the
-# dashboard always reflects whatever runs are currently archived.
-# We prepend `.venv-wpt/bin` to PATH so the `#!/usr/bin/env python3`
-# shebang in our loaders picks up the wpt venv (which has `duckdb`)
-# instead of a system python3 that probably doesn't.
-dashboard-build:
-    cd dashboard && PATH="{{justfile_directory()}}/.venv-wpt/bin:$PATH" npm run build
-
-# Start the Observable preview server on http://127.0.0.1:3000 with
-# hot reload. Edit src/*.md and the page re-renders automatically.
-# Same PATH injection as `dashboard-build`.
-dashboard-serve:
-    cd dashboard && PATH="{{justfile_directory()}}/.venv-wpt/bin:$PATH" npm run dev
-
-# Clear Observable's data-loader cache and the built site. Useful
-# after changing the data loader's output schema (Observable caches
-# loader output and may serve a stale shape otherwise).
-dashboard-clean:
-    rm -rf dashboard/src/.observablehq dashboard/.observablehq dashboard/dist
-
-# Tear down the wpt venv and clean up any koala temp screenshots
-# left behind by interrupted runs.
-wpt-clean:
-    rm -rf .venv-wpt
-    find /tmp /var/folders -name 'koala-wpt-*.png' -delete 2>/dev/null || true
-
-# Lint, type-check, and test the Python packages: the same commands the
-# `python` CI workflow runs.
-#
-# Lint, type-check, and test the Python packages.
-py-check:
-    cd tools/koala-lab && uv run ruff check && uv run ruff format --check \
-        && uv run mypy src tests && uv run pytest
-
-# Measure koala builds against each other (koala-lab). Common uses:
-#
-#   just lab compare                 # working tree vs where this branch left master
-#   just lab compare master my-branch
-#   just lab show                    # re-print the latest result
-#   just lab corpus record           # (re)record the pages measured
-#
-# Compare koala builds, record pages, show results (koala-lab).
-lab *ARGS:
-    @uv run --project {{justfile_directory()}}/tools/koala-lab koala-lab {{ARGS}}
+    export PATH="{{justfile_directory()}}/.venv-wpt/bin:$PATH"
+    case "{{action}}" in
+        setup) (cd dashboard && npm install) && pip install --quiet duckdb ;;
+        serve) cd dashboard && npm run dev ;;
+        build) cd dashboard && npm run build ;;
+        clean) rm -rf dashboard/src/.observablehq dashboard/.observablehq dashboard/dist ;;
+        *) echo "error: action must be setup, serve, build, or clean; got '{{action}}'" >&2; exit 2 ;;
+    esac

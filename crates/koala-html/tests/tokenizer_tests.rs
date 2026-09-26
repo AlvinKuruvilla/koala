@@ -489,3 +489,46 @@ fn test_named_character_reference_in_attribute() {
         _ => panic!("Expected StartTag token"),
     }
 }
+
+/// The text of every `Character` token, concatenated.
+fn text_of(input: &str) -> String {
+    tokenize(input)
+        .into_iter()
+        .filter_map(|token| match token {
+            Token::Character { data } => Some(data),
+            _ => None,
+        })
+        .collect()
+}
+
+/// [§ 13.2.5.80 Numeric character reference end state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)
+/// does not consume a character. The tokenizer used to consume one on
+/// entering it anyway and drop it, so `can&#39;t` came out as `can'`.
+#[test]
+fn test_numeric_character_reference_keeps_the_next_character() {
+    assert_eq!(text_of("can&#39;t"), "can't");
+    assert_eq!(text_of("x&#x41;y"), "xAy");
+    assert_eq!(text_of("&#x41;&#66;"), "AB");
+    // Missing semicolon: a parse error, but the character after the digits
+    // is reconsumed, not lost.
+    assert_eq!(text_of("&#65x"), "Ax");
+    // At end of input, with and without the semicolon.
+    assert_eq!(text_of("x&#65;"), "xA");
+    assert_eq!(text_of("x&#65"), "xA");
+}
+
+#[test]
+fn test_numeric_character_reference_in_attribute_value() {
+    let tokens = tokenize(r#"<a title="x&#39;y" data-n=a&#66;c>"#);
+    let Token::StartTag { attributes, .. } = &tokens[0] else {
+        panic!("expected a start tag, got {:?}", tokens[0]);
+    };
+    let value = |name: &str| {
+        attributes
+            .iter()
+            .find(|attr| attr.name == name)
+            .map(|attr| attr.value.clone())
+    };
+    assert_eq!(value("title").as_deref(), Some("x'y"));
+    assert_eq!(value("data-n").as_deref(), Some("aBc"));
+}

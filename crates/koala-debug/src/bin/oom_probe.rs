@@ -18,7 +18,6 @@
 //! Run with:
 //!
 //! ```sh
-//! just probe-oom <url>                # via the justfile recipe
 //! cargo run --release --bin oom-probe -- <url>
 //! cargo run --release --bin oom-probe -- --map URL=/tmp/x.js <url>
 //! ```

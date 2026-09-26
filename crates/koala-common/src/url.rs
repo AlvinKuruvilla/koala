@@ -184,21 +184,27 @@ fn merge_paths(base_has_authority: bool, base_path: &str, ref_path: &str) -> Str
 /// inside the path, not after a scheme).
 #[must_use]
 pub fn has_scheme(href: &str) -> bool {
+    scheme(href).is_some()
+}
+
+/// The scheme of `href` as written (`"https"` for `https://a.test/`), or
+/// `None` when it has none. Schemes compare ASCII case-insensitively;
+/// callers lower-case before matching.
+#[must_use]
+pub fn scheme(href: &str) -> Option<&str> {
     let mut chars = href.char_indices();
-    let Some((_, first)) = chars.next() else {
-        return false;
-    };
+    let (_, first) = chars.next()?;
     if !first.is_ascii_alphabetic() {
-        return false;
+        return None;
     }
-    for (_, c) in chars {
+    for (i, c) in chars {
         match c {
-            ':' => return true,
+            ':' => return Some(&href[..i]),
             'a'..='z' | 'A'..='Z' | '0'..='9' | '+' | '-' | '.' => {}
-            _ => return false,
+            _ => return None,
         }
     }
-    false
+    None
 }
 
 /// The `file:` URL of a local file, used as the document URL of a page
