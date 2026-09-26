@@ -209,7 +209,19 @@ pub fn load_document_with_hooks<H: JsHooks>(
 
     // The active `RequestSender` dispatches on the URL scheme, so the
     // loader just hands it the address and gets bytes back.
-    let html_source = net::fetch_text(&document_url)?;
+    //
+    // An HTTP error status still usually comes with a page: the server's
+    // own "Not Found" or "Service Unavailable". Browsers display it, and
+    // show their own error page only when the body is empty (Chromium's
+    // `HttpErrorNavigationThrottle`, Firefox's `nsURILoader`). Only the
+    // document gets this treatment; a stylesheet, script, or image that
+    // comes back with an error status is not used.
+    let html_bytes = match net::fetch_bytes(&document_url) {
+        Ok(bytes) => bytes,
+        Err(net::FetchError::HttpStatus { body, .. }) if !body.is_empty() => body,
+        Err(error) => return Err(error.into()),
+    };
+    let html_source = String::from_utf8_lossy(&html_bytes).into_owned();
 
     // A `data:` document has no location to resolve references against.
     let is_data = koala_common::url::scheme(&document_url)

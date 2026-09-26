@@ -98,11 +98,19 @@ def test_summarize_counts_responses_and_failures(tmp_path: Path) -> None:
                 "version": 1,
                 "entries": {
                     "https://e.test/": {"body": "aGk=", "sha256": "..."},
-                    "https://e.test/gone.css": {"error": "HTTP 404"},
+                    "https://e.test/gone.css": {"error": "connection refused"},
+                    "https://e.test/missing": {
+                        "body": "",
+                        "sha256": "...",
+                        "status": 404,
+                    },
                 },
             }
         )
     )
     recording = summarize(archive)
-    assert recording.responses == 2
-    assert recording.failures == [("https://e.test/gone.css", "HTTP 404")]
+    assert recording.responses == 3
+    assert recording.failures == [
+        ("https://e.test/gone.css", "connection refused"),
+        ("https://e.test/missing", "HTTP 404"),
+    ]

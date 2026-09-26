@@ -9,15 +9,23 @@ use std::path::PathBuf;
 use koala_common::archive::{Archive, ArchiveError, RecordingSender, ReplaySender};
 use koala_common::net::{FetchError, RequestSender, fetch_bytes, install_sender};
 
-/// Stand-in for the network: known URLs return their body, anything else
-/// fails with a 404.
+/// Stand-in for the network: known URLs return their body, a host named
+/// `down.example` cannot be reached, and anything else is a 404 with the
+/// server's error page.
 struct FakeSite(HashMap<&'static str, &'static [u8]>);
+
+const NOT_FOUND_PAGE: &[u8] = b"<h1>Not Found</h1>";
 
 impl RequestSender for FakeSite {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+        if url.contains("down.example") {
+            // Any non-HTTP failure will do; the archive keeps only its message.
+            return Err(FetchError::InvalidFileUrl { url: url.to_string() });
+        }
         self.0.get(url).map(|body| body.to_vec()).ok_or_else(|| FetchError::HttpStatus {
             url: url.to_string(),
             status: 404,
+            body: NOT_FOUND_PAGE.to_vec(),
         })
     }
 }
@@ -50,7 +58,7 @@ fn fetch_all(sender: Box<dyn RequestSender>, urls: &[&str]) -> Vec<String> {
 }
 
 /// Record a load, then replay it from the saved file: every fetch returns
-/// what it returned while recording, including the failure.
+/// what it returned while recording, including an HTTP error and a failure.
 #[test]
 fn replay_reproduces_recorded_load() {
     let urls = [
@@ -58,6 +66,7 @@ fn replay_reproduces_recorded_load() {
         "https://example.com/a.css",
         "https://example.com/logo.png",
         "https://example.com/missing.js",
+        "https://down.example/x.js",
     ];
     let recorder = RecordingSender::new(site());
     let live = fetch_all(Box::new(recorder.clone()), &urls);
@@ -66,17 +75,57 @@ fn replay_reproduces_recorded_load() {
     recorder.archive().save(&path).expect("temp dir is writable");
     let archive = Archive::load(&path).expect("archive was just saved");
     std::fs::remove_file(&path).expect("archive was just saved");
-    assert_eq!(archive.len(), 4, "the failed fetch is recorded too");
+    assert_eq!(archive.len(), 5, "the 404 and the failed fetch are recorded too");
 
-    let replayed = fetch_all(Box::new(ReplaySender::new(archive)), &urls);
-    assert_eq!(replayed[..3], live[..3]);
-    // The 404 comes back as a recorded failure that quotes the original.
+    let replay = ReplaySender::new(archive);
+    let replayed = fetch_all(Box::new(replay.clone()), &urls);
+    // Successes and the 404 come back exactly as they were.
+    assert_eq!(replayed[..4], live[..4]);
+    // A failure without a response comes back as a recorded failure that
+    // quotes the original.
     assert!(
-        replayed[3].contains("failed when the archive was recorded")
-            && replayed[3].contains("HTTP 404"),
+        replayed[4].contains("failed when the archive was recorded"),
         "got {}",
-        replayed[3]
+        replayed[4]
     );
+}
+
+/// The server's error page survives recording, so replaying a page that
+/// shows a 404 page still shows it.
+#[test]
+fn replay_keeps_the_body_of_an_http_error() {
+    let recorder = RecordingSender::new(site());
+    let _ = recorder.fetch("https://example.com/missing");
+    let path = temp_archive("http-error");
+    recorder.archive().save(&path).expect("temp dir is writable");
+    let archive = Archive::load(&path).expect("archive was just saved");
+    std::fs::remove_file(&path).expect("archive was just saved");
+
+    let err = ReplaySender::new(archive)
+        .fetch("https://example.com/missing")
+        .expect_err("the page was a 404");
+    match err {
+        FetchError::HttpStatus { status, body, .. } => {
+            assert_eq!(status, 404);
+            assert_eq!(body, NOT_FOUND_PAGE);
+        }
+        other => panic!("expected HttpStatus, got {other}"),
+    }
+}
+
+/// Archives written before `status` existed still load.
+#[test]
+fn load_accepts_version_1() {
+    let path = temp_archive("version-1");
+    std::fs::write(
+        &path,
+        r#"{"format":"koala-fetch-archive","version":1,"entries":{
+            "https://example.com/":{"body":"aGk=","sha256":"8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4"}}}"#,
+    )
+    .expect("temp dir is writable");
+    let archive = Archive::load(&path).expect("version 1 is still readable");
+    std::fs::remove_file(&path).expect("file was just written");
+    assert_eq!(archive.len(), 1);
 }
 
 /// A URL the recording never saw is an error, not a network fetch.
