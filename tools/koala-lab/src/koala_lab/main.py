@@ -65,6 +65,14 @@ def _parser() -> argparse.ArgumentParser:
     listing = corpus_sub.add_parser("list", help="show pages and what is recorded")
     listing.set_defaults(handler=_list)
 
+    replay_args = corpus_sub.add_parser(
+        "args",
+        help="print koala's arguments for TARGET, one per line: a corpus page "
+        "replays its recording; a path or URL passes through",
+    )
+    _ = replay_args.add_argument("target", metavar="TARGET")
+    replay_args.set_defaults(handler=_args)
+
     compare_cmd = commands.add_parser(
         "compare", help="measure two builds on the corpus and report what changed"
     )
@@ -168,6 +176,22 @@ def _record(args: argparse.Namespace) -> int:
         # page, so name each one.
         for url, message in recording.failures:
             print(f"{'':<{width}}  {url}: {message}")
+    return 0
+
+
+def _args(args: argparse.Namespace) -> int:
+    root = repo_root()
+    pages = {p.name: p for p in corpus.load_corpus(corpus.manifest_path(root))}
+    page = pages.get(args.target)
+    if page is None:
+        print(args.target)
+        return 0
+    archive = corpus.archive_path(root, page)
+    if not archive.exists():
+        raise LabError(f"{page.name} is not recorded (run: koala-lab corpus record)")
+    # One per line so callers can split on newlines: the archive path may
+    # contain spaces.
+    print("--replay", archive, page.url, sep="\n")
     return 0
 
 
