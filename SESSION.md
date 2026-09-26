@@ -5,16 +5,6 @@ fixing but shouldn't block the current task. Per the global
 CLAUDE.md convention: write observations here, don't fix them
 inline unless they block progress.
 
-## Perf harness — deferred items
-
-- **`just bench-diff` for comparing JSON reports.** `just bench`
-  emits structured JSON to stdout; comparing two reports today
-  is manual (`diff`, `jq`, eyeballing). A small Rust subcommand
-  (`koala --bench-diff before.json after.json`) that prints
-  per-stage % deltas with red/green highlighting would close the
-  regression-detection loop. Defer until we have enough bench
-  runs that manual diffing gets cumbersome.
-
 ## koala-css gaps surfaced by the landing / error page redesign
 
 The landing page (`koala-qt/res/landing.html`) and error page
@@ -673,29 +663,13 @@ graphs process heap + CPU over time. Brainstormed follow-ups, tabled
   with the feature on. A quick `cargo clippy --fix` pass on koala-js
   would clear the doc-markdown ones.
 
-## `--bench-diff` compares means from a single report per side
+## `js_runtime_init` is sometimes 6x slower than usual
 
-Measured 2026-09-26 on the landing page, 300 setup loads per report, 5
-reports per build. One base-vs-cascade pair showed `js_runtime_init`
-6.3% faster, and nothing on that branch touches the JS runtime. The
-noise is specific to certain stages, not spread evenly across the harness:
-
-- `html_parse` and `css_cascade` means vary about 1-2% across reports.
-- `js_runtime_init` has a heavy tail (one report: min 113, p50 139,
-  p95 819, max 1110 us), so its mean is dominated by a few slow
-  samples. Even its p50 ranges 119-139 us across reports.
-
-`bench-diff` prints the per-stage *mean* of one report against one
-other. Options, not yet weighed:
-
-- diff p50 instead of (or beside) the mean;
-- accept several reports per side and show the across-report range,
-  as `tmp/bench-flystring.sh` did by hand;
-- flag stages whose p95/p50 ratio makes any single-pair delta
-  meaningless.
-
-The `js_runtime_init` tail itself is unexplained: Boa context creation
-is sometimes 6x slower than usual.
+Measured 2026-09-26 on the landing page, 300 loads in one process:
+min 113, p50 139, p95 819, max 1110 us. Creating the Boa context is
+occasionally several times slower than its median, and the cause is
+unknown. koala-lab tests per-process p50s, so the tail does not
+distort comparisons, but it is real time a page load pays.
 
 ## JS error messages don't say where or what
 
