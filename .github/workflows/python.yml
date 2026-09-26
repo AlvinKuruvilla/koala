@@ -25,7 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes exact tags only (no floating major).
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
