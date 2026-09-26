@@ -388,7 +388,7 @@ fn ensure_bucket(
     let bucket = match scope_obj.get(type_.clone(), context)?.as_object() {
         Some(o) => JsArray::from_object(o.clone())?,
         None => {
-            let fresh = JsArray::new(context);
+            let fresh = JsArray::new(context)?;
             let _ = scope_obj.set(
                 type_.clone(),
                 JsValue::from(fresh.clone()),

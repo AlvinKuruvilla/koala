@@ -75,7 +75,8 @@ const TIMER_ARGS_KEY: &str = "__koala_timer_args__";
 pub fn register_timers(context: &mut Context) {
     // Pre-create the callback storage array. setTimeout / setInterval
     // push into it; the runtime's pump loop reads back from it.
-    let arr = JsArray::new(context);
+    let arr = JsArray::new(context)
+        .expect("creating an empty array only fails on a Boa engine bug");
     context
         .register_global_property(js_string!(TIMERS_KEY), arr, Attribute::all())
         .expect("__koala_timers__ should not already exist");
@@ -83,7 +84,8 @@ pub fn register_timers(context: &mut Context) {
     // Parallel storage for trailing arguments. Same index space
     // as `__koala_timers__`; each slot is a JsArray (empty when
     // setTimeout was called without trailing args).
-    let args_arr = JsArray::new(context);
+    let args_arr = JsArray::new(context)
+        .expect("creating an empty array only fails on a Boa engine bug");
     context
         .register_global_property(
             js_string!(TIMER_ARGS_KEY),
@@ -186,7 +188,7 @@ fn register_timer(
     // ObjectInitializer-style builders take of `context` blocks
     // any further `context` calls, but `JsArray::new` only needs
     // a single borrow.
-    let extra_args = JsArray::new(context);
+    let extra_args = JsArray::new(context)?;
     for arg in args.iter().skip(2) {
         let _ = extra_args.push(arg.clone(), context)?;
     }
