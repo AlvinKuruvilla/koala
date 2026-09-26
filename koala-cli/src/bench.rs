@@ -32,6 +32,7 @@ use owo_colors::OwoColorize;
 use koala_browser::{FontProvider, load_document, warning};
 use koala_common::alloc_count::{SIZE_BUCKET_BOUNDS, reset_peak, size_histogram, snapshot};
 use koala_common::archive::ReplaySender;
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
@@ -118,6 +119,7 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
 
     let mut setup_us_samples: Vec<u64> = Vec::with_capacity(setup_iterations as usize);
     let mut setup_stage_samples: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    let mut setup_samples: Vec<LoadSample> = Vec::with_capacity(setup_iterations as usize);
     let mut setup_alloc: Option<AllocDelta> = None;
     let mut setup_histogram: Option<Vec<HistBucket>> = None;
     let mut doc = None;
@@ -127,7 +129,8 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
         reset_peak();
         let start = Instant::now();
         let loaded = load_document(url).with_context(|| format!("loading {url}"))?;
-        setup_us_samples.push(start.elapsed().as_micros() as u64);
+        let total_us = start.elapsed().as_micros() as u64;
+        setup_us_samples.push(total_us);
 
         // Allocation per load is deterministic on a fixed source, so one
         // representative sample (the first, post-warmup) is enough.
@@ -143,9 +146,13 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
         for ev in take_events() {
             *this_load.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
         }
-        for (name, total) in this_load {
-            setup_stage_samples.entry(name).or_default().push(total);
+        for (name, total) in &this_load {
+            setup_stage_samples.entry(name.clone()).or_default().push(*total);
         }
+        setup_samples.push(LoadSample {
+            total_us,
+            stages_us: this_load,
+        });
 
         doc = Some(loaded);
     }
@@ -190,6 +197,7 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
     // outlier (e.g. a resize that only trips on some iterations) is
     // visible rather than averaged away.
     let mut alloc_samples: Vec<AllocDelta> = Vec::with_capacity(iterations as usize);
+    let mut render_samples: Vec<BTreeMap<String, u64>> = Vec::with_capacity(iterations as usize);
     for _ in 0..iterations {
         let alloc_before = snapshot();
         reset_peak();
@@ -197,9 +205,12 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
         // Snapshot before draining timing events so the drain's own
         // allocations don't land in this iteration's render delta.
         alloc_samples.push(AllocDelta::between(alloc_before, snapshot()));
+        let mut this_render: BTreeMap<String, u64> = BTreeMap::new();
         for ev in take_events() {
             per_stage.entry(ev.name).or_default().push(ev.duration_us);
+            *this_render.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
         }
+        render_samples.push(this_render);
     }
 
     let render: BTreeMap<String, StageStats> = per_stage
@@ -207,7 +218,14 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
         .map(|(name, samples)| (name.to_string(), stats(&samples)))
         .collect();
 
+    // One more render, outside the timed loop because hashing a full
+    // frame costs milliseconds, to fingerprint what the page looks like.
+    let render_hash = hex::encode(Sha256::digest(
+        render_document_once(&doc, width, height, &font_provider)?.rgba_bytes(),
+    ));
+
     let report = BenchReport {
+        schema_version: SCHEMA_VERSION,
         url: url.to_string(),
         viewport: Viewport { width, height },
         iterations,
@@ -222,6 +240,9 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
         render_alloc: RenderAlloc::aggregate(&alloc_samples),
         // Read after every load has run, so it covers everything served.
         input_digest: replay.map(ReplaySender::input_digest),
+        render_hash,
+        setup_samples,
+        render_samples,
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -311,6 +332,8 @@ fn install_subscriber() {
 
 #[derive(Serialize, Deserialize)]
 struct BenchReport {
+    /// [`SCHEMA_VERSION`] of the build that wrote this report.
+    schema_version: u32,
     /// Verbatim path/URL passed on the command line. Useful when
     /// multiple report JSONs are pooled and a downstream tool
     /// needs to attribute timings.
@@ -353,6 +376,34 @@ struct BenchReport {
     /// reports with equal digests measured identical inputs. `None` for
     /// live or local-file loads, whose inputs are not pinned.
     input_digest: Option<String>,
+    /// SHA-256 of the RGBA pixels of one render of the final document.
+    /// Two builds with equal hashes drew identical frames; a timing
+    /// comparison between builds that draw different frames compares
+    /// different work.
+    render_hash: String,
+    /// Every measured load, in order. The `setup_*` summaries above are
+    /// computed from these; they are kept so an analysis can use any
+    /// statistic without re-running the page.
+    setup_samples: Vec<LoadSample>,
+    /// Every measured render, in order: per-stage µs, summed within the
+    /// render when a stage fires more than once.
+    render_samples: Vec<BTreeMap<String, u64>>,
+}
+
+/// Version of the [`BenchReport`] layout. Bump when a field is added,
+/// removed, or changes meaning, so readers can refuse a report they
+/// would misread.
+const SCHEMA_VERSION: u32 = 1;
+
+/// One measured document load.
+#[derive(Serialize, Deserialize)]
+struct LoadSample {
+    /// Wall-clock µs for the whole `load_document` call.
+    total_us: u64,
+    /// Per-stage µs, summed within the load when a stage fires more
+    /// than once (`image_loading` per image). Stages that did not fire
+    /// are absent.
+    stages_us: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize, Deserialize)]

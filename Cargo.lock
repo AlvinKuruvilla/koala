@@ -3125,6 +3125,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "hex",
  "koala-browser",
  "koala-common",
  "koala-css",
@@ -3136,6 +3137,7 @@ dependencies = [
  "owo-colors",
  "serde",
  "serde_json",
+ "sha2",
  "tracing",
  "tracing-subscriber",
 ]
