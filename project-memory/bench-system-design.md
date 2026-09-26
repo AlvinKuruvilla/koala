@@ -202,7 +202,7 @@ cascade) was reported as slower on example.com and hacker news with
 3. **Authored corpus.** Frozen landing page plus pages aimed at the
    cascade, layout, and inline paths.
 4. **Run store and history.** Runs kept as `<timestamp>_<sha>`, as
-   `just wpt-record` does; a dashboard page for trends per page and
+   `just wpt ... record` does; a dashboard page for trends per page and
    stage.
 5. **CI gate.** Base and PR head built and compared in the same job,
    against the same archive, on deterministic metrics only (allocation
