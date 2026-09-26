@@ -94,6 +94,19 @@ pub enum FetchError {
         source: std::io::Error,
     },
 
+    /// The URL's scheme is not one koala can load, often a typo such as
+    /// `htpps://`.
+    #[error(
+        "'{url}' uses the '{scheme}' scheme, which koala cannot load \
+         (it loads http, https, file, and data URLs)"
+    )]
+    UnsupportedScheme {
+        /// The URL that was requested.
+        url: String,
+        /// The scheme as written.
+        scheme: String,
+    },
+
     /// A `file:` URL that names no file on this machine: malformed, or
     /// with a host, which is what a protocol-relative reference
     /// (`//cdn.example/x.js`) resolves to in a page loaded from disk.
@@ -258,7 +271,11 @@ pub trait RequestSender {
 /// - `http://` / `https://` → blocking HTTP GET via `reqwest`, honoring
 ///   the WPT [`hosts`](crate::hosts) overrides.
 /// - `file:` → read the file the URL names on this machine.
-/// - anything else → treated as a filesystem path.
+/// - no scheme → a filesystem path.
+/// - any other scheme → [`FetchError::UnsupportedScheme`].
+///
+/// Schemes match ASCII case-insensitively, as the URL Standard requires:
+/// `HTTPS://a.test/` is fetched like `https://a.test/`.
 ///
 /// Stateless. Constructing one is free; you don't need to cache the
 /// instance.
@@ -266,21 +283,27 @@ pub struct DefaultSender;
 
 impl RequestSender for DefaultSender {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
-        if url.starts_with("data:") {
-            return DataURL::new(url.to_string()).decode();
-        }
-        if url.starts_with("http://") || url.starts_with("https://") {
-            return http_fetch(url);
-        }
-        let path = if url.starts_with("file:") {
-            ::url::Url::parse(url)
+        let written = crate::url::scheme(url);
+        let path = match written.map(str::to_ascii_lowercase).as_deref() {
+            None => PathBuf::from(url),
+            // `DataURL` expects the lower-case prefix; `data:` is five bytes.
+            Some("data") => return DataURL::new(format!("data:{}", &url[5..])).decode(),
+            Some("http" | "https") => return http_fetch(url),
+            Some("file") => ::url::Url::parse(url)
                 .ok()
                 .and_then(|parsed| parsed.to_file_path().ok())
                 .ok_or_else(|| FetchError::InvalidFileUrl {
                     url: url.to_string(),
-                })?
-        } else {
-            PathBuf::from(url)
+                })?,
+            // On Windows, `C:\page.html` parses as scheme `c`; a single
+            // letter is a drive, not a scheme.
+            Some(drive) if cfg!(windows) && drive.len() == 1 => PathBuf::from(url),
+            Some(_) => {
+                return Err(FetchError::UnsupportedScheme {
+                    url: url.to_string(),
+                    scheme: written.unwrap_or_default().to_string(),
+                });
+            }
         };
         std::fs::read(&path).map_err(|e| FetchError::LocalRead {
             path: url.to_string(),

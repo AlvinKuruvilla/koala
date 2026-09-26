@@ -212,7 +212,9 @@ pub fn load_document_with_hooks<H: JsHooks>(
     let html_source = net::fetch_text(&document_url)?;
 
     // A `data:` document has no location to resolve references against.
-    let base_url = (!document_url.starts_with("data:")).then_some(document_url.as_str());
+    let is_data = koala_common::url::scheme(&document_url)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data"));
+    let base_url = (!is_data).then_some(document_url.as_str());
     let mut doc = parse_html_with_base_url(&html_source, base_url, hooks);
     doc.source_path = path.to_string();
 
