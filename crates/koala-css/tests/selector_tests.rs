@@ -253,6 +253,24 @@ fn test_match_class_selector() {
     assert!(selector.matches(&multi_class));
 }
 
+/// Classes are split on any ASCII whitespace, not only spaces (DOM ordered
+/// set parser). Class lists in real markup are often wrapped across lines.
+#[test]
+fn test_match_class_separated_by_any_ascii_whitespace() {
+    let selector = parse_selector(".b").unwrap();
+    for class_attr in ["a\nb", "a\tb", "a\r\nb", "  b  ", "a\u{0C}b"] {
+        let mut attrs = HashMap::new();
+        let _ = attrs.insert("class".to_string(), class_attr.to_string());
+        let element = ElementData {
+            tag_name: "div".into(),
+            attrs,
+        };
+        assert!(selector.matches(&element), "class={class_attr:?} should match .b");
+    }
+    // A class is a whole token, never a substring of one.
+    assert!(!selector.matches(&make_element("div", None, &["ab"])));
+}
+
 #[test]
 fn test_match_id_selector() {
     let selector = parse_selector("#main-content").unwrap();
