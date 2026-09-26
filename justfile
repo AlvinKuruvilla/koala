@@ -399,3 +399,9 @@ dashboard-clean:
 wpt-clean:
     rm -rf .venv-wpt
     find /tmp /var/folders -name 'koala-wpt-*.png' -delete 2>/dev/null || true
+
+# Lint, type-check, and test the Python packages: the same commands the
+# `python` CI workflow runs.
+py-check:
+    cd tools/koala-lab && uv run ruff check && uv run ruff format --check \
+        && uv run mypy src tests && uv run pytest

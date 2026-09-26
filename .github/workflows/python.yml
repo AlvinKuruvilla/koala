@@ -1,0 +1,45 @@
+name: python
+
+# Lint, type-check, and test the Python packages. One job per package;
+# `just py-check` runs the same commands locally.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "tools/koala-lab/**"
+      - ".github/workflows/python.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "tools/koala-lab/**"
+      - ".github/workflows/python.yml"
+
+jobs:
+  koala-lab:
+    name: koala-lab
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/koala-lab
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: ruff check
+        run: uv run ruff check
+
+      - name: ruff format
+        run: uv run ruff format --check
+
+      - name: mypy
+        run: uv run mypy src tests
+
+      - name: pytest
+        run: uv run pytest
