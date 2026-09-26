@@ -30,7 +30,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use koala_browser::{FontProvider, load_document, warning};
 use koala_common::alloc_count::{SIZE_BUCKET_BOUNDS, reset_peak, size_histogram, snapshot};
-use koala_common::archive::ReplaySender;
+use crate::archive::ReplaySender;
 use sha2::{Digest, Sha256};
 use serde::Serialize;
 use tracing::span;

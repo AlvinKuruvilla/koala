@@ -4,7 +4,7 @@
 //! a body, so the tests control exactly what an error response contains.
 
 use koala_browser::load_document;
-use koala_browser::net::{FetchCause, FetchError, RequestSender, install_sender};
+use koala_browser::fetch::{FetchCause, FetchError, RequestSender, install_sender};
 
 struct FakeServer(Vec<(&'static str, u16, &'static str)>);
 

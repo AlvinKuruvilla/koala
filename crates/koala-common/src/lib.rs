@@ -4,18 +4,11 @@
 //! - **Warning System** - colored terminal output for unsupported features
 //! - **URL Resolution** - resolve relative URLs against a base URL
 //! - **Image Types** - shared image data structures
-//! - **Network Utilities** - HTTP fetch helpers
 
 /// Counting global allocator for heap accounting in bench / dev builds.
 pub mod alloc_count;
-/// Record fetch responses to a file and replay them without the network.
-pub mod archive;
-/// WPT-style hosts-file DNS overrides used when running under wptrunner.
-pub mod hosts;
 /// Decoded image data types shared across renderer components.
 pub mod image;
-/// HTTP fetch utilities for document, stylesheet, and image loading.
-pub mod net;
 /// URL resolution utilities.
 pub mod url;
 /// Warning system with colored terminal output.

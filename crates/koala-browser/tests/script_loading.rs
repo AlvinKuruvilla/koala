@@ -39,7 +39,7 @@ fn js_errors(doc: &koala_browser::LoadedDocument) -> Vec<&str> {
 
 #[test]
 fn data_url_script_runs_and_mutates_the_dom() {
-    // data: URL bodies fetch synchronously through koala_common::net
+    // data: URL bodies fetch synchronously through koala_fetch
     // without touching the network or filesystem. The script
     // tags the <body> with a marker attribute so the test can
     // verify it ran end-to-end.

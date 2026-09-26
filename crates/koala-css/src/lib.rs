@@ -327,11 +327,11 @@ fn is_stylesheet_link(data: &ElementData) -> bool {
 ///
 /// # Errors
 ///
-/// Returns a [`koala_common::net::FetchError`] if the stylesheet cannot be fetched.
+/// Returns a [`koala_fetch::FetchError`] if the stylesheet cannot be fetched.
 pub fn fetch_external_stylesheet(
     href: &str,
     base_url: Option<&str>,
-) -> Result<String, koala_common::net::FetchError> {
+) -> Result<String, koala_fetch::FetchError> {
     // [§ 4.2.4.3](https://html.spec.whatwg.org/multipage/semantics.html#link-type-stylesheet)
     //
     // STEP 1: "Let options be the result of creating link options from element."
@@ -363,7 +363,7 @@ pub fn fetch_external_stylesheet(
     // [§ 4.2.4](https://html.spec.whatwg.org/multipage/semantics.html#the-link-element)
     // "If the resource is not available, the user agent must act as if
     // the resource was an empty style sheet."
-    koala_common::net::fetch_text(&resolved_url)
+    koala_fetch::fetch_text(&resolved_url)
 }
 
 /// Extract and collect all stylesheets from the DOM in cascade order.

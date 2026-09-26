@@ -236,7 +236,8 @@ Focus on what you're working on *now*. Don't try to implement everything in one 
 ```
 koala/
 ├── crates/
-│   ├── koala-common/     # Shared utilities (URL, fetching, image types)
+│   ├── koala-common/     # Shared utilities (URL resolution, warnings, image types)
+│   ├── koala-fetch/      # Resource fetching (WHATWG Fetch)
 │   ├── koala-dom/        # Arena-based DOM tree with parent/sibling links
 │   ├── koala-html/       # HTML tokenizer and parser (WHATWG spec)
 │   ├── koala-css/        # CSS parser, cascade, layout engine, paint, values
@@ -251,14 +252,16 @@ koala/
 **Crate Dependencies:**
 ```
 koala-common       (no deps — shared utilities)
+    ↑
+koala-fetch        (depends on koala-common — the only crate with an HTTP client)
 koala-dom          (no deps)
 koala-js           (no deps — Boa-backed JS runtime)
     ↑
 koala-html         (depends on koala-dom)
-koala-css          (depends on koala-common, koala-dom)
+koala-css          (depends on koala-common, koala-fetch, koala-dom)
 koala-wpt          (depends on koala-js — WPT-only globals, not pulled by browser builds)
     ↑
-koala-browser      (depends on koala-common, koala-dom, koala-html, koala-css, koala-js)
+koala-browser      (depends on koala-common, koala-fetch, koala-dom, koala-html, koala-css, koala-js)
     ↑
 koala-ui           (depends on koala-browser; Slint frontend, multi-tab chrome)
 koala-cli          (depends on koala-browser + koala-wpt; the latter for `--wpt-protocol` mode)

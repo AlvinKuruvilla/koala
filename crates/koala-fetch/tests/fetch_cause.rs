@@ -6,7 +6,7 @@
 
 use std::net::TcpListener;
 
-use koala_common::net::{DefaultSender, FetchCause, RequestSender};
+use koala_fetch::{DefaultSender, FetchCause, RequestSender};
 
 fn cause_of(url: &str) -> FetchCause {
     DefaultSender.fetch(url).expect_err("the fetch is meant to fail").cause()

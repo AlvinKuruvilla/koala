@@ -1,6 +1,6 @@
 //! Which URLs `DefaultSender` fetches, by scheme.
 
-use koala_common::net::{DefaultSender, FetchError, RequestSender};
+use koala_fetch::{DefaultSender, FetchError, RequestSender};
 use koala_common::url::{file_url_from_path, scheme};
 
 /// A mistyped scheme is reported as a scheme problem, not as a missing

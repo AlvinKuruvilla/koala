@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use koala_common::net::{DefaultSender, FetchError, RequestSender};
+use koala_fetch::{DefaultSender, FetchError, RequestSender};
 use koala_common::url::{file_url_from_path, resolve_url};
 
 /// A fresh directory whose name contains a space, `#`, `%`, and `?`.

@@ -1,13 +1,13 @@
-# Every fetch must go through `koala_common::net::RequestSender`: a request
+# Every fetch must go through `koala_fetch::RequestSender`: a request
 # that bypasses it is invisible to `--record` and hits the live network
 # under `--replay`. Only the sender implementation builds an HTTP client.
 disallowed-types = [
-    { path = "reqwest::Client", reason = "fetch through koala_common::net so --record/--replay see the request" },
-    { path = "reqwest::ClientBuilder", reason = "fetch through koala_common::net so --record/--replay see the request" },
-    { path = "reqwest::blocking::Client", reason = "fetch through koala_common::net so --record/--replay see the request" },
-    { path = "reqwest::blocking::ClientBuilder", reason = "fetch through koala_common::net so --record/--replay see the request" },
+    { path = "reqwest::Client", reason = "fetch through koala_fetch so --record/--replay see the request" },
+    { path = "reqwest::ClientBuilder", reason = "fetch through koala_fetch so --record/--replay see the request" },
+    { path = "reqwest::blocking::Client", reason = "fetch through koala_fetch so --record/--replay see the request" },
+    { path = "reqwest::blocking::ClientBuilder", reason = "fetch through koala_fetch so --record/--replay see the request" },
 ]
 disallowed-methods = [
-    { path = "reqwest::get", reason = "fetch through koala_common::net so --record/--replay see the request" },
-    { path = "reqwest::blocking::get", reason = "fetch through koala_common::net so --record/--replay see the request" },
+    { path = "reqwest::get", reason = "fetch through koala_fetch so --record/--replay see the request" },
+    { path = "reqwest::blocking::get", reason = "fetch through koala_fetch so --record/--replay see the request" },
 ]

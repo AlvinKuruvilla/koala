@@ -1,4 +1,4 @@
-//! Record/replay through `koala_common::archive`.
+//! Record/replay through the archive senders.
 //!
 //! The inner sender is a fixed URL → response table, so every test runs
 //! without the network and knows exactly what "the page" returned.
@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use koala_common::archive::{Archive, ArchiveError, RecordingSender, ReplaySender};
-use koala_common::net::{FetchError, RequestSender, fetch_bytes, install_sender};
+use super::{Archive, ArchiveError, RecordingSender, ReplaySender};
+use koala_fetch::{FetchError, RequestSender, fetch_bytes, install_sender};
 
 /// Stand-in for the network: known URLs return their body, a host named
 /// `down.example` cannot be reached, and anything else is a 404 with the
@@ -78,7 +78,7 @@ fn replay_reproduces_recorded_load() {
     assert_eq!(archive.len(), 5, "the 404 and the failed fetch are recorded too");
 
     let replay = ReplaySender::new(archive);
-    let replayed = fetch_all(Box::new(replay.clone()), &urls);
+    let replayed = fetch_all(Box::new(replay), &urls);
     // Successes and the 404 come back exactly as they were.
     assert_eq!(replayed[..4], live[..4]);
     // A failure without a response comes back as a recorded failure that
@@ -142,7 +142,7 @@ fn replay_miss_is_an_error() {
 fn data_urls_bypass_the_archive() {
     let recorder = RecordingSender::new(site());
     assert_eq!(recorder.fetch("data:,hi").expect("valid data URL"), b"hi");
-    assert!(recorder.archive().is_empty());
+    assert_eq!(recorder.archive().len(), 0);
 
     let replay = ReplaySender::new(Archive::new());
     assert_eq!(replay.fetch("data:,hi").expect("valid data URL"), b"hi");

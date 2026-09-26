@@ -111,7 +111,7 @@ Third-party page content is not committed. Two kinds of input:
   replays from the archive; the network is never touched during a
   measurement.
 
-Record/replay uses an existing seam. `koala_common::net` routes every
+Record/replay uses an existing seam. `koala_fetch` routes every
 fetch through the `RequestSender` trait (`install_sender`), which
 `MappedSender` already uses for the `oom-probe --map` override. Two new
 senders:

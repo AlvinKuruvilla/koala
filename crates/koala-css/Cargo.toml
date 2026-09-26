@@ -8,6 +8,7 @@ description = "CSS tokenizer, parser, layout engine, and cascade for the Koala r
 [dependencies]
 koala-common.workspace = true
 koala-dom.workspace = true
+koala-fetch.workspace = true
 # `std` feature provides `FlyString`, used as the key type for the
 # cascade's custom-property map.
 koala-std = { workspace = true, features = ["std"] }

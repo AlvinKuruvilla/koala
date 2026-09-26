@@ -29,7 +29,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use koala_browser::{load_document, warning};
-use koala_browser::net::{DefaultSender, MappedSender, install_sender};
+use koala_browser::fetch::{DefaultSender, MappedSender, install_sender};
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use tracing_subscriber::prelude::*;

@@ -4,6 +4,7 @@
 
 #[cfg(feature = "bench")]
 mod bench;
+mod archive;
 mod render;
 
 // Heap accounting for `--bench` mode. Installed only under the
@@ -19,8 +20,8 @@ mod wpt_protocol;
 use anyhow::{Context, Result};
 use clap::Parser;
 use koala_browser::{FontProvider, LoadedDocument, load_document, parse_html_string};
-use koala_common::archive::{Archive, RecordingSender, ReplaySender};
-use koala_common::net::{DefaultSender, install_sender};
+use archive::{Archive, RecordingSender, ReplaySender};
+use koala_fetch::{DefaultSender, install_sender};
 use koala_css::LayoutBox;
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
@@ -188,7 +189,7 @@ fn main() -> Result<()> {
     // for every mode so the same setup applies to both CLI usage
     // and protocol-driven runs.
     if let Some(ref path) = cli.hosts_file {
-        koala_browser::hosts::set_from_file(path)
+        koala_fetch::hosts::set_from_file(path)
             .map_err(|e| anyhow::anyhow!("failed to load --hosts-file '{}': {e}", path.display()))?;
     }
 
