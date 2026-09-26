@@ -180,6 +180,14 @@ impl Archive {
         self.entries.is_empty()
     }
 
+    /// The recorded failures, as `(url, error message)` in URL order.
+    pub fn failures(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.entries.iter().filter_map(|(url, entry)| match entry {
+            Entry::Failed(message) => Some((url.as_str(), message.as_str())),
+            Entry::Body(_) => None,
+        })
+    }
+
     /// Read an archive from `path`, checking every body against its
     /// recorded SHA-256.
     ///

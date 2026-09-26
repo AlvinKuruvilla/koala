@@ -31,6 +31,7 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use koala_browser::{FontProvider, load_document, warning};
 use koala_common::alloc_count::{SIZE_BUCKET_BOUNDS, reset_peak, size_histogram, snapshot};
+use koala_common::archive::ReplaySender;
 use serde::{Deserialize, Serialize};
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
@@ -39,16 +40,30 @@ use tracing_subscriber::registry::{LookupSpan, Registry};
 
 use crate::render::render_document_once;
 
-/// Run the bench harness against `url` (file path or HTTP URL).
-/// Emits a single JSON document to stdout — schema is the
-/// [`BenchReport`] struct below.
-///
-/// `iterations` is the sample count whose timings get aggregated.
-/// `warmup` is the discard-iteration count run beforehand (lets
-/// the OS page in glyph atlases, JIT caches warm, etc.). Setting
-/// `warmup = 0` is supported but pollutes the first sample with
-/// cold-cache outliers — the `just bench` default of 3 keeps the
-/// noise floor below ~5 % on the landing page.
+/// What one `--bench` run measures and how.
+pub(crate) struct BenchConfig<'a> {
+    /// File path or HTTP URL of the page.
+    pub(crate) url: &'a str,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// Sample count whose render timings get aggregated.
+    pub(crate) iterations: u32,
+    /// Discard renders run beforehand (lets the OS page in glyph
+    /// atlases, lazy caches warm, etc.). Zero is supported but pollutes
+    /// the first sample with cold-cache outliers; the `just bench`
+    /// default of 3 keeps the noise floor below ~5 % on the landing page.
+    pub(crate) warmup: u32,
+    /// Measured document loads aggregated into the setup stats.
+    pub(crate) setup_iterations: u32,
+    /// Discard loads run before the measured ones.
+    pub(crate) setup_warmup: u32,
+    /// The sender serving fetches under `--replay`, read afterwards for
+    /// the report's input digest.
+    pub(crate) replay: Option<&'a ReplaySender>,
+}
+
+/// Run the bench harness described by `config`. Emits a single JSON
+/// document to stdout — schema is the [`BenchReport`] struct below.
 ///
 /// # Errors
 ///
@@ -56,15 +71,17 @@ use crate::render::render_document_once;
 /// [`render_document_once`]. A bench run failing partway through
 /// emits no JSON.
 #[allow(clippy::cast_possible_truncation)] // µs durations comfortably fit u64
-pub(crate) fn run(
-    url: &str,
-    width: u32,
-    height: u32,
-    iterations: u32,
-    warmup: u32,
-    setup_iterations: u32,
-    setup_warmup: u32,
-) -> Result<()> {
+pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
+    let &BenchConfig {
+        url,
+        width,
+        height,
+        iterations,
+        warmup,
+        setup_iterations,
+        setup_warmup,
+        replay,
+    } = config;
     // At least one measured load is required — we keep its document for
     // the render loop and need a non-empty sample set for `stats`.
     let setup_iterations = setup_iterations.max(1);
@@ -203,6 +220,8 @@ pub(crate) fn run(
         setup_size_histogram,
         render,
         render_alloc: RenderAlloc::aggregate(&alloc_samples),
+        // Read after every load has run, so it covers everything served.
+        input_digest: replay.map(ReplaySender::input_digest),
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -329,6 +348,11 @@ struct BenchReport {
     /// Heap activity per render iteration, aggregated across the
     /// sample loop. See [`RenderAlloc`].
     render_alloc: RenderAlloc,
+    /// Under `--replay`, the SHA-256 of every URL the loads were served
+    /// and what each produced (see `ReplaySender::input_digest`). Two
+    /// reports with equal digests measured identical inputs. `None` for
+    /// live or local-file loads, whose inputs are not pinned.
+    input_digest: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
