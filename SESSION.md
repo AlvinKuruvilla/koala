@@ -690,3 +690,17 @@ fix, in order:
 
 Suspected first find: Bootstrap's `getDataAttributes` calls
 `Object.keys(element.dataset)`; koala may not implement `dataset`.
+
+## Rendering bugs found by the new error page (2026-09-26)
+
+- **Inline text breaks into spaced columns.** koala-ui's previous error
+  page split paragraphs into widely spaced chunks that ran past the right
+  edge. Reproduction: `res/fixtures/inline-layout-gaps.html` (render with
+  `just cli res/fixtures/inline-layout-gaps.html shot.png`).
+- **Text after a bold run overlaps it.** The following text starts where
+  the run would end if it were set in the regular face, so it overlaps
+  the bold glyphs and swallows a following space. Reproduction:
+  `res/fixtures/bold-run-overlap.html`.
+- **No font fallback.** A character missing from the chosen font (for
+  example ⌘ in Helvetica) draws as an empty box instead of falling back
+  to a font that has it.

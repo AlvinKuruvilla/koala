@@ -140,6 +140,81 @@ pub enum FetchError {
     },
 }
 
+/// Why a fetch failed, in the terms a user can act on. Browsers show a
+/// different error page for each (Chromium's net error codes, Firefox's
+/// `aboutNetError` pages); [`FetchError::cause`] maps an error onto them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchCause {
+    /// DNS found no address for the host.
+    NameNotResolved,
+    /// The host answered and refused the connection.
+    ConnectionRefused,
+    /// The host did not answer in time.
+    TimedOut,
+    /// Any other failure to reach the host (TLS, reset, unreachable).
+    ConnectionFailed,
+    /// The server answered with this error status.
+    HttpStatus(u16),
+    /// A local file does not exist.
+    FileNotFound,
+    /// The URL's scheme is not one koala loads; carries the scheme.
+    UnsupportedScheme(String),
+    /// Anything else: malformed input, a replay miss, a failed read.
+    Other,
+}
+
+impl FetchError {
+    /// Classify this error for display.
+    ///
+    /// Refusals and timeouts are recognized from typed errors in the
+    /// cause chain. DNS failures are not typed anywhere reqwest exposes:
+    /// hyper-util reports them as a `ConnectError` whose message is
+    /// `"dns error"`, so that text is matched; `tests/fetch_cause.rs` pins
+    /// it, so a dependency upgrade that changes the wording fails a test
+    /// instead of silently turning "host not found" into a generic
+    /// connection failure.
+    #[must_use]
+    pub fn cause(&self) -> FetchCause {
+        match self {
+            Self::RequestFailed { source, .. } => {
+                if source.is_timeout() {
+                    return FetchCause::TimedOut;
+                }
+                let mut next: Option<&(dyn std::error::Error + 'static)> = Some(source);
+                while let Some(error) = next {
+                    if let Some(io) = error.downcast_ref::<std::io::Error>() {
+                        match io.kind() {
+                            std::io::ErrorKind::ConnectionRefused => {
+                                return FetchCause::ConnectionRefused;
+                            }
+                            std::io::ErrorKind::TimedOut => return FetchCause::TimedOut,
+                            _ => {}
+                        }
+                    }
+                    if error.to_string() == "dns error" {
+                        return FetchCause::NameNotResolved;
+                    }
+                    next = error.source();
+                }
+                FetchCause::ConnectionFailed
+            }
+            Self::HttpStatus { status, .. } => FetchCause::HttpStatus(*status),
+            Self::LocalRead { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+                FetchCause::FileNotFound
+            }
+            Self::UnsupportedScheme { scheme, .. } => FetchCause::UnsupportedScheme(scheme.clone()),
+            Self::HttpClientInit(_)
+            | Self::ResponseBody { .. }
+            | Self::InvalidDataUrl { .. }
+            | Self::Base64Decode(_)
+            | Self::LocalRead { .. }
+            | Self::InvalidFileUrl { .. }
+            | Self::NotInArchive { .. }
+            | Self::RecordedFailure { .. } => FetchCause::Other,
+        }
+    }
+}
+
 /// A parsed `data:` URL that can be decoded into raw bytes.
 // TODO: Support more media types (e.g. `text/plain`) and image formats (e.g. `image/svg`).
 // TODO: Consider using a proper URL parser instead of manual string manipulation.

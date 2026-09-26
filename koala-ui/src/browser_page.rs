@@ -45,6 +45,8 @@ use koala_browser::{
 };
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
+use crate::error_page::Failure;
+
 // Process-wide `RendererFonts` cache. Loading four font files from
 // disk costs ~250 ms on macOS; doing it per render was the dominant
 // cost before the rasterizer rework. Now loaded exactly once, shared
@@ -557,7 +559,7 @@ impl BrowserPage {
     /// content shown at that entry.
     fn install_engine_error(&self, message: &str) {
         let url = self.current_url.clone().unwrap_or_default();
-        let error_html = crate::error_page::render(&url, message);
+        let error_html = crate::error_page::render(&url, &Failure::Engine(message));
         let Some(state) = PageState::from_document(parse_html_string(&error_html)).map(Arc::new)
         else {
             eprintln!("[koala-ui] error template failed to parse; engine error was: {message}");
@@ -655,14 +657,14 @@ fn run_load_worker(
                 report_parse_issues(&url, &doc.parse_issues);
                 match PageState::from_document(doc) {
                     Some(state) => Arc::new(state),
-                    None => error_state(&url, "document produced no layout tree"),
+                    None => error_state(&url, &Failure::Engine("document produced no layout tree")),
                 }
             }
-            Ok(Err(e)) => error_state(&url, &e.to_string()),
+            Ok(Err(e)) => error_state(&url, &Failure::Load(&e)),
             Err(payload) => {
                 let message = panic_message(&payload);
                 eprintln!("[koala-ui] loader panicked for {url}: {message}");
-                error_state(&url, &message)
+                error_state(&url, &Failure::Engine(&message))
             }
         };
 
@@ -676,13 +678,13 @@ fn run_load_worker(
 }
 
 /// Builds an `Arc<PageState>` from the built-in error template for
-/// the given URL and error message. Falls back to a minimal
+/// the given URL and failure. Falls back to a minimal
 /// hard-coded page when the template itself fails to parse — if
 /// that ever happens it means koala-css is broken enough that the
 /// error page can't even be used, which we handle by showing a
 /// plain-text message.
-fn error_state(url: &str, message: &str) -> Arc<PageState> {
-    let html = crate::error_page::render(url, message);
+fn error_state(url: &str, failure: &Failure<'_>) -> Arc<PageState> {
+    let html = crate::error_page::render(url, failure);
     if let Some(state) = PageState::from_document(parse_html_string(&html)) {
         return Arc::new(state);
     }
