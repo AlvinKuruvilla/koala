@@ -336,6 +336,11 @@ impl<I: RequestSender> RequestSender for MappedSender<I> {
 thread_local! {
     /// Thread-local active sender. `None` falls back to [`DefaultSender`].
     /// Set via [`install_sender`], cleared when the returned guard drops.
+    ///
+    /// NOTE: a fetch made on a thread with no sender installed uses
+    /// `DefaultSender` and goes to the live network, even under
+    /// `--replay`. Moving any loader onto a worker thread means
+    /// installing the caller's sender on that thread too.
     static ACTIVE_SENDER: RefCell<Option<Box<dyn RequestSender>>> = const { RefCell::new(None) };
 }
 
@@ -375,6 +380,7 @@ fn with_active_sender<R>(f: impl FnOnce(&dyn RequestSender) -> R) -> R {
 
 /// Shared HTTP body fetch used by [`DefaultSender`]. Separated so the
 /// trait impl reads as a three-arm scheme dispatch.
+#[allow(clippy::disallowed_types)] // the one sanctioned HTTP client
 fn http_fetch(url: &str) -> Result<Vec<u8>, FetchError> {
     let client = crate::hosts::apply(reqwest::blocking::Client::builder().timeout(TIMEOUT))
         .build()

@@ -123,6 +123,7 @@ pub fn set_from_file(path: &Path) -> Result<(), HostsError> {
 
 /// Apply the installed overrides (if any) to `builder`. When no
 /// hosts file has been loaded, returns the builder unchanged.
+#[allow(clippy::disallowed_types)] // configures the client `net::DefaultSender` builds
 pub fn apply(
     builder: reqwest::blocking::ClientBuilder,
 ) -> reqwest::blocking::ClientBuilder {
