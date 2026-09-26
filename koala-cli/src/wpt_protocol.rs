@@ -64,8 +64,8 @@ enum Command {
 struct TestharnessResultPayload {
     /// Test name (the string passed to `test()` / `async_test()`).
     name: String,
-    /// Numeric WPT status code: 0 = PASS, 1 = FAIL, 2 = TIMEOUT,
-    /// 3 = NOTRUN, 4 = PRECONDITION_FAILED.
+    /// Numeric WPT status code: 0 = `PASS`, 1 = `FAIL`, 2 = `TIMEOUT`,
+    /// 3 = `NOTRUN`, 4 = `PRECONDITION_FAILED`.
     status: u32,
     /// Assertion failure detail or empty when the test passed.
     message: String,
@@ -79,8 +79,8 @@ struct TestharnessResultPayload {
 /// loaded but didn't run testharness.js).
 #[derive(Debug, Serialize)]
 struct TestharnessCompletionPayload {
-    /// Numeric harness status: 0 = OK, 1 = ERROR, 2 = TIMEOUT,
-    /// 3 = PRECONDITION_FAILED.
+    /// Numeric harness status: 0 = `OK`, 1 = `ERROR`, 2 = `TIMEOUT`,
+    /// 3 = `PRECONDITION_FAILED`.
     status: u32,
     /// Diagnostic message; empty in the clean OK case.
     message: String,

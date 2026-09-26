@@ -331,7 +331,7 @@ struct BenchReport {
     /// `layout_tree_build`, `script_loading`, `js_execute`, optionally
     /// `post_js_relayout`). Each value aggregates one per-load total per
     /// measured iteration; a stage that fires multiple times within a
-    /// load (image_loading per image) is summed within that load first.
+    /// load (`image_loading` per image) is summed within that load first.
     setup_stages: BTreeMap<String, StageStats>,
     /// Heap activity attributable to a single `load_document` call,
     /// sampled on the first measured load (deterministic on a fixed
@@ -462,7 +462,7 @@ impl AllocDelta {
             bytes_allocated,
             bytes_freed,
             alloc_calls: (end.alloc_calls - before.alloc_calls) as u64,
-            net_live_bytes: bytes_allocated as i64 - bytes_freed as i64,
+            net_live_bytes: bytes_allocated.cast_signed() - bytes_freed.cast_signed(),
             // `peak` was reset to the live baseline before the region,
             // so subtracting that baseline yields the extra heap held
             // at the worst moment. `saturating_sub` guards the
@@ -649,12 +649,10 @@ fn print_metric(label: &str, before: Option<u64>, after: Option<u64>) {
             } else {
                 (a as f64 - b as f64) / b as f64 * 100.0
             };
-            let arrow = if a < b {
-                "↓"
-            } else if a > b {
-                "↑"
-            } else {
-                "="
+            let arrow = match a.cmp(&b) {
+                std::cmp::Ordering::Less => "↓",
+                std::cmp::Ordering::Greater => "↑",
+                std::cmp::Ordering::Equal => "=",
             };
             let body = format!("{:>14} → {:>14}  {arrow}{pct:+6.1}%", commas(b), commas(a));
             if pct.abs() < NOISE_PCT {
@@ -678,7 +676,7 @@ fn commas(n: u64) -> String {
     let len = digits.len();
     let mut out = String::with_capacity(len + len / 3);
     for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);
