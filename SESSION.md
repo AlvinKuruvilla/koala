@@ -695,18 +695,6 @@ other. Options, not yet weighed:
 The `js_runtime_init` tail itself is unexplained: Boa context creation
 is sometimes 6x slower than usual.
 
-## Cached-page loads resolve root-relative URLs against `/`
-
-`just bench https://google.com` loads `.bench-cache/google_com.html`
-as a file. `load_document` gives a file no `base_url`, so
-`<link href="/xjs/_/ss/...">` and `<img src="/images/...">` are read
-as absolute filesystem paths and fail ("local read of '/xjs/...'
-failed"). Every cached-page bench so far measured the HTML and inline
-scripts only, with no external CSS or images. Replay by original URL
-(project-memory/bench-system-design.md) replaces this path; reading
-`/`-rooted paths off the real filesystem root is also wrong in itself
-for any `file` load.
-
 ## JS error messages don't say where or what
 
 Deferred 2026-09-26. Boa 0.22 (PR #10) returns a call stack with each

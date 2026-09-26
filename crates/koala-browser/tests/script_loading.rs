@@ -117,6 +117,41 @@ fn local_file_script_loads_and_executes() {
     );
 }
 
+/// A page loaded from disk resolves `src="run.js"` against its own
+/// directory, not the test's working directory. The directory name
+/// contains a space, `#`, `%`, and `?`, which must survive the round trip
+/// through the page's `file:` URL.
+#[test]
+fn page_from_disk_resolves_relative_script_next_to_it() {
+    let dir = std::env::temp_dir().join(format!(
+        "koala page #1 50% ?q-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("temp dir is writable");
+    fs::write(
+        dir.join("page.html"),
+        r#"<!DOCTYPE html><html><body><script src="run.js"></script></body></html>"#,
+    )
+    .expect("temp dir is writable");
+    fs::write(
+        dir.join("run.js"),
+        "document.body.setAttribute('data-relative','loaded');",
+    )
+    .expect("temp dir is writable");
+
+    let doc = koala_browser::load_document(
+        dir.join("page.html").to_str().expect("temp paths are UTF-8"),
+    )
+    .expect("page.html was just written");
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(js_errors(&doc).is_empty(), "unexpected issues: {:?}", doc.parse_issues);
+    assert_eq!(
+        find_marker_attr(&doc.dom, "data-relative").as_deref(),
+        Some("loaded"),
+    );
+}
+
 #[test]
 fn missing_src_records_parse_issue_but_does_not_abort() {
     // The first script's src points at a path that won't exist;

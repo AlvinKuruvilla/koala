@@ -239,17 +239,18 @@ Replay is only sound if every byte a load reads comes through
 
 Consequences for the design:
 
-- **Replay must load the page by its original URL.** `load_document`
-  sets `base_url` only when the path is `http(s)://`; a local file gets
-  none. So the probe runs `koala --bench https://www.google.com/
-  --replay <archive>`, and relative subresources resolve exactly as
-  they did when recorded.
+- **Replay must load the page by its original URL.** A saved copy of a
+  page gets a `file:` base URL, so its references resolve against the
+  local directory, not the site. The probe runs `koala --bench
+  https://www.google.com/ --replay <archive>`, and relative subresources
+  resolve exactly as they did when recorded.
 - **The existing `.bench-cache/` numbers measure a stripped page.**
   `just bench https://google.com` loads `.bench-cache/google_com.html`
   as a file, so its root-relative stylesheet and images resolve to
-  filesystem paths (`/xjs/_/ss/...`, `/images/branding/...`) and fail;
-  only the HTML and inline scripts are measured. The google figures in
-  PR #9 are for that page, not for google as a browser sees it.
+  `file:///xjs/_/ss/...` and `file:///images/...` and fail, as they
+  would in a browser; only the HTML and inline scripts are measured.
+  The google figures in PR #9 are for that page, not for google as a
+  browser sees it.
 - **The audit is a grep and will go stale.** `@import`, `@font-face`,
   JS `fetch`, or a loader thread each reopen it. Enforce the first half
   mechanically: a workspace `clippy.toml` `disallowed-types` entry for

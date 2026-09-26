@@ -182,7 +182,8 @@ fn merge_paths(base_has_authority: bool, base_path: &str, ref_path: &str) -> Str
 /// `javascript:`, `blob:`, etc. without enumerating them, and
 /// correctly rejects strings like `foo/bar:baz` (the `:` is
 /// inside the path, not after a scheme).
-fn has_scheme(href: &str) -> bool {
+#[must_use]
+pub fn has_scheme(href: &str) -> bool {
     let mut chars = href.char_indices();
     let Some((_, first)) = chars.next() else {
         return false;
@@ -198,6 +199,25 @@ fn has_scheme(href: &str) -> bool {
         }
     }
     false
+}
+
+/// The `file:` URL of a local file, used as the document URL of a page
+/// opened from disk, as a browser does.
+///
+/// # Errors
+///
+/// Returns the I/O error from canonicalizing `path`, e.g. when the file
+/// does not exist.
+///
+/// # Panics
+///
+/// Panics if the canonical path is not absolute, which
+/// [`std::fs::canonicalize`] never returns.
+pub fn file_url_from_path(path: &std::path::Path) -> std::io::Result<String> {
+    let absolute = std::fs::canonicalize(path)?;
+    let url = ::url::Url::from_file_path(&absolute)
+        .expect("canonicalize returns an absolute path");
+    Ok(url.into())
 }
 
 #[cfg(test)]
