@@ -8,8 +8,12 @@ description = "Shared utilities for the Koala renderer"
 [dependencies]
 backtrace = { version = "0.3.76", optional = true }
 base64 = "0.22.1"
+hex = "0.4.3"
 koala-std.workspace = true
 reqwest.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2 = "0.11.0"
 thiserror.workspace = true
 
 [lints]

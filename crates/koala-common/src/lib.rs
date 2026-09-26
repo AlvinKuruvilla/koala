@@ -8,6 +8,8 @@
 
 /// Counting global allocator for heap accounting in bench / dev builds.
 pub mod alloc_count;
+/// Record fetch responses to a file and replay them without the network.
+pub mod archive;
 /// WPT-style hosts-file DNS overrides used when running under wptrunner.
 pub mod hosts;
 /// Decoded image data types shared across renderer components.

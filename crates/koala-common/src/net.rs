@@ -93,6 +93,29 @@ pub enum FetchError {
         #[source]
         source: std::io::Error,
     },
+
+    /// A [`ReplaySender`](crate::archive::ReplaySender) was asked for a URL
+    /// its archive does not hold. Replay never falls back to the network,
+    /// so this means the current build requests something the recorded
+    /// build did not.
+    #[error(
+        "'{url}' is not in the replay archive; this build fetches a resource the \
+         recording did not (re-record the page if that is expected)"
+    )]
+    NotInArchive {
+        /// The URL that was requested.
+        url: String,
+    },
+
+    /// The fetch failed when the archive was recorded, and replay
+    /// reproduces that failure.
+    #[error("'{url}' failed when the archive was recorded: {message}")]
+    RecordedFailure {
+        /// The URL that was requested.
+        url: String,
+        /// The error message captured at record time.
+        message: String,
+    },
 }
 
 /// A parsed `data:` URL that can be decoded into raw bytes.
