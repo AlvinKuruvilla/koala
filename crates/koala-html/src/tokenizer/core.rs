@@ -2514,14 +2514,28 @@ impl HTMLTokenizer {
         loop {
             // Each state begins by consuming the next input character,
             // unless we're reconsuming from a previous state transition.
-            if self.reconsume {
+            //
+            // The exception is [§ 13.2.5.80 Numeric character reference end
+            // state](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state):
+            // its steps start with "Check the character reference code", not
+            // "Consume the next input character". Consuming here dropped the
+            // character after every `&#NN;` (`can&#39;t` became `can'`). It
+            // must also leave a pending reconsume alone: after a reference
+            // with no semicolon (`&#65x`), the `x` is reconsumed by the
+            // return state the end state switches to.
+            if self.state == TokenizerState::NumericCharacterReferenceEnd {
+                // Neither consume nor clear `reconsume`.
+            } else if self.reconsume {
                 self.reconsume = false;
                 // Keep current_input_character as-is for reconsuming
             } else {
                 self.current_input_character = self.consume();
             }
 
-            if self.current_input_character.is_none() && self.at_eof {
+            if self.current_input_character.is_none()
+                && self.at_eof
+                && self.state != TokenizerState::NumericCharacterReferenceEnd
+            {
                 break;
             }
             match self.state {
