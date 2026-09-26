@@ -468,7 +468,7 @@ impl HTMLParser {
     /// custom elements, and the "will execute script" flag.
     fn create_element(&mut self, tag_name: &str, attributes: &[Attribute]) -> NodeId {
         self.tree.alloc(NodeType::Element(ElementData {
-            tag_name: tag_name.to_string(),
+            tag_name: tag_name.into(),
             attrs: Self::attributes_to_map(attributes),
         }))
     }

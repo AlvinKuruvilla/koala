@@ -6,6 +6,20 @@ license.workspace = true
 description = "Hand-rolled no_std + alloc foundation library for Koala — learning-motivated replacements for selected std types"
 
 [dependencies]
+# Small-string substrate for the std-gated `FlyString` interner (see
+# `string::fly`). Optional and pulled in only by our `std` feature, where
+# ecow's own `std` support is wanted (the `fly` module is std-only).
+# Interim stand-in for a hand-rolled koala-std SSO type; kept as the
+# differential oracle once that lands.
+ecow = { version = "0.3", optional = true }
+
+[features]
+# Off by default so the collection core stays strictly `no_std`. Enabling
+# `std` unlocks `string::FlyString` and its process-global interner, which
+# need `std`'s `Mutex`/`LazyLock` (see the crate-level docs for why this is
+# the one sanctioned `std` dependency).
+default = []
+std = ["dep:ecow"]
 
 [dev-dependencies]
 quickcheck = "1"

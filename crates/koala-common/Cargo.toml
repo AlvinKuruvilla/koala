@@ -6,6 +6,7 @@ license.workspace = true
 description = "Shared utilities for the Koala renderer"
 
 [dependencies]
+backtrace = { version = "0.3.76", optional = true }
 base64 = "0.22.1"
 koala-std.workspace = true
 reqwest.workspace = true
@@ -13,3 +14,9 @@ thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Opt-in call-site attribution for small allocations (see
+# `alloc_count::attribution`). Pulls in `backtrace` for stack capture and
+# symbolization; off by default so normal builds never link it.
+alloc-attribution = ["dep:backtrace"]

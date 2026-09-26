@@ -30,7 +30,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use koala_browser::{FontProvider, load_document, warning};
-use koala_common::alloc_count::{reset_peak, snapshot};
+use koala_common::alloc_count::{SIZE_BUCKET_BOUNDS, reset_peak, size_histogram, snapshot};
 use serde::{Deserialize, Serialize};
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
@@ -102,9 +102,11 @@ pub(crate) fn run(
     let mut setup_us_samples: Vec<u64> = Vec::with_capacity(setup_iterations as usize);
     let mut setup_stage_samples: BTreeMap<String, Vec<u64>> = BTreeMap::new();
     let mut setup_alloc: Option<AllocDelta> = None;
+    let mut setup_histogram: Option<Vec<HistBucket>> = None;
     let mut doc = None;
     for _ in 0..setup_iterations {
         let alloc_before = snapshot();
+        let hist_before = size_histogram();
         reset_peak();
         let start = Instant::now();
         let loaded = load_document(url).with_context(|| format!("loading {url}"))?;
@@ -114,6 +116,7 @@ pub(crate) fn run(
         // representative sample (the first, post-warmup) is enough.
         if setup_alloc.is_none() {
             setup_alloc = Some(AllocDelta::between(alloc_before, snapshot()));
+            setup_histogram = Some(hist_delta(hist_before, size_histogram()));
         }
 
         // A stage may fire more than once per load (e.g. image_loading
@@ -137,6 +140,18 @@ pub(crate) fn run(
         .map(|(name, samples)| (name, stats(&samples)))
         .collect();
     let setup_alloc = setup_alloc.expect("at least one setup iteration ran");
+    let setup_size_histogram = setup_histogram.expect("at least one setup iteration ran");
+
+    // Attribute the small-allocation bucket to call sites. One extra load
+    // under the armed allocator (kept out of the timing/alloc samples
+    // above, since backtrace capture is slow), printing a top-N table to
+    // stderr — the bench JSON on stdout stays clean.
+    #[cfg(feature = "alloc-attribution")]
+    {
+        koala_common::alloc_count::attribution::arm(24);
+        let _ = load_document(url).with_context(|| format!("loading {url}"))?;
+        koala_common::alloc_count::attribution::dump(30);
+    }
 
     let font_provider = FontProvider::load();
 
@@ -185,6 +200,7 @@ pub(crate) fn run(
         setup_us,
         setup_stages,
         setup_alloc,
+        setup_size_histogram,
         render,
         render_alloc: RenderAlloc::aggregate(&alloc_samples),
     };
@@ -302,6 +318,10 @@ struct BenchReport {
     /// sampled on the first measured load (deterministic on a fixed
     /// source). See [`AllocDelta`].
     setup_alloc: AllocDelta,
+    /// Allocation-size distribution of that same setup load, bucketed by
+    /// requested size. The low buckets gauge how many allocations a
+    /// small-string-optimized string type could keep off the heap.
+    setup_size_histogram: Vec<HistBucket>,
     /// Per-stage aggregated samples for the render loop, keyed by
     /// span name. `BTreeMap` so JSON output is alphabetically
     /// stable across runs.
@@ -352,6 +372,35 @@ fn stats(samples: &[u64]) -> StageStats {
         min_us: sorted[0],
         max_us: sorted[n - 1],
     }
+}
+
+/// One bucket of the allocation-size histogram: how many allocations of
+/// the measured region requested at most `max_bytes` (and more than the
+/// previous bucket's bound).
+#[derive(Serialize, Deserialize)]
+struct HistBucket {
+    /// Inclusive upper bound of the bucket in bytes (`u64::MAX` is the
+    /// catch-all for large allocations).
+    max_bytes: u64,
+    count: u64,
+}
+
+/// Element-wise difference of two cumulative size histograms, paired
+/// with the bucket bounds — the size profile of whatever ran between the
+/// two snapshots.
+#[allow(clippy::cast_possible_truncation)] // counts fit u64 on any target
+fn hist_delta(
+    before: [usize; SIZE_BUCKET_BOUNDS.len()],
+    after: [usize; SIZE_BUCKET_BOUNDS.len()],
+) -> Vec<HistBucket> {
+    SIZE_BUCKET_BOUNDS
+        .iter()
+        .zip(before.iter().zip(after.iter()))
+        .map(|(&bound, (&b, &a))| HistBucket {
+            max_bytes: bound as u64,
+            count: a.saturating_sub(b) as u64,
+        })
+        .collect()
 }
 
 /// Heap activity over one measured region, in *requested* bytes (see

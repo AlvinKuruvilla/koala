@@ -17,6 +17,11 @@ layout-trace = ["koala-css/layout-trace"]
 # only the harness module + its subscriber dep are gated behind
 # this feature so non-bench builds stay light.
 bench = ["dep:tracing-subscriber"]
+# Adds a call-site attribution pass to `--bench`: one extra armed
+# `load_document` whose small allocations are bucketed by call site and
+# printed to stderr (no profile file). Slower and only meaningful with
+# debuginfo; opt in alongside `bench`.
+alloc-attribution = ["bench", "koala-common/alloc-attribution"]
 
 [dependencies]
 libc = "0.2"

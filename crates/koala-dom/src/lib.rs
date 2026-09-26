@@ -9,6 +9,7 @@
 //! providing O(1) access and traversal without borrow checker issues.
 
 use koala_std::collections::{HashMap, HashSet};
+use koala_std::string::FlyString;
 
 /// Map of attribute names to values for an element.
 ///
@@ -103,7 +104,11 @@ pub enum NodeType {
 #[derive(Debug, Clone)]
 pub struct ElementData {
     /// "An element's local name"
-    pub tag_name: String,
+    ///
+    /// Stored as a [`FlyString`]: tag names are short and high-frequency,
+    /// so they live inline in the handle with no per-element heap
+    /// allocation. See `koala_common::fly`.
+    pub tag_name: FlyString,
     /// "An element has an associated attribute list"
     pub attrs: AttributesMap,
 }

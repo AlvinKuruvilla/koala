@@ -18,7 +18,7 @@ fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> ElementData {
         let _ = attrs.insert("class".to_string(), classes.join(" "));
     }
     ElementData {
-        tag_name: tag.to_string(),
+        tag_name: tag.into(),
         attrs,
     }
 }
@@ -335,7 +335,7 @@ fn make_element_type(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType 
         let _ = attrs.insert("class".to_string(), classes.join(" "));
     }
     NodeType::Element(ElementData {
-        tag_name: tag.to_string(),
+        tag_name: tag.into(),
         attrs,
     })
 }
@@ -908,7 +908,7 @@ fn test_matches_link() {
     let mut a_attrs = HashMap::new();
     let _ = a_attrs.insert("href".to_string(), "https://example.com".to_string());
     let a_with_href = tree.alloc(NodeType::Element(ElementData {
-        tag_name: "a".to_string(),
+        tag_name: "a".into(),
         attrs: a_attrs,
     }));
     let a_without_href = tree.alloc(make_element_type("a", None, &[]));
@@ -932,7 +932,7 @@ fn make_element_with_attrs(tag: &str, attrs: &[(&str, &str)]) -> ElementData {
         let _ = attr_map.insert(k.to_string(), v.to_string());
     }
     ElementData {
-        tag_name: tag.to_string(),
+        tag_name: tag.into(),
         attrs: attr_map,
     }
 }

@@ -20,6 +20,7 @@ use crate::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, Length
 use koala_common::warning::warn_once;
 use serde::Serialize;
 use koala_std::collections::HashMap;
+use koala_std::string::FlyString;
 
 /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
 ///
@@ -753,8 +754,12 @@ pub struct ComputedStyle {
     /// "A custom property is any property whose name starts with two dashes."
     /// Custom properties are inherited by default (§ 2: "Inherited: yes").
     /// Values are stored as resolved component values (`var()` already substituted).
+    /// Keyed by [`FlyString`]: custom-property names are a small, highly
+    /// repeated vocabulary that this map clones into every node during the
+    /// cascade, so interning the keys turns those clones from heap
+    /// allocations into inline copies / refcount bumps.
     #[serde(skip)]
-    pub custom_properties: HashMap<String, Vec<ComponentValue>>,
+    pub custom_properties: HashMap<FlyString, Vec<ComponentValue>>,
 
     /// Source order of the declaration that set `margin_top` (for cascade resolution)
     #[serde(skip)]
@@ -782,7 +787,7 @@ impl ComputedStyle {
         if decl.name.starts_with("--") {
             let _ = self
                 .custom_properties
-                .insert(decl.name.clone(), decl.value.clone());
+                .insert(FlyString::new(&decl.name), decl.value.clone());
             return;
         }
 
@@ -1830,7 +1835,7 @@ impl ComputedStyle {
     /// Must be called after all declarations are applied and before
     /// children inherit.
     pub fn resolve_custom_properties(&mut self) {
-        let keys: Vec<String> = self.custom_properties.keys().cloned().collect();
+        let keys: Vec<FlyString> = self.custom_properties.keys().cloned().collect();
         for key in keys {
             // `key` was just read from `keys()`, so it is present; the
             // `else continue` is unreachable in practice but keeps this

@@ -8,6 +8,7 @@
 //! computed-value time, after `var()` functions have been substituted."
 
 use koala_std::collections::HashMap;
+use koala_std::string::FlyString;
 
 use crate::parser::ComponentValue;
 use crate::tokenizer::CSSToken;
@@ -70,7 +71,7 @@ pub fn contains_var(values: &[ComponentValue]) -> bool {
 #[allow(clippy::implicit_hasher)]
 pub fn substitute_var(
     values: &[ComponentValue],
-    custom_properties: &HashMap<String, Vec<ComponentValue>>,
+    custom_properties: &HashMap<FlyString, Vec<ComponentValue>>,
     depth: u32,
 ) -> Option<Vec<ComponentValue>> {
     // [§ 2.3](https://www.w3.org/TR/css-variables-1/#cycles)
@@ -97,7 +98,7 @@ pub fn substitute_var(
 
                 let prop_name = prop_name?;
 
-                if let Some(prop_value) = custom_properties.get(&prop_name) {
+                if let Some(prop_value) = custom_properties.get(prop_name.as_str()) {
                     // Step 2: Custom property exists — substitute its value.
                     // The value is already resolved (var() substituted) at this
                     // point for custom-property-to-custom-property references.
@@ -251,7 +252,7 @@ mod tests {
         // var(--color) with --color: red
         let values = vec![var_fn(vec![ident("--color")])];
         let mut props = HashMap::new();
-        let _ = props.insert("--color".to_string(), vec![ident("red")]);
+        let _ = props.insert("--color".into(), vec![ident("red")]);
 
         let result = substitute_var(&values, &props, 0);
         assert_eq!(result, Some(vec![ident("red")]));
@@ -277,7 +278,7 @@ mod tests {
             var_fn(vec![ident("--color")]),
         ])];
         let mut props = HashMap::new();
-        let _ = props.insert("--color".to_string(), vec![ident("green")]);
+        let _ = props.insert("--color".into(), vec![ident("green")]);
 
         let result = substitute_var(&values, &props, 0);
         assert_eq!(result, Some(vec![ident("green")]));
@@ -319,7 +320,7 @@ mod tests {
         // Depth > MAX_SUBSTITUTION_DEPTH → None
         let values = vec![var_fn(vec![ident("--a")])];
         let mut props = HashMap::new();
-        let _ = props.insert("--a".to_string(), vec![ident("ok")]);
+        let _ = props.insert("--a".into(), vec![ident("ok")]);
 
         let result = substitute_var(&values, &props, MAX_SUBSTITUTION_DEPTH + 1);
         assert_eq!(result, None);
@@ -360,7 +361,7 @@ mod tests {
         }];
         let mut props = HashMap::new();
         let _ = props.insert(
-            "--r".to_string(),
+            "--r".into(),
             vec![ComponentValue::Token(CSSToken::Number {
                 value: 255.0,
                 int_value: Some(255),

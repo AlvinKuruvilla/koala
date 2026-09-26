@@ -658,3 +658,39 @@ graphs process heap + CPU over time. Brainstormed follow-ups, tabled
   per allocation + symbolication. Real overhead; its own project.
 - **Page-complexity counts.** DOM / layout-box / computed-style node
   counts for the active page; needs koala-browser to expose them.
+
+## Pre-existing clippy debt surfaced under `--features bench`
+
+- **koala-js doc-markdown errors.** Running `cargo clippy -p koala-cli
+  --features bench` (or `alloc-attribution`) reports ~22
+  `clippy::doc_markdown` "item in documentation is missing backticks"
+  errors across `koala-js` (`lib.rs`, `dom_handle.rs`,
+  `globals/{macros,dom_exception,...}.rs`), plus a few `unused_must_use`
+  on `self.context.run_jobs()`. Pre-existing and unrelated to the bench
+  tooling; they just become visible because clippy lints the wider graph
+  with the feature on. A quick `cargo clippy --fix` pass on koala-js
+  would clear the doc-markdown ones.
+
+## `--bench-diff` compares means from a single report per side
+
+Measured 2026-09-26 on the landing page, 300 setup loads per report, 5
+reports per build. One base-vs-cascade pair showed `js_runtime_init`
+6.3% faster, and nothing on that branch touches the JS runtime. The
+noise is specific to certain stages, not spread evenly across the harness:
+
+- `html_parse` and `css_cascade` means vary about 1-2% across reports.
+- `js_runtime_init` has a heavy tail (one report: min 113, p50 139,
+  p95 819, max 1110 us), so its mean is dominated by a few slow
+  samples. Even its p50 ranges 119-139 us across reports.
+
+`bench-diff` prints the per-stage *mean* of one report against one
+other. Options, not yet weighed:
+
+- diff p50 instead of (or beside) the mean;
+- accept several reports per side and show the across-report range,
+  as `tmp/bench-flystring.sh` did by hand;
+- flag stages whose p95/p50 ratio makes any single-pair delta
+  meaningless.
+
+The `js_runtime_init` tail itself is unexplained: Boa context creation
+is sometimes 6x slower than usual.

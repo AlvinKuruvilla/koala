@@ -20,12 +20,12 @@ pub fn fixture() -> DomHandle {
     let mut tree = DomTree::new();
     let root = tree.root();
     let html = tree.alloc(NodeType::Element(ElementData {
-        tag_name: "html".to_string(),
+        tag_name: "html".into(),
         attrs: AttributesMap::new(),
     }));
     tree.append_child(root, html);
     let body = tree.alloc(NodeType::Element(ElementData {
-        tag_name: "body".to_string(),
+        tag_name: "body".into(),
         attrs: AttributesMap::new(),
     }));
     tree.append_child(html, body);
@@ -35,7 +35,7 @@ pub fn fixture() -> DomHandle {
     let _ = div_attrs.insert("class".to_string(), "greeting prominent".to_string());
     let _ = div_attrs.insert("data-track".to_string(), "yes".to_string());
     let div = tree.alloc(NodeType::Element(ElementData {
-        tag_name: "div".to_string(),
+        tag_name: "div".into(),
         attrs: div_attrs,
     }));
     tree.append_child(body, div);
@@ -53,12 +53,12 @@ pub fn list_fixture() -> DomHandle {
     let mut tree = DomTree::new();
     let root = tree.root();
     let html = tree.alloc(NodeType::Element(ElementData {
-        tag_name: "html".to_string(),
+        tag_name: "html".into(),
         attrs: AttributesMap::new(),
     }));
     tree.append_child(root, html);
     let body = tree.alloc(NodeType::Element(ElementData {
-        tag_name: "body".to_string(),
+        tag_name: "body".into(),
         attrs: AttributesMap::new(),
     }));
     tree.append_child(html, body);
