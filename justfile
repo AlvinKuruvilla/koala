@@ -12,10 +12,30 @@ lldb_run := "lldb --batch --no-lldbinit -o run -o 'script import os; os._exit(ll
 
 # Open the browser GUI (debug build, under lldb). The address bar
 # handles navigation, so this takes no argument.
+#
+# It runs from target/debug/Koala.app: macOS takes the name and icon in
+# the app switcher, Dock, and menu bar from an app bundle, so a bare
+# executable shows as "koala-ui" with a generic icon. The binary is
+# hard-linked in rather than copied (instant, and a rebuild replaces the
+# file, so it is re-linked each run).
+#
+# The icon is koala-ui/macos/Koala.icns, generated from icon.svg and
+# committed so building needs no SVG tools. After editing the SVG:
+#
+#   set=tmp/Koala.iconset; mkdir -p $set
+#   for s in 16 32 128 256 512; do
+#     rsvg-convert -w $s        koala-ui/macos/icon.svg -o $set/icon_${s}x${s}.png
+#     rsvg-convert -w $((s*2))  koala-ui/macos/icon.svg -o $set/icon_${s}x${s}@2x.png
+#   done
+#   iconutil -c icns $set -o koala-ui/macos/Koala.icns
 [doc("Open the browser GUI under lldb (a crash prints a backtrace)")]
 gui:
     cargo build --bin koala-ui
-    {{lldb_run}} target/debug/koala-ui
+    mkdir -p target/debug/Koala.app/Contents/MacOS target/debug/Koala.app/Contents/Resources
+    cp koala-ui/macos/Info.plist target/debug/Koala.app/Contents/Info.plist
+    cp koala-ui/macos/Koala.icns target/debug/Koala.app/Contents/Resources/Koala.icns
+    ln -f target/debug/koala-ui target/debug/Koala.app/Contents/MacOS/koala-ui
+    {{lldb_run}} target/debug/Koala.app/Contents/MacOS/koala-ui
 
 # Load TARGET in the headless CLI (debug build, under lldb) and print its
 # DOM, or save a screenshot. TARGET is a recorded corpus page (replayed;
