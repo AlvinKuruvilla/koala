@@ -326,10 +326,8 @@ polish the look.
 
   Boa ships a typed slot map *on every `Context`*
   specifically for stashing host-side Rust state that
-  callbacks need. We already depend on it — the
-  `get_many_mut` → `get_disjoint_mut` patch in
-  `crates/boa/core/engine/src/host_defined.rs` (commit
-  `302922a`) is in that file. The migration shape:
+  callbacks need (`boa_engine::HostDefined`,
+  `src/host_defined.rs` in the crate). The migration shape:
 
   ```rust
   // Today (dom_handle.rs):
@@ -446,7 +444,7 @@ polish the look.
   Boa's existing primitives, and the migration steps are
   bounded.
 
-- **Boa 0.21+ has 6 `parse_issues` on overleaf** — the Boa
+- **Boa 0.21+ had 6 `parse_issues` on overleaf** (unchecked on 0.22) — the Boa
   bump fixed the 46 GB for-in OOM but the page still returns 6
   JS parse errors from the inline-script pump. They don't break
   rendering; they're a backlog of real-world JS constructs Boa

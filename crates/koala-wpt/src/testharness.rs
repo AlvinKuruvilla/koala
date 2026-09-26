@@ -79,7 +79,8 @@ const COMPLETION_CBS_KEY: &str = "__koala_completion_callbacks__";
 /// Register the bridge globals on `context`. Called from
 /// [`crate::globals::register_globals`].
 pub(super) fn register_testharness(context: &mut Context) {
-    let results = JsArray::new(context);
+    let results = JsArray::new(context)
+        .expect("creating an empty array only fails on a Boa engine bug");
     context
         .register_global_property(js_string!(RESULTS_KEY), results, Attribute::all())
         .expect("__koala_test_results__ should not already exist");
@@ -92,7 +93,8 @@ pub(super) fn register_testharness(context: &mut Context) {
         )
         .expect("__koala_test_completion__ should not already exist");
 
-    let result_cbs = JsArray::new(context);
+    let result_cbs = JsArray::new(context)
+        .expect("creating an empty array only fails on a Boa engine bug");
     context
         .register_global_property(
             js_string!(RESULT_CBS_KEY),
@@ -101,7 +103,8 @@ pub(super) fn register_testharness(context: &mut Context) {
         )
         .expect("__koala_result_callbacks__ should not already exist");
 
-    let completion_cbs = JsArray::new(context);
+    let completion_cbs = JsArray::new(context)
+        .expect("creating an empty array only fails on a Boa engine bug");
     context
         .register_global_property(
             js_string!(COMPLETION_CBS_KEY),

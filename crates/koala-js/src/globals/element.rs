@@ -268,7 +268,7 @@ pub(super) fn query_selector_all(
     let scope_id = node_id_from_this(this, context)?;
     let parsed = parse_query_arg(args, "querySelectorAll", context)?;
     let Some(parsed) = parsed else {
-        return Ok(JsArray::new(context).into());
+        return Ok(JsArray::new(context)?.into());
     };
 
     let ids: Vec<NodeId> = with_dom(|dom| find_all_matches(dom, scope_id, &parsed))
