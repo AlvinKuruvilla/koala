@@ -633,7 +633,7 @@ impl SimpleSelector {
             // [§ 6.6 Class selector](https://www.w3.org/TR/selectors-4/#class-html)
             // "For documents that use the class attribute (which most do), authors
             // can use the 'period' (.) notation as an alternative."
-            Self::Class(class_name) => element.classes().contains(class_name.as_str()),
+            Self::Class(class_name) => element.has_class(class_name),
 
             // [§ 6.7 ID selector](https://www.w3.org/TR/selectors-4/#id-selectors)
             // "An ID selector represents an element instance that has an identifier

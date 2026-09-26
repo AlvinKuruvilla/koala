@@ -8,7 +8,7 @@
 //! The tree uses arena allocation with [`NodeId`] indices for all relationships,
 //! providing O(1) access and traversal without borrow checker issues.
 
-use koala_std::collections::{HashMap, HashSet};
+use koala_std::collections::HashMap;
 use koala_std::string::FlyString;
 
 /// Map of attribute names to values for an element.
@@ -123,16 +123,29 @@ impl ElementData {
         self.attrs.get("id")
     }
 
-    /// Returns the set of class names from the class attribute.
+    /// Whether `class_name` is one of the element's classes.
     ///
-    /// Per [§ 3.2.6 Global attributes](https://html.spec.whatwg.org/multipage/dom.html#global-attributes):
-    /// "The class attribute, if specified, must have a value that is a set of
-    /// space-separated tokens representing the various classes that the element belongs to."
+    /// [DOM § 4.9 Interface Element](https://dom.spec.whatwg.org/#interface-element)
+    ///
+    /// "The token set of this particular `DOMTokenList` object are also known
+    /// as the element's classes." A `DOMTokenList`'s token set is the result
+    /// of the ordered set parser on the attribute value:
+    ///
+    /// [DOM § 1.2 Ordered sets](https://dom.spec.whatwg.org/#concept-ordered-set-parser)
+    ///
+    /// "1. Let inputTokens be the result of splitting input on ASCII
+    /// whitespace."
+    ///
+    /// Implementation note: membership needs only the split, not the set, so
+    /// this scans the attribute in place instead of allocating. Selector
+    /// matching calls it once per class selector per rule per element, which
+    /// made the allocation the largest single cost of the cascade on
+    /// real pages.
     #[must_use]
-    pub fn classes(&self) -> HashSet<&str> {
+    pub fn has_class(&self, class_name: &str) -> bool {
         self.attrs
             .get("class")
-            .map_or_else(HashSet::new, |classlist| classlist.split(' ').collect())
+            .is_some_and(|classes| classes.split_ascii_whitespace().any(|c| c == class_name))
     }
 }
 

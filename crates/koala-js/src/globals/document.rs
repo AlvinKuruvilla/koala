@@ -248,7 +248,9 @@ fn get_elements_by_class_name(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let raw = required_string_arg(args, 0, "getElementsByClassName", "classNames", context)?;
-    let needle: Vec<String> = raw.split_whitespace().map(str::to_string).collect();
+    // "Let classes be the result of running the ordered set parser on
+    // classNames", which splits on ASCII whitespace.
+    let needle: Vec<String> = raw.split_ascii_whitespace().map(str::to_string).collect();
     if needle.is_empty() {
         return Ok(boa_engine::object::builtins::JsArray::new(context)?.into());
     }
@@ -256,10 +258,8 @@ fn get_elements_by_class_name(
     let ids: Vec<NodeId> = with_dom(|dom| {
         dom.iter_all()
             .filter(|&id| {
-                dom.as_element(id).is_some_and(|e| {
-                    let classes = e.classes();
-                    needle.iter().all(|c| classes.contains(c.as_str()))
-                })
+                dom.as_element(id)
+                    .is_some_and(|e| needle.iter().all(|c| e.has_class(c)))
             })
             .collect()
     })
