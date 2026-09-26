@@ -31,6 +31,8 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use koala_browser::{FontProvider, load_document, warning};
 use koala_common::alloc_count::{SIZE_BUCKET_BOUNDS, reset_peak, size_histogram, snapshot};
+use koala_common::archive::ReplaySender;
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use tracing::span;
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
@@ -39,16 +41,30 @@ use tracing_subscriber::registry::{LookupSpan, Registry};
 
 use crate::render::render_document_once;
 
-/// Run the bench harness against `url` (file path or HTTP URL).
-/// Emits a single JSON document to stdout — schema is the
-/// [`BenchReport`] struct below.
-///
-/// `iterations` is the sample count whose timings get aggregated.
-/// `warmup` is the discard-iteration count run beforehand (lets
-/// the OS page in glyph atlases, JIT caches warm, etc.). Setting
-/// `warmup = 0` is supported but pollutes the first sample with
-/// cold-cache outliers — the `just bench` default of 3 keeps the
-/// noise floor below ~5 % on the landing page.
+/// What one `--bench` run measures and how.
+pub(crate) struct BenchConfig<'a> {
+    /// File path or HTTP URL of the page.
+    pub(crate) url: &'a str,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// Sample count whose render timings get aggregated.
+    pub(crate) iterations: u32,
+    /// Discard renders run beforehand (lets the OS page in glyph
+    /// atlases, lazy caches warm, etc.). Zero is supported but pollutes
+    /// the first sample with cold-cache outliers; the `just bench`
+    /// default of 3 keeps the noise floor below ~5 % on the landing page.
+    pub(crate) warmup: u32,
+    /// Measured document loads aggregated into the setup stats.
+    pub(crate) setup_iterations: u32,
+    /// Discard loads run before the measured ones.
+    pub(crate) setup_warmup: u32,
+    /// The sender serving fetches under `--replay`, read afterwards for
+    /// the report's input digest.
+    pub(crate) replay: Option<&'a ReplaySender>,
+}
+
+/// Run the bench harness described by `config`. Emits a single JSON
+/// document to stdout — schema is the [`BenchReport`] struct below.
 ///
 /// # Errors
 ///
@@ -56,15 +72,17 @@ use crate::render::render_document_once;
 /// [`render_document_once`]. A bench run failing partway through
 /// emits no JSON.
 #[allow(clippy::cast_possible_truncation)] // µs durations comfortably fit u64
-pub(crate) fn run(
-    url: &str,
-    width: u32,
-    height: u32,
-    iterations: u32,
-    warmup: u32,
-    setup_iterations: u32,
-    setup_warmup: u32,
-) -> Result<()> {
+pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
+    let &BenchConfig {
+        url,
+        width,
+        height,
+        iterations,
+        warmup,
+        setup_iterations,
+        setup_warmup,
+        replay,
+    } = config;
     // At least one measured load is required — we keep its document for
     // the render loop and need a non-empty sample set for `stats`.
     let setup_iterations = setup_iterations.max(1);
@@ -101,6 +119,7 @@ pub(crate) fn run(
 
     let mut setup_us_samples: Vec<u64> = Vec::with_capacity(setup_iterations as usize);
     let mut setup_stage_samples: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    let mut setup_samples: Vec<LoadSample> = Vec::with_capacity(setup_iterations as usize);
     let mut setup_alloc: Option<AllocDelta> = None;
     let mut setup_histogram: Option<Vec<HistBucket>> = None;
     let mut doc = None;
@@ -110,7 +129,8 @@ pub(crate) fn run(
         reset_peak();
         let start = Instant::now();
         let loaded = load_document(url).with_context(|| format!("loading {url}"))?;
-        setup_us_samples.push(start.elapsed().as_micros() as u64);
+        let total_us = start.elapsed().as_micros() as u64;
+        setup_us_samples.push(total_us);
 
         // Allocation per load is deterministic on a fixed source, so one
         // representative sample (the first, post-warmup) is enough.
@@ -126,9 +146,13 @@ pub(crate) fn run(
         for ev in take_events() {
             *this_load.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
         }
-        for (name, total) in this_load {
-            setup_stage_samples.entry(name).or_default().push(total);
+        for (name, total) in &this_load {
+            setup_stage_samples.entry(name.clone()).or_default().push(*total);
         }
+        setup_samples.push(LoadSample {
+            total_us,
+            stages_us: this_load,
+        });
 
         doc = Some(loaded);
     }
@@ -173,6 +197,7 @@ pub(crate) fn run(
     // outlier (e.g. a resize that only trips on some iterations) is
     // visible rather than averaged away.
     let mut alloc_samples: Vec<AllocDelta> = Vec::with_capacity(iterations as usize);
+    let mut render_samples: Vec<BTreeMap<String, u64>> = Vec::with_capacity(iterations as usize);
     for _ in 0..iterations {
         let alloc_before = snapshot();
         reset_peak();
@@ -180,9 +205,12 @@ pub(crate) fn run(
         // Snapshot before draining timing events so the drain's own
         // allocations don't land in this iteration's render delta.
         alloc_samples.push(AllocDelta::between(alloc_before, snapshot()));
+        let mut this_render: BTreeMap<String, u64> = BTreeMap::new();
         for ev in take_events() {
             per_stage.entry(ev.name).or_default().push(ev.duration_us);
+            *this_render.entry(ev.name.to_string()).or_insert(0) += ev.duration_us;
         }
+        render_samples.push(this_render);
     }
 
     let render: BTreeMap<String, StageStats> = per_stage
@@ -190,7 +218,14 @@ pub(crate) fn run(
         .map(|(name, samples)| (name.to_string(), stats(&samples)))
         .collect();
 
+    // One more render, outside the timed loop because hashing a full
+    // frame costs milliseconds, to fingerprint what the page looks like.
+    let render_hash = hex::encode(Sha256::digest(
+        render_document_once(&doc, width, height, &font_provider)?.rgba_bytes(),
+    ));
+
     let report = BenchReport {
+        schema_version: SCHEMA_VERSION,
         url: url.to_string(),
         viewport: Viewport { width, height },
         iterations,
@@ -203,6 +238,11 @@ pub(crate) fn run(
         setup_size_histogram,
         render,
         render_alloc: RenderAlloc::aggregate(&alloc_samples),
+        // Read after every load has run, so it covers everything served.
+        input_digest: replay.map(ReplaySender::input_digest),
+        render_hash,
+        setup_samples,
+        render_samples,
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -292,6 +332,8 @@ fn install_subscriber() {
 
 #[derive(Serialize, Deserialize)]
 struct BenchReport {
+    /// [`SCHEMA_VERSION`] of the build that wrote this report.
+    schema_version: u32,
     /// Verbatim path/URL passed on the command line. Useful when
     /// multiple report JSONs are pooled and a downstream tool
     /// needs to attribute timings.
@@ -312,7 +354,7 @@ struct BenchReport {
     /// `layout_tree_build`, `script_loading`, `js_execute`, optionally
     /// `post_js_relayout`). Each value aggregates one per-load total per
     /// measured iteration; a stage that fires multiple times within a
-    /// load (image_loading per image) is summed within that load first.
+    /// load (`image_loading` per image) is summed within that load first.
     setup_stages: BTreeMap<String, StageStats>,
     /// Heap activity attributable to a single `load_document` call,
     /// sampled on the first measured load (deterministic on a fixed
@@ -329,6 +371,39 @@ struct BenchReport {
     /// Heap activity per render iteration, aggregated across the
     /// sample loop. See [`RenderAlloc`].
     render_alloc: RenderAlloc,
+    /// Under `--replay`, the SHA-256 of every URL the loads were served
+    /// and what each produced (see `ReplaySender::input_digest`). Two
+    /// reports with equal digests measured identical inputs. `None` for
+    /// live or local-file loads, whose inputs are not pinned.
+    input_digest: Option<String>,
+    /// SHA-256 of the RGBA pixels of one render of the final document.
+    /// Two builds with equal hashes drew identical frames; a timing
+    /// comparison between builds that draw different frames compares
+    /// different work.
+    render_hash: String,
+    /// Every measured load, in order. The `setup_*` summaries above are
+    /// computed from these; they are kept so an analysis can use any
+    /// statistic without re-running the page.
+    setup_samples: Vec<LoadSample>,
+    /// Every measured render, in order: per-stage µs, summed within the
+    /// render when a stage fires more than once.
+    render_samples: Vec<BTreeMap<String, u64>>,
+}
+
+/// Version of the [`BenchReport`] layout. Bump when a field is added,
+/// removed, or changes meaning, so readers can refuse a report they
+/// would misread.
+const SCHEMA_VERSION: u32 = 1;
+
+/// One measured document load.
+#[derive(Serialize, Deserialize)]
+struct LoadSample {
+    /// Wall-clock µs for the whole `load_document` call.
+    total_us: u64,
+    /// Per-stage µs, summed within the load when a stage fires more
+    /// than once (`image_loading` per image). Stages that did not fire
+    /// are absent.
+    stages_us: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -438,7 +513,7 @@ impl AllocDelta {
             bytes_allocated,
             bytes_freed,
             alloc_calls: (end.alloc_calls - before.alloc_calls) as u64,
-            net_live_bytes: bytes_allocated as i64 - bytes_freed as i64,
+            net_live_bytes: bytes_allocated.cast_signed() - bytes_freed.cast_signed(),
             // `peak` was reset to the live baseline before the region,
             // so subtracting that baseline yields the extra heap held
             // at the worst moment. `saturating_sub` guards the
@@ -625,12 +700,10 @@ fn print_metric(label: &str, before: Option<u64>, after: Option<u64>) {
             } else {
                 (a as f64 - b as f64) / b as f64 * 100.0
             };
-            let arrow = if a < b {
-                "↓"
-            } else if a > b {
-                "↑"
-            } else {
-                "="
+            let arrow = match a.cmp(&b) {
+                std::cmp::Ordering::Less => "↓",
+                std::cmp::Ordering::Greater => "↑",
+                std::cmp::Ordering::Equal => "=",
             };
             let body = format!("{:>14} → {:>14}  {arrow}{pct:+6.1}%", commas(b), commas(a));
             if pct.abs() < NOISE_PCT {
@@ -654,7 +727,7 @@ fn commas(n: u64) -> String {
     let len = digits.len();
     let mut out = String::with_capacity(len + len / 3);
     for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);

@@ -93,6 +93,38 @@ pub enum FetchError {
         #[source]
         source: std::io::Error,
     },
+
+    /// A `file:` URL that names no file on this machine: malformed, or
+    /// with a host, which is what a protocol-relative reference
+    /// (`//cdn.example/x.js`) resolves to in a page loaded from disk.
+    #[error("'{url}' does not name a file on this machine")]
+    InvalidFileUrl {
+        /// The URL that was requested.
+        url: String,
+    },
+
+    /// A [`ReplaySender`](crate::archive::ReplaySender) was asked for a URL
+    /// its archive does not hold. Replay never falls back to the network,
+    /// so this means the current build requests something the recorded
+    /// build did not.
+    #[error(
+        "'{url}' is not in the replay archive; this build fetches a resource the \
+         recording did not (re-record the page if that is expected)"
+    )]
+    NotInArchive {
+        /// The URL that was requested.
+        url: String,
+    },
+
+    /// The fetch failed when the archive was recorded, and replay
+    /// reproduces that failure.
+    #[error("'{url}' failed when the archive was recorded: {message}")]
+    RecordedFailure {
+        /// The URL that was requested.
+        url: String,
+        /// The error message captured at record time.
+        message: String,
+    },
 }
 
 /// A parsed `data:` URL that can be decoded into raw bytes.
@@ -225,8 +257,8 @@ pub trait RequestSender {
 /// - `data:` → decode in-process via [`DataURL`].
 /// - `http://` / `https://` → blocking HTTP GET via `reqwest`, honoring
 ///   the WPT [`hosts`](crate::hosts) overrides.
-/// - anything else → treated as a filesystem path (with an optional
-///   `file://` prefix stripped).
+/// - `file:` → read the file the URL names on this machine.
+/// - anything else → treated as a filesystem path.
 ///
 /// Stateless. Constructing one is free; you don't need to cache the
 /// instance.
@@ -240,8 +272,17 @@ impl RequestSender for DefaultSender {
         if url.starts_with("http://") || url.starts_with("https://") {
             return http_fetch(url);
         }
-        let path = url.strip_prefix("file://").unwrap_or(url);
-        std::fs::read(path).map_err(|e| FetchError::LocalRead {
+        let path = if url.starts_with("file:") {
+            ::url::Url::parse(url)
+                .ok()
+                .and_then(|parsed| parsed.to_file_path().ok())
+                .ok_or_else(|| FetchError::InvalidFileUrl {
+                    url: url.to_string(),
+                })?
+        } else {
+            PathBuf::from(url)
+        };
+        std::fs::read(&path).map_err(|e| FetchError::LocalRead {
             path: url.to_string(),
             source: e,
         })
@@ -295,6 +336,11 @@ impl<I: RequestSender> RequestSender for MappedSender<I> {
 thread_local! {
     /// Thread-local active sender. `None` falls back to [`DefaultSender`].
     /// Set via [`install_sender`], cleared when the returned guard drops.
+    ///
+    /// NOTE: a fetch made on a thread with no sender installed uses
+    /// `DefaultSender` and goes to the live network, even under
+    /// `--replay`. Moving any loader onto a worker thread means
+    /// installing the caller's sender on that thread too.
     static ACTIVE_SENDER: RefCell<Option<Box<dyn RequestSender>>> = const { RefCell::new(None) };
 }
 
@@ -334,6 +380,7 @@ fn with_active_sender<R>(f: impl FnOnce(&dyn RequestSender) -> R) -> R {
 
 /// Shared HTTP body fetch used by [`DefaultSender`]. Separated so the
 /// trait impl reads as a three-arm scheme dispatch.
+#[allow(clippy::disallowed_types)] // the one sanctioned HTTP client
 fn http_fetch(url: &str) -> Result<Vec<u8>, FetchError> {
     let client = crate::hosts::apply(reqwest::blocking::Client::builder().timeout(TIMEOUT))
         .build()

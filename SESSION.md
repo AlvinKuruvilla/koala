@@ -696,3 +696,23 @@ other. Options, not yet weighed:
 
 The `js_runtime_init` tail itself is unexplained: Boa context creation
 is sometimes 6x slower than usual.
+
+## JS error messages don't say where or what
+
+Deferred 2026-09-26. Boa 0.22 (PR #10) returns a call stack with each
+error, but every frame reads `unknown at :L:C` because koala never names
+the script, and overleaf's webpack frames span several files. Planned
+fix, in order:
+
+- Name each script when evaluating it (`Source::with_path`): its URL,
+  or for inline scripts the document URL plus the `<script>` line, as
+  Chrome does.
+- Print the source around the innermost frame with a caret, as Node
+  does from V8's `v8::Message::GetSourceLine`. Boa keeps frame
+  positions `pub(crate)` (`ShadowEntry`), so either parse Boa's error
+  text (pin the format with a test) or upstream a patch making the
+  position public.
+- Trim the stack to the innermost few frames.
+
+Suspected first find: Bootstrap's `getDataAttributes` calls
+`Object.keys(element.dataset)`; koala may not implement `dataset`.

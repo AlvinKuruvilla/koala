@@ -192,20 +192,27 @@ pub fn load_document_with_hooks<H: JsHooks>(
     path: &str,
     hooks: &mut H,
 ) -> Result<LoadedDocument, LoadError> {
-    // Fetch the HTML source. The active `RequestSender` dispatches
-    // on URL scheme — `http(s)://` over the network, `file://` and
-    // plain paths off the filesystem, `data:` decoded in-process —
-    // so the loader just hands it the address and gets bytes back.
-    //
-    // Whether to expose `base_url` to the downstream stylesheet /
-    // script / image loaders is still decided here: relative URLs
-    // resolve against an http base, but a file path has no base
-    // that makes sense to follow.
-    let is_remote = path.starts_with("http://") || path.starts_with("https://");
-    let html_source = net::fetch_text(path)?;
-    let base_url = if is_remote { Some(path) } else { None };
+    // A filesystem path becomes its `file:` URL, as when a browser opens
+    // a page from disk. That URL is the base for the page's relative
+    // references, so they resolve against the page's directory rather
+    // than the process's working directory.
+    let document_url = if koala_common::url::has_scheme(path) {
+        path.to_string()
+    } else {
+        koala_common::url::file_url_from_path(std::path::Path::new(path)).map_err(|source| {
+            net::FetchError::LocalRead {
+                path: path.to_string(),
+                source,
+            }
+        })?
+    };
 
-    // Parse the document with base URL for resolving external stylesheets
+    // The active `RequestSender` dispatches on the URL scheme, so the
+    // loader just hands it the address and gets bytes back.
+    let html_source = net::fetch_text(&document_url)?;
+
+    // A `data:` document has no location to resolve references against.
+    let base_url = (!document_url.starts_with("data:")).then_some(document_url.as_str());
     let mut doc = parse_html_with_base_url(&html_source, base_url, hooks);
     doc.source_path = path.to_string();
 

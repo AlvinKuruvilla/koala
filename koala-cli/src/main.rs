@@ -16,9 +16,11 @@ static GLOBAL: koala_common::alloc_count::CountingAllocator =
 
 mod wpt_protocol;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use koala_browser::{FontProvider, LoadedDocument, load_document, parse_html_string};
+use koala_common::archive::{Archive, RecordingSender, ReplaySender};
+use koala_common::net::{DefaultSender, install_sender};
 use koala_css::LayoutBox;
 use koala_dom::{DomTree, NodeId, NodeType};
 use owo_colors::OwoColorize;
@@ -148,6 +150,24 @@ struct Cli {
     /// takes no page argument.
     #[arg(long, num_args = 2, value_names = ["BEFORE", "AFTER"], group = "input")]
     bench_diff: Option<Vec<PathBuf>>,
+
+    /// Load the page once, record every fetch it makes (failures
+    /// included) into a JSON archive at FILE, and exit. Replay it with
+    /// `--replay` to load the page again without the network.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "path",
+        conflicts_with_all = ["html", "bench", "layout", "screenshot", "wpt_protocol", "replay"]
+    )]
+    record: Option<PathBuf>,
+
+    /// Serve every fetch from an archive written by `--record` instead
+    /// of the network. Pass the page's original URL, not a local copy,
+    /// so relative URLs resolve as they did when recorded. A URL the
+    /// archive lacks fails the fetch; it is never fetched live.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["html", "wpt_protocol"])]
+    replay: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -186,6 +206,26 @@ fn main() -> Result<()> {
         return wpt_protocol::run();
     }
 
+    // Record mode is a single load whose only output is the archive.
+    if let Some(ref archive_path) = cli.record {
+        let path = cli.path.as_deref().expect("clap requires a path with --record");
+        return record(path, archive_path);
+    }
+
+    // Replay: every fetch in this process is served from the archive.
+    // The guard lives to the end of `main`, so it covers whichever mode
+    // runs below. `replay` stays in scope for `--bench` to read the
+    // input digest after its loads.
+    let replay = match cli.replay {
+        Some(ref archive_path) => Some(ReplaySender::new(
+            Archive::load(archive_path).context("loading --replay archive")?,
+        )),
+        None => None,
+    };
+    let _replay_guard = replay
+        .as_ref()
+        .map(|sender| install_sender(Box::new(sender.clone())));
+
     // Bench-diff mode: pure JSON-in, table-out — no rendering. Dispatch
     // before --bench so the two are unambiguous.
     if let Some(paths) = cli.bench_diff.as_ref() {
@@ -214,15 +254,16 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--bench requires a path/URL argument"))?;
         #[cfg(feature = "bench")]
         {
-            return bench::run(
-                path,
-                cli.width,
-                cli.height,
-                cli.bench_iterations,
-                cli.bench_warmup,
-                cli.setup_iterations,
-                cli.setup_warmup,
-            );
+            return bench::run(&bench::BenchConfig {
+                url: path,
+                width: cli.width,
+                height: cli.height,
+                iterations: cli.bench_iterations,
+                warmup: cli.bench_warmup,
+                setup_iterations: cli.setup_iterations,
+                setup_warmup: cli.setup_warmup,
+                replay: replay.as_ref(),
+            });
         }
         #[cfg(not(feature = "bench"))]
         {
@@ -284,6 +325,32 @@ fn main() -> Result<()> {
         print_document(&doc);
     }
 
+    Ok(())
+}
+
+/// Load `path` once with every fetch recorded, then write the archive to
+/// `archive_path`.
+fn record(path: &str, archive_path: &Path) -> Result<()> {
+    let recorder = RecordingSender::new(DefaultSender);
+    {
+        let _guard = install_sender(Box::new(recorder.clone()));
+        let _ = load_document(path).with_context(|| format!("loading {path}"))?;
+    }
+    let archive = recorder.archive();
+    archive
+        .save(archive_path)
+        .context("writing --record archive")?;
+    println!(
+        "Recorded {} responses to {}",
+        archive.len(),
+        archive_path.display()
+    );
+    // Failures are kept in the archive and replayed as failures, but a
+    // recording full of them usually means the page was fetched wrong
+    // (a local file with root-relative URLs, a blocked host), so say so.
+    for (url, message) in archive.failures() {
+        eprintln!("  failed while recording: {url}: {message}");
+    }
     Ok(())
 }
 
