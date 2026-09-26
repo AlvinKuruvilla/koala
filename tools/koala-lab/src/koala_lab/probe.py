@@ -16,9 +16,10 @@ from typing import Any
 
 from koala_lab.errors import LabError
 
-# The `BenchReport` layout this module reads (`SCHEMA_VERSION` in
-# koala-cli/src/bench.rs).
-SCHEMA_VERSION = 1
+# `BenchReport` layouts this module reads (`SCHEMA_VERSION` in
+# koala-cli/src/bench.rs). Version 2 only removed summaries this module
+# never read, so both parse identically.
+SCHEMA_VERSIONS = (1, 2)
 
 # Matches `just bench`: the koala-ui default window at 2x.
 VIEWPORT = (2048, 1536)
@@ -86,11 +87,11 @@ def run(binary: Path, archive: Path, url: str, counts: Counts) -> Report:
 def parse(raw: dict[str, Any]) -> Report:
     """Read a `--bench` report, refusing layouts this module does not know."""
     version = raw.get("schema_version")
-    if version != SCHEMA_VERSION:
+    if version not in SCHEMA_VERSIONS:
         raise LabError(
             f"the build wrote report schema {version}, koala-lab reads "
-            f"{SCHEMA_VERSION}; builds from before the probe contract "
-            "(PR #11) cannot be measured"
+            f"{', '.join(map(str, SCHEMA_VERSIONS))}; builds from before the "
+            "probe contract (PR #11) cannot be measured"
         )
     digest = raw.get("input_digest")
     if digest is None:

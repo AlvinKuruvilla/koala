@@ -136,20 +136,12 @@ struct Cli {
     /// high on purpose: the measured loads run at process start, so
     /// without enough warmup they sample the CPU-frequency ramp and
     /// cold OS caches, which adds ~20% cross-process variance and makes
-    /// `--bench-diff` setup numbers untrustworthy. ~15 warm loads ramp
+    /// setup numbers from different runs incomparable. ~15 warm loads ramp
     /// the CPU first, cutting that to a few percent. Lower it for live
     /// URLs (each load is a network fetch) — pair with
     /// `--setup-iterations 1`.
     #[arg(long, default_value = "15", value_name = "N")]
     setup_warmup: u32,
-
-    /// Compare two `--bench` JSON reports and print a colored
-    /// before→after delta table. Takes exactly two file paths:
-    /// `--bench-diff before.json after.json`. Requires the `bench`
-    /// cargo feature. Part of the `input` group: it stands alone and
-    /// takes no page argument.
-    #[arg(long, num_args = 2, value_names = ["BEFORE", "AFTER"], group = "input")]
-    bench_diff: Option<Vec<PathBuf>>,
 
     /// Load the page once, record every fetch it makes (failures
     /// included) into a JSON archive at FILE, and exit. Replay it with
@@ -226,25 +218,7 @@ fn main() -> Result<()> {
         .as_ref()
         .map(|sender| install_sender(Box::new(sender.clone())));
 
-    // Bench-diff mode: pure JSON-in, table-out — no rendering. Dispatch
-    // before --bench so the two are unambiguous.
-    if let Some(paths) = cli.bench_diff.as_ref() {
-        #[cfg(feature = "bench")]
-        {
-            // clap's `num_args = 2` guarantees exactly two paths.
-            return bench::diff(&paths[0], &paths[1]);
-        }
-        #[cfg(not(feature = "bench"))]
-        {
-            let _ = paths;
-            anyhow::bail!(
-                "--bench-diff requires the `bench` cargo feature. \
-                 Rebuild with `cargo run --release --features bench --bin koala -- ...`."
-            );
-        }
-    }
-
-    // Bench mode similarly owns its own pipeline (no screenshot
+    // Bench mode owns its own pipeline (no screenshot
     // save, repeated render). Dispatch before screenshot
     // validation since it doesn't take an output path.
     if cli.bench {
