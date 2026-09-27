@@ -3391,7 +3391,7 @@ impl LayoutBox {
         // "If 'height' has a computed value of 'auto', and the element has an
         // intrinsic height, then that intrinsic height is the used value of 'height'."
         let used_height = if height_is_auto {
-            self.intrinsic_height.map_or_else(
+            self.intrinsic_height.unwrap_or_else(
                 || {
                     // "Otherwise, if 'height' has a computed value of 'auto', and
                     // the element has an intrinsic ratio then the used value of
@@ -3408,7 +3408,6 @@ impl LayoutBox {
                         },
                     )
                 },
-                |ih| ih,
             )
         } else {
             let mut h = self.height.as_ref().map_or(150.0, |al| {

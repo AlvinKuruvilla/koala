@@ -2431,11 +2431,8 @@ impl ComputedStyle {
 
         let mut shadows = Vec::new();
         for group in &groups {
-            if let Some(shadow) = self.parse_single_shadow(group) {
-                shadows.push(shadow);
-            } else {
-                return None; // Invalid shadow = entire property invalid
-            }
+            // An invalid shadow makes the entire property invalid.
+            shadows.push(self.parse_single_shadow(group)?);
         }
 
         if shadows.is_empty() {

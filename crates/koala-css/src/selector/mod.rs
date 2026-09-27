@@ -1155,7 +1155,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
     let mut combinator_chain = Vec::new();
     for (compound, combinator) in compounds
         .into_iter()
-        .zip(combinators_between.into_iter())
+        .zip(combinators_between)
         .rev()
     {
         combinator_chain.push((combinator, compound));

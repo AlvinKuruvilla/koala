@@ -284,17 +284,13 @@ impl FloatContext {
     /// Used by `place_float()` to efficiently scan downward when a float
     /// doesn't fit at the current Y position.
     fn next_float_bottom_after(&self, y: f32) -> f32 {
-        let mut next = f32::MAX;
-        for f in self.left_floats.iter().chain(self.right_floats.iter()) {
-            let bottom = f.margin_box.y + f.margin_box.height;
-            if bottom > y && bottom < next {
-                next = bottom;
-            }
-        }
-        if next == f32::MAX {
-            y // No float bottom found above y
-        } else {
-            next
-        }
+        self.left_floats
+            .iter()
+            .chain(self.right_floats.iter())
+            .map(|f| f.margin_box.y + f.margin_box.height)
+            .filter(|&bottom| bottom > y)
+            .reduce(f32::min)
+            // No float bottom below y.
+            .unwrap_or(y)
     }
 }

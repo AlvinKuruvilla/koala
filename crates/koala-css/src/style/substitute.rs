@@ -103,14 +103,13 @@ pub fn substitute_var(
                     // The value is already resolved (var() substituted) at this
                     // point for custom-property-to-custom-property references.
                     result.extend(prop_value.iter().cloned());
-                } else if let Some(fb) = fallback {
+                } else {
                     // Step 3: Use fallback value, substituting any var() in it.
+                    // Step 4: No value, no fallback — invalid at computed-value time.
+                    let fb = fallback?;
                     let resolved_fallback =
                         substitute_var(&fb, custom_properties, depth + 1)?;
                     result.extend(resolved_fallback);
-                } else {
-                    // Step 4: No value, no fallback — invalid at computed-value time.
-                    return None;
                 }
             }
             ComponentValue::Function { name, value } => {

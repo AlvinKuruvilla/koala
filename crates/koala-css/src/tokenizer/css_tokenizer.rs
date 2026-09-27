@@ -490,10 +490,8 @@ impl CSSTokenizer {
         loop {
             match self.consume() {
                 Some(')') | None => return,
-                Some('\\') => {
-                    if self.is_valid_escape(Some('\\'), self.peek()) {
-                        let _ = self.consume_escaped_code_point();
-                    }
+                Some('\\') if self.is_valid_escape(Some('\\'), self.peek()) => {
+                    let _ = self.consume_escaped_code_point();
                 }
                 _ => {}
             }
