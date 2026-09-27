@@ -13,6 +13,7 @@ use koala_std::collections::HashMap;
 use koala_dom::NodeId;
 
 use crate::layout::inline::FragmentContent;
+use crate::selector::PseudoElement;
 use crate::style::ComputedStyle;
 use crate::style::values::PositionType;
 use crate::style::BorderRadius;
@@ -112,10 +113,19 @@ impl<'a> DisplayListBuilder<'a> {
 
         let dims = &layout_box.dimensions;
 
-        // Get style for this box if it has a node
+        // Get style for this box if it has a node. A `::before` or `::after`
+        // box's style hangs off its element's.
         let style = match &layout_box.box_type {
             BoxType::Principal(node_id) => self.styles.get(node_id),
-            _ => None,
+            BoxType::PseudoElement(node_id, pseudo_element) => {
+                self.styles.get(node_id).and_then(|element| {
+                    match pseudo_element {
+                        PseudoElement::Before => element.before.as_deref(),
+                        PseudoElement::After => element.after.as_deref(),
+                    }
+                })
+            }
+            BoxType::AnonymousInline(_) | BoxType::AnonymousBlock => None,
         };
 
         // Use own style or inherit from parent for certain properties

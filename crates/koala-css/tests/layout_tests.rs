@@ -4763,3 +4763,117 @@ fn test_replaced_percentage_height_with_auto_containing_block() {
     assert_eq!(svg.dimensions.content.height, 12.0, "height: 100% acts as auto");
     assert_eq!(div.dimensions.content.height, 12.0);
 }
+
+// CSS 2.1 § 12 Generated content
+
+/// The `::before`/`::after` kind of a box, or `None` for any other box.
+fn pseudo_element_of(layout_box: &LayoutBox) -> Option<koala_css::PseudoElement> {
+    match layout_box.box_type {
+        koala_css::BoxType::PseudoElement(_, pseudo_element) => Some(pseudo_element),
+        _ => None,
+    }
+}
+
+/// [CSS 2.1 § 12.1](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+///
+/// "The :before and :after pseudo-elements interact with other boxes as if
+/// they were real elements inserted just inside their associated element":
+/// `::before` is the first child and `::after` the last, and each holds its
+/// `content` as text.
+#[test]
+fn test_before_and_after_are_first_and_last_children() {
+    let root = layout_html(
+        "<html><body><style>p::before { content: 'Note: '; } \
+         p::after { content: ' (' attr(title) ')'; }</style>\
+         <p title='draft'>Text</p></body></html>",
+    );
+
+    let p = &box_at_depth(&root, 2).children[0];
+    let kinds: Vec<_> = p.children.iter().map(pseudo_element_of).collect();
+    assert_eq!(
+        kinds,
+        [
+            Some(koala_css::PseudoElement::Before),
+            None,
+            Some(koala_css::PseudoElement::After)
+        ]
+    );
+    let generated_text = |pseudo: &LayoutBox| match &pseudo.children[0].box_type {
+        koala_css::BoxType::AnonymousInline(text) => text.clone(),
+        other => panic!("expected generated text, got {other:?}"),
+    };
+    assert_eq!(generated_text(&p.children[0]), "Note: ");
+    assert_eq!(generated_text(&p.children[2]), " (draft)");
+}
+
+/// [CSS 2.1 § 12.2](https://www.w3.org/TR/CSS2/generate.html#content)
+///
+/// "none: The pseudo-element is not generated", and 'normal', the initial
+/// value, "Computes to 'none' for the :before and :after pseudo-elements". So
+/// a rule that styles `::after` without giving it `content` generates nothing,
+/// and neither does `display: none`.
+#[test]
+fn test_pseudo_element_without_content_is_not_generated() {
+    let root = layout_html(
+        "<html><body><style>p::before { color: red; } \
+         p::after { content: none; } \
+         div::before { content: 'x'; display: none; }</style>\
+         <p>Text</p><div>Text</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    for element in &body.children {
+        assert!(
+            element.children.iter().all(|c| pseudo_element_of(c).is_none()),
+            "no pseudo-element box expected in {:?}",
+            element.tag_name
+        );
+    }
+}
+
+/// [CSS 2.1 § 9.5.2](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+///
+/// The micro clearfix, `.clearfix:after { content: ''; display: table; clear:
+/// both }`, puts an empty box after the floats that must clear them, so the
+/// container's in-flow content ends below the floats. Floats do not count
+/// toward an ordinary block's height (§ 10.6.3), so without the generated box
+/// this container is 0px tall; book.io's page body collapsed that way.
+#[test]
+fn test_clearfix_after_holds_container_open() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } \
+         .clearfix:after { content: ''; display: table; clear: both; } \
+         .floated { float: left; width: 100px; height: 80px; }</style>\
+         <div class='clearfix'><div class='floated'></div></div></body></html>",
+    );
+
+    let container = &box_at_depth(&root, 2).children[0];
+    assert_eq!(container.dimensions.content.height, 80.0);
+}
+
+/// [CSS 2.1 § 12.1](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+///
+/// An inline-block `::before` of an inline element sits on the line beside
+/// the inline-blocks inside that element. Inline layout finds each
+/// inline-block again after the line is aligned; keyed by `NodeId` alone,
+/// the search for the `::before` would find its `<span>` first and shift the
+/// whole `<span>` subtree, moving the `.ib` inside it twice.
+///
+/// The line holds 50px + 30px centred in 800px, so it starts at x=360.
+#[test]
+fn test_inline_block_pseudo_element_moves_with_its_line() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } p { margin: 0; text-align: center; } \
+         .outer::before { content: ''; display: inline-block; width: 50px; height: 10px; } \
+         .ib { display: inline-block; width: 30px; height: 10px; }</style>\
+         <p><span class='outer'><span class='ib'></span></span></p></body></html>",
+    );
+
+    let outer = &box_at_depth(&root, 2).children[0].children[0];
+    let xs: Vec<f32> = outer
+        .children
+        .iter()
+        .map(|c| c.dimensions.content.x)
+        .collect();
+    assert_eq!(xs, [360.0, 410.0]);
+}

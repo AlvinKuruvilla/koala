@@ -10,8 +10,8 @@ use std::cell::Cell;
 use koala_dom::{DomTree, Namespace, NodeId, NodeType};
 
 use crate::style::computed::{
-    AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
-    ListStyleType, Overflow, TrackList, Visibility, WhiteSpace,
+    AlignItems, AlignSelf, Content, ContentItem, FlexDirection, FlexWrap, GridAutoFlow, GridLine,
+    JustifyContent, ListStyleType, Overflow, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
     AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, ComputedStyle, DisplayValue,
@@ -21,6 +21,8 @@ use crate::style::{
 use crate::style::values::{
     ClearSide, FloatSide, FontStyle, PositionType, TextAlign, TextDecorationLine,
 };
+
+use crate::selector::PseudoElement;
 
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
@@ -52,16 +54,19 @@ fn collapse_two_margins(a: f32, b: f32) -> f32 {
     }
 }
 
-/// Find a child `LayoutBox` by `NodeId`, searching recursively.
+/// Find a child `LayoutBox` by [`ElementBoxId`], searching recursively.
 ///
 /// Used to locate inline-block children for repositioning after line
 /// finalization.
-fn find_child_by_node_id(children: &mut [LayoutBox], target: NodeId) -> Option<&mut LayoutBox> {
+fn find_child_by_box_id(
+    children: &mut [LayoutBox],
+    target: ElementBoxId,
+) -> Option<&mut LayoutBox> {
     for child in children.iter_mut() {
-        if let BoxType::Principal(id) = child.box_type && id == target {
+        if child.box_type.element_box_id() == Some(target) {
             return Some(child);
         }
-        if let Some(found) = find_child_by_node_id(&mut child.children, target) {
+        if let Some(found) = find_child_by_box_id(&mut child.children, target) {
             return Some(found);
         }
     }
@@ -99,7 +104,7 @@ fn layout_inline_content(
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
     abs_cb: Rect,
-    inline_block_positions: &mut Vec<(NodeId, Rect)>,
+    inline_block_positions: &mut Vec<(ElementBoxId, Rect)>,
     float_ctx: &mut FloatContext,
 ) {
     for child in children.iter_mut() {
@@ -159,7 +164,7 @@ fn layout_inline_content(
             {
                 inline_layout.add_line_break(inherited_font_size, font_metrics);
             }
-            BoxType::Principal(node_id)
+            BoxType::Principal(_) | BoxType::PseudoElement(..)
                 if child.display.outer == OuterDisplayType::Inline
                     && child.display.inner == InnerDisplayType::FlowRoot =>
             {
@@ -172,7 +177,10 @@ fn layout_inline_content(
                 //
                 // "Inline-block elements participate in their parent's inline
                 // formatting context as a single opaque box."
-                let node_id = *node_id;
+                let box_id = child
+                    .box_type
+                    .element_box_id()
+                    .expect("principal and pseudo-element boxes have an element");
 
                 // STEP 1: Resolve width. If auto, use shrink-to-fit.
                 if child.width.is_none() || matches!(child.width, Some(AutoLength::Auto)) {
@@ -193,10 +201,10 @@ fn layout_inline_content(
 
                 // STEP 3: Record margin box and place on the inline line.
                 let mb = child.dimensions.margin_box();
-                inline_layout.add_inline_block(node_id, mb.width, mb.height);
+                inline_layout.add_inline_block(box_id, mb.width, mb.height);
 
                 // Record the temporary position for post-layout repositioning.
-                inline_block_positions.push((node_id, mb));
+                inline_block_positions.push((box_id, mb));
             }
             BoxType::Principal(node_id)
                 if child.display.outer == OuterDisplayType::Inline && child.is_replaced =>
@@ -213,7 +221,10 @@ fn layout_inline_content(
                 // inline-block: laid out on its own, then placed whole. Its
                 // size comes from `layout_replaced` (§ 10.3.2, § 10.6.2),
                 // which `layout` dispatches to, so no shrink-to-fit step.
-                let node_id = *node_id;
+                let box_id = ElementBoxId {
+                    node: *node_id,
+                    pseudo_element: None,
+                };
                 let temp_cb = Rect {
                     x: content_rect.x,
                     y: inline_layout.current_y,
@@ -222,10 +233,12 @@ fn layout_inline_content(
                 };
                 child.layout(temp_cb, viewport, font_metrics, abs_cb);
                 let mb = child.dimensions.margin_box();
-                inline_layout.add_inline_block(node_id, mb.width, mb.height);
-                inline_block_positions.push((node_id, mb));
+                inline_layout.add_inline_block(box_id, mb.width, mb.height);
+                inline_block_positions.push((box_id, mb));
             }
-            BoxType::Principal(_) if child.display.outer == OuterDisplayType::Inline => {
+            BoxType::Principal(_) | BoxType::PseudoElement(..)
+                if child.display.outer == OuterDisplayType::Inline =>
+            {
                 // [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
                 //
                 // "An inline box is one that is both inline-level and whose
@@ -283,7 +296,7 @@ fn layout_inline_content(
                 // STEP 4: Close the inline box (apply right edge).
                 inline_layout.end_inline_box(right_mbp);
             }
-            BoxType::Principal(_) | BoxType::AnonymousBlock => {
+            BoxType::Principal(_) | BoxType::PseudoElement(..) | BoxType::AnonymousBlock => {
                 // [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
                 //
                 // "When an inline box contains an in-flow block-level box,
@@ -352,6 +365,49 @@ pub enum BoxType {
     /// "In a document like this: `<div>`Some text`<p>`More text`</p></div>`
     /// ...the 'Some text' part generates an anonymous block box."
     AnonymousBlock,
+
+    /// [CSS 2.1 § 12.1 The :before and :after pseudo-elements](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+    ///
+    /// The box of element `NodeId`'s `::before` or `::after`. "The :before
+    /// and :after pseudo-elements interact with other boxes as if they were
+    /// real elements inserted just inside their associated element", so it
+    /// is laid out like an element's principal box. Its style is the
+    /// element's `ComputedStyle::before` or `ComputedStyle::after`.
+    PseudoElement(NodeId, PseudoElement),
+}
+
+impl BoxType {
+    /// The element this box was generated for, for a principal or
+    /// pseudo-element box; `None` for an anonymous box.
+    #[must_use]
+    pub const fn element_box_id(&self) -> Option<ElementBoxId> {
+        match *self {
+            Self::Principal(node) => Some(ElementBoxId {
+                node,
+                pseudo_element: None,
+            }),
+            Self::PseudoElement(node, pseudo_element) => Some(ElementBoxId {
+                node,
+                pseudo_element: Some(pseudo_element),
+            }),
+            Self::AnonymousInline(_) | Self::AnonymousBlock => None,
+        }
+    }
+}
+
+/// Which of an element's boxes a box is: its principal box, or its
+/// `::before` or `::after`.
+///
+/// A `NodeId` alone does not tell them apart, and inline layout finds an
+/// inline-block box again by this after the line is finished; an
+/// `inline-block` `::before` searched for by `NodeId` would find its own
+/// element first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElementBoxId {
+    /// The element.
+    pub node: NodeId,
+    /// `None` for the element's principal box.
+    pub pseudo_element: Option<PseudoElement>,
 }
 
 /// A node in the layout tree (render tree with computed layout).
@@ -1242,214 +1298,8 @@ impl LayoutBox {
                     }
                 }
 
-                // Extract style values from computed style
-                // [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
-                let (margin, padding, border_width, width, height) =
-                    Self::extract_box_style_values(style);
-
-                // [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
-                //
-                // Resolve font-size to pixels. Defaults to 16px ('medium').
-                #[allow(clippy::cast_possible_truncation)]
-                let font_size = style
-                    .and_then(|s| s.font_size.as_ref())
-                    .map_or(16.0, |fs| fs.to_px() as f32);
-
-                // [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
-                //
-                // "The initial value is implementation-dependent."
-                // Most browsers default to black.
-                let color = style
-                    .and_then(|s| s.color.as_ref())
-                    .unwrap_or(&ColorValue::BLACK);
-
-                // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
-                //
-                // "This property describes how inline-level content of a block
-                // container is aligned."
-                // "Initial value: a nameless value that acts as 'left' if
-                // 'direction' is 'ltr', 'right' if 'direction' is 'rtl'."
-                let text_align = style.and_then(|s| s.text_align).unwrap_or_default();
-
-                // [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
-                //
-                // "This property specifies the weight of glyphs in the font."
-                // 400 = normal, 700 = bold.
-                let font_weight = style.and_then(|s| s.font_weight).unwrap_or(400);
-
-                // [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
-                //
-                // "The 'font-style' property allows italic or oblique faces to
-                // be selected."
-                let font_style = style.and_then(|s| s.font_style).unwrap_or_default();
-
-                // [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
-                let text_decoration = style
-                    .and_then(|s| s.text_decoration_line)
-                    .unwrap_or_default();
-
-                // [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
-                //
-                // The cascade already inherits this for elements with a
-                // ComputedStyle; the `unwrap_or(0.0)` only triggers for
-                // root-with-no-cascaded-value, where the initial value
-                // `normal` collapses to zero.
-                let letter_spacing = style.and_then(|s| s.letter_spacing).unwrap_or(0.0);
-
-                // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
-                let flex_direction = style.and_then(|s| s.flex_direction).unwrap_or_default();
-                // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
-                let justify_content = style.and_then(|s| s.justify_content).unwrap_or_default();
-                // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
-                let align_items = style.and_then(|s| s.align_items).unwrap_or_default();
-                // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
-                let align_self = style.and_then(|s| s.align_self).unwrap_or_default();
-                // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
-                let flex_grow = style.and_then(|s| s.flex_grow).unwrap_or(0.0);
-                // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
-                let flex_shrink = style.and_then(|s| s.flex_shrink).unwrap_or(1.0);
-                // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
-                let flex_basis = style.and_then(|s| s.flex_basis);
-                // [§ 5.2 'flex-wrap'](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
-                let flex_wrap = style.and_then(|s| s.flex_wrap).unwrap_or_default();
-
-                // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
-                let white_space = style.and_then(|s| s.white_space).unwrap_or_default();
-                // [§ 11.2 'visibility'](https://www.w3.org/TR/CSS2/visufx.html#visibility)
-                let visibility = style.and_then(|s| s.visibility).unwrap_or_default();
-                // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
-                let opacity = style.and_then(|s| s.opacity).unwrap_or(1.0);
-                // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
-                let box_shadow = style
-                    .and_then(|s| s.box_shadow.clone())
-                    .unwrap_or_default();
-
-                // [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
-                let border_radius = style
-                    .and_then(|s| s.border_radius)
-                    .unwrap_or_default();
-
-                // [§ 7.2 'grid-template-columns'/'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
-                let grid_template_columns = style
-                    .and_then(|s| s.grid_template_columns.clone())
-                    .unwrap_or_default();
-                let grid_template_rows = style
-                    .and_then(|s| s.grid_template_rows.clone())
-                    .unwrap_or_default();
-                // [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
-                let grid_auto_flow = style.and_then(|s| s.grid_auto_flow).unwrap_or_default();
-                // [§ 10.1 'row-gap' / 'column-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
-                #[allow(clippy::cast_possible_truncation)]
-                let row_gap = style
-                    .and_then(|s| s.row_gap)
-                    .map_or(0.0, |l| l.to_px() as f32);
-                #[allow(clippy::cast_possible_truncation)]
-                let column_gap = style
-                    .and_then(|s| s.column_gap)
-                    .map_or(0.0, |l| l.to_px() as f32);
-                // [§ 8.3 Grid line placement](https://www.w3.org/TR/css-grid-1/#line-placement)
-                let grid_column_start = style
-                    .and_then(|s| s.grid_column_start)
-                    .unwrap_or(GridLine::Auto);
-                let grid_column_end = style
-                    .and_then(|s| s.grid_column_end)
-                    .unwrap_or(GridLine::Auto);
-                let grid_row_start = style
-                    .and_then(|s| s.grid_row_start)
-                    .unwrap_or(GridLine::Auto);
-                let grid_row_end = style
-                    .and_then(|s| s.grid_row_end)
-                    .unwrap_or(GridLine::Auto);
-
-                // [§ 10.4 min-width / max-width](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
-                // [§ 10.7 min-height / max-height](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
-                let min_width = style.and_then(|s| s.min_width);
-                let max_width = style.and_then(|s| s.max_width);
-                let min_height = style.and_then(|s| s.min_height);
-                let max_height = style.and_then(|s| s.max_height);
-
-                // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
-                //
-                // "Values: static | relative | absolute | fixed | sticky"
-                // Initial: static
-                let position_type = style
-                    .and_then(|s| s.position)
-                    .unwrap_or(PositionType::Static);
-
-                // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
-                //
-                // Extract float and clear from computed style.
-                let clear_side = style.and_then(|s| s.clear);
-                let overflow = style.and_then(|s| s.overflow).unwrap_or(Overflow::Visible);
-
-                // [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
-                //
-                // "1. If 'display' has the value 'none', then 'position' and
-                //    'float' do not apply."
-                //
-                // "2. Otherwise, if 'position' has the value 'absolute' or 'fixed',
-                //    the box is absolutely positioned, 'float' is set to 'none',
-                //    and display is set according to the table below."
-                //
-                // "3. Otherwise, if 'float' has a value other than 'none', the box
-                //    is floated and 'display' is set according to the table below."
-                //
-                // The table maps inline → block (and inline-* → block-*),
-                // which is blockification as Display 3 § 2.7 defines it.
-                let (display, float_side) =
-                    if matches!(position_type, PositionType::Absolute | PositionType::Fixed) {
-                        // Rule 2: absolute/fixed → float is none, blockify display
-                        (display.blockified(), None)
-                    } else {
-                        // Rule 3: extract float, blockify if floated
-                        let fs = style.and_then(|s| s.float);
-                        if fs.is_some() {
-                            (display.blockified(), fs)
-                        } else {
-                            (display, fs)
-                        }
-                    };
-
-                // [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
-                //
-                // "These properties specify offsets with respect to the box's
-                // containing block."
-                //
-                // None in ComputedStyle means property not set (treated as 'auto').
-                // AutoLength::Auto also means 'auto'. Both map to None in BoxOffsets.
-                // Length values are resolved to px during cascade.
-                #[allow(clippy::cast_possible_truncation)]
-                let offsets = BoxOffsets {
-                    top: style.and_then(|s| s.top.as_ref()).and_then(|al| match al {
-                        AutoLength::Auto => None,
-                        AutoLength::Length(l) => Some(l.to_px() as f32),
-                    }),
-                    right: style
-                        .and_then(|s| s.right.as_ref())
-                        .and_then(|al| match al {
-                            AutoLength::Auto => None,
-                            AutoLength::Length(l) => Some(l.to_px() as f32),
-                        }),
-                    bottom: style
-                        .and_then(|s| s.bottom.as_ref())
-                        .and_then(|al| match al {
-                            AutoLength::Auto => None,
-                            AutoLength::Length(l) => Some(l.to_px() as f32),
-                        }),
-                    left: style.and_then(|s| s.left.as_ref()).and_then(|al| match al {
-                        AutoLength::Auto => None,
-                        AutoLength::Length(l) => Some(l.to_px() as f32),
-                    }),
-                };
-
-                // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
-                //
-                // "The box-sizing property defines whether the width and height
-                // (and respective min/max properties) on an element include
-                // padding and borders or not."
-                // Initial: content-box (false)
-                let box_sizing_border_box =
-                    style.is_some_and(|s| s.box_sizing_border_box.unwrap_or(false));
+                let mut layout_box =
+                    Self::from_style(BoxType::Principal(node_id), style, display, children);
 
                 // [§ 10.3.2 Inline, replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
                 //
@@ -1483,94 +1333,70 @@ impl LayoutBox {
                     (false, None, None, None, None)
                 };
 
-                // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
-                //
-                // "The list-style-type property specifies a counter style or string
-                // for the element's marker."
-                // Inherited: yes. Initial: disc.
-                let list_style_type = style.and_then(|s| s.list_style_type);
+                layout_box.is_replaced = is_replaced;
+                layout_box.replaced_src = replaced_src;
+                layout_box.is_inline_svg = is_inline_svg;
+                layout_box.intrinsic_width = intrinsic_width;
+                layout_box.intrinsic_height = intrinsic_height;
+                layout_box.intrinsic_ratio = intrinsic_ratio;
 
                 // [§ 3 Markers](https://www.w3.org/TR/css-lists-3/#markers)
                 //
                 // For `display: list-item`, generate marker text based on the
                 // resolved list-style-type and the ordinal position among siblings.
-                let marker_text = if display.outer == OuterDisplayType::ListItem {
-                    let lst = list_style_type.unwrap_or_default();
-                    if lst == ListStyleType::None {
-                        None
-                    } else {
+                if layout_box.display.outer == OuterDisplayType::ListItem {
+                    let lst = layout_box.list_style_type.unwrap_or_default();
+                    if lst != ListStyleType::None {
                         // Determine ordinal position by counting preceding <li> siblings
                         // in the DOM parent.
                         let ordinal = Self::compute_list_ordinal(tree, node_id);
-                        Some(Self::generate_marker_string(lst, ordinal))
+                        layout_box.marker_text = Some(Self::generate_marker_string(lst, ordinal));
                     }
-                } else {
-                    None
-                };
+                }
 
-                Some(Self {
-                    box_type: BoxType::Principal(node_id),
-                    dimensions: BoxDimensions::default(),
-                    display,
-                    children,
-                    margin,
-                    padding,
-                    border_width,
-                    width,
-                    height,
-                    min_width,
-                    max_width,
-                    min_height,
-                    max_height,
-                    font_size,
-                    color: color.clone(),
-                    text_align,
-                    font_weight,
-                    font_style,
-                    text_decoration,
-                    letter_spacing,
-                    line_boxes: Vec::new(),
-                    collapsed_margin_top: None,
-                    collapsed_margin_bottom: None,
-                    is_replaced,
-                    replaced_src,
-                    is_inline_svg,
-                    intrinsic_ratio,
-                    intrinsic_width,
-                    intrinsic_height,
-                    flex_direction,
-                    justify_content,
-                    align_items,
-                    align_self,
-                    flex_grow,
-                    flex_shrink,
-                    flex_basis,
-                    flex_wrap,
-                    grid_template_columns,
-                    grid_template_rows,
-                    grid_auto_flow,
-                    row_gap,
-                    column_gap,
-                    grid_column_start,
-                    grid_column_end,
-                    grid_row_start,
-                    grid_row_end,
-                    position_type,
-                    offsets,
-                    box_sizing_border_box,
-                    float_side,
-                    clear_side,
-                    overflow,
-                    white_space,
-                    visibility,
-                    opacity,
-                    box_shadow,
-                    border_radius,
-                    list_style_type,
-                    marker_text,
-                    tag_name: Some(tag),
-                    colspan: data.attrs.get("colspan").and_then(|v| v.parse().ok()).unwrap_or(1),
-                })
+                layout_box.colspan =
+                    data.attrs.get("colspan").and_then(|v| v.parse().ok()).unwrap_or(1);
+                layout_box.tag_name = Some(tag);
+
+                // [CSS 2.1 § 12.1](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+                //
+                // "The :before and :after pseudo-elements interact with other
+                // boxes as if they were real elements inserted just inside
+                // their associated element": `::before` as the first child,
+                // `::after` as the last.
+                //
+                // "This specification does not fully define the interaction
+                // of :before and :after with replaced elements (such as IMG
+                // in HTML)." A replaced element's children are not laid out,
+                // so none are generated for one.
+                if !layout_box.is_replaced
+                    && let Some(style) = style
+                {
+                    if let Some(before) = style.before.as_deref().and_then(|before| {
+                        Self::pseudo_element_box(
+                            node_id,
+                            PseudoElement::Before,
+                            before,
+                            &data.attrs,
+                            is_flex_or_grid,
+                        )
+                    }) {
+                        layout_box.children.insert(0, before);
+                    }
+                    if let Some(after) = style.after.as_deref().and_then(|after| {
+                        Self::pseudo_element_box(
+                            node_id,
+                            PseudoElement::After,
+                            after,
+                            &data.attrs,
+                            is_flex_or_grid,
+                        )
+                    }) {
+                        layout_box.children.push(after);
+                    }
+                }
+
+                Some(layout_box)
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
             //
@@ -1606,78 +1432,456 @@ impl LayoutBox {
                 if !preserve_whitespace && text.trim().is_empty() {
                     return None;
                 }
-                Some(Self {
-                    box_type: BoxType::AnonymousInline(text.clone()),
-                    dimensions: BoxDimensions::default(),
-                    display: DisplayValue::inline(),
-                    children: Vec::new(),
-                    // Anonymous inline boxes have no margin/padding/border (all None = 0 when resolved)
-                    margin: UnresolvedAutoEdgeSizes::default(),
-                    padding: UnresolvedEdgeSizes::default(),
-                    border_width: UnresolvedEdgeSizes::default(),
-                    width: None,
-                    height: None,
-                    min_width: None,
-                    max_width: None,
-                    min_height: None,
-                    max_height: None,
-                    // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
-                    //
-                    // Text nodes inherit font-size and color from their parent.
-                    // These defaults are overridden during inline layout by the
-                    // parent's resolved values.
-                    font_size: 16.0,
-                    color: ColorValue::BLACK,
-                    text_align: TextAlign::default(),
-                    font_weight: 400,
-                    font_style: FontStyle::Normal,
-                    text_decoration: TextDecorationLine::default(),
-                    letter_spacing: 0.0,
-                    line_boxes: Vec::new(),
-                    collapsed_margin_top: None,
-                    collapsed_margin_bottom: None,
-                    is_replaced: false,
-                    replaced_src: None,
-                    is_inline_svg: false,
-                    intrinsic_ratio: None,
-                    intrinsic_width: None,
-                    intrinsic_height: None,
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::FlexStart,
-                    align_items: AlignItems::Stretch,
-                    align_self: AlignSelf::Auto,
-                    flex_grow: 0.0,
-                    flex_shrink: 1.0,
-                    flex_basis: None,
-                    flex_wrap: FlexWrap::default(),
-                    grid_template_columns: TrackList::default(),
-                    grid_template_rows: TrackList::default(),
-                    grid_auto_flow: GridAutoFlow::default(),
-                    row_gap: 0.0,
-                    column_gap: 0.0,
-                    grid_column_start: GridLine::Auto,
-                    grid_column_end: GridLine::Auto,
-                    grid_row_start: GridLine::Auto,
-                    grid_row_end: GridLine::Auto,
-                    position_type: PositionType::Static,
-                    offsets: BoxOffsets::default(),
-                    box_sizing_border_box: false,
-                    float_side: None,
-                    clear_side: None,
-                    overflow: Overflow::Visible,
-                    white_space: WhiteSpace::default(),
-                    visibility: Visibility::default(),
-                    opacity: 1.0,
-                    box_shadow: Vec::new(),
-                    border_radius: BorderRadius::default(),
-                    list_style_type: None,
-                    marker_text: None,
-                    tag_name: None,
-                    colspan: 1,
-                })
+                Some(Self::anonymous_inline(text.clone()))
             }
             // Comments do not generate boxes and are not part of the render tree.
             NodeType::Comment(_) => None,
+        }
+    }
+
+    /// [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
+    ///
+    /// The box for a run of text: a text node's, or the text a `::before`
+    /// or `::after` generates.
+    fn anonymous_inline(text: String) -> Self {
+        Self {
+            box_type: BoxType::AnonymousInline(text),
+            dimensions: BoxDimensions::default(),
+            display: DisplayValue::inline(),
+            children: Vec::new(),
+            // Anonymous inline boxes have no margin/padding/border (all None = 0 when resolved)
+            margin: UnresolvedAutoEdgeSizes::default(),
+            padding: UnresolvedEdgeSizes::default(),
+            border_width: UnresolvedEdgeSizes::default(),
+            width: None,
+            height: None,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
+            //
+            // Text nodes inherit font-size and color from their parent.
+            // These defaults are overridden during inline layout by the
+            // parent's resolved values.
+            font_size: 16.0,
+            color: ColorValue::BLACK,
+            text_align: TextAlign::default(),
+            font_weight: 400,
+            font_style: FontStyle::Normal,
+            text_decoration: TextDecorationLine::default(),
+            letter_spacing: 0.0,
+            line_boxes: Vec::new(),
+            collapsed_margin_top: None,
+            collapsed_margin_bottom: None,
+            is_replaced: false,
+            replaced_src: None,
+            is_inline_svg: false,
+            intrinsic_ratio: None,
+            intrinsic_width: None,
+            intrinsic_height: None,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Stretch,
+            align_self: AlignSelf::Auto,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: None,
+            flex_wrap: FlexWrap::default(),
+            grid_template_columns: TrackList::default(),
+            grid_template_rows: TrackList::default(),
+            grid_auto_flow: GridAutoFlow::default(),
+            row_gap: 0.0,
+            column_gap: 0.0,
+            grid_column_start: GridLine::Auto,
+            grid_column_end: GridLine::Auto,
+            grid_row_start: GridLine::Auto,
+            grid_row_end: GridLine::Auto,
+            position_type: PositionType::Static,
+            offsets: BoxOffsets::default(),
+            box_sizing_border_box: false,
+            float_side: None,
+            clear_side: None,
+            overflow: Overflow::Visible,
+            white_space: WhiteSpace::default(),
+            visibility: Visibility::default(),
+            opacity: 1.0,
+            box_shadow: Vec::new(),
+            border_radius: BorderRadius::default(),
+            list_style_type: None,
+            marker_text: None,
+            tag_name: None,
+            colspan: 1,
+        }
+    }
+
+    /// [CSS 2.1 § 12.1 The :before and :after pseudo-elements](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+    ///
+    /// The box element `node_id`'s `pseudo_element` generates under `style`,
+    /// or `None` if it generates none.
+    ///
+    /// `attrs` are the element's attributes, for `attr()`; `inside_flex_or_grid`
+    /// says whether the element is a flex or grid container, which makes the
+    /// box a flex or grid item.
+    fn pseudo_element_box(
+        node_id: NodeId,
+        pseudo_element: PseudoElement,
+        style: &ComputedStyle,
+        attrs: &koala_dom::AttributesMap,
+        inside_flex_or_grid: bool,
+    ) -> Option<Self> {
+        // [CSS 2.1 § 12.2](https://www.w3.org/TR/CSS2/generate.html#content)
+        //
+        // "none: The pseudo-element is not generated." "normal: Computes to
+        // 'none' for the :before and :after pseudo-elements." 'normal' is
+        // also the initial value, so a pseudo-element no rule gave a
+        // `content` is not generated either.
+        let Some(Content::Items(items)) = &style.content else {
+            return None;
+        };
+
+        // [§ 2.6 display: none](https://www.w3.org/TR/css-display-3/#valdef-display-none)
+        //
+        // "The element and its descendants generate no boxes or text runs."
+        if style.display_none {
+            return None;
+        }
+
+        // "<string>: Text content"; "attr(X): This function returns as a
+        // string the value of attribute X for the subject of the selector.
+        // [...] If the subject of the selector does not have an attribute X,
+        // an empty string is returned."
+        let text: String = items
+            .iter()
+            .map(|item| match item {
+                ContentItem::String(text) => text.as_str(),
+                ContentItem::Attr(name) => attrs.get(name).map_or("", String::as_str),
+            })
+            .collect();
+
+        // "the initial value of the 'display' property is 'inline'", so a
+        // generated box is inline unless a rule says otherwise.
+        let display = style.display.unwrap_or_else(DisplayValue::inline);
+        let display = if inside_flex_or_grid {
+            display.blockified()
+        } else {
+            display
+        };
+
+        // The text is laid out as the box's only child, and white space in it
+        // is "still subject to the 'white-space' property" (§ 12.2), as the
+        // Text arm of `build_box` treats a text node. `content: ''`, the
+        // clearfix's value, produces no text box at all.
+        let preserve_whitespace = matches!(
+            style.white_space.unwrap_or_default(),
+            WhiteSpace::Pre | WhiteSpace::PreWrap
+        );
+        let children = if !preserve_whitespace && text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![Self::anonymous_inline(text)]
+        };
+
+        Some(Self::from_style(
+            BoxType::PseudoElement(node_id, pseudo_element),
+            Some(style),
+            display,
+            children,
+        ))
+    }
+
+    /// Build a box whose properties all come from `style`.
+    ///
+    /// `display` is the box's display type before § 9.7 adjusts it for
+    /// `position` and `float`, which this does. Everything that needs the
+    /// DOM element rather than its style is left at the value for a box
+    /// without one: not replaced, no list marker, no tag name, a `colspan`
+    /// of 1. An element's box fills those in afterwards; a `::before` or
+    /// `::after` box keeps them.
+    fn from_style(
+        box_type: BoxType,
+        style: Option<&ComputedStyle>,
+        display: DisplayValue,
+        children: Vec<Self>,
+    ) -> Self {
+        // Extract style values from computed style
+        // [§ 8 Box model](https://www.w3.org/TR/CSS2/box.html)
+        let (margin, padding, border_width, width, height) =
+            Self::extract_box_style_values(style);
+
+        // [§ 3.5 'font-size'](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
+        //
+        // Resolve font-size to pixels. Defaults to 16px ('medium').
+        #[allow(clippy::cast_possible_truncation)]
+        let font_size = style
+            .and_then(|s| s.font_size.as_ref())
+            .map_or(16.0, |fs| fs.to_px() as f32);
+
+        // [§ 3.1 'color'](https://www.w3.org/TR/css-color-4/#the-color-property)
+        //
+        // "The initial value is implementation-dependent."
+        // Most browsers default to black.
+        let color = style
+            .and_then(|s| s.color.as_ref())
+            .unwrap_or(&ColorValue::BLACK);
+
+        // [§ 16.2 Alignment: the 'text-align' property](https://www.w3.org/TR/CSS2/text.html#alignment-prop)
+        //
+        // "This property describes how inline-level content of a block
+        // container is aligned."
+        // "Initial value: a nameless value that acts as 'left' if
+        // 'direction' is 'ltr', 'right' if 'direction' is 'rtl'."
+        let text_align = style.and_then(|s| s.text_align).unwrap_or_default();
+
+        // [§ 3.2 'font-weight'](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
+        //
+        // "This property specifies the weight of glyphs in the font."
+        // 400 = normal, 700 = bold.
+        let font_weight = style.and_then(|s| s.font_weight).unwrap_or(400);
+
+        // [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
+        //
+        // "The 'font-style' property allows italic or oblique faces to
+        // be selected."
+        let font_style = style.and_then(|s| s.font_style).unwrap_or_default();
+
+        // [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
+        let text_decoration = style
+            .and_then(|s| s.text_decoration_line)
+            .unwrap_or_default();
+
+        // [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
+        //
+        // The cascade already inherits this for elements with a
+        // ComputedStyle; the `unwrap_or(0.0)` only triggers for
+        // root-with-no-cascaded-value, where the initial value
+        // `normal` collapses to zero.
+        let letter_spacing = style.and_then(|s| s.letter_spacing).unwrap_or(0.0);
+
+        // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
+        let flex_direction = style.and_then(|s| s.flex_direction).unwrap_or_default();
+        // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
+        let justify_content = style.and_then(|s| s.justify_content).unwrap_or_default();
+        // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+        let align_items = style.and_then(|s| s.align_items).unwrap_or_default();
+        // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+        let align_self = style.and_then(|s| s.align_self).unwrap_or_default();
+        // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
+        let flex_grow = style.and_then(|s| s.flex_grow).unwrap_or(0.0);
+        // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
+        let flex_shrink = style.and_then(|s| s.flex_shrink).unwrap_or(1.0);
+        // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
+        let flex_basis = style.and_then(|s| s.flex_basis);
+        // [§ 5.2 'flex-wrap'](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
+        let flex_wrap = style.and_then(|s| s.flex_wrap).unwrap_or_default();
+
+        // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
+        let white_space = style.and_then(|s| s.white_space).unwrap_or_default();
+        // [§ 11.2 'visibility'](https://www.w3.org/TR/CSS2/visufx.html#visibility)
+        let visibility = style.and_then(|s| s.visibility).unwrap_or_default();
+        // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+        let opacity = style.and_then(|s| s.opacity).unwrap_or(1.0);
+        // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+        let box_shadow = style
+            .and_then(|s| s.box_shadow.clone())
+            .unwrap_or_default();
+
+        // [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
+        let border_radius = style
+            .and_then(|s| s.border_radius)
+            .unwrap_or_default();
+
+        // [§ 7.2 'grid-template-columns'/'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
+        let grid_template_columns = style
+            .and_then(|s| s.grid_template_columns.clone())
+            .unwrap_or_default();
+        let grid_template_rows = style
+            .and_then(|s| s.grid_template_rows.clone())
+            .unwrap_or_default();
+        // [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
+        let grid_auto_flow = style.and_then(|s| s.grid_auto_flow).unwrap_or_default();
+        // [§ 10.1 'row-gap' / 'column-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
+        #[allow(clippy::cast_possible_truncation)]
+        let row_gap = style
+            .and_then(|s| s.row_gap)
+            .map_or(0.0, |l| l.to_px() as f32);
+        #[allow(clippy::cast_possible_truncation)]
+        let column_gap = style
+            .and_then(|s| s.column_gap)
+            .map_or(0.0, |l| l.to_px() as f32);
+        // [§ 8.3 Grid line placement](https://www.w3.org/TR/css-grid-1/#line-placement)
+        let grid_column_start = style
+            .and_then(|s| s.grid_column_start)
+            .unwrap_or(GridLine::Auto);
+        let grid_column_end = style
+            .and_then(|s| s.grid_column_end)
+            .unwrap_or(GridLine::Auto);
+        let grid_row_start = style
+            .and_then(|s| s.grid_row_start)
+            .unwrap_or(GridLine::Auto);
+        let grid_row_end = style
+            .and_then(|s| s.grid_row_end)
+            .unwrap_or(GridLine::Auto);
+
+        // [§ 10.4 min-width / max-width](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
+        // [§ 10.7 min-height / max-height](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
+        let min_width = style.and_then(|s| s.min_width);
+        let max_width = style.and_then(|s| s.max_width);
+        let min_height = style.and_then(|s| s.min_height);
+        let max_height = style.and_then(|s| s.max_height);
+
+        // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
+        //
+        // "Values: static | relative | absolute | fixed | sticky"
+        // Initial: static
+        let position_type = style
+            .and_then(|s| s.position)
+            .unwrap_or(PositionType::Static);
+
+        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        //
+        // Extract float and clear from computed style.
+        let clear_side = style.and_then(|s| s.clear);
+        let overflow = style.and_then(|s| s.overflow).unwrap_or(Overflow::Visible);
+
+        // [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
+        //
+        // "1. If 'display' has the value 'none', then 'position' and
+        //    'float' do not apply."
+        //
+        // "2. Otherwise, if 'position' has the value 'absolute' or 'fixed',
+        //    the box is absolutely positioned, 'float' is set to 'none',
+        //    and display is set according to the table below."
+        //
+        // "3. Otherwise, if 'float' has a value other than 'none', the box
+        //    is floated and 'display' is set according to the table below."
+        //
+        // The table maps inline → block (and inline-* → block-*),
+        // which is blockification as Display 3 § 2.7 defines it.
+        let (display, float_side) =
+            if matches!(position_type, PositionType::Absolute | PositionType::Fixed) {
+                // Rule 2: absolute/fixed → float is none, blockify display
+                (display.blockified(), None)
+            } else {
+                // Rule 3: extract float, blockify if floated
+                let fs = style.and_then(|s| s.float);
+                if fs.is_some() {
+                    (display.blockified(), fs)
+                } else {
+                    (display, fs)
+                }
+            };
+
+        // [§ 9.3.2 Box offsets](https://www.w3.org/TR/CSS2/visuren.html#position-props)
+        //
+        // "These properties specify offsets with respect to the box's
+        // containing block."
+        //
+        // None in ComputedStyle means property not set (treated as 'auto').
+        // AutoLength::Auto also means 'auto'. Both map to None in BoxOffsets.
+        // Length values are resolved to px during cascade.
+        #[allow(clippy::cast_possible_truncation)]
+        let offsets = BoxOffsets {
+            top: style.and_then(|s| s.top.as_ref()).and_then(|al| match al {
+                AutoLength::Auto => None,
+                AutoLength::Length(l) => Some(l.to_px() as f32),
+            }),
+            right: style
+                .and_then(|s| s.right.as_ref())
+                .and_then(|al| match al {
+                    AutoLength::Auto => None,
+                    AutoLength::Length(l) => Some(l.to_px() as f32),
+                }),
+            bottom: style
+                .and_then(|s| s.bottom.as_ref())
+                .and_then(|al| match al {
+                    AutoLength::Auto => None,
+                    AutoLength::Length(l) => Some(l.to_px() as f32),
+                }),
+            left: style.and_then(|s| s.left.as_ref()).and_then(|al| match al {
+                AutoLength::Auto => None,
+                AutoLength::Length(l) => Some(l.to_px() as f32),
+            }),
+        };
+
+        // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
+        //
+        // "The box-sizing property defines whether the width and height
+        // (and respective min/max properties) on an element include
+        // padding and borders or not."
+        // Initial: content-box (false)
+        let box_sizing_border_box =
+            style.is_some_and(|s| s.box_sizing_border_box.unwrap_or(false));
+
+        // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
+        //
+        // "The list-style-type property specifies a counter style or string
+        // for the element's marker."
+        // Inherited: yes. Initial: disc.
+        let list_style_type = style.and_then(|s| s.list_style_type);
+
+        Self {
+            box_type,
+            dimensions: BoxDimensions::default(),
+            display,
+            children,
+            margin,
+            padding,
+            border_width,
+            width,
+            height,
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+            font_size,
+            color: color.clone(),
+            text_align,
+            font_weight,
+            font_style,
+            text_decoration,
+            letter_spacing,
+            line_boxes: Vec::new(),
+            collapsed_margin_top: None,
+            collapsed_margin_bottom: None,
+            is_replaced: false,
+            replaced_src: None,
+            is_inline_svg: false,
+            intrinsic_ratio: None,
+            intrinsic_width: None,
+            intrinsic_height: None,
+            flex_direction,
+            justify_content,
+            align_items,
+            align_self,
+            flex_grow,
+            flex_shrink,
+            flex_basis,
+            flex_wrap,
+            grid_template_columns,
+            grid_template_rows,
+            grid_auto_flow,
+            row_gap,
+            column_gap,
+            grid_column_start,
+            grid_column_end,
+            grid_row_start,
+            grid_row_end,
+            position_type,
+            offsets,
+            box_sizing_border_box,
+            float_side,
+            clear_side,
+            overflow,
+            white_space,
+            visibility,
+            opacity,
+            box_shadow,
+            border_radius,
+            list_style_type,
+            marker_text: None,
+            tag_name: None,
+            colspan: 1,
         }
     }
 
@@ -3476,7 +3680,7 @@ impl LayoutBox {
             );
         }
 
-        let mut inline_block_positions: Vec<(NodeId, Rect)> = Vec::new();
+        let mut inline_block_positions: Vec<(ElementBoxId, Rect)> = Vec::new();
 
         layout_inline_content(
             &mut self.children,
@@ -3534,18 +3738,18 @@ impl LayoutBox {
         if !inline_block_positions.is_empty() {
             for line_box in &self.line_boxes {
                 for fragment in &line_box.fragments {
-                    if let FragmentContent::InlineBlock(frag_node_id) = &fragment.content {
-                        // Find the temp position for this node_id.
+                    if let FragmentContent::InlineBlock(frag_box_id) = &fragment.content {
+                        // Find the temp position for this box.
                         if let Some((_, temp_mb)) = inline_block_positions
                             .iter()
-                            .find(|(nid, _)| nid == frag_node_id)
+                            .find(|(box_id, _)| box_id == frag_box_id)
                         {
                             let dx = fragment.bounds.x - temp_mb.x;
                             let dy = fragment.bounds.y - temp_mb.y;
                             if dx != 0.0 || dy != 0.0 {
-                                // Find the child LayoutBox by NodeId and shift it.
+                                // Find the child LayoutBox and shift it.
                                 if let Some(child) =
-                                    find_child_by_node_id(&mut self.children, *frag_node_id)
+                                    find_child_by_box_id(&mut self.children, *frag_box_id)
                                 {
                                     Self::shift_box_tree(child, dx, dy);
                                 }

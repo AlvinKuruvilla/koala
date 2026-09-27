@@ -268,6 +268,19 @@ impl Specificity {
     }
 }
 
+/// [§ 3.6 Pseudo-elements](https://www.w3.org/TR/selectors-4/#pseudo-elements)
+///
+/// The pseudo-elements Koala generates boxes for: CSS 2.1 § 12.1's
+/// `::before` and `::after`. Other pseudo-elements (`::first-line`,
+/// `::placeholder`, ...) still parse to [`SimpleSelector::NeverMatch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PseudoElement {
+    /// `::before`, or the legacy `:before`.
+    Before,
+    /// `::after`, or the legacy `:after`.
+    After,
+}
+
 /// A parsed CSS selector ready for matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSelector {
@@ -275,6 +288,10 @@ pub struct ParsedSelector {
     pub complex: ComplexSelector,
     /// The specificity of this selector.
     pub specificity: Specificity,
+    /// The pseudo-element the selector ends in, if any. The complex selector
+    /// then describes the originating element: `p.note::before` is the
+    /// `::before` of an element matching `p.note`.
+    pub pseudo_element: Option<PseudoElement>,
 }
 
 impl ParsedSelector {
@@ -294,6 +311,11 @@ impl ParsedSelector {
     /// with combinators, use `matches_in_tree` which has access to DOM context.
     #[must_use]
     pub fn matches(&self, element: &ElementData) -> bool {
+        // A pseudo-element selector matches no element (see `matches_in_tree`).
+        if self.pseudo_element.is_some() {
+            return false;
+        }
+
         // First, the subject (rightmost compound) must match the element
         let subject_matches = self
             .complex
@@ -328,8 +350,27 @@ impl ParsedSelector {
     ///
     /// # Returns
     /// `true` if the selector matches the element
+    ///
+    /// A selector ending in a pseudo-element matches no element: it
+    /// represents the pseudo-element, and "Pseudo-elements are featureless,
+    /// and so can't be matched by any other selector" (§ 3.6.1). Use
+    /// [`Self::originating_element_matches`] to find the element it belongs
+    /// to.
     #[must_use]
     pub fn matches_in_tree(&self, tree: &DomTree, node_id: NodeId) -> bool {
+        self.pseudo_element.is_none() && self.originating_element_matches(tree, node_id)
+    }
+
+    /// [§ 3.6.2 Binding to the Document Tree](https://www.w3.org/TR/selectors-4/#pseudo-element-attachment)
+    ///
+    /// "Syntactically, a pseudo-element immediately follows the compound
+    /// selector representing its originating element."
+    ///
+    /// Whether `node_id` matches the selector with its pseudo-element left
+    /// off. For a selector without one, this is the same as
+    /// [`Self::matches_in_tree`].
+    #[must_use]
+    pub fn originating_element_matches(&self, tree: &DomTree, node_id: NodeId) -> bool {
         // First, the subject (rightmost compound) must match the element
         if !compound_matches_in_tree(&self.complex.subject, tree, node_id) {
             return false;
@@ -758,7 +799,7 @@ fn report_unmatched_pseudo_class(name: &str, is_functional: bool) {
         "target-within", "user-invalid", "user-valid", "valid", "visited", "where",
     ];
     let name = name.to_string();
-    if matches!(name.as_str(), "before" | "after" | "first-line" | "first-letter") {
+    if matches!(name.as_str(), "first-line" | "first-letter") {
         diagnostics::report(|| Diagnostic::UnsupportedPseudoElement { name });
     } else if DEFINED.contains(&name.as_str()) {
         let name = if is_functional { format!("{name}()") } else { name };
@@ -834,8 +875,20 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
     let mut chars = trimmed.chars().peekable();
     let mut current_compound = Vec::new();
     let mut current_ident = String::new();
+    let mut pseudo_element = None;
 
     while let Some(c) = chars.next() {
+        // [§ 3.6.1 Syntax](https://www.w3.org/TR/selectors-4/#pseudo-element-syntax)
+        //
+        // "Syntactically, a pseudo-element immediately follows the compound
+        // selector representing its originating element." Nothing may come
+        // after `::before` or `::after` but trailing whitespace; a selector
+        // like `p::before span` is invalid, and "An invalid selector
+        // represents, and therefore matches, nothing."
+        if pseudo_element.is_some() && !c.is_ascii_whitespace() {
+            return None;
+        }
+
         match c {
             // [§ 6.6 Class selector](https://www.w3.org/TR/selectors-4/#class-html)
             // "The class selector is given as a full stop (. U+002E)
@@ -1039,8 +1092,34 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
 
                 let pseudo_lower = pseudo_name.to_ascii_lowercase();
 
+                // [§ 3.6.1 Syntax](https://www.w3.org/TR/selectors-4/#pseudo-element-syntax)
+                //
+                // "Because CSS Level 1 and CSS Level 2 conflated
+                // pseudo-elements and pseudo-classes by sharing a
+                // single-colon syntax for both, user agents must also accept
+                // the previous one-colon notation for the Level 1 & 2
+                // pseudo-elements (::before, ::after, ::first-line, and
+                // ::first-letter)."
+                //
+                // So `:after` is `::after`, whichever number of colons.
+                if !is_functional && matches!(pseudo_lower.as_str(), "before" | "after") {
+                    // With nothing before it, as in `::before` or `div > ::after`,
+                    // the originating element is any element: the compound is
+                    // an implied `*`.
+                    if current_compound.is_empty() {
+                        current_compound.push(SimpleSelector::Universal);
+                    }
+                    pseudo_element = Some(if pseudo_lower == "before" {
+                        PseudoElement::Before
+                    } else {
+                        PseudoElement::After
+                    });
+                    continue;
+                }
+
                 if is_pseudo_element {
-                    // All pseudo-elements → NeverMatch (we don't render ::before, ::after, etc.)
+                    // Other pseudo-elements → NeverMatch: Koala generates boxes
+                    // only for ::before and ::after.
                     diagnostics::report(|| Diagnostic::UnsupportedPseudoElement {
                         name: pseudo_lower.clone(),
                     });
@@ -1207,10 +1286,17 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
 
     // [§ 17 Calculating Specificity](https://www.w3.org/TR/selectors-4/#specificity-rules)
     // Calculate specificity by summing all simple selectors in the complex selector
-    let specificity = complex.calculate_specificity();
+    let mut specificity = complex.calculate_specificity();
+
+    // "count the number of type selectors and pseudo-elements in the
+    // selector (= C)"
+    if pseudo_element.is_some() {
+        specificity.2 += 1;
+    }
 
     Some(ParsedSelector {
         complex,
         specificity,
+        pseudo_element,
     })
 }

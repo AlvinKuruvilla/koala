@@ -22,6 +22,50 @@ use serde::Serialize;
 use koala_std::collections::HashMap;
 use koala_std::string::FlyString;
 
+/// [§ 12.2 The 'content' property](https://www.w3.org/TR/CSS2/generate.html#content)
+///
+/// "Value: normal | none | [ <string> | <uri> | <counter> | attr(<identifier>)
+/// | open-quote | close-quote | no-open-quote | no-close-quote ]+ | inherit"
+///
+/// Only strings and `attr()` are parsed; a declaration using any other value
+/// is dropped (see `apply_content`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum Content {
+    /// "normal: Computes to 'none' for the :before and :after pseudo-elements."
+    Normal,
+    /// "none: The pseudo-element is not generated."
+    None,
+    /// The listed items, concatenated in order.
+    Items(Vec<ContentItem>),
+}
+
+/// One item of a [`Content::Items`] list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ContentItem {
+    /// "<string>: Text content"
+    String(String),
+    /// "attr(X): This function returns as a string the value of attribute X
+    /// for the subject of the selector. [...] If the subject of the selector
+    /// does not have an attribute X, an empty string is returned."
+    ///
+    /// Implementation note: the spec's computed value is the resulting
+    /// string, but a declaration is applied without its element in reach,
+    /// so the attribute name is kept and looked up when the box is built.
+    /// Koala renders a document once, so the result is the same.
+    Attr(String),
+}
+
+impl Content {
+    /// Whether a `::before` or `::after` with this `content` generates a box.
+    ///
+    /// "On :before and :after, if 'normal' is specified, computes to 'none'",
+    /// and "none: The pseudo-element is not generated."
+    #[must_use]
+    pub const fn generates_box(&self) -> bool {
+        matches!(self, Self::Items(_))
+    }
+}
+
 /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
 ///
 /// "This property specifies whether content of a block container element
@@ -676,6 +720,28 @@ pub struct ComputedStyle {
     // These fields track which declaration (by source_order) set each physical margin,
     // allowing proper cascade resolution when both logical and physical properties
     // target the same computed value.
+    /// [§ 12.2 The 'content' property](https://www.w3.org/TR/CSS2/generate.html#content)
+    ///
+    /// "Initial: normal", "Inherited: no". None = not set (initial).
+    ///
+    /// Only read on the styles in [`Self::before`] and [`Self::after`]: "On
+    /// elements, always computes to 'normal'."
+    pub content: Option<Content>,
+
+    /// [§ 12.1 The :before and :after pseudo-elements](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+    ///
+    /// The style of this element's `::before`, if any rule selected it. Its
+    /// own `before` and `after` are always `None`.
+    ///
+    /// "The :before and :after pseudo-elements inherit any inheritable
+    /// properties from the element in the document tree to which they are
+    /// attached." "In a :before or :after pseudo-element declaration,
+    /// non-inherited properties take their initial values."
+    pub before: Option<Box<Self>>,
+
+    /// The style of this element's `::after`, as [`Self::before`].
+    pub after: Option<Box<Self>>,
+
     /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
     ///
     /// "This property specifies whether content of a block container element
@@ -1773,6 +1839,7 @@ impl ComputedStyle {
             // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
             //
             // "Values: visible | hidden | scroll | auto"
+            "content" => self.apply_content(decl, values),
             "overflow" | "overflow-x" | "overflow-y" => {
                 if let Some(ComponentValue::Token(CSSToken::Ident(ident))) = values.first() {
                     match ident.to_ascii_lowercase().as_str() {
@@ -2130,6 +2197,111 @@ impl ComputedStyle {
                 }
             }
         }
+    }
+
+    /// [§ 12.2 The 'content' property](https://www.w3.org/TR/CSS2/generate.html#content)
+    ///
+    /// "Value: normal | none | [ <string> | <uri> | <counter> |
+    /// attr(<identifier>) | open-quote | close-quote | no-open-quote |
+    /// no-close-quote ]+ | inherit"
+    ///
+    /// Strings and `attr()` are implemented. For the other values, CSS 2.1
+    /// § 4.2: "If a UA does not support a particular value, it should ignore
+    /// that value when parsing style sheets, as if that value was an illegal
+    /// value", and "User agents must ignore a declaration with an illegal
+    /// value". So the whole declaration is dropped, and a lower-priority
+    /// `content` declaration, if any, still applies.
+    fn apply_content(&mut self, decl: &Declaration, values: &[ComponentValue]) {
+        let significant: Vec<&ComponentValue> = values
+            .iter()
+            .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+            .collect();
+
+        // The single keywords.
+        if let [ComponentValue::Token(CSSToken::Ident(ident))] = significant.as_slice() {
+            match ident.to_ascii_lowercase().as_str() {
+                // 'inherit' takes the originating element's value, which
+                // "On elements, always computes to 'normal'". 'initial' is
+                // 'normal', and 'unset' on a non-inherited property is
+                // 'initial'.
+                "normal" | "inherit" | "initial" | "unset" => {
+                    self.content = Some(Content::Normal);
+                    return;
+                }
+                "none" => {
+                    self.content = Some(Content::None);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        let unsupported = || {
+            diagnostics::report(|| Diagnostic::UnsupportedContentValue {
+                value: serialize_component_values(&decl.value),
+            });
+        };
+
+        let mut items = Vec::new();
+        for value in &significant {
+            match value {
+                // "<string>: Text content"
+                ComponentValue::Token(CSSToken::String(text)) => {
+                    items.push(ContentItem::String(text.clone()));
+                }
+                // "attr(X): This function returns as a string the value of
+                // attribute X for the subject of the selector."
+                ComponentValue::Function { name, value: args }
+                    if name.eq_ignore_ascii_case("attr") =>
+                {
+                    let args: Vec<&ComponentValue> = args
+                        .iter()
+                        .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+                        .collect();
+                    let [ComponentValue::Token(CSSToken::Ident(attribute))] = args.as_slice()
+                    else {
+                        reject(decl);
+                        return;
+                    };
+                    // "The case-sensitivity of attribute names depends on the
+                    // document language." HTML attribute names are stored
+                    // lowercased by the parser.
+                    items.push(ContentItem::Attr(attribute.to_ascii_lowercase()));
+                }
+                // <uri>, <counter> and the quote keywords: valid, not
+                // implemented.
+                ComponentValue::Token(CSSToken::Url(_)) => {
+                    unsupported();
+                    return;
+                }
+                ComponentValue::Function { name, .. }
+                    if ["url", "counter", "counters"]
+                        .iter()
+                        .any(|f| name.eq_ignore_ascii_case(f)) =>
+                {
+                    unsupported();
+                    return;
+                }
+                ComponentValue::Token(CSSToken::Ident(ident))
+                    if ["open-quote", "close-quote", "no-open-quote", "no-close-quote"]
+                        .iter()
+                        .any(|k| ident.eq_ignore_ascii_case(k)) =>
+                {
+                    unsupported();
+                    return;
+                }
+                _ => {
+                    reject(decl);
+                    return;
+                }
+            }
+        }
+
+        if items.is_empty() {
+            reject(decl);
+            return;
+        }
+        self.content = Some(Content::Items(items));
     }
 
     /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS21/box.html#margin-properties)

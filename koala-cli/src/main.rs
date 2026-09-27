@@ -520,6 +520,17 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
             },
             |element| format!("<{}>", element.tag_name),
         ),
+        koala_css::BoxType::PseudoElement(node_id, pseudo_element) => {
+            let element = doc
+                .dom
+                .as_element(*node_id)
+                .map_or_else(|| format!("{node_id:?}"), |element| element.tag_name.to_string());
+            let pseudo_element = match pseudo_element {
+                koala_css::PseudoElement::Before => "before",
+                koala_css::PseudoElement::After => "after",
+            };
+            format!("<{element}>::{pseudo_element}")
+        }
         koala_css::BoxType::AnonymousBlock => "AnonymousBlock".to_string(),
         koala_css::BoxType::AnonymousInline(text) => {
             let preview: String = text.chars().take(25).collect();
@@ -533,7 +544,7 @@ fn print_layout_box(layout_box: &LayoutBox, depth: usize, doc: &LoadedDocument) 
 
     // Print box header
     match &layout_box.box_type {
-        koala_css::BoxType::Principal(_) => {
+        koala_css::BoxType::Principal(_) | koala_css::BoxType::PseudoElement(..) => {
             println!(
                 "{}{}  {}",
                 indent,

@@ -11,12 +11,11 @@
 //! "The height of the line box is determined by the rules given in the
 //! section on line height calculations."
 
-use koala_dom::NodeId;
-
 use crate::style::ColorValue;
 use crate::style::values::{FontStyle, TextAlign, TextDecorationLine};
 
 use super::box_model::Rect;
+use super::layout_box::ElementBoxId;
 
 /// Font metrics interface for text measurement during layout.
 ///
@@ -156,9 +155,9 @@ pub enum FragmentContent {
     /// elements) is called an atomic inline-level box because it
     /// participates in its inline formatting context as a single opaque box."
     ///
-    /// Stores the `NodeId` so the corresponding child `LayoutBox` can be
+    /// Stores which box it is so the corresponding child `LayoutBox` can be
     /// repositioned after line finalization.
-    InlineBlock(NodeId),
+    InlineBlock(ElementBoxId),
 }
 
 /// A contiguous run of text within a line fragment.
@@ -663,7 +662,7 @@ impl InlineLayout {
     ///
     /// Unlike regular inline boxes, inline-blocks are atomic — they cannot
     /// be split across lines.
-    pub fn add_inline_block(&mut self, node_id: NodeId, width: f32, height: f32) {
+    pub fn add_inline_block(&mut self, box_id: ElementBoxId, width: f32, height: f32) {
         // STEP 1: Check if the inline-block fits on the current line.
         //
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
@@ -688,7 +687,7 @@ impl InlineLayout {
                 width,
                 height,
             },
-            content: FragmentContent::InlineBlock(node_id),
+            content: FragmentContent::InlineBlock(box_id),
             vertical_align: VerticalAlign::Baseline,
         };
         self.current_line_fragments.push(fragment);

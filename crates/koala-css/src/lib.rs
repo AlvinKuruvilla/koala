@@ -75,12 +75,13 @@ pub use layout::{
 pub use paint::{DisplayCommand, DisplayList, DisplayListBuilder};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{
-    AttributeSelector, ParsedSelector, PseudoClass, SimpleSelector, Specificity, parse_selector,
+    AttributeSelector, ParsedSelector, PseudoClass, PseudoElement, SimpleSelector, Specificity,
+    parse_selector,
 };
 pub use style::ComputedStyle;
 pub use style::computed::{
-    AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
-    ListStyleType, Overflow, TrackList, TrackSize, Visibility, WhiteSpace,
+    AlignItems, AlignSelf, Content, ContentItem, FlexDirection, FlexWrap, GridAutoFlow, GridLine,
+    JustifyContent, ListStyleType, Overflow, TrackList, TrackSize, Visibility, WhiteSpace,
 };
 pub use style::{
     AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, DEFAULT_FONT_SIZE_PX,
