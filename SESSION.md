@@ -762,3 +762,16 @@ privileges ordinary pages do not.
 - `cargo clippy --workspace` fails on 26 errors in koala-js (22 are
   `doc_markdown`), new with the 1.97 toolchain. They were hidden until
   koala-css's own clippy errors were fixed, since clippy stopped there.
+
+## Text does not wrap in a narrow block (2026-09-26)
+
+`<div style="width:60px">Google Google Google</div>` lays out one line
+tall (h=19.2); each word is about 52px, so it should be three lines.
+Found while testing column flex base sizes, which measure an item by
+laying it out, so they inherit the wrong height. Probably related to the
+"inline text breaks into columns" bug above.
+
+The column flex base size lays each item out twice (a measuring clone,
+then the real layout), so nested column containers cost 2^depth. See
+`column_content_base_size` in `koala-css/src/layout/flex.rs`; reusing the
+measuring layout when the resolved size equals the base size is the fix.

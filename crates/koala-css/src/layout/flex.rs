@@ -289,23 +289,54 @@ pub fn layout_flex(
 
         // [§ 9.2 step 3](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
         //
-        // Determine flex base size:
-        //   A. If flex-basis is a definite length, use it.
-        //   B. If flex-basis is auto and the item has a definite main size
-        //      (width for row, height for column), use that.
-        //   C. Otherwise, use max-content size on the main axis.
-        let mut base_size = child.flex_basis.as_ref().map_or_else(
-            || flex_base_from_main_or_content(child, axis, viewport, cb_width, font_metrics),
-            |fb| {
-                let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport, cb_width);
-                if resolved.is_auto() {
-                    // flex-basis: auto — fall through to main-size or content sizing
-                    flex_base_from_main_or_content(child, axis, viewport, cb_width, font_metrics)
-                } else {
-                    resolved.to_px_or(0.0)
-                }
-            },
-        );
+        // "Determine the flex base size and hypothetical main size of each
+        // item:"
+        //
+        // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
+        //
+        // "stretch: If the cross size property of the flex item computes to
+        // auto, and neither of the cross-axis margins are auto, the flex item
+        // is stretched."
+        //
+        // Step 3E needs this for column items, since § 9.8 makes a stretched
+        // item's width definite when the container is single-line.
+        let cross_margins_auto = match axis {
+            MainAxis::Row => resolved_margin.top.is_auto() || resolved_margin.bottom.is_auto(),
+            MainAxis::Column => resolved_margin.left.is_auto() || resolved_margin.right.is_auto(),
+        };
+        let cross_size_auto = match axis {
+            MainAxis::Row => &child.height,
+            MainAxis::Column => &child.width,
+        }
+        .as_ref()
+        .is_none_or(|size| matches!(size, AutoLength::Auto));
+        let stretched = used_alignment(child.align_self, container.align_items)
+            == AlignItems::Stretch
+            && cross_size_auto
+            && !cross_margins_auto
+            && container.flex_wrap == FlexWrap::Nowrap;
+
+        let definite_flex_basis = child
+            .flex_basis
+            .as_ref()
+            .map(|fb| UnresolvedAutoEdgeSizes::resolve_auto_length(fb, viewport, cb_width))
+            .filter(|resolved| !resolved.is_auto());
+        let mut base_size = match definite_flex_basis {
+            // STEP 3A: "If the item has a definite used flex basis, that's
+            // the flex base size."
+            Some(resolved) => resolved.to_px_or(0.0),
+            // Otherwise the flex basis is `auto`, which resolves through the
+            // main size property, and failing that the item's content.
+            None => flex_base_from_main_or_content(
+                child,
+                axis,
+                viewport,
+                cb_width,
+                font_metrics,
+                stretched,
+                child_abs_cb,
+            ),
+        };
 
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
         //
@@ -679,14 +710,7 @@ pub fn layout_flex(
         let line_cross_size = line_cross_sizes[line_idx];
         let child = &mut container.children[item.index];
 
-        let alignment = match child.align_self {
-            AlignSelf::Auto => container_align_items,
-            AlignSelf::FlexStart => AlignItems::FlexStart,
-            AlignSelf::FlexEnd => AlignItems::FlexEnd,
-            AlignSelf::Center => AlignItems::Center,
-            AlignSelf::Baseline => AlignItems::Baseline,
-            AlignSelf::Stretch => AlignItems::Stretch,
-        };
+        let alignment = used_alignment(child.align_self, container_align_items);
 
         let child_margin_box_cross = axis.cross_size(&child.dimensions.margin_box());
 
@@ -752,43 +776,56 @@ pub fn layout_flex(
     container.layout_absolute_children(viewport, font_metrics, child_abs_cb);
 }
 
-/// Determine flex base size from the main-axis size property or
-/// content measurement.
+/// [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
 ///
-/// [§ 9.2 step 3](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
+/// An item's cross-axis alignment: its `align-self`, where "auto" defers
+/// "cross-axis alignment control to the value of align-items on the
+/// parent box".
+const fn used_alignment(align_self: AlignSelf, align_items: AlignItems) -> AlignItems {
+    match align_self {
+        AlignSelf::Auto => align_items,
+        AlignSelf::FlexStart => AlignItems::FlexStart,
+        AlignSelf::FlexEnd => AlignItems::FlexEnd,
+        AlignSelf::Center => AlignItems::Center,
+        AlignSelf::Baseline => AlignItems::Baseline,
+        AlignSelf::Stretch => AlignItems::Stretch,
+    }
+}
+
+/// The flex base size of an item whose `flex-basis` is `auto`.
 ///
-/// When flex-basis is auto:
-///   - If the item has a definite main-axis size (width for row,
-///     height for column), use that.
-///   - Otherwise, use max-content size on the main axis.
+/// [§ 7.2.3 The flex-basis property](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
 ///
-/// TODO(content-main-size): `measure_content_size` today returns
-/// max-content *width*. For column-direction flex items without a
-/// definite height, the spec wants their max-content *block* size
-/// (intrinsic height) here. We don't have that helper yet; for
-/// column-direction items with no `height` declared we return 0.0
-/// and document the gap. In practice this collapses
-/// `display: flex; flex-direction: column` items without explicit
-/// heights to zero main size — visible in
-/// `koala-ui/res/landing.html`'s capability / binding rows.
+/// "auto: When specified on a flex item, the auto keyword retrieves the
+/// value of the main size property as the used flex-basis. If that value is
+/// itself auto, then the used value is content."
+#[allow(clippy::too_many_arguments)]
 fn flex_base_from_main_or_content(
     child: &LayoutBox,
     axis: MainAxis,
     viewport: Rect,
     cb_width: f32,
     font_metrics: &dyn FontMetrics,
+    stretched: bool,
+    abs_cb: Rect,
 ) -> f32 {
     match axis {
+        // "the auto keyword retrieves the value of the main size property as
+        // the used flex-basis", and when that is definite, step 3A: "If the
+        // item has a definite used flex basis, that's the flex base size."
+        //
+        // The caller handles border-box conversion after this returns, so
+        // the raw CSS value is returned here.
         MainAxis::Row => {
             if let Some(ref w) = child.width {
                 let resolved = UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport, cb_width);
                 if !resolved.is_auto() {
-                    // Note: The caller handles border-box conversion after this
-                    // returns, so we return the raw CSS value here.
                     return resolved.to_px_or(0.0);
                 }
             }
-            // No definite width — use max-content size.
+            // "If that value is itself auto, then the used value is content",
+            // which step 3E sizes as max-content: for row, the max-content
+            // width.
             child.measure_content_size(viewport, font_metrics)
         }
         MainAxis::Column => {
@@ -798,11 +835,100 @@ fn flex_base_from_main_or_content(
                     return resolved.to_px_or(0.0);
                 }
             }
-            // TODO(content-main-size): need intrinsic block size for
-            // column-direction items without a declared height.
-            0.0
+            // "If that value is itself auto, then the used value is content":
+            // for column, the height the item lays out to.
+            column_content_base_size(child, viewport, cb_width, font_metrics, stretched, abs_cb)
         }
     }
+}
+
+/// The flex base size of a column item whose used flex basis is `content`:
+/// the height it lays out to.
+///
+/// [§ 9.2 step 3E](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
+///
+/// The item is laid out on a clone, which step 6 then lays out again for
+/// real at its resolved size. A column container nested in a column item
+/// therefore lays its contents out twice per level; reusing the measuring
+/// layout when the resolved size equals the base size would avoid that.
+fn column_content_base_size(
+    child: &LayoutBox,
+    viewport: Rect,
+    cb_width: f32,
+    font_metrics: &dyn FontMetrics,
+    stretched: bool,
+    abs_cb: Rect,
+) -> f32 {
+    let mut probe = child.clone();
+
+    // STEP 1: Choose the cross size (the width) to lay the item out at.
+    //
+    // "If a cross size is needed to determine the main size (e.g. when the
+    // flex item's main size is in its block axis, or when it has a preferred
+    // aspect ratio) and the flex item's cross size is auto and not definite,
+    // in this calculation use fit-content as the flex item's cross size."
+    //
+    // A column item's main size is its block size, so a width is needed.
+    // It is definite, and fit-content does not apply, in two cases.
+    //
+    // CASE A: The item has a definite `width` of its own; layout uses it.
+    let has_definite_width = child.width.as_ref().is_some_and(|w| {
+        !UnresolvedAutoEdgeSizes::resolve_auto_length(w, viewport, cb_width).is_auto()
+    });
+    // CASE B: [§ 9.8](https://www.w3.org/TR/css-flexbox-1/#definite-sizes)
+    // "If a single-line flex container has a definite cross size, the
+    // automatic preferred outer cross size of any stretched flex items is the
+    // flex container's inner cross size (clamped to the flex item's min and
+    // max cross size) and is considered definite."
+    //
+    // Block layout of an auto-width box already makes its outer width the
+    // containing block's width, so laying out at `cb_width` does this.
+    //
+    // Otherwise the cross size is auto and not definite: use fit-content.
+    if !has_definite_width && !stretched {
+        // [CSS Sizing 3 § 2.1](https://www.w3.org/TR/css-sizing-3/#fit-content-size)
+        //
+        // "fit-content size: If the available space in a given axis is
+        // definite, equal to clamp(min-content size, stretch-fit size,
+        // max-content size) (i.e. max(min-content size, min(max-content
+        // size, stretch-fit size)))."
+        //
+        // "stretch-fit size: The size a box would take if its outer size
+        // filled the available space in the given axis"
+        let margin = child.margin.resolve(viewport, cb_width);
+        let stretch_fit =
+            (cb_width - margin.left.to_px_or(0.0) - margin.right.to_px_or(0.0)).max(0.0);
+        // `measure_content_size` returns the border-box width.
+        let max_content = child.measure_content_size(viewport, font_metrics);
+        // TODO: Koala has no min-content measure, so this is
+        // min(max-content, stretch-fit) without the outer max. The two differ
+        // only when the item's min-content width exceeds the space available,
+        // where the item should overflow instead of narrowing.
+        probe.box_sizing_border_box = true;
+        probe.width = Some(AutoLength::Length(LengthValue::Px(f64::from(
+            max_content.min(stretch_fit),
+        ))));
+    }
+
+    // STEP 2: Lay the item out.
+    //
+    // "Otherwise, size the item into the available space using its used flex
+    // basis in place of its main size, treating a value of content as
+    // max-content."
+    //
+    // A max-content block size is the height the content lays out to, which
+    // is what an auto height gives.
+    probe.height = None;
+    let containing = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: cb_width,
+        height: 0.0,
+    };
+    probe.layout(containing, viewport, font_metrics, abs_cb);
+
+    // STEP 3: "The flex base size is the item's resulting main size."
+    probe.dimensions.content.height
 }
 
 /// [§ 9.7 Resolving Flexible Lengths](https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths)

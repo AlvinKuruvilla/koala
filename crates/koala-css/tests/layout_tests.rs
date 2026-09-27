@@ -4535,3 +4535,47 @@ fn test_letter_spacing_child_overrides_parent() {
         runs[0].width,
     );
 }
+
+/// [§ 9.2 step 3E](https://www.w3.org/TR/css-flexbox-1/#algo-main-item)
+///
+/// A column item with no declared height takes its flex base size from
+/// the height its content lays out to. Koala used to return 0 here, so
+/// every such item collapsed; on the new tab page that hid the tile
+/// labels. Each item should be as tall as the same content laid out as a
+/// plain block, whether it is stretched (the default) or aligned, which
+/// sizes its width as fit-content instead.
+#[test]
+fn test_flex_column_items_take_their_content_height() {
+    let root = layout_html(
+        "<html><head><style>\
+         * { margin: 0; padding: 0; }\
+         .col { display: flex; flex-direction: column; }\
+         .centered { align-items: center; }\
+         </style></head>\
+         <body>\
+            <div>Google</div>\
+            <div class='col'><div>Google</div><span>Google</span></div>\
+            <div class='col centered'><span>Google</span></div>\
+         </body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let block_height = body.children[0].dimensions.content.height;
+    assert!(block_height > 0.0, "reference block has no height");
+
+    let stretched = &body.children[1];
+    let aligned = &body.children[2];
+    for (name, item) in [
+        ("stretched div", &stretched.children[0]),
+        ("stretched span", &stretched.children[1]),
+        ("centered span", &aligned.children[0]),
+    ] {
+        assert!(
+            (item.dimensions.content.height - block_height).abs() < 0.5,
+            "{name}: height {} but the same content as a block is {block_height}",
+            item.dimensions.content.height
+        );
+    }
+    // The container is as tall as its items.
+    assert!((stretched.dimensions.content.height - 2.0 * block_height).abs() < 0.5);
+}
