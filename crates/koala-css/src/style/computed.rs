@@ -737,10 +737,10 @@ pub struct ComputedStyle {
     /// properties from the element in the document tree to which they are
     /// attached." "In a :before or :after pseudo-element declaration,
     /// non-inherited properties take their initial values."
-    pub before: Option<Box<ComputedStyle>>,
+    pub before: Option<Box<Self>>,
 
     /// The style of this element's `::after`, as [`Self::before`].
-    pub after: Option<Box<ComputedStyle>>,
+    pub after: Option<Box<Self>>,
 
     /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
     ///
@@ -2220,20 +2220,16 @@ impl ComputedStyle {
         // The single keywords.
         if let [ComponentValue::Token(CSSToken::Ident(ident))] = significant.as_slice() {
             match ident.to_ascii_lowercase().as_str() {
-                "normal" => {
+                // 'inherit' takes the originating element's value, which
+                // "On elements, always computes to 'normal'". 'initial' is
+                // 'normal', and 'unset' on a non-inherited property is
+                // 'initial'.
+                "normal" | "inherit" | "initial" | "unset" => {
                     self.content = Some(Content::Normal);
                     return;
                 }
                 "none" => {
                     self.content = Some(Content::None);
-                    return;
-                }
-                // 'inherit' takes the originating element's value, which
-                // "On elements, always computes to 'normal'". 'initial' is
-                // 'normal', and 'unset' on a non-inherited property is
-                // 'initial'.
-                "inherit" | "initial" | "unset" => {
-                    self.content = Some(Content::Normal);
                     return;
                 }
                 _ => {}
