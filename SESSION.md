@@ -775,3 +775,15 @@ The column flex base size lays each item out twice (a measuring clone,
 then the real layout), so nested column containers cost 2^depth. See
 `column_content_base_size` in `koala-css/src/layout/flex.rs`; reusing the
 measuring layout when the resolved size equals the base size is the fix.
+
+## Foreign content follow-ups (2026-09-27)
+
+- "Has an element in scope" (§ 13.2.4.2) lists MathML `mi`, `mo`, `mn`,
+  `ms`, `mtext`, `annotation-xml` and SVG `foreignObject`, `desc`, `title`
+  as scope boundaries. Koala's scope checks compare tag names only, so an
+  HTML end tag inside `<foreignObject>` can reach elements outside the SVG.
+- CDATA sections: the tokenizer's markup-declaration state should allow
+  `<![CDATA[` when the adjusted current node is not in the HTML namespace.
+  That needs the parser to tell the tokenizer; see the TODO in
+  `tokenizer/core.rs`.
+- SVG `<script>` elements are popped but never run.

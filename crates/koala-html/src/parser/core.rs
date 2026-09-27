@@ -4,7 +4,7 @@ use koala_common::diagnostics::{self, Diagnostic};
 use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
 
 use super::foreign_content::{
-    adjust_foreign_attributes, adjust_mathml_attributes, adjust_svg_attributes,
+    adjust_foreign_attributes, adjust_mathml_attributes, adjust_svg_attributes, adjust_svg_tag_name,
 };
 use crate::tokenizer::{Attribute, Token};
 
@@ -262,10 +262,353 @@ impl HTMLParser {
 
     /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher)
     ///
+    /// The tree construction dispatcher: "As each token is emitted from the
+    /// tokenizer, the user agent must follow the appropriate steps from the
+    /// following list, known as the tree construction dispatcher:"
+    fn process_token(&mut self, token: &Token) {
+        if self.uses_html_content_rules(token) {
+            // "Process the token according to the rules given in the section
+            // corresponding to the current insertion mode in HTML content."
+            self.process_token_in_html_content(token);
+        } else {
+            // "Otherwise: Process the token according to the rules given in
+            // the section for parsing tokens in foreign content."
+            self.process_token_in_foreign_content(token);
+        }
+    }
+
+    /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher)
+    ///
+    /// Whether the dispatcher sends `token` to the insertion mode rules
+    /// rather than the foreign content rules.
+    fn uses_html_content_rules(&self, token: &Token) -> bool {
+        // "If the stack of open elements is empty"
+        let Some(node) = self.adjusted_current_node() else {
+            return true;
+        };
+        let namespace = self.namespace_of(node);
+        let tag_name = self.get_tag_name(node).unwrap_or_default();
+        let is_start_tag = |names: &[&str]| {
+            matches!(token, Token::StartTag { name, .. } if names.contains(&name.as_str()))
+        };
+        let is_character = matches!(token, Token::Character { .. });
+
+        // "If the adjusted current node is an element in the HTML namespace"
+        namespace == Some(Namespace::Html)
+            // "If the adjusted current node is a MathML text integration point
+            // and the token is a start tag whose tag name is neither "mglyph"
+            // nor "malignmark""
+            || (self.is_mathml_text_integration_point(node)
+                && matches!(token, Token::StartTag { .. })
+                && !is_start_tag(&["mglyph", "malignmark"]))
+            // "If the adjusted current node is a MathML text integration point
+            // and the token is a character token"
+            || (self.is_mathml_text_integration_point(node) && is_character)
+            // "If the adjusted current node is a MathML annotation-xml element
+            // and the token is a start tag whose tag name is "svg""
+            || (namespace == Some(Namespace::MathMl)
+                && tag_name == "annotation-xml"
+                && is_start_tag(&["svg"]))
+            // "If the adjusted current node is an HTML integration point and
+            // the token is a start tag"
+            || (self.is_html_integration_point(node) && matches!(token, Token::StartTag { .. }))
+            // "If the adjusted current node is an HTML integration point and
+            // the token is a character token"
+            || (self.is_html_integration_point(node) && is_character)
+            // "If the token is an end-of-file token"
+            || matches!(token, Token::EndOfFile)
+    }
+
+    /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#adjusted-current-node)
+    ///
+    /// "The adjusted current node is the parser's fragment context element if
+    /// that element is non-null and the stack of open elements has only one
+    /// element in it (fragment case); otherwise, the adjusted current node is
+    /// the current node."
+    ///
+    /// Implementation note: Koala does not implement the fragment parsing
+    /// algorithm, so there is no context element and this is always the
+    /// current node.
+    fn adjusted_current_node(&self) -> Option<NodeId> {
+        self.current_node()
+    }
+
+    /// The namespace of the element `id`, or `None` if it is not an element.
+    fn namespace_of(&self, id: NodeId) -> Option<Namespace> {
+        self.tree.as_element(id).map(|data| data.namespace)
+    }
+
+    /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#mathml-text-integration-point)
+    ///
+    /// "A node is a MathML text integration point if it is one of the
+    /// following elements: A MathML mi element, A MathML mo element, A MathML
+    /// mn element, A MathML ms element, A MathML mtext element"
+    fn is_mathml_text_integration_point(&self, id: NodeId) -> bool {
+        self.namespace_of(id) == Some(Namespace::MathMl)
+            && matches!(
+                self.get_tag_name(id),
+                Some("mi" | "mo" | "mn" | "ms" | "mtext")
+            )
+    }
+
+    /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#html-integration-point)
+    ///
+    /// "A node is an HTML integration point if it is one of the following
+    /// elements:"
+    fn is_html_integration_point(&self, id: NodeId) -> bool {
+        let Some(element) = self.tree.as_element(id) else {
+            return false;
+        };
+        match element.namespace {
+            // "A MathML annotation-xml element whose start tag token had an
+            // attribute with the name "encoding" whose value was an ASCII
+            // case-insensitive match for "text/html""
+            //
+            // "A MathML annotation-xml element whose start tag token had an
+            // attribute with the name "encoding" whose value was an ASCII
+            // case-insensitive match for "application/xhtml+xml""
+            //
+            // Implementation note: the element's attributes are the start
+            // tag's, since nothing can change them before this check.
+            Namespace::MathMl => {
+                element.tag_name.as_str() == "annotation-xml"
+                    && element.attrs.get("encoding").is_some_and(|encoding| {
+                        encoding.eq_ignore_ascii_case("text/html")
+                            || encoding.eq_ignore_ascii_case("application/xhtml+xml")
+                    })
+            }
+            // "An SVG foreignObject element", "An SVG desc element", "An SVG
+            // title element"
+            Namespace::Svg => {
+                matches!(element.tag_name.as_str(), "foreignObject" | "desc" | "title")
+            }
+            Namespace::Html => false,
+        }
+    }
+
+    /// [§ 13.2.6.5 The rules for parsing tokens in foreign content](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign)
+    ///
+    /// "When the user agent is to apply the rules for parsing tokens in
+    /// foreign content, the user agent must handle the token as follows:"
+    fn process_token_in_foreign_content(&mut self, token: &Token) {
+        match token {
+            // "A character token that is U+0000 NULL"
+            // "Parse error. Insert a U+FFFD REPLACEMENT CHARACTER character."
+            Token::Character { data: '\0' } => self.insert_character('\u{FFFD}'),
+
+            // "A character token that is one of U+0009 CHARACTER TABULATION,
+            // U+000A LINE FEED (LF), U+000C FORM FEED (FF), U+000D CARRIAGE
+            // RETURN (CR), or U+0020 SPACE"
+            // "Insert the token's character."
+            //
+            // "Any other character token"
+            // "Insert the token's character. Set the frameset-ok flag to "not
+            // ok"."
+            //
+            // TODO: the parser has no frameset-ok flag yet (see the TODO in
+            // "in body"), so both arms only insert the character.
+            Token::Character { data } => self.insert_character(*data),
+
+            // "A comment token"
+            // "Insert a comment."
+            Token::Comment { data } => self.insert_comment(data),
+
+            // "A processing instruction token" never occurs: Koala's
+            // tokenizer emits processing instructions as bogus comments.
+
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
+
+            // "A start tag whose tag name is one of: "b", "big", "blockquote",
+            // "body", "br", "center", "code", "dd", "div", "dl", "dt", "em",
+            // "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i",
+            // "img", "li", "listing", "menu", "meta", "nobr", "ol", "p", "pre",
+            // "ruby", "s", "small", "span", "strong", "strike", "sub", "sup",
+            // "table", "tt", "u", "ul", "var""
+            //
+            // "A start tag whose tag name is "font", if the token has any
+            // attributes named "color", "face", or "size""
+            //
+            // "An end tag whose tag name is "br", "p""
+            token if Self::breaks_out_of_foreign_content(token) => {
+                // "Parse error."
+                //
+                // "While the current node is not a MathML text integration
+                // point, an HTML integration point, or an element in the HTML
+                // namespace, pop elements from the stack of open elements."
+                while let Some(node) = self.current_node() {
+                    if self.is_mathml_text_integration_point(node)
+                        || self.is_html_integration_point(node)
+                        || self.namespace_of(node) == Some(Namespace::Html)
+                    {
+                        break;
+                    }
+                    let _ = self.stack_of_open_elements.pop();
+                }
+                // "Reprocess the token according to the rules given in the
+                // section corresponding to the current insertion mode in HTML
+                // content."
+                self.process_token_in_html_content(token);
+            }
+
+            // "Any other start tag"
+            Token::StartTag {
+                name,
+                attributes,
+                self_closing,
+            } => {
+                let namespace = self
+                    .adjusted_current_node()
+                    .and_then(|node| self.namespace_of(node))
+                    .expect("foreign content rules only run with a foreign element open");
+                let mut name = name.clone();
+                let mut attributes = attributes.clone();
+
+                // "If the adjusted current node is an element in the MathML
+                // namespace, adjust MathML attributes for the token."
+                if namespace == Namespace::MathMl {
+                    adjust_mathml_attributes(&mut attributes);
+                }
+                if namespace == Namespace::Svg {
+                    // "If the adjusted current node is an element in the SVG
+                    // namespace, and the token's tag name is one of the ones
+                    // in the first column of the following table, change the
+                    // tag name to the name given in the corresponding cell in
+                    // the second column."
+                    name = adjust_svg_tag_name(&name).to_string();
+                    // "If the adjusted current node is an element in the SVG
+                    // namespace, adjust SVG attributes for the token."
+                    adjust_svg_attributes(&mut attributes);
+                }
+                // "Adjust foreign attributes for the token."
+                adjust_foreign_attributes(&mut attributes);
+
+                // "Insert a foreign element for the token, with the adjusted
+                // current node's namespace and false."
+                let adjusted_token = Token::StartTag {
+                    name: name.clone(),
+                    attributes,
+                    self_closing: *self_closing,
+                };
+                let _ = self.insert_foreign_element(&adjusted_token, namespace);
+
+                // "If the token has its self-closing flag set, then run the
+                // appropriate steps from the following list:"
+                if *self_closing {
+                    // "If the token's tag name is "script", and the new
+                    // current node is in the SVG namespace: Acknowledge the
+                    // token's self-closing flag, and then act as described in
+                    // the steps for a "script" end tag below."
+                    //
+                    // "Otherwise: Pop the current node off the stack of open
+                    // elements and acknowledge the token's self-closing flag."
+                    //
+                    // Both pop the new element; the script steps would also
+                    // run it, which Koala does not do (see the "script" end
+                    // tag arm).
+                    let _ = self.stack_of_open_elements.pop();
+                }
+            }
+
+            // "An end tag whose tag name is "script", if the current node is an
+            // SVG script element"
+            Token::EndTag { name, .. }
+                if name == "script"
+                    && self.current_node().is_some_and(|node| {
+                        self.namespace_of(node) == Some(Namespace::Svg)
+                            && self.get_tag_name(node) == Some("script")
+                    }) =>
+            {
+                // "Pop the current node off the stack of open elements."
+                let _ = self.stack_of_open_elements.pop();
+                // TODO: the remaining steps pause the parser and "Process the
+                // SVG script element according to the SVG rules". Koala does
+                // not run SVG scripts, so the element is left inert.
+            }
+
+            // "Any other end tag"
+            Token::EndTag { name, .. } => {
+                // "Initialize node to be the current node (the bottommost node
+                // of the stack)."
+                let mut index = self.stack_of_open_elements.len() - 1;
+                // "If node's tag name, converted to ASCII lowercase, is not the
+                // same as the tag name of the token, then this is a parse
+                // error."
+                loop {
+                    let node = self.stack_of_open_elements[index];
+                    // "Loop: If node is the topmost element in the stack of
+                    // open elements, then return. (fragment case)"
+                    if index == 0 {
+                        return;
+                    }
+                    // "If node's tag name, converted to ASCII lowercase, is the
+                    // same as the tag name of the token, pop elements from the
+                    // stack of open elements until node has been popped from
+                    // the stack, and then return."
+                    if self
+                        .get_tag_name(node)
+                        .is_some_and(|tag| tag.to_ascii_lowercase() == *name)
+                    {
+                        self.stack_of_open_elements.truncate(index);
+                        return;
+                    }
+                    // "Set node to the previous entry in the stack of open
+                    // elements."
+                    index -= 1;
+                    // "If node is not an element in the HTML namespace, return
+                    // to the step labeled loop."
+                    if self.namespace_of(self.stack_of_open_elements[index])
+                        != Some(Namespace::Html)
+                    {
+                        continue;
+                    }
+                    // "Otherwise, process the token according to the rules
+                    // given in the section corresponding to the current
+                    // insertion mode in HTML content."
+                    self.process_token_in_html_content(token);
+                    return;
+                }
+            }
+
+            // The dispatcher sends end-of-file to the insertion mode rules.
+            Token::EndOfFile => unreachable!("the dispatcher handles end-of-file in HTML content"),
+        }
+    }
+
+    /// Whether `token` is one of the tokens that leave foreign content:
+    /// the start tags and end tags listed in the arm that calls this.
+    fn breaks_out_of_foreign_content(token: &Token) -> bool {
+        const BREAKOUT_START_TAGS: &[&str] = &[
+            "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl", "dt",
+            "em", "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i", "img", "li",
+            "listing", "menu", "meta", "nobr", "ol", "p", "pre", "ruby", "s", "small", "span",
+            "strong", "strike", "sub", "sup", "table", "tt", "u", "ul", "var",
+        ];
+        match token {
+            Token::StartTag {
+                name, attributes, ..
+            } => {
+                BREAKOUT_START_TAGS.contains(&name.as_str())
+                    || (name == "font"
+                        && attributes
+                            .iter()
+                            .any(|attr| matches!(attr.name.as_str(), "color" | "face" | "size")))
+            }
+            Token::EndTag { name, .. } => name == "br" || name == "p",
+            _ => false,
+        }
+    }
+
+    /// [§ 13.2.6 Tree construction](https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher)
+    ///
+    /// Process `token` according to the rules for the current insertion mode
+    /// in HTML content.
+    ///
     /// # Panics
     ///
     /// Panics if the parser encounters an unimplemented insertion mode.
-    fn process_token(&mut self, token: &Token) {
+    fn process_token_in_html_content(&mut self, token: &Token) {
         match self.insertion_mode {
             InsertionMode::Initial => self.handle_initial_mode(token),
             InsertionMode::BeforeHtml => self.handle_before_html_mode(token),
@@ -3164,108 +3507,73 @@ impl HTMLParser {
                 self.stopped = true;
             }
 
-            // ===== FOREIGN CONTENT (SVG and MathML) =====
+            // [§ 13.2.6.4.7 "in body"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
             //
-            // [§ 13.2.6.4.7 "in body" - A start tag whose tag name is "math"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            // [§ 13.2.6.4.7 "in body" - A start tag whose tag name is "svg"](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody)
-            //
-            // "A start tag whose tag name is 'math'":
-            // "A start tag whose tag name is 'svg'":
-            //   "Reconstruct the active formatting elements, if any.
-            //    Adjust MathML attributes for the token. (This fixes the case of MathML
-            //    attributes that are not all lowercase.)
-            //    Adjust foreign attributes for the token. (This fixes the use of namespaced
-            //    attributes, in particular XLink.)
-            //    Insert a foreign element for the token, in the [MathML/SVG] namespace.
-            //    If the token has its self-closing flag set, pop the current node off the
-            //    stack of open elements and acknowledge the token's self-closing flag."
-            //
-            // NOTE: Current implementation adjusts attributes per spec but treats the
-            // element as HTML (no namespace). Full foreign content parsing (§ 13.2.6.5)
-            // is not yet implemented.
+            // "A start tag whose tag name is "svg""
             Token::StartTag {
                 name,
                 attributes,
                 self_closing,
             } if name == "svg" => {
-                // Implementation note: what follows inserts the element as
-                // HTML, and § 13.2.6.5 is not implemented, so the rest of the
-                // subtree is parsed as HTML too. Say so, because the result
-                // (self-closing children left open, nesting into each other)
-                // is wrong in a way nothing else reports.
-                diagnostics::report(|| Diagnostic::ForeignContentParsedAsHtml {
-                    element: "svg".to_string(),
-                });
-
-                // STEP 1: Reconstruct the active formatting elements, if any.
-                //   [§ 13.2.4.3](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)
+                // "Reconstruct the active formatting elements, if any."
                 self.reconstruct_active_formatting_elements();
 
-                // STEP 2: Adjust attributes for foreign content
-                //   [§ 13.2.6.3](https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes)
+                // "Adjust SVG attributes for the token. (This fixes the case of
+                // SVG attributes that are not all lowercase.)"
+                //
+                // "Adjust foreign attributes for the token. (This fixes the use
+                // of namespaced attributes, in particular XLink in SVG.)"
                 let mut adjusted_attributes = attributes.clone();
                 adjust_svg_attributes(&mut adjusted_attributes);
                 adjust_foreign_attributes(&mut adjusted_attributes);
 
-                // STEP 3: Insert a foreign element for the token
-                //   [§ 13.2.6.1](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element)
-                //   NOTE: We insert as HTML element since our DOM doesn't support namespaces yet.
-                //   Full implementation would use SVG namespace "http://www.w3.org/2000/svg"
+                // "Insert a foreign element for the token, with SVG namespace
+                // and false."
                 let adjusted_token = Token::StartTag {
                     name: name.clone(),
                     attributes: adjusted_attributes,
                     self_closing: *self_closing,
                 };
-                let _element_id = self.insert_html_element(&adjusted_token);
+                let _ = self.insert_foreign_element(&adjusted_token, Namespace::Svg);
 
-                // STEP 4: Handle self-closing flag
-                //   "If the token has its self-closing flag set, pop the current node off
-                //    the stack of open elements and acknowledge the token's self-closing flag."
+                // "If the token has its self-closing flag set, pop the current
+                // node off the stack of open elements and acknowledge the
+                // token's self-closing flag."
                 if *self_closing {
                     let _ = self.stack_of_open_elements.pop();
-                    // NOTE: Acknowledging the self-closing flag prevents a parse error.
-                    // Since we don't track parse errors for this, we just pop.
                 }
-
-                // STEP 5: If not self-closing, future tokens should be processed by
-                //   "in foreign content" rules (§ 13.2.6.5). This is not yet implemented.
-                //   For now, we continue processing as HTML which works for simple cases.
             }
 
+            // "A start tag whose tag name is "math""
             Token::StartTag {
                 name,
                 attributes,
                 self_closing,
             } if name == "math" => {
-                // Implementation note: what follows inserts the element as
-                // HTML, and § 13.2.6.5 is not implemented, so the rest of the
-                // subtree is parsed as HTML too. Say so, because the result
-                // (self-closing children left open, nesting into each other)
-                // is wrong in a way nothing else reports.
-                diagnostics::report(|| Diagnostic::ForeignContentParsedAsHtml {
-                    element: "math".to_string(),
-                });
-
-                // STEP 1: Reconstruct the active formatting elements, if any.
+                // "Reconstruct the active formatting elements, if any."
                 self.reconstruct_active_formatting_elements();
 
-                // STEP 2: Adjust attributes for foreign content
-                //   [§ 13.2.6.3](https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes)
+                // "Adjust MathML attributes for the token. (This fixes the case
+                // of MathML attributes that are not all lowercase.)"
+                //
+                // "Adjust foreign attributes for the token. (This fixes the use
+                // of namespaced attributes, in particular XLink.)"
                 let mut adjusted_attributes = attributes.clone();
                 adjust_mathml_attributes(&mut adjusted_attributes);
                 adjust_foreign_attributes(&mut adjusted_attributes);
 
-                // STEP 3: Insert a foreign element for the token
-                //   NOTE: We insert as HTML element since our DOM doesn't support namespaces yet.
-                //   Full implementation would use MathML namespace "http://www.w3.org/1998/Math/MathML"
+                // "Insert a foreign element for the token, with MathML
+                // namespace and false."
                 let adjusted_token = Token::StartTag {
                     name: name.clone(),
                     attributes: adjusted_attributes,
                     self_closing: *self_closing,
                 };
-                let _element_id = self.insert_html_element(&adjusted_token);
+                let _ = self.insert_foreign_element(&adjusted_token, Namespace::MathMl);
 
-                // STEP 4: Handle self-closing flag
+                // "If the token has its self-closing flag set, pop the current
+                // node off the stack of open elements and acknowledge the
+                // token's self-closing flag."
                 if *self_closing {
                     let _ = self.stack_of_open_elements.pop();
                 }

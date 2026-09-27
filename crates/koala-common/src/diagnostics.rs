@@ -113,14 +113,6 @@ pub enum Diagnostic {
         /// Why the fetch failed.
         error: String,
     },
-    /// An `<svg>` or `<math>` element, and so everything inside it, parsed
-    /// with the HTML rules because the foreign-content rules are not
-    /// implemented. Self-closing elements inside stay open, so the tree
-    /// below it is wrong.
-    ForeignContentParsedAsHtml {
-        /// `svg` or `math`.
-        element: String,
-    },
     /// A parse error in the HTML tokenizer. HTML parse errors are
     /// recoverable by design, so these describe the page, not Koala.
     HtmlTokenizerParseError,
@@ -168,9 +160,7 @@ impl Diagnostic {
             | Self::UnsupportedPseudoClass { .. }
             | Self::UnsupportedPseudoElement { .. }
             | Self::StylesheetLoadFailed { .. } => "CSS",
-            Self::ForeignContentParsedAsHtml { .. }
-            | Self::HtmlTokenizerParseError
-            | Self::HtmlParseWarning { .. } => "HTML",
+            Self::HtmlTokenizerParseError | Self::HtmlParseWarning { .. } => "HTML",
             Self::ImageNotLoaded { .. }
             | Self::ImageUrlFragmentIgnored { .. }
             | Self::ImageUrlQueryIgnored { .. } => "image",
@@ -215,11 +205,6 @@ impl fmt::Display for Diagnostic {
             Self::StylesheetLoadFailed { href, error } => {
                 write!(f, "stylesheet '{href}' not loaded: {error}")
             }
-            Self::ForeignContentParsedAsHtml { element } => write!(
-                f,
-                "<{element}> parsed as HTML: foreign content (§ 13.2.6.5) is not implemented, \
-                 so self-closing elements inside it stay open"
-            ),
             Self::HtmlTokenizerParseError => write!(f, "tokenizer parse error"),
             Self::HtmlParseWarning { message } => write!(f, "{message}"),
             Self::ImageNotLoaded { src, error } => write!(f, "image '{src}' not shown: {error}"),

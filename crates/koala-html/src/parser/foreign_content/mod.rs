@@ -7,7 +7,7 @@ pub mod mathml;
 pub mod svg;
 
 pub use mathml::adjust_mathml_attributes;
-pub use svg::adjust_svg_attributes;
+pub use svg::{adjust_svg_attributes, adjust_svg_tag_name};
 
 use crate::tokenizer::Attribute;
 

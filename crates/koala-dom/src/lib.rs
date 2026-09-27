@@ -124,12 +124,12 @@ pub struct ElementData {
 /// the MathML namespace (HTML § 13.2.6.5); everything else is HTML.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Namespace {
-    /// "The HTML namespace is "http://www.w3.org/1999/xhtml"."
+    /// "The HTML namespace is `"http://www.w3.org/1999/xhtml"`."
     #[default]
     Html,
-    /// "The SVG namespace is "http://www.w3.org/2000/svg"."
+    /// "The SVG namespace is `"http://www.w3.org/2000/svg"`."
     Svg,
-    /// "The MathML namespace is "http://www.w3.org/1998/Math/MathML"."
+    /// "The MathML namespace is `"http://www.w3.org/1998/Math/MathML"`."
     MathMl,
 }
 
