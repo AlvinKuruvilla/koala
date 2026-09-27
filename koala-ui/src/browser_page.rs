@@ -321,8 +321,9 @@ impl BrowserPage {
     /// user's first fetched URL takes them back to the landing
     /// page instead of hitting a disabled button.
     pub fn load_landing_page(&mut self) {
-        self.state =
-            PageState::from_document(parse_html_string(crate::landing::LANDING_HTML)).map(Arc::new);
+        let doc = parse_html_string(crate::landing::LANDING_HTML);
+        report_problems("the new tab page", &doc);
+        self.state = PageState::from_document(doc).map(Arc::new);
         self.current_url = None;
         self.history.clear();
         self.history.push(HistoryEntry::Landing);
@@ -622,13 +623,12 @@ fn run_render_worker(
     }
 }
 
-/// Emit each collected parse / script issue on its own stderr line,
-/// prefixed with the page URL so multiple concurrent loads can be
-/// told apart in the terminal. No-op for the empty case so clean
-/// pages don't add noise.
-fn report_parse_issues(url: &str, issues: &[String]) {
-    for issue in issues {
-        eprintln!("[koala-ui] {url}: {issue}");
+/// Print what went wrong while loading `doc` to stderr, headed with
+/// `label` so concurrent loads can be told apart in the terminal. Prints
+/// nothing for a clean load or under `--quiet`.
+fn report_problems(label: &str, doc: &LoadedDocument) {
+    if let Some(report) = doc.problem_report(label) {
+        eprint!("{report}");
     }
 }
 
@@ -669,13 +669,11 @@ fn run_load_worker(
 
         let state = match attempt {
             Ok(Ok(doc)) => {
-                // HTML parse warnings, script-load failures, and
-                // every JS error collect into
-                // `LoadedDocument.parse_issues`. Mirror koala-cli's
-                // surfacing on stderr so a partly-rendered site
+                // Dropped CSS, parse warnings, and script errors, as
+                // koala-cli prints them, so a partly-rendered site
                 // isn't an opaque mystery to whoever launched the
                 // app from a terminal.
-                report_parse_issues(&url, &doc.parse_issues);
+                report_problems(&url, &doc);
                 match PageState::from_document(doc) {
                     Some(state) => Arc::new(state),
                     None => error_state(&url, &Failure::Engine("document produced no layout tree")),
@@ -706,7 +704,9 @@ fn run_load_worker(
 /// plain-text message.
 fn error_state(url: &str, failure: &Failure<'_>) -> Arc<PageState> {
     let html = crate::error_page::render(url, failure);
-    if let Some(state) = PageState::from_document(parse_html_string(&html)) {
+    let doc = parse_html_string(&html);
+    report_problems("the error page", &doc);
+    if let Some(state) = PageState::from_document(doc) {
         return Arc::new(state);
     }
     let fallback = parse_html_string(

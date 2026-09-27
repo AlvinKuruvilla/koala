@@ -16,7 +16,7 @@
 //! `decode(bytes, path_for_ext, resolved_url)` entry point.
 
 use koala_common::image::LoadedImage;
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 
 /// Error type for image fetch and decode operations.
 #[derive(Debug, thiserror::Error)]
@@ -73,34 +73,22 @@ pub fn strip_url_decorations(resolved: &str) -> &str {
         .map_or(without_fragment, |(b, _)| b)
 }
 
-/// Emit `warn_once` messages for fragment identifiers and query strings
+/// Report fragment identifiers and query strings
 /// present in an image URL.
 pub fn warn_url_decorations(src: &str, resolved: &str) {
     // TODO: Handle SVG fragment identifiers (§ 7.1 of SVG spec) —
     // e.g. `icons.svg#globe-blue` should extract a single element
     // from a sprite sheet rather than rendering the whole document.
-    if let Some((_before, frag)) = resolved.split_once('#') {
-        warn_once(
-            "image",
-            &format!(
-                "ignoring SVG fragment identifier '#{frag}' in '{src}' \
-                 (sprite sheets not yet supported)"
-            ),
-        );
+    if resolved.contains('#') {
+        diagnostics::report(|| Diagnostic::ImageUrlFragmentIgnored { src: src.to_string() });
     }
 
     // TODO: Handle URL query parameters that hint at image sizing —
     // e.g. `?w=1024` may indicate a server-side resize or could
     // inform client-side rasterization dimensions.
     let without_fragment = resolved.split_once('#').map_or(resolved, |(b, _)| b);
-    if let Some((_before, qry)) = without_fragment.split_once('?') {
-        warn_once(
-            "image",
-            &format!(
-                "ignoring query string '?{qry}' in '{src}' \
-                 (URL parameters not yet handled)"
-            ),
-        );
+    if without_fragment.contains('?') {
+        diagnostics::report(|| Diagnostic::ImageUrlQueryIgnored { src: src.to_string() });
     }
 }
 

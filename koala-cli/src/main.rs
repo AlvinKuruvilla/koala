@@ -161,6 +161,11 @@ struct Cli {
     /// archive lacks fails the fetch; it is never fetched live.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["html", "wpt_protocol"])]
     replay: Option<PathBuf>,
+
+    /// Don't print the problems the engine met while loading (CSS it
+    /// dropped, selectors it can't match, script errors) to stderr.
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 fn main() -> Result<()> {
@@ -184,6 +189,9 @@ fn main() -> Result<()> {
         }
     }
     let cli = Cli::parse();
+    if cli.quiet {
+        koala_browser::warning::set_quiet(true);
+    }
 
     // Install host overrides before any HTTP fetch can happen. Done
     // for every mode so the same setup applies to both CLI usage
@@ -278,14 +286,17 @@ fn main() -> Result<()> {
     }
 
     // Determine the document source
-    let doc = if let Some(html_string) = cli.html {
-        parse_html_string(&html_string)
+    let (doc, label) = if let Some(html_string) = cli.html {
+        (parse_html_string(&html_string), "--html input".to_string())
     } else if let Some(path) = cli.path {
-        load_document(&path)?
+        (load_document(&path)?, path)
     } else {
         // clap should prevent this, but just in case
         anyhow::bail!("Either a file/URL path or --html must be provided");
     };
+    if let Some(report) = doc.problem_report(&label) {
+        eprint!("{report}");
+    }
 
     // Handle screenshot mode
     if let Some(ref output_path) = cli.screenshot {
@@ -385,13 +396,6 @@ fn print_document(doc: &LoadedDocument) {
     if doc.layout_tree.is_some() {
         print_header("Layout");
         print_subheader("Layout tree built successfully");
-    }
-
-    if !doc.parse_issues.is_empty() {
-        print_header("Parse Issues");
-        for issue in &doc.parse_issues {
-            println!("    {} {}", "!".yellow(), issue);
-        }
     }
 
     println!();

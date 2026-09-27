@@ -8,7 +8,7 @@ use koala_std::collections::HashMap;
 use crate::parser::{Rule, StyleRule, Stylesheet};
 use crate::selector::{ParsedSelector, Specificity, parse_selector};
 use crate::style::ComputedStyle;
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 use koala_dom::{DomTree, NodeId, NodeType};
 
 /// [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
@@ -86,16 +86,14 @@ fn parse_stylesheet_rules<'a>(
 
                 // Warn if all selectors in this rule failed to parse
                 if !any_parsed && !style_rule.selectors.is_empty() {
-                    let selector_text = style_rule
-                        .selectors
-                        .iter()
-                        .map(|s| s.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    warn_once(
-                        "CSS",
-                        &format!("failed to parse selector '{selector_text}'"),
-                    );
+                    diagnostics::report(|| Diagnostic::InvalidSelector {
+                        selector: style_rule
+                            .selectors
+                            .iter()
+                            .map(|s| s.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    });
                 }
             }
             Rule::At(_) => {} // Skip at-rules for MVP

@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::parser::ComponentValue;
 use crate::tokenizer::CSSToken;
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 
 /// User agent default font size.
 /// [§ 3.5 font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop)
@@ -211,7 +211,7 @@ pub fn parse_single_length(v: &ComponentValue) -> Option<LengthValue> {
             } else if unit.eq_ignore_ascii_case("vh") {
                 Some(LengthValue::Vh(*value))
             } else {
-                warn_once("CSS", &format!("unsupported unit '{unit}'"));
+                diagnostics::report(|| Diagnostic::UnsupportedCssUnit { unit: unit.clone() });
                 None
             }
         }

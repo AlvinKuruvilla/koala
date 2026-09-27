@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::parser::ComponentValue;
 use crate::tokenizer::CSSToken;
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 
 // [§ 2 Box Layout Modes: the display property](https://www.w3.org/TR/css-display-3/#the-display-properties)
 //
@@ -212,7 +212,9 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
                 "none" => return None,
 
                 _ => {
-                    warn_once("CSS", &format!("unsupported display value '{ident}'"));
+                    diagnostics::report(|| Diagnostic::UnsupportedDisplay {
+                        value: ident.clone(),
+                    });
                 }
             }
         }

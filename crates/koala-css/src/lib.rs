@@ -432,10 +432,12 @@ pub fn extract_all_stylesheets(tree: &DomTree, base_url: Option<&str>) -> Docume
                         //
                         // "If the resource is not available, the user agent must act as if
                         // the resource was an empty style sheet."
-                        koala_common::warning::warn_once(
-                            "Koala CSS",
-                            &format!("Failed to load stylesheet '{href}': {e}"),
-                        );
+                        koala_common::diagnostics::report(|| {
+                            koala_common::diagnostics::Diagnostic::StylesheetLoadFailed {
+                                href: href.clone(),
+                                error: e.to_string(),
+                            }
+                        });
                         // Continue without this stylesheet (empty stylesheet per spec)
                     }
                 }

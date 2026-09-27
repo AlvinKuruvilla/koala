@@ -1,6 +1,6 @@
 use strum_macros::Display;
 
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
 
 use super::foreign_content::{
@@ -209,10 +209,12 @@ impl HTMLParser {
 
     /// Record a parse warning (for unhandled but recoverable situations).
     ///
-    /// Logs via koala-common's warning system and stores the issue for later retrieval.
+    /// Reports to the load's diagnostics and stores the issue for later retrieval.
     #[allow(dead_code)]
     fn parse_warning(&mut self, message: &str) {
-        warn_once("HTML Parser", message);
+        diagnostics::report(|| Diagnostic::HtmlParseWarning {
+            message: message.to_string(),
+        });
         self.issues.push(ParseIssue {
             message: message.to_string(),
             token_index: self.token_index,

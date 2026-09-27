@@ -85,8 +85,8 @@ pub(crate) fn run(config: &BenchConfig<'_>) -> Result<()> {
     // At least one measured load is required — we keep its document for
     // the render loop and need a non-empty sample set for `stats`.
     let setup_iterations = setup_iterations.max(1);
-    // Suppress informational stderr noise — font-load lines,
-    // image-decode warnings, CSS parser warn_once messages. These
+    // Suppress informational stderr noise — font-load lines and the
+    // per-load diagnostics (dropped CSS, failed images). These
     // are useful for diagnosing real-world rendering, but during a
     // bench they pollute the report and would corrupt downstream
     // tooling that captures stderr alongside stdout.

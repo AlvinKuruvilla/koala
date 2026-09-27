@@ -30,8 +30,9 @@ pub use renderer::{Renderer, RendererFonts};
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
 
-/// Engine-wide diagnostic-warning system, plus the process-wide
-/// quiet flag toggled by `koala-cli --wpt-protocol`.
+/// Problems met while loading a page; see [`LoadedDocument::diagnostics`].
+pub use koala_common::diagnostics;
+/// The process-wide quiet flag that silences diagnostic output.
 pub use koala_common::warning;
 /// Re-exported fetch layer. Callers can install a custom
 /// [`fetch::RequestSender`] (e.g. a [`fetch::MappedSender`] wrapping
@@ -84,12 +85,43 @@ pub struct LoadedDocument {
     /// Parse issues/warnings
     pub parse_issues: Vec<String>,
 
+    /// What the engine dropped, could not match, or parsed wrongly while
+    /// loading this document (empty in quiet mode).
+    pub diagnostics: diagnostics::Diagnostics,
+
     /// Loaded images keyed by their `src` attribute value.
     ///
     /// [§ 4.8.3 The img element](https://html.spec.whatwg.org/multipage/embedded-content.html#the-img-element)
     ///
     /// Used by the renderer to draw `DrawImage` commands.
     pub images: HashMap<String, LoadedImage>,
+}
+
+impl LoadedDocument {
+    /// Everything that went wrong while loading, as one block of text for
+    /// stderr: the diagnostics, then parse issues and script errors, one
+    /// per line. `None` when there is nothing to report, or in quiet mode.
+    ///
+    /// `label` names the page in the heading, since several loads can
+    /// print into one terminal.
+    #[must_use]
+    pub fn problem_report(&self, label: &str) -> Option<String> {
+        use std::fmt::Write as _;
+
+        if warning::is_quiet() || (self.diagnostics.is_empty() && self.parse_issues.is_empty()) {
+            return None;
+        }
+        let count = self.diagnostics.len() + self.parse_issues.len();
+        let mut out = format!("koala: {count} problem(s) loading {label}\n");
+        out.push_str(&self.diagnostics.to_string());
+        for issue in &self.parse_issues {
+            // Script errors carry a multi-line stack trace; keep its
+            // continuation lines under the message.
+            let issue = issue.replace('\n', "\n         ");
+            let _ = writeln!(out, "  {:<6} {issue}", "page");
+        }
+        Some(out)
+    }
 }
 
 /// Error type for document loading. Every fetch path (HTTP, `data:`,
@@ -245,6 +277,10 @@ fn parse_html_with_base_url<H: JsHooks>(
     base_url: Option<&str>,
     hooks: &mut H,
 ) -> LoadedDocument {
+    // Everything below runs on this thread, so the thread's collector
+    // ends up holding exactly this load's problems. Discard anything an
+    // earlier load on this thread left behind.
+    let _ = diagnostics::take();
     let (tokens, dom, mut parse_issues) = tokenize_and_parse(html);
     let stylesheet = extract_stylesheet(&dom, base_url);
     // Inline CSS text kept for debugging.
@@ -295,6 +331,7 @@ fn parse_html_with_base_url<H: JsHooks>(
         styles,
         layout_tree,
         parse_issues,
+        diagnostics: diagnostics::take(),
         images,
     }
 }
@@ -557,9 +594,12 @@ fn load_images(
             let bytes = match fetch_image_bytes(&resolved) {
                 Ok(b) => b,
                 Err(e) => {
-                    if !warning::is_quiet() {
-                        eprintln!("[Koala] Warning: failed to load image '{src}': {e}");
-                    }
+                    diagnostics::report(|| {
+                        diagnostics::Diagnostic::ImageNotLoaded {
+                            src: src.to_string(),
+                            error: e.to_string(),
+                        }
+                    });
                     continue;
                 }
             };
@@ -571,12 +611,12 @@ fn load_images(
                     let _ = images.insert(src.to_string(), loaded);
                 }
                 Err(e) => {
-                    if !warning::is_quiet() {
-                        eprintln!(
-                            "[Koala] Warning: skipping <img src=\"{src}\">: {e}. \
-                             The page will still render but this image will be missing."
-                        );
-                    }
+                    diagnostics::report(|| {
+                        diagnostics::Diagnostic::ImageNotLoaded {
+                            src: src.to_string(),
+                            error: e.to_string(),
+                        }
+                    });
                 }
             }
         }

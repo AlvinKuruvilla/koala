@@ -63,6 +63,19 @@ static GLOBAL: koala_common::alloc_count::CountingAllocator =
 slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
+    // The only argument is `--quiet` / `-q`, which stops each load's
+    // problem report (dropped CSS, script errors) printing to stderr.
+    // Anything else is a typo, so refuse it rather than ignore it.
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "-q" | "--quiet" => koala_browser::warning::set_quiet(true),
+            other => {
+                eprintln!("koala-ui: unknown argument '{other}'. The only option is -q / --quiet.");
+                std::process::exit(2);
+            }
+        }
+    }
+
     let window = MainWindow::new()?;
 
     // Developer HUD: a second window opened from the View → Developer

@@ -17,7 +17,7 @@ use crate::style::values::{
 };
 use crate::tokenizer::CSSToken;
 use crate::{AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, LengthValue};
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 use serde::Serialize;
 use koala_std::collections::HashMap;
 use koala_std::string::FlyString;
@@ -1820,7 +1820,9 @@ impl ComputedStyle {
                 // have standard counterparts — falls through to the
                 // warning below so author typos stay visible.
                 if !crate::vendor_prefixes::is_silent_vendor_property(unknown) {
-                    warn_once("CSS", &format!("unknown property '{unknown}'"));
+                    diagnostics::report(|| Diagnostic::UnknownCssProperty {
+                        property: unknown.to_string(),
+                    });
                 }
             }
         }

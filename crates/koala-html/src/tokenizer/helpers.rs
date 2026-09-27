@@ -9,7 +9,7 @@
 //! - RCDATA/RAWTEXT helpers for raw text elements
 //! - Attribute helpers for duplicate detection
 
-use koala_common::warning::warn_once;
+use koala_common::diagnostics::{self, Diagnostic};
 
 use super::core::{HTMLTokenizer, TokenizerState};
 use super::token::Token;
@@ -362,10 +362,10 @@ impl HTMLTokenizer {
 impl HTMLTokenizer {
     /// [§ 13.2.2 Parse errors](https://html.spec.whatwg.org/multipage/parsing.html#parse-errors)
     ///
-    /// Logs a parse error using the koala-common warning system.
-    /// Parse errors in HTML are not fatal - the parser recovers and continues.
+    /// Reports a parse error to the load's diagnostics. Parse errors in
+    /// HTML are not fatal - the parser recovers and continues.
+    #[allow(clippy::unused_self, reason = "called as a tokenizer method from every state")]
     pub(super) fn log_parse_error(&self) {
-        let pos = self.current_pos;
-        warn_once("HTML Tokenizer", &format!("parse error at position {pos}"));
+        diagnostics::report(|| Diagnostic::HtmlTokenizerParseError);
     }
 }

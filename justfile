@@ -11,7 +11,11 @@
 lldb_run := "lldb --batch --no-lldbinit -o run -o 'script import os; os._exit(lldb.process.GetExitStatus())' -k 'thread backtrace all -c 60' -k 'script import os; os._exit(134)' --"
 
 # Open the browser GUI (debug build, under lldb). The address bar
-# handles navigation, so this takes no argument.
+# handles navigation; the only flag is --quiet, which stops each page's
+# problem report (dropped CSS, script errors) printing.
+#
+#   just gui
+#   just gui --quiet
 #
 # It runs from target/debug/Koala.app: macOS takes the name and icon in
 # the app switcher, Dock, and menu bar from an app bundle, so a bare
@@ -29,29 +33,29 @@ lldb_run := "lldb --batch --no-lldbinit -o run -o 'script import os; os._exit(ll
 #   done
 #   iconutil -c icns $set -o koala-ui/macos/Koala.icns
 [doc("Open the browser GUI under lldb (a crash prints a backtrace)")]
-gui:
+gui *FLAGS:
     cargo build --bin koala-ui
     mkdir -p target/debug/Koala.app/Contents/MacOS target/debug/Koala.app/Contents/Resources
     cp koala-ui/macos/Info.plist target/debug/Koala.app/Contents/Info.plist
     cp koala-ui/macos/Koala.icns target/debug/Koala.app/Contents/Resources/Koala.icns
     ln -f target/debug/koala-ui target/debug/Koala.app/Contents/MacOS/koala-ui
-    {{lldb_run}} target/debug/Koala.app/Contents/MacOS/koala-ui
+    {{lldb_run}} target/debug/Koala.app/Contents/MacOS/koala-ui {{FLAGS}}
 
 # Load TARGET in the headless CLI (debug build, under lldb) and print its
-# DOM, or save a screenshot. TARGET is a recorded corpus page (replayed;
-# see `just lab corpus list`), a local file, or a URL.
+# DOM. TARGET is a recorded corpus page (replayed; see `just lab corpus
+# list`), a local file, or a URL. FLAGS go to koala as they are.
 #
 #   just cli https://example.com
-#   just cli google screenshot.png
-[doc("Load a page in the headless CLI under lldb; optionally screenshot it")]
-cli target screenshot="":
+#   just cli google -S screenshot.png
+#   just cli google --layout --quiet
+[doc("Load a page in the headless CLI under lldb; FLAGS go to koala")]
+cli target *FLAGS:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --bin koala
     args=()
     while IFS= read -r arg; do args+=("$arg"); done < <(just lab corpus args "{{target}}")
-    if [ -n "{{screenshot}}" ]; then args=(-S "{{screenshot}}" "${args[@]}"); fi
-    {{lldb_run}} target/debug/koala "${args[@]}"
+    {{lldb_run}} target/debug/koala {{FLAGS}} "${args[@]}"
 
 # Fetch a page and pretty-print it with Prettier, expanding any
 # minified embedded <style>/<script> blocks into readable, indented
