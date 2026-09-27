@@ -78,6 +78,38 @@ impl DisplayValue {
         }
     }
 
+    /// [§ 2.7 Automatic Box Type Transformations](https://www.w3.org/TR/css-display-3/#transformations)
+    ///
+    /// "Some layout effects require blockification or inlinification of the
+    /// box type, which sets the box's computed outer display type to block
+    /// or inline (respectively)."
+    ///
+    /// "For legacy reasons, if an inline block box (inline flow-root) is
+    /// blockified, it becomes a block box (losing its flow-root nature). For
+    /// consistency, a run-in flow-root box also blockifies to a block box."
+    ///
+    /// "If a layout-internal box is blockified, its inner display type
+    /// converts to flow so that it becomes a block container." Koala has no
+    /// layout-internal values by this point: `parse_display_value` already
+    /// maps them to `block`.
+    ///
+    /// A list item is already block-level and is left alone. So
+    /// `inline-flex` becomes `flex` and `inline-grid` becomes `grid`, keeping
+    /// their inner type.
+    #[must_use]
+    pub const fn blockified(self) -> Self {
+        match (self.outer, self.inner) {
+            (OuterDisplayType::Inline | OuterDisplayType::RunIn, InnerDisplayType::FlowRoot) => {
+                Self::block()
+            }
+            (OuterDisplayType::Inline | OuterDisplayType::RunIn, inner) => Self {
+                outer: OuterDisplayType::Block,
+                inner,
+            },
+            (OuterDisplayType::Block | OuterDisplayType::ListItem, _) => self,
+        }
+    }
+
     /// `display: inline` - inline outer, flow inner
     #[must_use]
     pub const fn inline() -> Self {
@@ -210,6 +242,22 @@ pub fn parse_display_value(values: &[ComponentValue]) -> Option<DisplayValue> {
 
                 // "none" is handled separately by is_display_none
                 "none" => return None,
+
+                // [§ 2.5 Box Generation](https://www.w3.org/TR/css-display-3/#box-generation)
+                //
+                // "contents: The element itself does not generate any boxes,
+                // but its children and pseudo-elements still generate boxes
+                // and text runs as normal."
+                //
+                // TODO: implement. Dropping the value leaves the element
+                // with its default box, so its children lay out inside it
+                // rather than in its parent. Code that looks for "the
+                // nearest ancestor element (skipping display:contents
+                // ancestors)" treats the parent as that ancestor; search for
+                // `DisplayContentsNotSupported` to find those sites.
+                "contents" => {
+                    diagnostics::report(|| Diagnostic::DisplayContentsNotSupported);
+                }
 
                 _ => {
                     diagnostics::report(|| Diagnostic::UnsupportedDisplay {

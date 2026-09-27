@@ -1016,6 +1016,19 @@ impl LayoutBox {
         node_id: NodeId,
         image_dimensions: &HashMap<NodeId, (f32, f32)>,
     ) -> Option<Self> {
+        Self::build_box(tree, styles, node_id, image_dimensions, false)
+    }
+
+    /// [`Self::build_layout_tree`] for one node. `parent_is_flex_or_grid`
+    /// says whether the parent element is a flex or grid container, whose
+    /// children are blockified (see the element arm below).
+    fn build_box(
+        tree: &DomTree,
+        styles: &HashMap<NodeId, ComputedStyle>,
+        node_id: NodeId,
+        image_dimensions: &HashMap<NodeId, (f32, f32)>,
+        parent_is_flex_or_grid: bool,
+    ) -> Option<Self> {
         let node = tree.get(node_id)?;
 
         match &node.node_type {
@@ -1031,7 +1044,7 @@ impl LayoutBox {
                 let mut children = Vec::new();
                 for &child_id in tree.children(node_id) {
                     if let Some(child_box) =
-                        Self::build_layout_tree(tree, styles, child_id, image_dimensions)
+                        Self::build_box(tree, styles, child_id, image_dimensions, false)
                     {
                         children.push(child_box);
                     }
@@ -1128,11 +1141,35 @@ impl LayoutBox {
                     .and_then(|s| s.display)
                     .or_else(|| default_display_for_element(&tag))?;
 
+                // [§ 4 Flex Items](https://www.w3.org/TR/css-flexbox-1/#flex-items)
+                //
+                // "If the computed display value of an element's nearest
+                // ancestor element (skipping display:contents ancestors) is
+                // flex or inline-flex, the element's own display value is
+                // blockified."
+                //
+                // [§ 2.7](https://www.w3.org/TR/css-display-3/#transformations):
+                // "A parent with a grid or flex display value blockifies the
+                // box's display type."
+                //
+                // TODO: this takes the parent as "the nearest ancestor
+                // element", which is only right while no ancestor has
+                // display: contents. Koala does not implement contents yet;
+                // a page that uses it reports `DisplayContentsNotSupported`,
+                // and this is one of the sites to revisit when it lands.
+                let display = if parent_is_flex_or_grid {
+                    display.blockified()
+                } else {
+                    display
+                };
+
                 // Build children recursively
+                let is_flex_or_grid =
+                    matches!(display.inner, InnerDisplayType::Flex | InnerDisplayType::Grid);
                 let mut children = Vec::new();
                 for &child_id in tree.children(node_id) {
                     if let Some(child_box) =
-                        Self::build_layout_tree(tree, styles, child_id, image_dimensions)
+                        Self::build_box(tree, styles, child_id, image_dimensions, is_flex_or_grid)
                     {
                         children.push(child_box);
                     }
@@ -1289,21 +1326,17 @@ impl LayoutBox {
                 // "3. Otherwise, if 'float' has a value other than 'none', the box
                 //    is floated and 'display' is set according to the table below."
                 //
-                // The table maps inline → block (and inline-* → block-*).
+                // The table maps inline → block (and inline-* → block-*),
+                // which is blockification as Display 3 § 2.7 defines it.
                 let (display, float_side) =
                     if matches!(position_type, PositionType::Absolute | PositionType::Fixed) {
                         // Rule 2: absolute/fixed → float is none, blockify display
-                        let d = if display.outer == OuterDisplayType::Inline {
-                            DisplayValue::block()
-                        } else {
-                            display
-                        };
-                        (d, None)
+                        (display.blockified(), None)
                     } else {
                         // Rule 3: extract float, blockify if floated
                         let fs = style.and_then(|s| s.float);
-                        if fs.is_some() && display.outer == OuterDisplayType::Inline {
-                            (DisplayValue::block(), fs)
+                        if fs.is_some() {
+                            (display.blockified(), fs)
                         } else {
                             (display, fs)
                         }

@@ -75,6 +75,12 @@ pub enum Diagnostic {
         /// The keyword as written.
         value: String,
     },
+    /// `display: contents`, which Koala does not implement. The element
+    /// keeps its default box instead of disappearing from the box tree, so
+    /// its children lay out inside it rather than in its parent: children
+    /// of a flex or grid container wrapped in a `display: contents` element
+    /// do not become flex or grid items.
+    DisplayContentsNotSupported,
     /// A selector Koala could not parse. Every selector in the rule failed,
     /// so the rule is dropped.
     InvalidSelector {
@@ -156,6 +162,7 @@ impl Diagnostic {
             | Self::UnresolvedCssVar { .. }
             | Self::UnsupportedCssUnit { .. }
             | Self::UnsupportedDisplay { .. }
+            | Self::DisplayContentsNotSupported
             | Self::InvalidSelector { .. }
             | Self::UnknownPseudoClass { .. }
             | Self::UnsupportedPseudoClass { .. }
@@ -188,6 +195,11 @@ impl fmt::Display for Diagnostic {
             }
             Self::UnsupportedCssUnit { unit } => write!(f, "unsupported unit '{unit}'"),
             Self::UnsupportedDisplay { value } => write!(f, "unsupported display value '{value}'"),
+            Self::DisplayContentsNotSupported => write!(
+                f,
+                "display: contents not supported: the element keeps its box, so its children \
+                 are not laid out as children of its parent (flex and grid items under it are wrong)"
+            ),
             Self::InvalidSelector { selector } => {
                 write!(f, "rule dropped: could not parse selector '{selector}'")
             }
