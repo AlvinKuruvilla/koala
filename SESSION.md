@@ -742,3 +742,23 @@ files packed into the binary. Proposal: a `koala:` scheme in koala-fetch
 serving embedded files, with `koala://newtab` and the error page moved
 onto it. Open questions: the scheme name, and whether its pages get any
 privileges ordinary pages do not.
+
+## Diagnostics follow-ups (2026-09-26)
+
+- `InvalidCssValue` quotes the value before `var()` substitution, so
+  `color: var(--text)` is reported when the real failure is the
+  `light-dark()` it resolves to. `reject` only sees the `Declaration`;
+  passing the substituted values too would let the message show both.
+- `text-decoration`, `flex-flow`, `grid-column` and `grid-row` still skip
+  tokens they do not know without reporting them.
+- Koala parses each declaration's value in the cascade, once per element
+  it applies to (`ComputedStyle::apply_declaration`), so a rule matching
+  1,000 elements parses its values 1,000 times. Ladybird parses values
+  once, at stylesheet parse time, and stores the rejection reason on the
+  declaration. Worth measuring with `just lab compare` before changing.
+- Selector lists: an unknown pseudo-class makes the whole list invalid per
+  spec (Ladybird drops the rule); Koala turns that one selector into
+  never-match and keeps the rest, so `a:foo, b {}` still styles `b`.
+- `cargo clippy --workspace` fails on 26 errors in koala-js (22 are
+  `doc_markdown`), new with the 1.97 toolchain. They were hidden until
+  koala-css's own clippy errors were fixed, since clippy stopped there.
