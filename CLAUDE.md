@@ -60,6 +60,8 @@ This project follows the [WHATWG HTML Living Standard](https://html.spec.whatwg.
 3. **Preserve the spec's structure** — If the spec uses numbered steps, use numbered comments. If it uses bullets, use bullets. Match nesting levels.
 4. **Add interpretive comments where helpful** — When something requires clarification, add your own commentary clearly marked as such (e.g., "NOTE:" or "Implementation note:")
 5. **Document unimplemented branches too** — Even `todo!()` branches should have full spec text explaining what they *would* do
+6. **Fetch the spec; never quote from memory** — Before implementing, download the spec page into `tmp/` (`curl`) and extract the section. Check every quote and section number against it before committing. Recalled "quotes" drift: wrong section numbers, a rule remembered backwards (a negative blur radius is invalid, not clamped). WHATWG pages write `id=` attributes unquoted; W3C pages quote them.
+7. **Put each sentence beside the code that implements it** — Quote the sentence directly above the line or branch that carries it out, step by step, rather than gathering the spec text in one block at the top of a function. A reader should be able to check each line against the sentence above it.
 
 #### Example of Good Code
 
