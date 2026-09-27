@@ -75,6 +75,14 @@ pub enum Diagnostic {
         /// The keyword as written.
         value: String,
     },
+    /// A valid `content` value Koala does not implement yet, such as
+    /// `counter()` or `open-quote`. The whole declaration is dropped, as CSS
+    /// 2.1 § 4.2 says to do for an unsupported value, so a `::before` or
+    /// `::after` with no other `content` is not generated.
+    UnsupportedContentValue {
+        /// The value as written.
+        value: String,
+    },
     /// `display: contents`, which Koala does not implement. The element
     /// keeps its default box instead of disappearing from the box tree, so
     /// its children lay out inside it rather than in its parent: children
@@ -160,6 +168,7 @@ impl Diagnostic {
             | Self::UnresolvedCssVar { .. }
             | Self::UnsupportedCssUnit { .. }
             | Self::UnsupportedDisplay { .. }
+            | Self::UnsupportedContentValue { .. }
             | Self::DisplayContentsNotSupported
             | Self::InvalidSelector { .. }
             | Self::UnknownPseudoClass { .. }
@@ -192,6 +201,9 @@ impl fmt::Display for Diagnostic {
             }
             Self::UnsupportedCssUnit { unit } => write!(f, "unsupported unit '{unit}'"),
             Self::UnsupportedDisplay { value } => write!(f, "unsupported display value '{value}'"),
+            Self::UnsupportedContentValue { value } => {
+                write!(f, "dropped 'content: {value}': not supported yet")
+            }
             Self::DisplayContentsNotSupported => write!(
                 f,
                 "display: contents not supported: the element keeps its box, so its children \

@@ -8,8 +8,8 @@
     clippy::uninlined_format_args
 )]
 
-use koala_css::Stylesheet;
 use koala_css::cascade::compute_styles;
+use koala_css::{Content, ContentItem, Stylesheet};
 use koala_css::parser::CSSParser;
 use koala_css::tokenizer::CSSTokenizer;
 use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
@@ -1130,4 +1130,108 @@ fn border_width_keywords_and_style_none() {
     let border = style.border_top.expect("border-top set");
     assert_eq!(border.width, koala_css::LengthValue::Px(5.0));
     assert_eq!(border.computed_width(), koala_css::LengthValue::Px(0.0));
+}
+
+// CSS 2.1 § 12 Generated content
+
+/// Styles for `<body><p class="note"><span></span></p></body>` under `css`:
+/// the `<p>`'s style and the `<span>`'s.
+fn note_styles(css: &str) -> (koala_css::ComputedStyle, koala_css::ComputedStyle) {
+    let mut tree = DomTree::new();
+    let body_id = tree.alloc(make_element("body", None, &[]));
+    let p_id = tree.alloc(make_element("p", None, &["note"]));
+    let span_id = tree.alloc(make_element("span", None, &[]));
+    tree.append_child(NodeId::ROOT, body_id);
+    tree.append_child(body_id, p_id);
+    tree.append_child(p_id, span_id);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &parse_css(css));
+    (
+        styles.get(&p_id).expect("p styled").clone(),
+        styles.get(&span_id).expect("span styled").clone(),
+    )
+}
+
+/// [CSS 2.1 § 12.1](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+///
+/// A `::before` rule styles the pseudo-element, not the element. Before
+/// `::before` was parsed, the rule matched nothing at all.
+#[test]
+fn test_pseudo_element_rule_styles_pseudo_element_only() {
+    let (p, _) = note_styles(
+        "p { color: #0000ff; } \
+         p.note::before { content: 'Note: '; color: #ff0000; }",
+    );
+
+    assert_eq!(p.color.as_ref().map(|c| c.b), Some(0xff));
+    assert_eq!(p.content, None);
+    let before = p.before.expect("::before styled");
+    assert_eq!(before.color.as_ref().map(|c| c.r), Some(0xff));
+    assert_eq!(
+        before.content,
+        Some(Content::Items(vec![ContentItem::String("Note: ".to_string())]))
+    );
+    assert!(p.after.is_none());
+}
+
+/// [CSS 2.1 § 12.1](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+///
+/// "The :before and :after pseudo-elements inherit any inheritable properties
+/// from the element in the document tree to which they are attached." "In a
+/// :before or :after pseudo-element declaration, non-inherited properties
+/// take their initial values."
+///
+/// `color` is inherited and `margin-top` is not. The `<span>` inherits from
+/// the `<p>` but never gets the `<p>`'s `::after`.
+#[test]
+fn test_pseudo_element_inherits_from_its_element() {
+    let (p, span) = note_styles(
+        "p { color: #0000ff; margin-top: 7px; } \
+         p:after { content: 'x'; }",
+    );
+
+    let after = p.after.expect("::after styled");
+    assert_eq!(after.color.as_ref().map(|c| c.b), Some(0xff));
+    assert_eq!(after.margin_top, None);
+    assert!(span.after.is_none());
+}
+
+/// [CSS 2.1 § 4.2](https://www.w3.org/TR/CSS2/syndata.html#unsupported-values)
+///
+/// "If a UA does not support a particular value, it should ignore that value
+/// when parsing style sheets, as if that value was an illegal value."
+///
+/// `counter()` is valid but not implemented, so the more specific declaration
+/// is ignored and the less specific one still applies.
+#[test]
+fn test_unsupported_content_value_drops_the_declaration() {
+    let (p, _) = note_styles(
+        "p::before { content: 'fallback'; } \
+         p.note::before { content: counter(item); }",
+    );
+
+    assert_eq!(
+        p.before.expect("::before styled").content,
+        Some(Content::Items(vec![ContentItem::String("fallback".to_string())]))
+    );
+}
+
+/// [CSS 2.1 § 12.2](https://www.w3.org/TR/CSS2/generate.html#content)
+///
+/// Strings and `attr()` mix in one list; `none` and `normal` are keywords.
+#[test]
+fn test_content_values() {
+    let (p, _) = note_styles(
+        "p::before { content: '(' attr(HREF) ')'; } \
+         p::after { content: none; }",
+    );
+
+    assert_eq!(
+        p.before.expect("::before styled").content,
+        Some(Content::Items(vec![
+            ContentItem::String("(".to_string()),
+            ContentItem::Attr("href".to_string()),
+            ContentItem::String(")".to_string()),
+        ]))
+    );
+    assert_eq!(p.after.expect("::after styled").content, Some(Content::None));
 }

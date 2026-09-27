@@ -6,7 +6,7 @@
 use koala_std::collections::HashMap;
 
 use crate::parser::{Rule, StyleRule, Stylesheet};
-use crate::selector::{ParsedSelector, Specificity, parse_selector};
+use crate::selector::{ParsedSelector, PseudoElement, Specificity, parse_selector};
 use crate::style::ComputedStyle;
 use koala_common::diagnostics::{self, Diagnostic};
 use koala_dom::{DomTree, NodeId, NodeType};
@@ -126,17 +126,96 @@ pub fn compute_styles(
     parse_stylesheet_rules(ua_stylesheet, CascadeOrigin::UserAgent, &mut parsed_rules);
     parse_stylesheet_rules(author_stylesheet, CascadeOrigin::Author, &mut parsed_rules);
 
+    // Rules for ::before and ::after style those pseudo-elements, never the
+    // element. They are a small share of a stylesheet, so they are set apart
+    // once rather than skipped per element.
+    let (pseudo_element_rules, element_rules): (Vec<_>, Vec<_>) = parsed_rules
+        .into_iter()
+        .partition(|pr| pr.selector.pseudo_element.is_some());
+
     // Start with default inherited style (none)
     let initial_style = ComputedStyle::default();
     compute_node_styles(
         tree,
         tree.root(),
-        &parsed_rules,
+        &CascadeRules {
+            element: &element_rules,
+            pseudo_element: &pseudo_element_rules,
+        },
         &initial_style,
         &mut styles,
     );
 
     styles
+}
+
+/// The parsed rules, split by whether they select a pseudo-element.
+struct CascadeRules<'r, 'a> {
+    element: &'r [ParsedRule<'a>],
+    pseudo_element: &'r [ParsedRule<'a>],
+}
+
+/// [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
+///
+/// "The cascading process sorts declarations according to the following
+/// criteria, in descending order of priority:
+/// Origin and Importance > ... > Specificity > Order of Appearance"
+///
+/// Sort by (origin, specificity) — UA rules sort before author rules,
+/// so author rules always override UA rules regardless of specificity.
+/// Within the same origin, higher specificity wins. The sort is stable, so
+/// rules that tie keep their order of appearance.
+///
+/// Apply declarations in order (lowest priority first, highest last wins).
+fn apply_in_cascade_order(style: &mut ComputedStyle, mut matched: Vec<MatchedRule>) {
+    matched.sort_by(|a, b| {
+        a.origin
+            .cmp(&b.origin)
+            .then_with(|| a.specificity.cmp(&b.specificity))
+    });
+    for m in matched {
+        for decl in &m.rule.declarations {
+            style.apply_declaration(decl);
+        }
+    }
+}
+
+/// [CSS 2.1 § 12.1 The :before and :after pseudo-elements](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+///
+/// The style of element `id`'s `pseudo_element`, or `None` if no rule
+/// selects it.
+///
+/// "The :before and :after pseudo-elements inherit any inheritable
+/// properties from the element in the document tree to which they are
+/// attached." "In a :before or :after pseudo-element declaration,
+/// non-inherited properties take their initial values."
+fn pseudo_element_style(
+    tree: &DomTree,
+    id: NodeId,
+    rules: &[ParsedRule],
+    element_style: &ComputedStyle,
+    pseudo_element: PseudoElement,
+) -> Option<Box<ComputedStyle>> {
+    let matched: Vec<MatchedRule> = rules
+        .iter()
+        .filter(|pr| {
+            pr.selector.pseudo_element == Some(pseudo_element)
+                && pr.selector.originating_element_matches(tree, id)
+        })
+        .map(|pr| MatchedRule {
+            origin: pr.origin,
+            specificity: pr.selector.specificity,
+            rule: pr.rule,
+        })
+        .collect();
+    if matched.is_empty() {
+        return None;
+    }
+
+    let mut style = inherit_styles(element_style);
+    apply_in_cascade_order(&mut style, matched);
+    style.resolve_custom_properties();
+    Some(Box::new(style))
 }
 
 /// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)
@@ -146,7 +225,7 @@ pub fn compute_styles(
 fn compute_node_styles(
     tree: &DomTree,
     id: NodeId,
-    rules: &[ParsedRule],
+    rules: &CascadeRules,
     inherited: &ComputedStyle,
     styles: &mut HashMap<NodeId, ComputedStyle>,
 ) {
@@ -160,7 +239,8 @@ fn compute_node_styles(
 
             // [§ 6.4 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
             // Find all matching rules using tree-aware matching for combinator support
-            let mut matched: Vec<MatchedRule> = rules
+            let matched: Vec<MatchedRule> = rules
+                .element
                 .iter()
                 .filter(|pr| pr.selector.matches_in_tree(tree, id))
                 .map(|pr| MatchedRule {
@@ -169,28 +249,7 @@ fn compute_node_styles(
                     rule: pr.rule,
                 })
                 .collect();
-
-            // [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
-            //
-            // "The cascading process sorts declarations according to the following
-            // criteria, in descending order of priority:
-            // Origin and Importance > ... > Specificity > Order of Appearance"
-            //
-            // Sort by (origin, specificity) — UA rules sort before author rules,
-            // so author rules always override UA rules regardless of specificity.
-            // Within the same origin, higher specificity wins.
-            matched.sort_by(|a, b| {
-                a.origin
-                    .cmp(&b.origin)
-                    .then_with(|| a.specificity.cmp(&b.specificity))
-            });
-
-            // Apply declarations in order (lowest priority first, highest last wins)
-            for m in matched {
-                for decl in &m.rule.declarations {
-                    computed.apply_declaration(decl);
-                }
-            }
+            apply_in_cascade_order(&mut computed, matched);
 
             // [§ 6.1 Cascade Sorting Order](https://www.w3.org/TR/css-cascade-4/#cascade-sort)
             //
@@ -217,6 +276,24 @@ fn compute_node_styles(
             // "Custom properties resolve any var() functions in their values
             // at computed-value time, which occurs before the value is inherited."
             computed.resolve_custom_properties();
+
+            // The pseudo-elements inherit from the element's finished style,
+            // so they are computed last. The style attribute does not reach
+            // them: it styles the element only.
+            computed.before = pseudo_element_style(
+                tree,
+                id,
+                rules.pseudo_element,
+                &computed,
+                PseudoElement::Before,
+            );
+            computed.after = pseudo_element_style(
+                tree,
+                id,
+                rules.pseudo_element,
+                &computed,
+                PseudoElement::After,
+            );
 
             // Store the computed style
             let _ = styles.insert(id, computed.clone());
@@ -391,6 +468,15 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
         // "Inherited: no"
         overflow: None,
+
+        // [§ 12.2 content](https://www.w3.org/TR/CSS2/generate.html#content)
+        // "Inherited: no"
+        content: None,
+
+        // A pseudo-element's style belongs to its own element; a child never
+        // takes over its parent's ::before or ::after.
+        before: None,
+        after: None,
 
         // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
         // "Inherited: no"
