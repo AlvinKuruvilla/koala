@@ -130,6 +130,12 @@ pub enum Diagnostic {
         /// Why it failed.
         error: String,
     },
+    /// An inline `<svg>` whose markup the SVG parser rejected. Its box is
+    /// laid out but stays empty.
+    InlineSvgNotRendered {
+        /// The parser's error.
+        error: String,
+    },
     /// An image URL fragment (`icons.svg#globe`), which Koala ignores, so
     /// a sprite sheet renders whole.
     ImageUrlFragmentIgnored {
@@ -162,6 +168,7 @@ impl Diagnostic {
             | Self::StylesheetLoadFailed { .. } => "CSS",
             Self::HtmlTokenizerParseError | Self::HtmlParseWarning { .. } => "HTML",
             Self::ImageNotLoaded { .. }
+            | Self::InlineSvgNotRendered { .. }
             | Self::ImageUrlFragmentIgnored { .. }
             | Self::ImageUrlQueryIgnored { .. } => "image",
         }
@@ -208,6 +215,7 @@ impl fmt::Display for Diagnostic {
             Self::HtmlTokenizerParseError => write!(f, "tokenizer parse error"),
             Self::HtmlParseWarning { message } => write!(f, "{message}"),
             Self::ImageNotLoaded { src, error } => write!(f, "image '{src}' not shown: {error}"),
+            Self::InlineSvgNotRendered { error } => write!(f, "inline <svg> not drawn: {error}"),
             Self::ImageUrlFragmentIgnored { src } => {
                 write!(f, "ignoring fragment in '{src}': sprite sheets not supported")
             }

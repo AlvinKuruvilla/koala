@@ -21,11 +21,14 @@ use image::{ImageBuffer, Rgba, RgbaImage};
 use koala_css::{
     BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle, TextDecorationLine,
 };
+use koala_dom::NodeId;
 use koala_std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use koala_common::image::LoadedImage;
+
+use crate::inline_svg::InlineSvg;
 
 /// Common system font paths to search for a default (regular) font.
 const FONT_SEARCH_PATHS: &[&str] = &[
@@ -155,6 +158,9 @@ pub struct Renderer {
     font_bold_italic: Option<Arc<Font>>,
     /// Loaded images keyed by src attribute. Used for `DrawImage` commands.
     images: HashMap<String, LoadedImage>,
+    /// Parsed inline `<svg>` content keyed by element. Used for `DrawSvg`
+    /// commands.
+    inline_svgs: HashMap<NodeId, Arc<InlineSvg>>,
     /// Stack of active clip rectangles for overflow: hidden.
     ///
     /// [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
@@ -219,8 +225,17 @@ impl Renderer {
             font_italic: fonts.italic,
             font_bold_italic: fonts.bold_italic,
             images,
+            inline_svgs: HashMap::default(),
             clip_stack: Vec::new(),
         }
+    }
+
+    /// Give the renderer the document's inline `<svg>` content, so it can
+    /// draw `DrawSvg` commands. Without it, those boxes stay empty.
+    #[must_use]
+    pub fn with_inline_svgs(mut self, inline_svgs: HashMap<NodeId, Arc<InlineSvg>>) -> Self {
+        self.inline_svgs = inline_svgs;
+        self
     }
 
     /// Try to load a font from a list of filesystem paths.
@@ -356,6 +371,16 @@ impl Renderer {
                 opacity,
             } => {
                 self.draw_image(src, *x, *y, *width, *height, *opacity);
+            }
+            DisplayCommand::DrawSvg {
+                x,
+                y,
+                width,
+                height,
+                node,
+                opacity,
+            } => {
+                self.draw_svg(*node, *x, *y, *width, *height, *opacity);
             }
             DisplayCommand::DrawText {
                 x,
@@ -506,6 +531,64 @@ impl Renderer {
                 }
 
                 self.buffer.put_pixel(px as u32, py as u32, rgba);
+            }
+        }
+    }
+
+    /// Draw an inline `<svg>` element's content into its box: rasterize it
+    /// at the box's size, then alpha-blend it onto the buffer.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss
+    )]
+    fn draw_svg(&mut self, node: NodeId, x: f32, y: f32, width: f32, height: f32, opacity: f32) {
+        let Some(svg) = self.inline_svgs.get(&node).cloned() else {
+            return;
+        };
+        let dest_w = width.round() as u32;
+        let dest_h = height.round() as u32;
+        if dest_w == 0 || dest_h == 0 {
+            return;
+        }
+        // The box is the SVG viewport; see `inline_svg` for why the markup
+        // is parsed at its size.
+        let Some(tree) = svg.tree(dest_w as f32, dest_h as f32) else {
+            return;
+        };
+        let Some(mut pixmap) = tiny_skia::Pixmap::new(dest_w, dest_h) else {
+            return;
+        };
+        resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+
+        let dest_x = x.round() as i32;
+        let dest_y = y.round() as i32;
+        for (i, pixel) in pixmap.pixels().iter().enumerate() {
+            let px = dest_x + (i as u32 % dest_w) as i32;
+            let py = dest_y + (i as u32 / dest_w) as i32;
+            if px < 0
+                || py < 0
+                || (px as u32) >= self.width
+                || (py as u32) >= self.height
+                || !self.is_visible(px, py)
+            {
+                continue;
+            }
+            // tiny-skia stores premultiplied color; the frame buffer and
+            // `alpha_blend` use straight alpha.
+            let color = pixel.demultiply();
+            // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
+            let alpha = (f32::from(color.alpha()) * opacity) as u8;
+            if alpha == 0 {
+                continue;
+            }
+            let fg = Rgba([color.red(), color.green(), color.blue(), alpha]);
+            if alpha == 255 {
+                self.buffer.put_pixel(px as u32, py as u32, fg);
+            } else {
+                let bg = *self.buffer.get_pixel(px as u32, py as u32);
+                self.buffer.put_pixel(px as u32, py as u32, alpha_blend(fg, bg, alpha));
             }
         }
     }

@@ -784,3 +784,18 @@ measuring layout when the resolved size equals the base size is the fix.
   That needs the parser to tell the tokenizer; see the TODO in
   `tokenizer/core.rs`.
 - SVG `<script>` elements are popped but never run.
+
+## Inline SVG follow-ups (2026-09-27)
+
+- Page CSS does not reach inside an inline `<svg>`: `usvg` sees the
+  subtree's attributes and its own `<style>`, not the document's
+  stylesheets, so `svg path { fill: red }` in the page has no effect.
+  Only `currentColor` crosses over (via a `color` attribute on the root).
+- Each draw re-parses the SVG markup at the box size (see
+  `koala-browser/src/inline_svg.rs`). Cache the rasterised pixmap keyed by
+  element and size if `just bench` shows it.
+- An `<svg>` with only a `viewBox` and no CSS width falls back to 300px
+  wide (CSS 2.1 § 10.3.2's fallback). The spec suggests using the
+  containing block's width when it does not depend on the element.
+- `<img width>` / `<img height>` attributes are ignored: the HTML
+  rendering section's presentational hints for them are not implemented.

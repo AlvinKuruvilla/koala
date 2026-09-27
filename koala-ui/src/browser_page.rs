@@ -39,6 +39,7 @@ use koala_browser::css::{
     ComputedStyle, DisplayListBuilder, LayoutBox, Rect, canvas_background,
 };
 use koala_browser::dom::{DomTree, NodeId};
+use koala_browser::inline_svg::InlineSvg;
 use koala_browser::{
     FontProvider, LoadedDocument, LoadedImage, Renderer, RendererFonts, load_document,
     parse_html_string,
@@ -125,6 +126,7 @@ struct PageState {
     styles: koala_std::collections::HashMap<NodeId, ComputedStyle>,
     layout_tree: LayoutBox,
     images: koala_std::collections::HashMap<String, LoadedImage>,
+    inline_svgs: koala_std::collections::HashMap<NodeId, std::sync::Arc<InlineSvg>>,
     // The document's `<title>` text content, trimmed. Empty when
     // the document has no `<title>` element or its text is
     // whitespace-only. Used to set the tab label.
@@ -143,6 +145,7 @@ impl PageState {
             styles: doc.styles,
             layout_tree,
             images: doc.images,
+            inline_svgs: doc.inline_svgs,
             title,
         })
     }
@@ -740,7 +743,8 @@ fn render_state(state: &PageState, width: u32, height: u32) -> Vec<u8> {
         height,
         state.images.clone(),
         cached_fonts().clone(),
-    );
+    )
+    .with_inline_svgs(state.inline_svgs.clone());
 
     // Propagate the canvas background (CSS 2.1 § 14.2) so regions
     // of the viewport not covered by painted content still show the

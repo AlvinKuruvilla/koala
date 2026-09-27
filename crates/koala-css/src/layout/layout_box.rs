@@ -7,7 +7,7 @@ use koala_std::collections::HashMap;
 #[cfg(feature = "layout-trace")]
 use std::cell::Cell;
 
-use koala_dom::{DomTree, NodeId, NodeType};
+use koala_dom::{DomTree, Namespace, NodeId, NodeType};
 
 use crate::style::computed::{
     AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
@@ -195,6 +195,33 @@ fn layout_inline_content(
                 inline_layout.add_inline_block(node_id, mb.width, mb.height);
 
                 // Record the temporary position for post-layout repositioning.
+                inline_block_positions.push((node_id, mb));
+            }
+            BoxType::Principal(node_id)
+                if child.display.outer == OuterDisplayType::Inline && child.is_replaced =>
+            {
+                // [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
+                //
+                // "Inline-level boxes that are not inline boxes (such as
+                // replaced inline-level elements, inline-block elements, and
+                // inline-table elements) are called atomic inline-level boxes
+                // because they participate in their inline formatting context
+                // as a single opaque box."
+                //
+                // So an inline `<img>` or `<svg>` goes on the line like an
+                // inline-block: laid out on its own, then placed whole. Its
+                // size comes from `layout_replaced` (§ 10.3.2, § 10.6.2),
+                // which `layout` dispatches to, so no shrink-to-fit step.
+                let node_id = *node_id;
+                let temp_cb = Rect {
+                    x: content_rect.x,
+                    y: inline_layout.current_y,
+                    width: content_rect.width,
+                    height: f32::MAX,
+                };
+                child.layout(temp_cb, viewport, font_metrics, abs_cb);
+                let mb = child.dimensions.margin_box();
+                inline_layout.add_inline_block(node_id, mb.width, mb.height);
                 inline_block_positions.push((node_id, mb));
             }
             BoxType::Principal(_) if child.display.outer == OuterDisplayType::Inline => {
@@ -500,6 +527,17 @@ pub struct LayoutBox {
     ///
     /// Used as a key to look up image data at paint/render time.
     pub replaced_src: Option<String>,
+
+    /// True for an inline `<svg>` element: a replaced box whose content is
+    /// the element's own SVG subtree, drawn by the renderer at the box's
+    /// size. Its descendants generate no CSS boxes.
+    pub is_inline_svg: bool,
+
+    /// Intrinsic aspect ratio (width / height) of replaced content that
+    /// has one without having both intrinsic dimensions, such as an
+    /// `<svg>` sized only by its `viewBox`. When `None`, the ratio is
+    /// derived from `intrinsic_width` and `intrinsic_height` if both exist.
+    pub intrinsic_ratio: Option<f32>,
 
     /// Intrinsic width of the replaced content in pixels.
     ///
@@ -1076,6 +1114,8 @@ impl LayoutBox {
                     collapsed_margin_bottom: None,
                     is_replaced: false,
                     replaced_src: None,
+                    is_inline_svg: false,
+                    intrinsic_ratio: None,
                     intrinsic_width: None,
                     intrinsic_height: None,
                     flex_direction: FlexDirection::Row,
@@ -1163,11 +1203,27 @@ impl LayoutBox {
                     display
                 };
 
-                // Build children recursively
+                // [SVG 2 § 8.12](https://www.w3.org/TR/SVG2/coords.html#SizingSVGInCSS)
+                //
+                // An `<svg>` element in HTML content is a replaced element:
+                // CSS lays out its box, and the SVG content inside is drawn
+                // into it. The parser only puts an element in the SVG
+                // namespace inside an `<svg>`, so an SVG-namespace element
+                // reached from an HTML parent is an outermost `<svg>`.
+                let is_inline_svg = data.namespace == Namespace::Svg && tag == "svg";
+
+                // Build children recursively. An inline `<svg>`'s children
+                // are its SVG content, drawn by the renderer, so they
+                // generate no CSS boxes.
                 let is_flex_or_grid =
                     matches!(display.inner, InnerDisplayType::Flex | InnerDisplayType::Grid);
                 let mut children = Vec::new();
-                for &child_id in tree.children(node_id) {
+                let child_ids: &[NodeId] = if is_inline_svg {
+                    &[]
+                } else {
+                    tree.children(node_id)
+                };
+                for &child_id in child_ids {
                     if let Some(child_box) =
                         Self::build_box(tree, styles, child_id, image_dimensions, is_flex_or_grid)
                     {
@@ -1387,8 +1443,8 @@ impl LayoutBox {
                 //
                 // Detect replaced elements (e.g., <img>) and record their
                 // intrinsic dimensions and src attribute for layout and paint.
-                let (is_replaced, replaced_src, intrinsic_width, intrinsic_height) = if tag == "img"
-                {
+                let (is_replaced, replaced_src, intrinsic_width, intrinsic_height, intrinsic_ratio) =
+                    if tag == "img" {
                     let src = data.attrs.get("src").cloned();
                     let dims = image_dimensions.get(&node_id);
                     (
@@ -1396,7 +1452,11 @@ impl LayoutBox {
                         src,
                         dims.map(|(w, _)| *w),
                         dims.map(|(_, h)| *h),
+                        None,
                     )
+                } else if is_inline_svg {
+                    let (w, h, ratio) = svg_intrinsic_size(&data.attrs);
+                    (true, None, w, h, ratio)
                 } else if matches!(tag.as_str(), "input" | "textarea" | "select") {
                     // [§ 15.5.12 The input element](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control)
                     // [§ 15.5.14 The textarea element](https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element)
@@ -1406,9 +1466,9 @@ impl LayoutBox {
                     // <button> is NOT replaced — it has child content and uses
                     // normal inline-block shrink-to-fit layout.
                     let (w, h) = form_control_intrinsic_size(&tag, &data.attrs);
-                    (true, None, Some(w), Some(h))
+                    (true, None, Some(w), Some(h), None)
                 } else {
-                    (false, None, None, None)
+                    (false, None, None, None, None)
                 };
 
                 // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
@@ -1462,6 +1522,8 @@ impl LayoutBox {
                     collapsed_margin_bottom: None,
                     is_replaced,
                     replaced_src,
+                    is_inline_svg,
+                    intrinsic_ratio,
                     intrinsic_width,
                     intrinsic_height,
                     flex_direction,
@@ -1563,6 +1625,8 @@ impl LayoutBox {
                     collapsed_margin_bottom: None,
                     is_replaced: false,
                     replaced_src: None,
+                    is_inline_svg: false,
+                    intrinsic_ratio: None,
                     intrinsic_width: None,
                     intrinsic_height: None,
                     flex_direction: FlexDirection::Row,
@@ -3067,6 +3131,8 @@ impl LayoutBox {
             collapsed_margin_bottom: None,
             is_replaced: false,
             replaced_src: None,
+            is_inline_svg: false,
+            intrinsic_ratio: None,
             intrinsic_width: None,
             intrinsic_height: None,
             flex_direction: FlexDirection::Row,
@@ -3373,10 +3439,10 @@ impl LayoutBox {
         self.dimensions.margin.right = resolved_margin.right.to_px_or(0.0);
 
         // STEP 2: Compute intrinsic ratio.
-        let intrinsic_ratio = match (self.intrinsic_width, self.intrinsic_height) {
+        let intrinsic_ratio = self.intrinsic_ratio.or(match (self.intrinsic_width, self.intrinsic_height) {
             (Some(w), Some(h)) if h > 0.0 => Some(w / h),
             _ => None,
-        };
+        });
 
         // STEP 3: Resolve width.
         // [§ 10.3.2](https://www.w3.org/TR/CSS2/visudet.html#inline-replaced-width)
@@ -3771,6 +3837,94 @@ impl LayoutBox {
                 OuterDisplayType::Block | OuterDisplayType::ListItem
             ) || c.has_block_descendant()
         })
+    }
+}
+
+/// The intrinsic width, height and aspect ratio of an inline `<svg>`.
+///
+/// [SVG 2 § 8.12 Intrinsic sizing properties of SVG content](https://www.w3.org/TR/SVG2/coords.html#SizingSVGInCSS)
+///
+/// "when specified as a length, the width and height sizing properties of
+/// the 'svg' element control the intrinsic dimensions of the SVG image"
+///
+/// "'auto' and percentage lengths must not be used to determine an
+/// intrinsic width or intrinsic height."
+///
+/// Implementation note: this reads the `width` and `height` attributes,
+/// which are presentation attributes for those properties. CSS `width` and
+/// `height` on the element are the element's used size, which
+/// [`LayoutBox::layout_replaced`] already prefers over intrinsic sizes.
+fn svg_intrinsic_size(attrs: &koala_dom::AttributesMap) -> (Option<f32>, Option<f32>, Option<f32>) {
+    let width = attrs.get("width").and_then(|v| svg_absolute_length(v));
+    let height = attrs.get("height").and_then(|v| svg_absolute_length(v));
+
+    // "The intrinsic aspect ratio must be calculated using the following
+    // algorithm. If the algorithm returns null, then there is no intrinsic
+    // aspect ratio."
+    let ratio = match (width, height) {
+        // "If the width and height sizing properties on the 'svg' element are
+        // both absolute values: return width / height"
+        (Some(w), Some(h)) if h > 0.0 => Some(w / h),
+        // "If an SVG View is active: ..." Koala does not support SVG views.
+        //
+        // "If the 'viewBox' on the 'svg' element is correctly specified: let
+        // viewbox be the viewbox defined by the 'viewBox' attribute on the
+        // 'svg' element return viewbox.width / viewbox.height"
+        _ => attrs
+            .get("viewBox")
+            .and_then(|v| svg_view_box_size(v))
+            .map(|(w, h)| w / h),
+        // "return null"
+    };
+    (width, height, ratio)
+}
+
+/// A length in an SVG `width` or `height` attribute, in px, when it is an
+/// absolute length. Font-relative units, percentages and `auto` give `None`.
+///
+/// [CSS Values 4 § 6.2 Absolute Lengths](https://www.w3.org/TR/css-values-4/#absolute-lengths):
+/// "1cm = 96px/2.54", "1mm = 1/10th of 1cm", "1Q = 1/40th of 1cm",
+/// "1in = 2.54cm = 96px", "1pc = 1/6th of 1in", "1pt = 1/72nd of 1in".
+/// A unitless number is in user units, which are px for an outermost `<svg>`.
+fn svg_absolute_length(value: &str) -> Option<f32> {
+    let value = value.trim();
+    let split = value
+        .find(|c: char| c.is_ascii_alphabetic() || c == '%')
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split);
+    let number: f32 = number.trim().parse().ok()?;
+    let px_per_unit = match unit.to_ascii_lowercase().as_str() {
+        "" | "px" => 1.0,
+        "in" => 96.0,
+        "cm" => 96.0 / 2.54,
+        "mm" => 96.0 / 25.4,
+        "q" => 96.0 / 101.6,
+        "pt" => 96.0 / 72.0,
+        "pc" => 16.0,
+        _ => return None,
+    };
+    (number >= 0.0).then_some(number * px_per_unit)
+}
+
+/// The width and height of a `viewBox` attribute, when it is correctly
+/// specified.
+///
+/// [SVG 2 § 8.6 The 'viewBox' attribute](https://www.w3.org/TR/SVG2/coords.html#ViewBoxAttribute):
+/// "The value of the 'viewBox' attribute is a list of four numbers
+/// <min-x>, <min-y>, <width> and <height>, separated by whitespace and/or a
+/// comma" and "A negative value for <width> or <height> is an error and
+/// invalidates the 'viewBox' attribute. A value of zero disables rendering
+/// of the element."
+fn svg_view_box_size(value: &str) -> Option<(f32, f32)> {
+    let numbers: Vec<f32> = value
+        .split(|c: char| c.is_ascii_whitespace() || c == ',')
+        .filter(|part| !part.is_empty())
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    match numbers.as_slice() {
+        [_, _, w, h] if *w > 0.0 && *h > 0.0 => Some((*w, *h)),
+        _ => None,
     }
 }
 
