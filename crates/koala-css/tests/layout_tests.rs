@@ -4610,3 +4610,22 @@ fn test_inline_svg_intrinsic_size() {
     svgs(body, &mut found);
     assert_eq!(found, [(24.0, 12.0, 0), (100.0, 50.0, 0), (96.0, 48.0, 0)]);
 }
+
+/// [§ 10.5](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+///
+/// A percentage height on a replaced element whose containing block has no
+/// explicit height "computes to 'auto'". `layout_replaced` resolved it
+/// against the f32::MAX sentinel instead, so Google's `<img>` and `<svg>`
+/// boxes, and every ancestor, came out ~3.4e38 px tall and the renderer
+/// hung filling them.
+#[test]
+fn test_replaced_percentage_height_with_auto_containing_block() {
+    let root = layout_html(
+        "<html><head><style>* { margin: 0; } svg { display: block; height: 100%; }\
+         </style></head><body><div><svg width='24' height='12'></svg></div></body></html>",
+    );
+    let div = &box_at_depth(&root, 2).children[0];
+    let svg = &div.children[0];
+    assert_eq!(svg.dimensions.content.height, 12.0, "height: 100% acts as auto");
+    assert_eq!(div.dimensions.content.height, 12.0);
+}

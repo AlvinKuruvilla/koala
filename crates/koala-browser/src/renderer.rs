@@ -465,8 +465,8 @@ impl Renderer {
             || border_radius.bottom_left > 0.0
             || border_radius.bottom_right > 0.0;
 
-        for dy in 0..h {
-            for dx in 0..w {
+        for dy in on_canvas(yi, h, self.height) {
+            for dx in on_canvas(xi, w, self.width) {
                 let px = xi + dx as i32;
                 let py = yi + dy as i32;
                 if px < 0
@@ -618,8 +618,8 @@ impl Renderer {
             return;
         }
 
-        for dy in 0..dest_h {
-            for dx in 0..dest_w {
+        for dy in on_canvas(dest_y, dest_h, self.height) {
+            for dx in on_canvas(dest_x, dest_w, self.width) {
                 let px = dest_x + dx as i32;
                 let py = dest_y + dy as i32;
 
@@ -1048,6 +1048,22 @@ fn allocate_buffer(width: u32, height: u32) -> RgbaImage {
     ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]))
 }
 
+/// The offsets along one axis, out of `len` pixels starting at `start`, that
+/// fall on a canvas `limit` pixels long.
+///
+/// Drawing loops iterate this instead of `0..len` so a rectangle much
+/// larger than the canvas costs no more than the canvas. Layout can produce
+/// such rectangles (a height resolved against an indefinite containing
+/// block was one), and iterating all of `0..len` would run for billions of
+/// rows with every pixel rejected by the bounds check.
+fn on_canvas(start: i32, len: u32, limit: u32) -> std::ops::Range<u32> {
+    let start = i64::from(start);
+    let lo = (-start).clamp(0, i64::from(len));
+    let hi = (i64::from(limit) - start).clamp(lo, i64::from(len));
+    // Both are within 0..=len, which fits in u32.
+    u32::try_from(lo).expect("clamped to 0..=len")..u32::try_from(hi).expect("clamped to 0..=len")
+}
+
 /// Alpha blend a foreground color onto a background color.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn alpha_blend(fg: Rgba<u8>, bg: Rgba<u8>, alpha: u8) -> Rgba<u8> {
@@ -1060,4 +1076,21 @@ fn alpha_blend(fg: Rgba<u8>, bg: Rgba<u8>, alpha: u8) -> Rgba<u8> {
         f32::from(fg[2]).mul_add(a, f32::from(bg[2]) * inv_a) as u8,
         255,
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::on_canvas;
+
+    /// Only offsets that land on the canvas come back, whether the span
+    /// starts before it, ends after it, or misses it entirely.
+    #[test]
+    fn on_canvas_clips_to_the_canvas() {
+        assert_eq!(on_canvas(0, 10, 100), 0..10);
+        assert_eq!(on_canvas(-3, 10, 100), 3..10);
+        assert_eq!(on_canvas(95, 10, 100), 0..5);
+        assert_eq!(on_canvas(200, 10, 100), 0..0);
+        assert_eq!(on_canvas(-50, 10, 100), 10..10);
+        assert_eq!(on_canvas(0, u32::MAX, 100), 0..100);
+    }
 }

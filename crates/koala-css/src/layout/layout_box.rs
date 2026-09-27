@@ -3450,7 +3450,19 @@ impl LayoutBox {
         // "If 'width' has a computed value of 'auto', and the element has an
         // intrinsic width, then that intrinsic width is the used value of 'width'."
         let width_is_auto = matches!(self.width, None | Some(AutoLength::Auto));
-        let height_is_auto = matches!(self.height, None | Some(AutoLength::Auto));
+        // [§ 10.5](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+        //
+        // "If the height of the containing block is not specified explicitly
+        // (i.e., it depends on content height), and this element is not
+        // absolutely positioned, the value computes to 'auto'."
+        //
+        // f32::MAX is the sentinel for an "auto" containing block height, as
+        // in `calculate_block_height`. Without this a percentage height
+        // resolves against f32::MAX.
+        let cb_height_is_auto = containing_block.height >= f32::MAX / 2.0;
+        let height_is_auto = matches!(self.height, None | Some(AutoLength::Auto))
+            || (cb_height_is_auto
+                && matches!(self.height, Some(AutoLength::Length(LengthValue::Percent(_)))));
 
         let used_width = if width_is_auto {
             if let Some(iw) = self.intrinsic_width {
