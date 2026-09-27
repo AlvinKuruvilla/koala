@@ -1,99 +1,164 @@
-# Koala
+<p align="center">
+  <img src="koala-ui/macos/icon.svg" width="128" alt="Koala icon">
+</p>
 
-An experimental Rust browser engine, built from scratch — no WebKit, Blink, or Gecko. Koala is a research project exploring what a browser looks like when the primary consumer is an LLM agent, and the human UI is the viewport onto what the agent sees.
+<h1 align="center">Koala</h1>
 
-![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+<p align="center">
+  A browser engine written in Rust from the HTML and CSS specs.
+</p>
 
-## The experiment
+<p align="center">
+  <a href="https://github.com/AlvinKuruvilla/koala/actions/workflows/miri.yml"><img src="https://github.com/AlvinKuruvilla/koala/actions/workflows/miri.yml/badge.svg" alt="miri"></a>
+  <a href="https://github.com/AlvinKuruvilla/koala/actions/workflows/python.yml"><img src="https://github.com/AlvinKuruvilla/koala/actions/workflows/python.yml/badge.svg" alt="python"></a>
+  <img src="https://img.shields.io/badge/rust-2024_edition-orange?logo=rust" alt="Rust 2024 edition">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
+</p>
 
-Every "AI that browses the web" product today runs Chromium in a box and pixel-scrapes it. The browser was designed for humans; agents kludge on top. It's slow, flaky, and hostile.
+Koala parses, styles, lays out, and paints web pages without WebKit, Blink,
+or Gecko. Each algorithm cites its section of the WHATWG or CSS spec and
+quotes the spec text next to the code that implements it. JavaScript runs on
+[Boa](https://github.com/boa-dev/boa).
 
-Koala inverts that. The engine is being built to be driven by an agent, with a Qt shell as a window onto what the agent is doing.
+The goal is a browser that LLM agents can drive directly. Agents that browse
+today drive Chromium from outside, through screenshots or accessibility-tree
+snapshots. Koala will instead hand an agent the layout tree as typed data
+(boxes, roles, reading order) and each page's forms, links, and buttons as
+actions. That interface does not exist yet.
+Today Koala renders pages to PNG from the command line, or in a desktop
+browser with tabs.
 
-The long-term bets:
+## Contents
 
-- **The render tree as a typed API.** Agents consume structured layout — boxes, semantic roles, reading order — not screenshots. *"Click the primary action in the checkout form"* resolves through the layout tree, not pixel coordinates.
-- **Every page as an MCP-shaped tool.** The browser extracts a page's action surface (forms, links, buttons, regions) and hands it to an LLM as typed tools. Every site becomes a tool server for free.
-- **Deterministic, replayable sessions.** Agent runs are reproducible scripts of `(URL, DOM state, action, resulting render tree)`. Diffable, shareable, debuggable.
-- **Spec-faithful by construction.** The engine is a synthesized implementation of the WHATWG HTML standard and CSS 2.1+, with section numbers and spec text quoted inline next to the code. Correctness over velocity.
+- [Status](#status)
+- [Getting started](#getting-started)
+- [Architecture](#architecture)
+- [Development](#development)
+- [License](#license)
 
-**None of the agent API exists yet.** Koala today is an HTML/CSS engine, a CLI, and a Qt browser shell. This README describes the direction, not the current reality.
+## Status
 
-## What works today
+| Area | Supported |
+|---|---|
+| HTML | WHATWG tokenizer and tree builder, including all 2,231 named character references, tables, and forms |
+| CSS | Type, class, ID, attribute, and combinator selectors; cascade; custom properties; shorthands |
+| Layout | Block, inline, inline-block, flexbox, grid, tables, floats, margin collapsing, replaced elements |
+| Positioning | `static`, `relative`, `absolute`, `fixed`, `sticky`; stacking contexts; `opacity`; overflow clipping |
+| Painting | Text with weight, style, and decoration; backgrounds; borders with radius; box shadows; images |
+| JavaScript | DOM bindings (`querySelector`, `addEventListener`, element and text APIs), timers, WPT `testharness.js` |
+| Network | HTTP(S), `file:`, and `data:` URLs; per-destination `Accept` headers; the server's page on HTTP errors |
 
-- **HTML parsing** — WHATWG tokenizer and tree builder: DOCTYPE, tags, attributes, comments, RCDATA/RAWTEXT, all 2,231 named character references, tables, forms.
-- **CSS engine** — tokenizer, parser, selector matching (type/class/ID/combinator/attribute), cascade, computed styles, custom properties, shorthand expansion.
-- **Layout** — block (CSS 2.1 § 9–10), inline formatting context, flexbox, grid, tables, inline-block, margin collapsing, replaced elements (`<img>`), overflow clipping.
-- **Rendering** — software rasterizer producing PNG/JPG/BMP: text with font weight/style/decoration, backgrounds, borders with radius, box shadows, images.
-- **`koala-qt`** — Qt6 browser shell over a `cxx` bridge into the engine. Tabs, location bar, landing page.
-- **`koala` CLI** — parse HTML, dump DOM and layout trees, render any URL to a PNG.
+Not supported: media queries, pseudo-elements, `z-index`, transforms,
+animations, and font fallback.
 
-**Notable gaps:** no JavaScript execution wired through the DOM yet (Boa is integrated but idle), no media queries, no pseudo-elements, no floats, no absolute positioning, no animations, no agent API. Expect rough edges.
+## Getting started
 
-## Try it
+Koala needs a Rust toolchain with 2024 edition support. The browser's UI is
+[Slint](https://slint.dev), a Rust crate, so Cargo builds everything. The
+recipes below use [`just`](https://github.com/casey/just).
+
+Open the browser:
 
 ```bash
-# Render a URL to a PNG
-cargo run --bin koala -- -S out.png https://example.com
-
-# Dump the DOM tree
-cargo run --bin koala -- https://example.com
-
-# Dump the computed layout tree (1280x720 viewport)
-cargo run --bin koala -- --layout https://example.com
-
-# Parse inline HTML
-cargo run --bin koala -- --html '<h1>Hello</h1>' --layout
-
-# Launch the Qt browser shell (requires Qt6 — `brew install qt` on macOS)
-cargo run --bin koala-qt
+just gui
 ```
+
+This builds `Koala.app` and runs it under `lldb`, so a crash prints a
+backtrace. The bundle is macOS-only; elsewhere, run
+`cargo run --bin koala-ui`.
+
+Render a page from the command line:
+
+```bash
+cargo run --bin koala -- -S out.png https://example.com   # screenshot
+cargo run --bin koala -- https://example.com              # DOM tree
+cargo run --bin koala -- --layout https://example.com     # layout tree
+cargo run --bin koala -- --html '<h1>Hello</h1>' --layout # inline HTML
+```
+
+The default viewport is 1280×720; `--width` and `--height` change it.
 
 ## Architecture
 
-```
-HTML ──→ Tokenizer ──→ Parser ──→ DOM Tree
-                                      │
-CSS  ──→ Tokenizer ──→ Parser ──→ Stylesheet
-                                      │
-                        Cascade ──→ Computed Styles
-                                      │
-                        Layout  ──→ Box Tree
-                                      │
-                        Paint   ──→ Display List
-                                      │
-                        Raster  ──→ Pixels
+A page moves through the engine top to bottom. When JavaScript mutates the
+DOM, the page goes back through the cascade and everything after it.
+
+```text
+bytes ─► HTML tokenizer ─► tree builder ─► DOM ◄──── JavaScript (Boa)
+                                            │
+CSS ───► CSS tokenizer ──► parser ──► cascade ─► computed styles
+                                            │
+                                   layout ─► box tree
+                                            │
+                                    paint ─► display list
+                                            │
+                                   raster ─► pixels
 ```
 
-```
+```text
 koala/
 ├── crates/
-│   ├── koala-common/     # Shared utilities (URL, fetching, images)
-│   ├── koala-dom/        # Arena-based DOM tree
-│   ├── koala-html/       # WHATWG tokenizer and parser
-│   ├── koala-css/        # CSS parser, cascade, layout, paint
-│   ├── koala-js/         # Boa-backed JavaScript runtime
-│   └── koala-browser/    # Document pipeline + software rasterizer
-├── koala-cli/            # CLI: parse, inspect, screenshot
-├── koala-qt/             # Qt6 browser shell (cxx bridge)
-└── res/                  # Test HTML and fonts
+│   ├── koala-common/   URLs, images, warnings, allocation counting
+│   ├── koala-fetch/    WHATWG Fetch: requests, destinations, senders
+│   ├── koala-dom/      arena-allocated DOM tree
+│   ├── koala-html/     HTML tokenizer and tree builder
+│   ├── koala-css/      CSS parser, cascade, layout, paint
+│   ├── koala-js/       Boa runtime and DOM bindings
+│   ├── koala-browser/  document pipeline and software rasterizer
+│   ├── koala-wpt/      web-platform-tests glue
+│   ├── koala-debug/    diagnostic probes for Boa and memory use
+│   └── koala-std/      no_std collections written for koala
+├── koala-cli/          the `koala` binary
+├── koala-ui/           the desktop browser (Slint)
+├── tools/koala-lab/    performance comparisons between builds
+└── res/                fonts, fixtures, and test pages
 ```
 
-Every algorithm is implemented alongside its WHATWG or CSS section number, with the spec text quoted inline. See [`CLAUDE.md`](CLAUDE.md) for the project's spec-commenting conventions.
+[`CLAUDE.md`](CLAUDE.md) describes the spec-commenting conventions every
+engine crate follows.
 
 ## Development
 
 ```bash
-cargo build                                  # Build workspace
-cargo test                                   # Full test suite
-cargo test -p koala-css                      # Single crate
+cargo test                  # all Rust tests
+cargo test -p koala-css     # one crate
 cargo clippy --workspace
-cargo fmt --check
-
-# Verbose layout tracing (block/inline/flex/grid/measure)
-cargo run --bin koala --features layout-trace -- -S out.png <url>
+just py-check               # ruff, mypy, and pytest for the Python tools
 ```
+
+### Measuring performance
+
+`just lab compare` builds two commits, loads each page of a recorded corpus
+in fresh processes, and reports which stages changed and by how much. With no
+arguments it compares the working tree against where the branch left
+`master`:
+
+```bash
+just lab corpus record        # record the corpus pages once
+just lab compare              # this branch vs. master
+just lab compare HEAD~3 HEAD  # any two commits
+```
+
+Recorded pages replay without the network, so both builds see the same bytes.
+A change counts only when it passes a Mann-Whitney test across seven
+processes per build, with a Holm correction across stages.
+
+### Conformance
+
+```bash
+just wpt-setup                      # once: create the wptrunner venv
+just wpt /css/CSS2/visudet/         # run a WPT directory
+just dashboard                      # browse recorded runs
+```
+
+### Debugging layout
+
+```bash
+cargo run --bin koala --features layout-trace -- -S out.png <url> 2> trace.txt
+```
+
+The trace tags each line by subsystem: `[FLEX]`, `[INLINE]`, `[BLOCK STEP`,
+`[MEASURE]`, `[LAYOUT DEPTH]`.
 
 ## License
 
