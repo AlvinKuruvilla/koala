@@ -84,7 +84,7 @@ pub struct TestharnessResult {
     /// object had no `name` property.
     pub name: String,
     /// Numeric status code: 0 = PASS, 1 = FAIL, 2 = TIMEOUT,
-    /// 3 = NOTRUN, 4 = PRECONDITION_FAILED. Out-of-range values
+    /// 3 = NOTRUN, 4 = `PRECONDITION_FAILED`. Out-of-range values
     /// are preserved as-is so the executor can surface them
     /// rather than silently mapping to FAIL.
     pub status: u32,
@@ -103,7 +103,7 @@ pub struct TestharnessResult {
 #[derive(Debug, Clone)]
 pub struct TestharnessCompletion {
     /// Numeric overall status: 0 = OK, 1 = ERROR, 2 = TIMEOUT,
-    /// 3 = PRECONDITION_FAILED.
+    /// 3 = `PRECONDITION_FAILED`.
     pub status: u32,
     /// Diagnostic message; empty in the clean OK case.
     pub message: String,

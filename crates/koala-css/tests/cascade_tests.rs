@@ -12,7 +12,7 @@ use koala_css::Stylesheet;
 use koala_css::cascade::compute_styles;
 use koala_css::parser::CSSParser;
 use koala_css::tokenizer::CSSTokenizer;
-use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
+use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
 
 fn parse_css(css: &str) -> Stylesheet {
     let mut tokenizer = CSSTokenizer::new(css.to_string());
@@ -52,6 +52,7 @@ fn make_element_with_attrs(
     NodeType::Element(ElementData {
         tag_name: tag.into(),
         attrs,
+        namespace: Namespace::Html,
     })
 }
 

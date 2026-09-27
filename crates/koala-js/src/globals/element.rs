@@ -44,7 +44,7 @@ use super::selectors::{find_all_matches, find_first_match, parse_query_arg};
 /// `events::dispatch_at_scope`. The Element-side EventTarget
 /// methods derive this from the wrapper's `__nodeId` slot, so
 /// listeners survive re-querying the same node through a new
-/// JsElement wrapper.
+/// `JsElement` wrapper.
 pub(crate) fn element_scope_key(node_id: NodeId) -> String {
     format!("node:{}", node_id.0)
 }

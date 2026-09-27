@@ -11,3 +11,11 @@ disallowed-methods = [
     { path = "reqwest::get", reason = "fetch through koala_fetch so --record/--replay see the request" },
     { path = "reqwest::blocking::get", reason = "fetch through koala_fetch so --record/--replay see the request" },
 ]
+
+# Proper nouns from the specs that `doc_markdown` would otherwise want in
+# backticks, which would mangle quoted spec text. ".." keeps clippy's
+# default list.
+doc-valid-idents = [
+    "MathML", "DOMException", "DOMString", "DOMContentLoaded", "EventTarget",
+    "HTMLElement", "WebIDL", "TypeError", "ToString", "ToUint32", "XLink", "..",
+]

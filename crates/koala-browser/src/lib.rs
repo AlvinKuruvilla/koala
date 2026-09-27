@@ -18,6 +18,7 @@
 
 pub mod font_metrics;
 pub mod image_loader;
+pub mod inline_svg;
 pub mod renderer;
 
 pub use koala_css as css;
@@ -95,6 +96,11 @@ pub struct LoadedDocument {
     ///
     /// Used by the renderer to draw `DrawImage` commands.
     pub images: HashMap<String, LoadedImage>,
+
+    /// Every inline `<svg>` element's content, parsed, keyed by the element.
+    ///
+    /// Used by the renderer to draw `DrawSvg` commands.
+    pub inline_svgs: HashMap<NodeId, std::sync::Arc<inline_svg::InlineSvg>>,
 }
 
 impl LoadedDocument {
@@ -327,6 +333,10 @@ fn parse_html_with_base_url<H: JsHooks>(
         (styles, layout_tree)
     };
 
+    // Parsed after scripts so the content matches the final DOM, and after
+    // the cascade so `currentColor` has the element's computed color.
+    let inline_svgs = inline_svg::load_inline_svgs(&dom, &styles);
+
     LoadedDocument {
         html_source: html.to_string(),
         source_path: String::new(),
@@ -339,6 +349,7 @@ fn parse_html_with_base_url<H: JsHooks>(
         parse_issues,
         diagnostics: diagnostics::take(),
         images,
+        inline_svgs,
     }
 }
 

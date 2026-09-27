@@ -51,17 +51,20 @@ fn peak_rss_bytes() -> u64 {
     if rc != 0 {
         return 0;
     }
+    // The kernel never reports a negative peak.
+    let max_rss = u64::try_from(ru.ru_maxrss).unwrap_or(0);
     #[cfg(target_os = "macos")]
     {
-        ru.ru_maxrss as u64
+        max_rss
     }
     #[cfg(not(target_os = "macos"))]
     {
         // Linux: ru_maxrss is KB.
-        (ru.ru_maxrss as u64).saturating_mul(1024)
+        max_rss.saturating_mul(1024)
     }
 }
 
+#[allow(clippy::cast_precision_loss, reason = "a display value, rounded to 0.1 MB")]
 fn format_mb(bytes: u64) -> String {
     format!("{:>8.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }
@@ -82,11 +85,10 @@ fn report(kind: &str, name: &str) {
         started_at: Instant::now(),
         last_rss: rss,
     });
-    let delta_signed = rss as i64 - st.last_rss as i64;
-    let delta_str = if delta_signed >= 0 {
-        format!("+{}", format_mb(delta_signed as u64))
+    let delta_str = if rss >= st.last_rss {
+        format!("+{}", format_mb(rss - st.last_rss))
     } else {
-        format!("-{}", format_mb((-delta_signed) as u64))
+        format!("-{}", format_mb(st.last_rss - rss))
     };
     let elapsed_ms = st.started_at.elapsed().as_millis();
     eprintln!(

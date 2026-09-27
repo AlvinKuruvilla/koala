@@ -8,6 +8,7 @@
 use crate::ColorValue;
 use crate::style::BorderRadius;
 use crate::style::values::{FontStyle, TextDecorationLine};
+use koala_dom::NodeId;
 
 /// A single drawing command.
 ///
@@ -86,6 +87,29 @@ pub enum DisplayCommand {
         /// [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
         ///
         /// Opacity multiplier for the image (0.0 = fully transparent, 1.0 = fully opaque).
+        opacity: f32,
+    },
+
+    /// Draw an inline `<svg>` element's content into its box.
+    ///
+    /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+    /// Step 5: "the replaced content of replaced inline-level elements"
+    ///
+    /// Unlike [`Self::DrawImage`], the content is vector: the renderer
+    /// rasterizes the `<svg>` subtree at `width` x `height`, so it stays
+    /// sharp at whatever size layout gave the box.
+    DrawSvg {
+        /// X coordinate of the box's top-left corner.
+        x: f32,
+        /// Y coordinate of the box's top-left corner.
+        y: f32,
+        /// Width of the content box in pixels.
+        width: f32,
+        /// Height of the content box in pixels.
+        height: f32,
+        /// The `<svg>` element, used as the key to its parsed content.
+        node: NodeId,
+        /// [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
         opacity: f32,
     },
 

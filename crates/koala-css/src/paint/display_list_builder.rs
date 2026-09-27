@@ -251,6 +251,18 @@ impl<'a> DisplayListBuilder<'a> {
                     opacity: layout_box.opacity,
                 });
             }
+            if layout_box.is_inline_svg
+                && let BoxType::Principal(node) = layout_box.box_type
+            {
+                display_list.push(DisplayCommand::DrawSvg {
+                    x: dims.content.x,
+                    y: dims.content.y,
+                    width: dims.content.width,
+                    height: dims.content.height,
+                    node,
+                    opacity: layout_box.opacity,
+                });
+            }
 
             // [CSS 2.1 Appendix E.2 Step 7](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
             // "the element's text"

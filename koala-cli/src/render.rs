@@ -93,7 +93,8 @@ pub(crate) fn render_document_once(
         height,
         doc.images.clone(),
         cached_renderer_fonts().clone(),
-    );
+    )
+    .with_inline_svgs(doc.inline_svgs.clone());
     renderer.render(&display_list);
 
     Ok(renderer)

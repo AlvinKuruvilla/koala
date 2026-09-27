@@ -28,7 +28,7 @@ use boa_engine::{
     Context, JsResult, JsValue, NativeFunction, js_string,
     object::ObjectInitializer, property::Attribute,
 };
-use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
+use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
 
 use crate::dom_handle::{with_dom, with_dom_mut};
 
@@ -281,10 +281,14 @@ fn create_element(
     let name = required_string_arg(args, 0, "createElement", "localName", context)?
         .to_ascii_lowercase();
 
+    // "Let namespace be the HTML namespace, if this is an HTML document or
+    // this's content type is "application/xhtml+xml"; otherwise null."
+    // Koala only has HTML documents.
     let new_id = with_dom_mut(|dom| {
         dom.alloc(NodeType::Element(ElementData {
             tag_name: name.into(),
             attrs: AttributesMap::new(),
+            namespace: Namespace::Html,
         }))
     })
     .ok_or_else(no_dom_error)?;

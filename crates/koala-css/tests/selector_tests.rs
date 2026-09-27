@@ -7,7 +7,7 @@ use koala_std::collections::HashMap;
 use koala_css::selector::{
     AttributeSelector, Combinator, PseudoClass, SimpleSelector, Specificity, parse_selector,
 };
-use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
+use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
 
 fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> ElementData {
     let mut attrs = HashMap::new();
@@ -20,6 +20,7 @@ fn make_element(tag: &str, id: Option<&str>, classes: &[&str]) -> ElementData {
     ElementData {
         tag_name: tag.into(),
         attrs,
+        namespace: Namespace::Html,
     }
 }
 
@@ -264,6 +265,7 @@ fn test_match_class_separated_by_any_ascii_whitespace() {
         let element = ElementData {
             tag_name: "div".into(),
             attrs,
+            namespace: Namespace::Html,
         };
         assert!(selector.matches(&element), "class={class_attr:?} should match .b");
     }
@@ -355,6 +357,7 @@ fn make_element_type(tag: &str, id: Option<&str>, classes: &[&str]) -> NodeType 
     NodeType::Element(ElementData {
         tag_name: tag.into(),
         attrs,
+        namespace: Namespace::Html,
     })
 }
 
@@ -928,6 +931,7 @@ fn test_matches_link() {
     let a_with_href = tree.alloc(NodeType::Element(ElementData {
         tag_name: "a".into(),
         attrs: a_attrs,
+        namespace: Namespace::Html,
     }));
     let a_without_href = tree.alloc(make_element_type("a", None, &[]));
 
@@ -952,6 +956,7 @@ fn make_element_with_attrs(tag: &str, attrs: &[(&str, &str)]) -> ElementData {
     ElementData {
         tag_name: tag.into(),
         attrs: attr_map,
+        namespace: Namespace::Html,
     }
 }
 

@@ -87,3 +87,60 @@ pub fn adjust_svg_attributes(attributes: &mut [Attribute]) {
         }
     }
 }
+
+/// [§ 13.2.6.5 The rules for parsing tokens in foreign content](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign)
+///
+/// "If the adjusted current node is an element in the SVG namespace, and
+/// the token's tag name is one of the ones in the first column of the
+/// following table, change the tag name to the name given in the
+/// corresponding cell in the second column. (This fixes the case of SVG
+/// elements that are not all lowercase.)"
+const SVG_TAG_NAME_ADJUSTMENTS: &[(&str, &str)] = &[
+    ("altglyph", "altGlyph"),
+    ("altglyphdef", "altGlyphDef"),
+    ("altglyphitem", "altGlyphItem"),
+    ("animatecolor", "animateColor"),
+    ("animatemotion", "animateMotion"),
+    ("animatetransform", "animateTransform"),
+    ("clippath", "clipPath"),
+    ("feblend", "feBlend"),
+    ("fecolormatrix", "feColorMatrix"),
+    ("fecomponenttransfer", "feComponentTransfer"),
+    ("fecomposite", "feComposite"),
+    ("feconvolvematrix", "feConvolveMatrix"),
+    ("fediffuselighting", "feDiffuseLighting"),
+    ("fedisplacementmap", "feDisplacementMap"),
+    ("fedistantlight", "feDistantLight"),
+    ("fedropshadow", "feDropShadow"),
+    ("feflood", "feFlood"),
+    ("fefunca", "feFuncA"),
+    ("fefuncb", "feFuncB"),
+    ("fefuncg", "feFuncG"),
+    ("fefuncr", "feFuncR"),
+    ("fegaussianblur", "feGaussianBlur"),
+    ("feimage", "feImage"),
+    ("femerge", "feMerge"),
+    ("femergenode", "feMergeNode"),
+    ("femorphology", "feMorphology"),
+    ("feoffset", "feOffset"),
+    ("fepointlight", "fePointLight"),
+    ("fespecularlighting", "feSpecularLighting"),
+    ("fespotlight", "feSpotLight"),
+    ("fetile", "feTile"),
+    ("feturbulence", "feTurbulence"),
+    ("foreignobject", "foreignObject"),
+    ("glyphref", "glyphRef"),
+    ("lineargradient", "linearGradient"),
+    ("radialgradient", "radialGradient"),
+    ("textpath", "textPath"),
+];
+
+/// The SVG element name for a lowercased `tag_name`, per the table above.
+/// Names outside the table are already correct and come back unchanged.
+#[must_use]
+pub fn adjust_svg_tag_name(tag_name: &str) -> &str {
+    SVG_TAG_NAME_ADJUSTMENTS
+        .iter()
+        .find(|&&(from, _)| from == tag_name)
+        .map_or(tag_name, |&(_, to)| to)
+}

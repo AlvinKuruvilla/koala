@@ -372,31 +372,19 @@ fn ensure_bucket(
 ) -> JsResult<JsArray> {
     let storage = listeners_storage(context)?;
     let scope_key = JsString::from(scope);
-    let scope_obj = match storage.get(scope_key.clone(), context)?.as_object() {
-        Some(o) => o.clone(),
-        None => {
-            let fresh = JsObject::with_null_proto();
-            let _ = storage.set(
-                scope_key,
-                JsValue::from(fresh.clone()),
-                false,
-                context,
-            )?;
-            fresh
-        }
+    let scope_obj = if let Some(o) = storage.get(scope_key.clone(), context)?.as_object() {
+        o.clone()
+    } else {
+        let fresh = JsObject::with_null_proto();
+        let _ = storage.set(scope_key, JsValue::from(fresh.clone()), false, context)?;
+        fresh
     };
-    let bucket = match scope_obj.get(type_.clone(), context)?.as_object() {
-        Some(o) => JsArray::from_object(o.clone())?,
-        None => {
-            let fresh = JsArray::new(context)?;
-            let _ = scope_obj.set(
-                type_.clone(),
-                JsValue::from(fresh.clone()),
-                false,
-                context,
-            )?;
-            fresh
-        }
+    let bucket = if let Some(o) = scope_obj.get(type_.clone(), context)?.as_object() {
+        JsArray::from_object(o.clone())?
+    } else {
+        let fresh = JsArray::new(context)?;
+        let _ = scope_obj.set(type_.clone(), JsValue::from(fresh.clone()), false, context)?;
+        fresh
     };
     Ok(bucket)
 }

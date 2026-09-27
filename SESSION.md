@@ -759,9 +759,6 @@ privileges ordinary pages do not.
 - Selector lists: an unknown pseudo-class makes the whole list invalid per
   spec (Ladybird drops the rule); Koala turns that one selector into
   never-match and keeps the rest, so `a:foo, b {}` still styles `b`.
-- `cargo clippy --workspace` fails on 26 errors in koala-js (22 are
-  `doc_markdown`), new with the 1.97 toolchain. They were hidden until
-  koala-css's own clippy errors were fixed, since clippy stopped there.
 
 ## Text does not wrap in a narrow block (2026-09-26)
 
@@ -775,3 +772,30 @@ The column flex base size lays each item out twice (a measuring clone,
 then the real layout), so nested column containers cost 2^depth. See
 `column_content_base_size` in `koala-css/src/layout/flex.rs`; reusing the
 measuring layout when the resolved size equals the base size is the fix.
+
+## Foreign content follow-ups (2026-09-27)
+
+- "Has an element in scope" (§ 13.2.4.2) lists MathML `mi`, `mo`, `mn`,
+  `ms`, `mtext`, `annotation-xml` and SVG `foreignObject`, `desc`, `title`
+  as scope boundaries. Koala's scope checks compare tag names only, so an
+  HTML end tag inside `<foreignObject>` can reach elements outside the SVG.
+- CDATA sections: the tokenizer's markup-declaration state should allow
+  `<![CDATA[` when the adjusted current node is not in the HTML namespace.
+  That needs the parser to tell the tokenizer; see the TODO in
+  `tokenizer/core.rs`.
+- SVG `<script>` elements are popped but never run.
+
+## Inline SVG follow-ups (2026-09-27)
+
+- Page CSS does not reach inside an inline `<svg>`: `usvg` sees the
+  subtree's attributes and its own `<style>`, not the document's
+  stylesheets, so `svg path { fill: red }` in the page has no effect.
+  Only `currentColor` crosses over (via a `color` attribute on the root).
+- Each draw re-parses the SVG markup at the box size (see
+  `koala-browser/src/inline_svg.rs`). Cache the rasterised pixmap keyed by
+  element and size if `just bench` shows it.
+- An `<svg>` with only a `viewBox` and no CSS width falls back to 300px
+  wide (CSS 2.1 § 10.3.2's fallback). The spec suggests using the
+  containing block's width when it does not depend on the element.
+- `<img width>` / `<img height>` attributes are ignored: the HTML
+  rendering section's presentational hints for them are not implemented.

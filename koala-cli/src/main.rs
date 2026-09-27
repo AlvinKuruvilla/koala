@@ -56,6 +56,10 @@ use crate::render::render_document_to_path;
     # Screenshot with custom viewport size
     koala --screenshot output.png --width 1920 --height 1080 https://example.com
 "#)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent command-line flag, the usual shape for clap"
+)]
 struct Cli {
     /// Path to HTML file or URL to fetch and parse
     #[arg(value_name = "FILE|URL", group = "input")]

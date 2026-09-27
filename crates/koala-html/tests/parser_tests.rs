@@ -618,3 +618,82 @@ fn test_ol_end_tag_scope_checking() {
         "text should still appear after stray </ol>"
     );
 }
+
+/// The tag names and namespaces of `id`'s element children, in order.
+fn child_elements(tree: &DomTree, id: NodeId) -> Vec<(String, koala_dom::Namespace)> {
+    tree.children(id)
+        .iter()
+        .filter_map(|&child| tree.as_element(child))
+        .map(|data| (data.tag_name.to_string(), data.namespace))
+        .collect()
+}
+
+/// [§ 13.2.6.5](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign)
+///
+/// Inside `<svg>`, a self-closing tag pops at once, element and attribute
+/// names get their SVG case back, and everything is in the SVG namespace.
+/// Before foreign content was implemented, `<rect/>` stayed open and
+/// `<circle/>` nested inside it, and names stayed lowercase.
+#[test]
+fn test_svg_foreign_content() {
+    use koala_dom::Namespace::{Html, Svg};
+
+    let tree = parse(
+        "<svg viewbox='0 0 10 10'><defs><lineargradient id=g><stop offset=0 /></lineargradient>\
+         </defs><rect/><circle r=1 /></svg><p>after</p>",
+    );
+    let body = find_element(&tree, NodeId::ROOT, "body").expect("body exists");
+    let svg = find_element(&tree, body, "svg").expect("svg exists");
+
+    assert_eq!(
+        child_elements(&tree, body),
+        [("svg".to_string(), Svg), ("p".to_string(), Html)]
+    );
+    assert_eq!(
+        child_elements(&tree, svg),
+        [
+            ("defs".to_string(), Svg),
+            ("rect".to_string(), Svg),
+            ("circle".to_string(), Svg),
+        ]
+    );
+    let gradient = find_element(&tree, svg, "linearGradient").expect("tag name case restored");
+    assert_eq!(child_elements(&tree, gradient), [("stop".to_string(), Svg)]);
+    let svg_data = tree.as_element(svg).expect("svg is an element");
+    assert_eq!(svg_data.attrs.get("viewBox").map(String::as_str), Some("0 0 10 10"));
+}
+
+/// "A start tag whose tag name is one of: ... "p" ..." inside SVG pops back
+/// out to HTML content, and an SVG `<foreignObject>` is an HTML integration
+/// point, where HTML start tags stay HTML without leaving the SVG.
+#[test]
+fn test_svg_breakout_and_integration_point() {
+    use koala_dom::Namespace::{Html, Svg};
+
+    let tree = parse("<svg><circle/><p>out</p></svg>");
+    let body = find_element(&tree, NodeId::ROOT, "body").expect("body exists");
+    assert_eq!(
+        child_elements(&tree, body),
+        [("svg".to_string(), Svg), ("p".to_string(), Html)]
+    );
+
+    let tree = parse("<svg><foreignObject><div>in</div></foreignObject></svg>");
+    let foreign = find_element(&tree, NodeId::ROOT, "foreignObject").expect("foreignObject");
+    assert_eq!(child_elements(&tree, foreign), [("div".to_string(), Html)]);
+}
+
+/// `<math>` content is in the MathML namespace, and a MathML text
+/// integration point (`mi`) takes HTML start tags as HTML.
+#[test]
+fn test_mathml_foreign_content() {
+    use koala_dom::Namespace::{Html, MathMl};
+
+    let tree = parse("<math><mi>x<b>y</b></mi><mo>+</mo></math>");
+    let math = find_element(&tree, NodeId::ROOT, "math").expect("math exists");
+    assert_eq!(
+        child_elements(&tree, math),
+        [("mi".to_string(), MathMl), ("mo".to_string(), MathMl)]
+    );
+    let mi = find_element(&tree, math, "mi").expect("mi exists");
+    assert_eq!(child_elements(&tree, mi), [("b".to_string(), Html)]);
+}
