@@ -30,19 +30,15 @@ pub use renderer::{Renderer, RendererFonts};
 // Re-export LoadedImage from koala-common for backwards compatibility.
 pub use koala_common::image::LoadedImage;
 
-/// WPT-style hosts-file DNS overrides for reqwest. See
-/// [`koala_common::hosts`] for the full module docs.
-pub use koala_common::hosts;
-
 /// Engine-wide diagnostic-warning system, plus the process-wide
 /// quiet flag toggled by `koala-cli --wpt-protocol`.
 pub use koala_common::warning;
 /// Re-exported fetch layer. Callers can install a custom
-/// [`net::RequestSender`] (e.g. a [`net::MappedSender`] wrapping
-/// [`net::DefaultSender`]) before [`load_document`] runs to
+/// [`fetch::RequestSender`] (e.g. a [`fetch::MappedSender`] wrapping
+/// [`fetch::DefaultSender`]) before [`load_document`] runs to
 /// substitute local files for specific URLs without touching the
 /// loaders.
-pub use koala_common::net;
+pub use koala_fetch as fetch;
 
 use image_loader::{
     ImageLoaderPipeline, fetch_image_bytes, strip_url_decorations, warn_url_decorations,
@@ -97,13 +93,13 @@ pub struct LoadedDocument {
 }
 
 /// Error type for document loading. Every fetch path (HTTP, `data:`,
-/// local file) flows through [`koala_common::net`], so a single
+/// local file) flows through [`koala_fetch`], so a single
 /// `Fetch` variant covers all of them.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     /// Failed to fetch the requested URL or file.
     #[error(transparent)]
-    Fetch(#[from] net::FetchError),
+    Fetch(#[from] fetch::FetchError),
 }
 
 /// Extension points into the JS lifecycle for callers who need
@@ -200,7 +196,7 @@ pub fn load_document_with_hooks<H: JsHooks>(
         path.to_string()
     } else {
         koala_common::url::file_url_from_path(std::path::Path::new(path)).map_err(|source| {
-            net::FetchError::LocalRead {
+            fetch::FetchError::LocalRead {
                 path: path.to_string(),
                 source,
             }
@@ -216,9 +212,10 @@ pub fn load_document_with_hooks<H: JsHooks>(
     // `HttpErrorNavigationThrottle`, Firefox's `nsURILoader`). Only the
     // document gets this treatment; a stylesheet, script, or image that
     // comes back with an error status is not used.
-    let html_bytes = match net::fetch_bytes(&document_url) {
+    let request = fetch::Request::new(&document_url, fetch::Destination::Document);
+    let html_bytes = match fetch::fetch_bytes(&request) {
         Ok(bytes) => bytes,
-        Err(net::FetchError::HttpStatus { body, .. }) if !body.is_empty() => body,
+        Err(fetch::FetchError::HttpStatus { body, .. }) if !body.is_empty() => body,
         Err(error) => return Err(error.into()),
     };
     let html_source = String::from_utf8_lossy(&html_bytes).into_owned();
@@ -685,9 +682,10 @@ fn load_scripts(
 /// § 4.12.1.1.6 ("Decoding the response's body as UTF-8"). Invalid
 /// UTF-8 is replaced with `U+FFFD` rather than rejected, matching
 /// the spec's lossy decode. URL-scheme dispatch (HTTP, `data:`,
-/// local file) is delegated to [`koala_common::net`].
+/// local file) is delegated to [`koala_fetch`].
 fn fetch_script_source(resolved_url: &str) -> Result<String, String> {
-    let bytes = net::fetch_bytes(resolved_url).map_err(|e| e.to_string())?;
+    let request = fetch::Request::new(resolved_url, fetch::Destination::Script);
+    let bytes = fetch::fetch_bytes(&request).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 

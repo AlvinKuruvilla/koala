@@ -7,6 +7,7 @@ description = "Document loading and rendering pipeline for the Koala renderer"
 
 [dependencies]
 koala-common.workspace = true
+koala-fetch.workspace = true
 koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true

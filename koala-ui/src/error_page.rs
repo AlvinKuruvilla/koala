@@ -16,7 +16,7 @@
 // or message can reach the page as anything but text.
 
 use koala_browser::LoadError;
-use koala_browser::net::FetchCause;
+use koala_browser::fetch::FetchCause;
 
 const TEMPLATE: &str = include_str!("../res/error.html");
 

@@ -23,7 +23,7 @@ use koala_common::warning::warn_once;
 pub enum ImageError {
     /// Image bytes could not be fetched (network, data-URL, or file error).
     #[error(transparent)]
-    Fetch(#[from] koala_common::net::FetchError),
+    Fetch(#[from] koala_fetch::FetchError),
 
     /// SVG parsing failed.
     #[error("failed to parse SVG: {0}")]
@@ -214,14 +214,17 @@ impl ImageDecoder for RasterDecoder {
 }
 
 /// Fetch image bytes from `resolved_url`. The active
-/// [`koala_common::net::RequestSender`] decides whether to hit the
+/// [`koala_fetch::RequestSender`] decides whether to hit the
 /// network, decode a `data:` URL, or read a local file.
 ///
 /// # Errors
 ///
 /// Returns an [`ImageError`] if the fetch fails.
 pub fn fetch_image_bytes(resolved_url: &str) -> Result<Vec<u8>, ImageError> {
-    Ok(koala_common::net::fetch_bytes(resolved_url)?)
+    Ok(koala_fetch::fetch_bytes(&koala_fetch::Request::new(
+        resolved_url,
+        koala_fetch::Destination::Image,
+    ))?)
 }
 
 /// Image loading pipeline that detects format and dispatches to the

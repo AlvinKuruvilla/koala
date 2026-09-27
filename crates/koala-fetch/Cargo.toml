@@ -1,0 +1,17 @@
+[package]
+name = "koala-fetch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Resource fetching for the Koala renderer (WHATWG Fetch)"
+
+[dependencies]
+base64 = "0.22.1"
+koala-common.workspace = true
+koala-std.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+url = "2.5.8"
+
+[lints]
+workspace = true

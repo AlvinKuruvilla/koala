@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/koala-common",
+    "crates/koala-fetch",
     "crates/koala-dom",
     "crates/koala-html",
     "crates/koala-css",
@@ -23,6 +24,7 @@ description = "Fast, lightweight HTML-to-image renderer in Rust"
 [workspace.dependencies]
 # Internal crates
 koala-common = { path = "crates/koala-common" }
+koala-fetch = { path = "crates/koala-fetch" }
 koala-dom = { path = "crates/koala-dom" }
 koala-html = { path = "crates/koala-html" }
 koala-css = { path = "crates/koala-css" }

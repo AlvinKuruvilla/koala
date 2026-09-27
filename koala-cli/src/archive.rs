@@ -74,7 +74,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::net::{DataURL, FetchError, RequestSender};
+use koala_fetch::{DataURL, FetchError, Request, RequestSender};
 
 /// Value of the `format` field; anything else is not an archive.
 const FORMAT: &str = "koala-fetch-archive";
@@ -190,12 +190,6 @@ impl Archive {
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    /// Whether nothing has been recorded.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 
     /// The recorded failures, as `(url, description)` in URL order: fetches
@@ -320,20 +314,7 @@ impl Archive {
 /// [`Archive`].
 ///
 /// Clones share one archive, so install a clone and keep the original to
-/// read the recording back:
-///
-/// ```
-/// # use koala_common::archive::RecordingSender;
-/// # use koala_common::net::{DefaultSender, fetch_bytes, install_sender};
-/// let recorder = RecordingSender::new(DefaultSender);
-/// {
-///     let _guard = install_sender(Box::new(recorder.clone()));
-///     let body = fetch_bytes("data:,hello").expect("data URLs always decode");
-///     assert_eq!(body, b"hello");
-/// }
-/// // `data:` URLs carry their own bytes, so nothing was recorded.
-/// assert!(recorder.archive().is_empty());
-/// ```
+/// read the recording back (see `record` in `main.rs`).
 pub struct RecordingSender<I> {
     inner: Rc<I>,
     archive: Rc<RefCell<Archive>>,
@@ -371,11 +352,12 @@ impl<I: RequestSender> RecordingSender<I> {
 }
 
 impl<I: RequestSender> RequestSender for RecordingSender<I> {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         if url.starts_with("data:") {
             return DataURL::new(url.to_string()).decode();
         }
-        let result = self.inner.fetch(url);
+        let result = self.inner.fetch(request);
         let entry = match &result {
             Ok(bytes) => Entry::Body(bytes.clone()),
             Err(FetchError::HttpStatus { status, body, .. }) => Entry::HttpError {
@@ -409,6 +391,8 @@ pub struct ReplaySender {
 }
 
 /// What one replayed URL produced, as far as the digest is concerned.
+// Read only by `input_digest`, which only `--bench` reports.
+#[cfg_attr(not(feature = "bench"), allow(dead_code))]
 #[derive(Debug, Clone)]
 enum Served {
     Body(String),
@@ -439,6 +423,7 @@ impl ReplaySender {
     /// Panics if called from inside a fetch on the same sender, which the
     /// single-threaded loaders never do.
     #[must_use]
+    #[cfg_attr(not(feature = "bench"), allow(dead_code))]
     pub fn input_digest(&self) -> String {
         let mut hasher = Sha256::new();
         for (url, served) in self.served.borrow().iter() {
@@ -466,7 +451,8 @@ impl ReplaySender {
 }
 
 impl RequestSender for ReplaySender {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, FetchError> {
+        let url = request.url;
         if url.starts_with("data:") {
             return DataURL::new(url.to_string()).decode();
         }
@@ -502,3 +488,6 @@ impl RequestSender for ReplaySender {
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
+
+#[cfg(test)]
+mod tests;

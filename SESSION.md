@@ -176,7 +176,7 @@ polish the look.
 
 - **Widen `Request` type when the request layer evolves,
   don't multiply senders** — the current
-  `koala_common::net::RequestSender` trait takes a bare URL
+  `koala_fetch::RequestSender` trait takes a bare URL
   (`fn fetch(&self, url: &str) -> …`). When the project
   hits one of two triggers — async load (likely first,
   driven by the WPT path or multi-tab perf), or a need for
@@ -417,7 +417,7 @@ polish the look.
   Likely first driver is the WPT path (real-browser
   parity) or multi-tab perf. When that happens:
 
-  1. Land the `koala_common::net::RequestSender` widening
+  1. Land the `koala_fetch::RequestSender` widening
      first (smallest blast radius, doesn't depend on
      Boa internals).
   2. Migrate `dom_handle` to `HostDefined` — minimal
@@ -521,7 +521,7 @@ harness timeout × `timeout-multiplier`).
 ## Pre-existing clippy errors unmasked
 
 `cargo clippy --workspace` previously failed on the first error
-in `koala-common/src/net.rs:144` (collapsible-if). With that one
+in `koala-common/src/net.rs:144` (now `crates/koala-fetch/src/`) (collapsible-if). With that one
 fixed, clippy now runs further into the tree and surfaces ~8
 pre-existing style errors across `koala-js` (mostly
 `doc_markdown` and a stray `needless_borrow` in
@@ -722,14 +722,6 @@ stack (boa-dev/boa#5537).
 - **No font fallback.** A character missing from the chosen font (for
   example ⌘ in Helvetica) draws as an empty box instead of falling back
   to a font that has it.
-
-## Navigations send no `Accept` header
-
-koala's requests carry a browser User-Agent but no `Accept: text/html,...`.
-Some servers pick the response by it: GitHub answers a missing page with
-the 9-byte plain text `Not Found` instead of its HTML 404 page
-(checked 2026-09-26). Document requests should send the navigation
-`Accept` value browsers use; subresources their own.
 
 ## example.com's box: text overflows it, no top margin
 
