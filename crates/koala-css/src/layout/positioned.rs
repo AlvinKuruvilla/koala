@@ -271,7 +271,7 @@ impl PositionedLayout {
             let child_abs_cb = layout_box.dimensions.padding_box();
 
             let mut float_ctx =
-                super::float::FloatContext::new(layout_box.dimensions.content.width);
+                super::float::FloatContext::new(layout_box.dimensions.content);
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
                 layout_box.layout_inline_children(
                     viewport,
@@ -360,7 +360,7 @@ impl PositionedLayout {
             layout_box.generate_anonymous_boxes();
             let child_abs_cb = layout_box.dimensions.padding_box();
             let mut float_ctx2 =
-                super::float::FloatContext::new(layout_box.dimensions.content.width);
+                super::float::FloatContext::new(layout_box.dimensions.content);
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
                 layout_box.layout_inline_children(
                     viewport,
