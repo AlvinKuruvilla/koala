@@ -8,7 +8,12 @@
 # innermost 60 frames of every thread, and exits 134, with no need to
 # reproduce it under a debugger by hand. Rust's own handler prints no
 # backtrace for a stack overflow, which is when this matters most.
-lldb_run := "lldb --batch --no-lldbinit -o run -o 'script import os; os._exit(lldb.process.GetExitStatus())' -k 'thread backtrace all -c 60' -k 'script import os; os._exit(134)' --"
+#
+# lldb sets OS_ACTIVITY_DT_MODE=enable on the program it launches, which
+# copies every macOS system log line to stderr: the OpenGL framework's
+# failed symbol lookups, and more. IDE_DISABLED_OS_ACTIVITY_DT_MODE is how
+# Xcode tells lldb not to; the log still goes to Console.app.
+lldb_run := "IDE_DISABLED_OS_ACTIVITY_DT_MODE=1 lldb --batch --no-lldbinit -o run -o 'script import os; os._exit(lldb.process.GetExitStatus())' -k 'thread backtrace all -c 60' -k 'script import os; os._exit(134)' --"
 
 # Open the browser GUI (debug build, under lldb). The address bar
 # handles navigation; the only flag is --quiet, which stops each page's
