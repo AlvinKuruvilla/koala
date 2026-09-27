@@ -7,7 +7,7 @@
 //! in a block formatting context. Inline-level boxes participate in an
 //! inline formatting context."
 
-use super::box_model::BoxDimensions;
+use super::box_model::{BoxDimensions, Rect};
 use super::float::FloatContext;
 
 /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -46,13 +46,14 @@ pub struct BlockFormattingContext {
 }
 
 impl BlockFormattingContext {
-    /// Create a new block formatting context.
+    /// Create a new block formatting context whose containing block has the
+    /// content box `containing_block`. Layout starts at its top edge.
     #[must_use]
-    pub const fn new(containing_width: f32, start_y: f32) -> Self {
+    pub const fn new(containing_block: Rect) -> Self {
         Self {
-            current_y: start_y,
-            containing_width,
-            float_context: FloatContext::new(containing_width),
+            current_y: containing_block.y,
+            containing_width: containing_block.width,
+            float_context: FloatContext::new(containing_block),
         }
     }
 

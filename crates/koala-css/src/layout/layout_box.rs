@@ -1978,7 +1978,7 @@ impl LayoutBox {
         //
         // Floats are scoped to their block formatting context. Each block
         // container gets its own FloatContext that tracks placed floats.
-        let mut float_ctx = FloatContext::new(self.dimensions.content.width);
+        let mut float_ctx = FloatContext::new(self.dimensions.content);
 
         // STEP 5: Layout children.
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -3235,7 +3235,10 @@ impl LayoutBox {
 
             // Place the float using its margin box dimensions.
             let child_mb = child.dimensions.margin_box();
-            let placed = float_ctx.place_float(float_side, child_mb.width, child_mb.height, 0.0);
+            // Floats are placed before any line box exists, so the highest
+            // position available is the top of the content box.
+            let placed =
+                float_ctx.place_float(float_side, child_mb.width, child_mb.height, content_rect.y);
 
             // Relocate from temporary position to placed position.
             let dx = placed.x - child_mb.x;
@@ -3255,8 +3258,10 @@ impl LayoutBox {
         // using the content area's top edge. Per-line queries are a v2
         // enhancement.
         let line_height = font_metrics.line_height(self.font_size);
-        let (left_offset, avail_width) =
+        let (left_edge, avail_width) =
             float_ctx.available_width_at(self.dimensions.content.y, line_height);
+        // `InlineLayout` wants the offset into this box's content area.
+        let left_offset = left_edge - self.dimensions.content.x;
 
         // Use the narrower of the content width and float-adjusted width.
         let effective_width = if avail_width < self.dimensions.content.width {

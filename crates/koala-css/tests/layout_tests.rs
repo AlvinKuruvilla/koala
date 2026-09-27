@@ -1903,6 +1903,59 @@ fn test_multiple_floats_stack() {
     );
 }
 
+/// [§ 9.5.1 Rules 1, 4](https://www.w3.org/TR/CSS2/visuren.html#float-position)
+///
+/// "The left outer edge of a left-floating box may not be to the left of the
+/// left edge of its containing block." "A floating box's outer top may not be
+/// higher than the top of its containing block."
+///
+/// The container's content box starts at (40, 510) and is 760px wide, so the
+/// left float sits at x=40 and the right float at 40 + 760 - 100 = 700, both at
+/// y=510. The other float tests put the container at (0, 0), where coordinates
+/// relative to the container and to the page agree; that is how floats placed
+/// relative to the page origin went unnoticed. book.io's footer went blank from
+/// it: its floats landed at y=0 and its height came out negative.
+fn assert_floats_placed_in_offset_container(container_contents: &str) {
+    let root = layout_html(&format!(
+        "<html><body><style>body {{ margin: 0; }} .spacer {{ height: 500px; }} \
+         .container {{ margin-left: 40px; padding-top: 10px; }} \
+         .fl {{ float: left; width: 100px; height: 50px; }} \
+         .fr {{ float: right; width: 100px; height: 50px; }} \
+         p {{ margin: 0; }}</style>\
+         <div class='spacer'></div><div class='container'>{container_contents}</div></body></html>"
+    ));
+
+    let body = box_at_depth(&root, 2);
+    let container = &body.children[1];
+    let floats = find_float_children(container);
+    assert_eq!(floats.len(), 2, "expected the left and right floats");
+
+    let positions: Vec<(f32, f32)> = floats
+        .iter()
+        .map(|f| (f.dimensions.content.x, f.dimensions.content.y))
+        .collect();
+    assert_eq!(positions, [(40.0, 510.0), (700.0, 510.0)]);
+    assert!(
+        container.dimensions.content.height >= 0.0,
+        "container height must not be negative, got {:.1}",
+        container.dimensions.content.height
+    );
+}
+
+/// Floats among inline content are placed by the inline formatting context.
+#[test]
+fn test_floats_in_offset_container_inline_path() {
+    assert_floats_placed_in_offset_container("<div class='fl'></div><div class='fr'></div>");
+}
+
+/// Floats among block siblings are placed by the block formatting context.
+#[test]
+fn test_floats_in_offset_container_block_path() {
+    assert_floats_placed_in_offset_container(
+        "<div class='fl'></div><div class='fr'></div><p>After</p>",
+    );
+}
+
 
 // Inline-block tests
 //
