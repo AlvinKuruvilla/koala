@@ -697,3 +697,35 @@ fn test_mathml_foreign_content() {
     let mi = find_element(&tree, math, "mi").expect("mi exists");
     assert_eq!(child_elements(&tree, mi), [("b".to_string(), Html)]);
 }
+
+/// [§ 13.2.6.4.12](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolgroup)
+///
+/// `<col>` is void inside a column group, and the column group closes either on
+/// `</colgroup>` or on any other token, which is then reprocessed "in table".
+/// The second table leans on that: `<tr>` has to close the implied `<colgroup>`
+/// rather than land inside it. Before this mode existed, both tables hit a
+/// `todo!()`.
+#[test]
+fn test_column_group() {
+    let tags = |tree: &DomTree, id: NodeId| -> Vec<String> {
+        child_elements(tree, id)
+            .into_iter()
+            .map(|(tag, _)| tag)
+            .collect()
+    };
+
+    let explicit =
+        parse("<table><colgroup><col><col span=2></colgroup><tr><td>x</td></tr></table>");
+    let table = find_element(&explicit, explicit.root(), "table").expect("table exists");
+    assert_eq!(tags(&explicit, table), ["colgroup", "tbody"]);
+    let colgroup = find_element(&explicit, table, "colgroup").expect("colgroup exists");
+    let cols = element_children(&explicit, colgroup, "col");
+    assert_eq!(cols.len(), 2);
+    assert!(tags(&explicit, cols[0]).is_empty());
+
+    let implied = parse("<table><col><tr><td>x</td></tr></table>");
+    let table = find_element(&implied, implied.root(), "table").expect("table exists");
+    assert_eq!(tags(&implied, table), ["colgroup", "tbody"]);
+    let colgroup = find_element(&implied, table, "colgroup").expect("colgroup exists");
+    assert_eq!(tags(&implied, colgroup), ["col"]);
+}

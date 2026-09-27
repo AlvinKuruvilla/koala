@@ -649,7 +649,7 @@ impl HTMLParser {
 
             // STEP 4: InColumnGroup mode - handles <col> elements
             //   [§ 13.2.6.4.12](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolumngroup)
-            InsertionMode::InColumnGroup => todo!("InColumnGroup mode - see STEP 4 above"),
+            InsertionMode::InColumnGroup => self.handle_in_column_group_mode(token),
 
             // STEP 5: InTableBody mode - handles <tbody>, <thead>, <tfoot>
             //   [§ 13.2.6.4.13](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
@@ -4216,6 +4216,96 @@ impl HTMLParser {
             // "Process the token using the rules for the "in body" insertion mode."
             _ => {
                 self.handle_in_body_mode(token);
+            }
+        }
+    }
+
+    /// [§ 13.2.6.4.12 The "in column group" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolgroup)
+    fn handle_in_column_group_mode(&mut self, token: &Token) {
+        let current_node_is_colgroup = self
+            .current_node()
+            .is_some_and(|id| self.get_tag_name(id) == Some("colgroup"));
+
+        match token {
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED
+            // (LF), U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Insert the character."
+            Token::Character { data } if Self::is_whitespace(*data) => {
+                self.insert_character(*data);
+            }
+
+            // "A comment token"
+            // "Insert a comment."
+            Token::Comment { data } => {
+                self.insert_comment(data);
+            }
+
+            // "A processing instruction token" never occurs: Koala's tokenizer emits processing
+            // instructions as bogus comments.
+
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
+
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
+            Token::StartTag { name, .. } if name == "html" => {
+                self.handle_in_body_mode(token);
+            }
+
+            // "A start tag whose tag name is "col""
+            Token::StartTag { name, .. } if name == "col" => {
+                // "Insert an HTML element for the token. Immediately pop the current node off
+                // the stack of open elements."
+                let _ = self.insert_html_element(token);
+                let _ = self.stack_of_open_elements.pop();
+                // "Acknowledge the token's self-closing flag, if it is set."
+                // NOTE: Koala does not track acknowledgement, so this is a no-op.
+            }
+
+            // "An end tag whose tag name is "colgroup""
+            Token::EndTag { name, .. } if name == "colgroup" => {
+                // "If the current node is not a colgroup element, then this is a parse error;
+                // ignore the token."
+                if !current_node_is_colgroup {
+                    return;
+                }
+                // "Otherwise, pop the current node from the stack of open elements. Switch the
+                // insertion mode to "in table"."
+                let _ = self.stack_of_open_elements.pop();
+                self.insertion_mode = InsertionMode::InTable;
+            }
+
+            // "An end tag whose tag name is "col""
+            // "Parse error. Ignore the token."
+            Token::EndTag { name, .. } if name == "col" => {}
+
+            // "A start tag whose tag name is "template""
+            // "An end tag whose tag name is "template""
+            // "Process the token using the rules for the "in head" insertion mode."
+            Token::StartTag { name, .. } | Token::EndTag { name, .. } if name == "template" => {
+                self.handle_in_head_mode(token);
+            }
+
+            // "An end-of-file token"
+            // "Process the token using the rules for the "in body" insertion mode."
+            Token::EndOfFile => {
+                self.handle_in_body_mode(token);
+            }
+
+            // "Anything else"
+            _ => {
+                // "If the current node is not a colgroup element, then this is a parse error;
+                // ignore the token."
+                if !current_node_is_colgroup {
+                    return;
+                }
+                // "Otherwise, pop the current node from the stack of open elements."
+                let _ = self.stack_of_open_elements.pop();
+                // "Switch the insertion mode to "in table"."
+                self.insertion_mode = InsertionMode::InTable;
+                // "Reprocess the token."
+                self.reprocess_token(token);
             }
         }
     }
