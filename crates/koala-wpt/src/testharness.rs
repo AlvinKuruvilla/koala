@@ -1,4 +1,4 @@
-//! testharness.js result bridge — capture Test / TestStatus
+//! testharness.js result bridge — capture `Test` / `TestStatus`
 //! payloads into a Rust-readable buffer for the WPT executor.
 //!
 //! [WPT testharness API](https://web-platform-tests.org/writing-tests/testharness-api.html)
@@ -185,7 +185,7 @@ fn emit_result(
 ) -> JsResult<JsValue> {
     let test = args.get_or_undefined(0);
     capture_result(test, context)?;
-    fan_out(RESULT_CBS_KEY, &[test.clone()], context)?;
+    fan_out(RESULT_CBS_KEY, std::slice::from_ref(test), context)?;
     Ok(JsValue::undefined())
 }
 

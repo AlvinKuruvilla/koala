@@ -83,7 +83,7 @@
 //! # Two scopes for method/accessor function bodies
 //!
 //! The methods and accessors named in the macro must be plain
-//! Rust functions with the standard NativeFunction signature:
+//! Rust functions with the standard `NativeFunction` signature:
 //!
 //! ```ignore
 //! fn(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue>

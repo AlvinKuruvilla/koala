@@ -32,16 +32,19 @@ fn peak_rss_bytes() -> u64 {
     if rc != 0 {
         return 0;
     }
+    // The kernel never reports a negative peak.
+    let max_rss = u64::try_from(ru.ru_maxrss).unwrap_or(0);
     #[cfg(target_os = "macos")]
     {
-        ru.ru_maxrss as u64
+        max_rss
     }
     #[cfg(not(target_os = "macos"))]
     {
-        (ru.ru_maxrss as u64).saturating_mul(1024)
+        max_rss.saturating_mul(1024)
     }
 }
 
+#[allow(clippy::cast_precision_loss, reason = "a display value, rounded to 0.1 MB")]
 fn fmt_mb(n: u64) -> String {
     format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
 }

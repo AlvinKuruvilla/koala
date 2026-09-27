@@ -201,10 +201,10 @@ fn dom_exception_code_get(
 /// Engine-side helper: build a `JsError` that JS code will see
 /// as a `DOMException` with the given name + message.
 ///
-/// We can't *construct* a JsObject without a `&mut Context`, and
+/// We can't *construct* a `JsObject` without a `&mut Context`, and
 /// the call sites that need to throw (e.g. `appendChild`'s
 /// pre-insertion validity check) already have one in scope.
-/// Returns the boxed error rather than a JsValue so the call
+/// Returns the boxed error rather than a `JsValue` so the call
 /// site is `return Err(throw_dom_exception(…))`.
 ///
 /// # Panics
@@ -244,7 +244,7 @@ pub(crate) fn throw_dom_exception(
             // rather than a runtime condition. Diagnostic
             // message includes the original name + message so
             // the failure mode is still debuggable.
-            let _ = installed_warning();
+            installed_warning();
             JsError::from_native(
                 JsNativeError::typ()
                     .with_message(format!("{name}: {message} ({e})")),

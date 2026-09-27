@@ -144,7 +144,7 @@ fn pathname_get(
 
 /// `location.toString()` returns `href` per spec — implemented as
 /// a method rather than relying on Symbol.toPrimitive coercion so
-/// the existing accessor-only ObjectInitializer pattern carries.
+/// the existing accessor-only `ObjectInitializer` pattern carries.
 fn to_string_native(
     _this: &JsValue,
     _args: &[JsValue],

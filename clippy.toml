@@ -15,4 +15,7 @@ disallowed-methods = [
 # Proper nouns from the specs that `doc_markdown` would otherwise want in
 # backticks, which would mangle quoted spec text. ".." keeps clippy's
 # default list.
-doc-valid-idents = ["MathML", ".."]
+doc-valid-idents = [
+    "MathML", "DOMException", "DOMString", "DOMContentLoaded", "EventTarget",
+    "HTMLElement", "WebIDL", "TypeError", "ToString", "ToUint32", "XLink", "..",
+]

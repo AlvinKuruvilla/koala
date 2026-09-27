@@ -565,7 +565,7 @@ impl JsRuntime {
     ///
     /// Handler errors are NOT propagated back: a listener that
     /// itself throws would otherwise trip an infinite error
-    /// loop. The handler-error is logged via the parse_issues
+    /// loop. The handler-error is logged via the `parse_issues`
     /// channel inside koala-browser instead.
     ///
     /// # Errors

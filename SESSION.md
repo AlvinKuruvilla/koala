@@ -759,9 +759,6 @@ privileges ordinary pages do not.
 - Selector lists: an unknown pseudo-class makes the whole list invalid per
   spec (Ladybird drops the rule); Koala turns that one selector into
   never-match and keeps the rest, so `a:foo, b {}` still styles `b`.
-- `cargo clippy --workspace` fails on 26 errors in koala-js (22 are
-  `doc_markdown`), new with the 1.97 toolchain. They were hidden until
-  koala-css's own clippy errors were fixed, since clippy stopped there.
 
 ## Text does not wrap in a narrow block (2026-09-26)
 

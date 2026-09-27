@@ -44,12 +44,12 @@ struct DomContext {
     /// Per-NodeId wrapper cache. The DOM spec requires
     /// `el.parentNode === el.parentNode` and analogous identity
     /// for every navigation accessor — without a cache, each
-    /// `make_*_object` call mints a fresh JsObject and breaks
+    /// `make_*_object` call mints a fresh `JsObject` and breaks
     /// identity. Cache lives in `DomContext` so its lifetime is
     /// exactly the DOM's: when the guard drops, the cached
     /// wrappers go with it, no cross-runtime pollution.
     ///
-    /// NodeId-keyed and append-only for now (koala_dom doesn't
+    /// `NodeId`-keyed and append-only for now (`koala_dom` doesn't
     /// recycle ids). A future "remove and free node" path would
     /// need to evict here; not a concern at current scope.
     wrappers: HashMap<NodeId, JsObject>,
