@@ -649,7 +649,7 @@ impl HTMLParser {
 
             // STEP 4: InColumnGroup mode - handles <col> elements
             //   [§ 13.2.6.4.12](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolumngroup)
-            InsertionMode::InColumnGroup => todo!("InColumnGroup mode - see STEP 4 above"),
+            InsertionMode::InColumnGroup => self.handle_in_column_group_mode(token),
 
             // STEP 5: InTableBody mode - handles <tbody>, <thead>, <tfoot>
             //   [§ 13.2.6.4.13](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intablebody)
@@ -740,7 +740,7 @@ impl HTMLParser {
         let last_table_pos = self
             .stack_of_open_elements
             .iter()
-            .rposition(|&id| self.get_tag_name(id) == Some("table"));
+            .rposition(|&id| self.html_tag_name(id) == Some("table"));
 
         let Some(table_pos) = last_table_pos else {
             // STEP 3: "If there is no last table element in the stack of open
@@ -785,7 +785,7 @@ impl HTMLParser {
         // "If foster parenting is enabled and the target is a table, tbody,
         //  tfoot, thead, or tr element..."
         if self.foster_parenting
-            && let Some(tag) = self.get_tag_name(target)
+            && let Some(tag) = self.html_tag_name(target)
             && matches!(tag, "table" | "tbody" | "tfoot" | "thead" | "tr")
         {
             return self.foster_parent_location();
@@ -978,9 +978,27 @@ impl HTMLParser {
 
     /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
     ///
-    /// Get the tag name of a node (local name of the element).
+    /// Get the tag name of a node (local name of the element), in any namespace.
+    ///
+    /// Tree construction almost always means an HTML element when it names one
+    /// ("the current node is a colgroup element"), so most checks want
+    /// [`Self::html_tag_name`]. This is for the few that name a namespace
+    /// themselves or compare against the token's tag name.
     fn get_tag_name(&self, id: NodeId) -> Option<&str> {
         self.tree.as_element(id).map(|data| data.tag_name.as_str())
+    }
+
+    /// The tag name of `id` if it is an element in the HTML namespace.
+    ///
+    /// Foreign content puts SVG and MathML elements on the stack of open
+    /// elements, and some share an HTML tag name: `<svg><template>` makes an SVG
+    /// `template`. The spec's "a template element" means the HTML one, so a
+    /// check on the tag name alone would stop at the SVG element.
+    fn html_tag_name(&self, id: NodeId) -> Option<&str> {
+        self.tree
+            .as_element(id)
+            .filter(|data| data.namespace == Namespace::Html)
+            .map(|data| data.tag_name.as_str())
     }
 
     /// [§ 13.2.4.2 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
@@ -995,7 +1013,7 @@ impl HTMLParser {
     fn pop_until_tag(&mut self, tag_name: &str) {
         while let Some(id) = self.stack_of_open_elements.pop() {
             // STEP 2: Check if we've reached the target element
-            if self.get_tag_name(id) == Some(tag_name) {
+            if self.html_tag_name(id) == Some(tag_name) {
                 break;
             }
             // STEP 3: Continue popping
@@ -1016,7 +1034,7 @@ impl HTMLParser {
     /// STEP 3: Otherwise, repeat from STEP 1.
     fn pop_until_one_of(&mut self, tag_names: &[&str]) {
         while let Some(idx) = self.stack_of_open_elements.pop() {
-            if let Some(name) = self.get_tag_name(idx) {
+            if let Some(name) = self.html_tag_name(idx) {
                 // STEP 2: Check if we've reached any of the target elements
                 if tag_names.contains(&name) {
                     break;
@@ -1045,7 +1063,7 @@ impl HTMLParser {
     fn has_element_in_specific_scope(&self, tag_name: &str, scope_markers: &[&str]) -> bool {
         // Walk the stack from top (current node) downward.
         for &node_id in self.stack_of_open_elements.iter().rev() {
-            if let Some(node_tag) = self.get_tag_name(node_id) {
+            if let Some(node_tag) = self.html_tag_name(node_id) {
                 // STEP 2: If node is the target, match.
                 if node_tag == tag_name {
                     return true;
@@ -1114,7 +1132,7 @@ impl HTMLParser {
     /// elements."
     fn clear_stack_back_to_table_context(&mut self) {
         while let Some(&current) = self.stack_of_open_elements.last() {
-            if let Some(tag) = self.get_tag_name(current)
+            if let Some(tag) = self.html_tag_name(current)
                 && matches!(tag, "table" | "template" | "html")
             {
                 break;
@@ -1131,7 +1149,7 @@ impl HTMLParser {
     /// stack of open elements."
     fn clear_stack_back_to_table_body_context(&mut self) {
         while let Some(&current) = self.stack_of_open_elements.last() {
-            if let Some(tag) = self.get_tag_name(current)
+            if let Some(tag) = self.html_tag_name(current)
                 && matches!(tag, "tbody" | "tfoot" | "thead" | "template" | "html")
             {
                 break;
@@ -1148,7 +1166,7 @@ impl HTMLParser {
     /// elements."
     fn clear_stack_back_to_table_row_context(&mut self) {
         while let Some(&current) = self.stack_of_open_elements.last() {
-            if let Some(tag) = self.get_tag_name(current)
+            if let Some(tag) = self.html_tag_name(current)
                 && matches!(tag, "tr" | "template" | "html")
             {
                 break;
@@ -1201,7 +1219,7 @@ impl HTMLParser {
                 // NOTE: Fragment case would set node to context element here.
             }
 
-            let Some(tag) = self.get_tag_name(node_id) else {
+            let Some(tag) = self.html_tag_name(node_id) else {
                 continue;
             };
 
@@ -1308,7 +1326,7 @@ impl HTMLParser {
         ];
 
         while let Some(&current) = self.stack_of_open_elements.last() {
-            if let Some(tag) = self.get_tag_name(current)
+            if let Some(tag) = self.html_tag_name(current)
                 && IMPLIED_END_TAG_ELEMENTS.contains(&tag)
                 && exclude != Some(tag)
             {
@@ -1529,11 +1547,19 @@ impl HTMLParser {
     /// [§ 13.1.1 Special](https://html.spec.whatwg.org/multipage/parsing.html#special)
     ///
     /// "The following elements have varying levels of special parsing rules:
-    /// ... they are collectively known as special elements."
-    fn is_special_element(tag_name: &str) -> bool {
-        matches!(
-            tag_name,
-            "address"
+    /// HTML's address, applet, area, ...; MathML mi, MathML mo, MathML mn,
+    /// MathML ms, MathML mtext, and MathML annotation-xml; and SVG
+    /// foreignObject, SVG desc, and SVG title."
+    fn is_special(&self, id: NodeId) -> bool {
+        let Some(element) = self.tree.as_element(id) else {
+            return false;
+        };
+        let tag_name = element.tag_name.as_str();
+        match element.namespace {
+            // "HTML's address, applet, area, ..."
+            Namespace::Html => matches!(
+                tag_name,
+                "address"
                 | "applet"
                 | "area"
                 | "article"
@@ -1616,10 +1642,16 @@ impl HTMLParser {
                 | "ul"
                 | "wbr"
                 | "xmp"
-        )
-        // NOTE: MathML and SVG special elements omitted for now:
-        // mi, mo, mn, ms, mtext, annotation-xml (MathML)
-        // foreignObject, desc, title (SVG)
+            ),
+            // "MathML mi, MathML mo, MathML mn, MathML ms, MathML mtext, and
+            // MathML annotation-xml"
+            Namespace::MathMl => matches!(
+                tag_name,
+                "mi" | "mo" | "mn" | "ms" | "mtext" | "annotation-xml"
+            ),
+            // "SVG foreignObject, SVG desc, and SVG title"
+            Namespace::Svg => matches!(tag_name, "foreignObject" | "desc" | "title"),
+        }
     }
 
     /// [§ 13.2.4.3 The list of active formatting elements](https://html.spec.whatwg.org/multipage/parsing.html#formatting)
@@ -1681,19 +1713,17 @@ impl HTMLParser {
         while i > 0 {
             i -= 1;
             let node_id = self.stack_of_open_elements[i];
-            if let Some(node_tag) = self.get_tag_name(node_id) {
-                // STEP 2: If node matches the tag name...
-                if node_tag == tag_name {
-                    // STEP 2a: Generate implied end tags, excluding same tag name.
-                    self.generate_implied_end_tags_excluding(Some(tag_name));
-                    // STEP 2c: Pop all nodes from current node up to and including node.
-                    self.stack_of_open_elements.truncate(i);
-                    return;
-                }
-                // STEP 3: If node is in the special category, ignore the token.
-                if Self::is_special_element(node_tag) {
-                    return;
-                }
+            // STEP 2: If node is an HTML element with the same tag name...
+            if self.html_tag_name(node_id) == Some(tag_name) {
+                // STEP 2a: Generate implied end tags, excluding same tag name.
+                self.generate_implied_end_tags_excluding(Some(tag_name));
+                // STEP 2c: Pop all nodes from current node up to and including node.
+                self.stack_of_open_elements.truncate(i);
+                return;
+            }
+            // STEP 3: If node is in the special category, ignore the token.
+            if self.is_special(node_id) {
+                return;
             }
             // STEP 4: Continue to previous entry.
         }
@@ -1711,7 +1741,7 @@ impl HTMLParser {
         //          and the current node is not in the list of active formatting elements,
         //          then pop the current node off the stack of open elements and return."
         if let Some(&current) = self.stack_of_open_elements.last()
-            && self.get_tag_name(current) == Some(subject)
+            && self.html_tag_name(current) == Some(subject)
         {
             let in_afl = self.active_formatting_elements.iter().any(|e| {
                 matches!(e, ActiveFormattingElement::Element { node_id, .. } if *node_id == current)
@@ -1802,9 +1832,7 @@ impl HTMLParser {
                 let mut found = None;
                 for i in (formatting_element_stack_index + 1)..self.stack_of_open_elements.len() {
                     let node_id = self.stack_of_open_elements[i];
-                    if let Some(tag) = self.get_tag_name(node_id)
-                        && Self::is_special_element(tag)
-                    {
+                    if self.is_special(node_id) {
                         found = Some(i);
                         break;
                     }
@@ -2752,7 +2780,7 @@ impl HTMLParser {
                 self.close_element_if_in_scope("p");
                 // If currently in a heading, close it (headings don't nest)
                 if let Some(idx) = self.current_node()
-                    && let Some(tag) = self.get_tag_name(idx)
+                    && let Some(tag) = self.html_tag_name(idx)
                     && matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
                 {
                     let _ = self.stack_of_open_elements.pop();
@@ -2891,19 +2919,17 @@ impl HTMLParser {
                 let mut found_li = false;
                 for i in (0..self.stack_of_open_elements.len()).rev() {
                     let node_id = self.stack_of_open_elements[i];
-                    if let Some(tag) = self.get_tag_name(node_id) {
-                        // STEP 3: If node is "li", close it.
-                        if tag == "li" {
-                            found_li = true;
-                            break;
-                        }
-                        // STEP 4: If node is special but not address/div/p, stop.
-                        if Self::is_special_element(tag) && !matches!(tag, "address" | "div" | "p")
-                        {
-                            break;
-                        }
-                        // STEP 5: Otherwise continue to previous entry.
+                    let tag = self.html_tag_name(node_id);
+                    // STEP 3: If node is "li", close it.
+                    if tag == Some("li") {
+                        found_li = true;
+                        break;
                     }
+                    // STEP 4: If node is special but not address/div/p, stop.
+                    if self.is_special(node_id) && !matches!(tag, Some("address" | "div" | "p")) {
+                        break;
+                    }
+                    // STEP 5: Otherwise continue to previous entry.
                 }
                 if found_li {
                     self.generate_implied_end_tags_excluding(Some("li"));
@@ -2941,19 +2967,17 @@ impl HTMLParser {
                 let mut found_tag: Option<&str> = None;
                 for i in (0..self.stack_of_open_elements.len()).rev() {
                     let node_id = self.stack_of_open_elements[i];
-                    if let Some(tag) = self.get_tag_name(node_id) {
-                        if tag == "dd" {
-                            found_tag = Some("dd");
-                            break;
-                        }
-                        if tag == "dt" {
-                            found_tag = Some("dt");
-                            break;
-                        }
-                        if Self::is_special_element(tag) && !matches!(tag, "address" | "div" | "p")
-                        {
-                            break;
-                        }
+                    let tag = self.html_tag_name(node_id);
+                    if tag == Some("dd") {
+                        found_tag = Some("dd");
+                        break;
+                    }
+                    if tag == Some("dt") {
+                        found_tag = Some("dt");
+                        break;
+                    }
+                    if self.is_special(node_id) && !matches!(tag, Some("address" | "div" | "p")) {
+                        break;
                     }
                 }
                 if let Some(close_tag) = found_tag {
@@ -3036,7 +3060,7 @@ impl HTMLParser {
             Token::StartTag { name, .. } if matches!(name.as_str(), "optgroup" | "option") => {
                 // Close current option if any
                 if let Some(&node_id) = self.stack_of_open_elements.last()
-                    && self.get_tag_name(node_id) == Some("option")
+                    && self.html_tag_name(node_id) == Some("option")
                 {
                     let _ = self.stack_of_open_elements.pop();
                 }
@@ -3618,7 +3642,7 @@ impl HTMLParser {
             // "Switch the insertion mode to "in table text" and reprocess the token."
             Token::Character { .. } => {
                 if let Some(current) = self.current_node()
-                    && let Some(tag) = self.get_tag_name(current)
+                    && let Some(tag) = self.html_tag_name(current)
                     && matches!(tag, "table" | "tbody" | "tfoot" | "thead" | "tr")
                 {
                     self.pending_table_character_tokens.clear();
@@ -3817,7 +3841,7 @@ impl HTMLParser {
                 let has_template = self
                     .stack_of_open_elements
                     .iter()
-                    .any(|&id| self.get_tag_name(id) == Some("template"));
+                    .any(|&id| self.html_tag_name(id) == Some("template"));
                 if has_template || self.form_element_pointer.is_some() {
                     // Parse error. Ignore the token.
                 } else {
@@ -4216,6 +4240,96 @@ impl HTMLParser {
             // "Process the token using the rules for the "in body" insertion mode."
             _ => {
                 self.handle_in_body_mode(token);
+            }
+        }
+    }
+
+    /// [§ 13.2.6.4.12 The "in column group" insertion mode](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incolgroup)
+    fn handle_in_column_group_mode(&mut self, token: &Token) {
+        let current_node_is_colgroup = self
+            .current_node()
+            .is_some_and(|id| self.html_tag_name(id) == Some("colgroup"));
+
+        match token {
+            // "A character token that is one of U+0009 CHARACTER TABULATION, U+000A LINE FEED
+            // (LF), U+000C FORM FEED (FF), U+000D CARRIAGE RETURN (CR), or U+0020 SPACE"
+            // "Insert the character."
+            Token::Character { data } if Self::is_whitespace(*data) => {
+                self.insert_character(*data);
+            }
+
+            // "A comment token"
+            // "Insert a comment."
+            Token::Comment { data } => {
+                self.insert_comment(data);
+            }
+
+            // "A processing instruction token" never occurs: Koala's tokenizer emits processing
+            // instructions as bogus comments.
+
+            // "A DOCTYPE token"
+            // "Parse error. Ignore the token."
+            Token::Doctype { .. } => {}
+
+            // "A start tag whose tag name is "html""
+            // "Process the token using the rules for the "in body" insertion mode."
+            Token::StartTag { name, .. } if name == "html" => {
+                self.handle_in_body_mode(token);
+            }
+
+            // "A start tag whose tag name is "col""
+            Token::StartTag { name, .. } if name == "col" => {
+                // "Insert an HTML element for the token. Immediately pop the current node off
+                // the stack of open elements."
+                let _ = self.insert_html_element(token);
+                let _ = self.stack_of_open_elements.pop();
+                // "Acknowledge the token's self-closing flag, if it is set."
+                // NOTE: Koala does not track acknowledgement, so this is a no-op.
+            }
+
+            // "An end tag whose tag name is "colgroup""
+            Token::EndTag { name, .. } if name == "colgroup" => {
+                // "If the current node is not a colgroup element, then this is a parse error;
+                // ignore the token."
+                if !current_node_is_colgroup {
+                    return;
+                }
+                // "Otherwise, pop the current node from the stack of open elements. Switch the
+                // insertion mode to "in table"."
+                let _ = self.stack_of_open_elements.pop();
+                self.insertion_mode = InsertionMode::InTable;
+            }
+
+            // "An end tag whose tag name is "col""
+            // "Parse error. Ignore the token."
+            Token::EndTag { name, .. } if name == "col" => {}
+
+            // "A start tag whose tag name is "template""
+            // "An end tag whose tag name is "template""
+            // "Process the token using the rules for the "in head" insertion mode."
+            Token::StartTag { name, .. } | Token::EndTag { name, .. } if name == "template" => {
+                self.handle_in_head_mode(token);
+            }
+
+            // "An end-of-file token"
+            // "Process the token using the rules for the "in body" insertion mode."
+            Token::EndOfFile => {
+                self.handle_in_body_mode(token);
+            }
+
+            // "Anything else"
+            _ => {
+                // "If the current node is not a colgroup element, then this is a parse error;
+                // ignore the token."
+                if !current_node_is_colgroup {
+                    return;
+                }
+                // "Otherwise, pop the current node from the stack of open elements."
+                let _ = self.stack_of_open_elements.pop();
+                // "Switch the insertion mode to "in table"."
+                self.insertion_mode = InsertionMode::InTable;
+                // "Reprocess the token."
+                self.reprocess_token(token);
             }
         }
     }
