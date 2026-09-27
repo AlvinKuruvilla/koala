@@ -32,13 +32,9 @@ pub struct TabState {
     /// tick repaints at the current size without needing a resize.
     pub last_requested: Cell<(u32, u32)>,
 
-    /// True between "navigation initiated for this tab" and "first
-    /// frame painted after the page state swapped". Drives the
-    /// tab's spinner (and, when this tab is active, the window's
-    /// progress strip). Deliberately orthogonal to resize-driven
-    /// renders so dragging the window doesn't flicker the
-    /// indicator on idle tabs.
-    pub expecting_paint: Cell<bool>,
+    /// Where the tab is in showing its page. Drives the tab's spinner
+    /// and, when this tab is active, the window's progress strip.
+    pub loading: Cell<Loading>,
 
     /// Most-recent rendered frame for this tab. Cached so that
     /// switching tabs can immediately restore the previous viewport
@@ -66,22 +62,75 @@ pub struct TabState {
 impl TabState {
     /// Spawns a fresh `BrowserPage` (which itself spawns the render
     /// + loader workers), seeds it with the landing page, and
-    /// returns a tab ready to be appended to the tab list. The
-    /// `expecting_paint` flag starts `true` because the landing
-    /// page's first render is the awaited paint — without it the
-    /// spinner would be off until a user-driven navigation lit it.
+    /// returns a tab ready to be appended to the tab list. It starts
+    /// loading, awaiting the landing page's first frame.
     pub fn new_landing() -> Self {
         let mut page = BrowserPage::new();
         page.load_landing_page();
+        let generation = page.state_generation();
         Self {
             page: RefCell::new(page),
             last_requested: Cell::new((0, 0)),
-            expecting_paint: Cell::new(true),
+            loading: Cell::new(Loading::AwaitingFrame(generation)),
             last_image: RefCell::new(None),
             url_text: RefCell::new(String::new()),
             title: RefCell::new(String::new()),
             can_go_back: Cell::new(false),
             can_go_forward: Cell::new(false),
         }
+    }
+}
+
+/// Where a tab is in showing a page.
+///
+/// A tab is loading from the moment a navigation starts until a frame of
+/// the page that navigation produced is on screen. "A frame arrived" is
+/// not enough: the viewport can be re-rendered while a load is in flight
+/// (a resize, or anything else that changes its size), and that frame
+/// shows the previous page. Frames carry the generation of the page state
+/// they show (`BrowserPage::state_generation`), and only one of the
+/// awaited generation or later ends loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Loading {
+    /// The current page is on screen.
+    Idle,
+    /// A navigation has started and its page has not loaded yet. No frame
+    /// ends this, since every frame that can arrive shows an earlier page.
+    AwaitingState,
+    /// The page state with this generation is loaded; the first frame of
+    /// it, or of a later state, ends loading.
+    AwaitingFrame(u64),
+}
+
+impl Loading {
+    /// Whether the tab shows a spinner.
+    pub fn is_loading(self) -> bool {
+        self != Self::Idle
+    }
+
+    /// The state after a frame of page state `generation` is shown.
+    #[must_use]
+    pub fn after_frame(self, generation: u64) -> Self {
+        match self {
+            Self::AwaitingFrame(awaited) if generation >= awaited => Self::Idle,
+            other => other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Loading;
+
+    /// A frame of an earlier page leaves the tab loading; a frame of the
+    /// awaited page or a later one ends it; and no frame ends a load whose
+    /// page has not arrived yet.
+    #[test]
+    fn only_a_frame_of_the_awaited_page_ends_loading() {
+        assert_eq!(Loading::AwaitingFrame(5).after_frame(4), Loading::AwaitingFrame(5));
+        assert_eq!(Loading::AwaitingFrame(5).after_frame(5), Loading::Idle);
+        assert_eq!(Loading::AwaitingFrame(5).after_frame(6), Loading::Idle);
+        assert_eq!(Loading::AwaitingState.after_frame(99), Loading::AwaitingState);
+        assert_eq!(Loading::Idle.after_frame(1), Loading::Idle);
     }
 }

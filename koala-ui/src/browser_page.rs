@@ -108,10 +108,19 @@ pub struct LoadPollResult {
 /// template and scheduling a fresh render; the GUI caller never sees
 /// the error payload and only knows that no paintable frame arrived.
 struct RenderResult {
+    /// The generation of the page state this frame shows.
+    generation: u64,
     width: u32,
     height: u32,
     pixels: Vec<u8>,
     error: String,
+}
+
+/// A rendered frame, ready to display.
+pub struct Frame {
+    pub image: Image,
+    /// The [`BrowserPage::state_generation`] of the page state it shows.
+    pub generation: u64,
 }
 
 /// The Send-able subset of `LoadedDocument` needed to render a page.
@@ -180,6 +189,9 @@ fn extract_title(dom: &DomTree) -> String {
 /// A single render request sent from the GUI thread to the render worker.
 struct RenderJob {
     state: Arc<PageState>,
+    /// The generation of `state` (see `BrowserPage::state_generation`),
+    /// carried through to the result.
+    generation: u64,
     width: u32,
     height: u32,
 }
@@ -237,6 +249,10 @@ pub struct BrowserPage {
     // those jobs complete.
     state: Option<Arc<PageState>>,
 
+    // Counts replacements of `state`; see `state_generation`. Changed
+    // only through `set_state`.
+    state_generation: u64,
+
     // The URL of the most-recently-committed load, if any. Used by
     // `reload_current_url` to re-fetch the same address.
     current_url: Option<String>,
@@ -291,6 +307,7 @@ impl BrowserPage {
 
         Self {
             state: None,
+            state_generation: 0,
             current_url: None,
             history: Vec::new(),
             history_index: None,
@@ -304,12 +321,27 @@ impl BrowserPage {
         }
     }
 
+    /// Replace the page state and bump its generation.
+    fn set_state(&mut self, state: Option<Arc<PageState>>) {
+        self.state = state;
+        self.state_generation += 1;
+    }
+
+    /// A number that increases every time the page state is replaced:
+    /// by a finished load, the landing page, or an error page. Frames
+    /// carry the generation they were rendered from, so the caller can
+    /// tell a frame of the current page from a late frame of a previous
+    /// one.
+    pub fn state_generation(&self) -> u64 {
+        self.state_generation
+    }
+
     /// Parses `html` on the calling thread and replaces the current
     /// page state synchronously. Used for ad-hoc in-memory HTML
     /// (tests, debugging) — clears the history stack because the
     /// HTML has no identity the user could navigate back to.
     pub fn load_html(&mut self, html: &str) {
-        self.state = PageState::from_document(parse_html_string(html)).map(Arc::new);
+        self.set_state(PageState::from_document(parse_html_string(html)).map(Arc::new));
         self.current_url = None;
         self.history.clear();
         self.history_index = None;
@@ -326,7 +358,7 @@ impl BrowserPage {
     pub fn load_landing_page(&mut self) {
         let doc = parse_html_string(crate::landing::LANDING_HTML);
         report_problems("the new tab page", &doc);
-        self.state = PageState::from_document(doc).map(Arc::new);
+        self.set_state(PageState::from_document(doc).map(Arc::new));
         self.current_url = None;
         self.history.clear();
         self.history.push(HistoryEntry::Landing);
@@ -475,7 +507,7 @@ impl BrowserPage {
             };
         };
 
-        self.state = Some(state);
+        self.set_state(Some(state));
 
         match source {
             LoadSource::UserNavigation => {
@@ -528,6 +560,7 @@ impl BrowserPage {
         };
         let _ = self.render_job_tx.send(RenderJob {
             state: Arc::clone(state),
+            generation: self.state_generation,
             width,
             height,
         });
@@ -535,7 +568,8 @@ impl BrowserPage {
 
     /// Non-blocking check for a finished frame. Returns `None` when
     /// no frame is ready. Intended to be called from a `slint::Timer`
-    /// at ~60 Hz.
+    /// at ~60 Hz. The frame's `generation` says which page state it
+    /// shows, which may be older than the current one.
     ///
     /// When the render worker caught a panic while rasterising the
     /// current page (e.g. a slice out-of-bounds in real-world HTML),
@@ -544,9 +578,9 @@ impl BrowserPage {
     /// synthesising an error-page `PageState` and injecting it
     /// through the load channel, so the next poll tick swaps state
     /// and schedules a fresh render of the built-in error template.
-    /// The caller always sees either a real `Image` or `None` — it
+    /// The caller always sees either a real frame or `None` — it
     /// never has to know about engine panics.
-    pub fn try_take_render_image(&self) -> Option<Image> {
+    pub fn try_take_render_image(&self) -> Option<Frame> {
         let Ok(result) = self.render_result_rx.try_recv() else {
             return None;
         };
@@ -568,7 +602,10 @@ impl BrowserPage {
         // the initial buffer.
         let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(result.width, result.height);
         buf.make_mut_bytes().copy_from_slice(&result.pixels);
-        Some(Image::from_rgba8(buf))
+        Some(Frame {
+            image: Image::from_rgba8(buf),
+            generation: result.generation,
+        })
     }
 
     /// Builds the error page for the currently-displayed URL and
@@ -614,6 +651,7 @@ fn run_render_worker(
 
         let pixels = render_state(&latest.state, latest.width, latest.height);
         let result = RenderResult {
+            generation: latest.generation,
             width: latest.width,
             height: latest.height,
             pixels,

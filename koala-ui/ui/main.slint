@@ -1,6 +1,6 @@
 // Top-level window: tab strip, header bar (back / forward /
-// reload / URL bar), an indeterminate progress strip visible
-// during in-flight navigations, and the viewport itself. Per-row
+// reload / URL bar), and the viewport, with an indeterminate
+// progress strip over its top edge during navigations. Per-row
 // tab markup lives in `tabs.slint`.
 //
 // `TabEntry` is re-exported below so Rust sees the generated
@@ -224,16 +224,29 @@ export component MainWindow inherits Window {
             }
         }
 
-        if root.loading: ProgressIndicator {
-            indeterminate: true;
-            height: 3px;
-            vertical-stretch: 0;
-        }
-
-        viewport := Image {
-            source: root.viewport-source;
-            image-fit: fill;
+        // The page area. The progress strip is drawn over the page's top
+        // edge rather than taking its own row: a row that appears while
+        // loading shrinks the viewport, and the resize re-renders the old
+        // page at the start of every load and again at the end.
+        Rectangle {
             vertical-stretch: 1;
+
+            viewport := Image {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                source: root.viewport-source;
+                image-fit: fill;
+            }
+
+            if root.loading: ProgressIndicator {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 3px;
+                indeterminate: true;
+            }
         }
     }
 }

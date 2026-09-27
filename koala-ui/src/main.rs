@@ -47,7 +47,7 @@ use slint::{
     ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel,
 };
 
-use tab_state::TabState;
+use tab_state::{Loading, TabState};
 
 // The developer HUD reads process-wide heap stats, which requires the
 // counting allocator to be the registered global allocator. It is
@@ -123,7 +123,7 @@ fn main() -> Result<(), slint::PlatformError> {
             window.set_committed_url(SharedString::from(url.as_str()));
             *tab.url_text.borrow_mut() = url.clone();
             tab.page.borrow().request_load(&url);
-            tab.expecting_paint.set(true);
+            tab.loading.set(Loading::AwaitingState);
             window.set_loading(true);
             refresh_tab_entry(&tab_model, i, tab);
         });
@@ -139,7 +139,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(i) else { return };
             if tab.page.borrow_mut().go_back() {
-                tab.expecting_paint.set(true);
+                tab.loading.set(Loading::AwaitingState);
                 window.set_loading(true);
                 refresh_tab_entry(&tab_model, i, tab);
             }
@@ -156,7 +156,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(i) else { return };
             if tab.page.borrow_mut().go_forward() {
-                tab.expecting_paint.set(true);
+                tab.loading.set(Loading::AwaitingState);
                 window.set_loading(true);
                 refresh_tab_entry(&tab_model, i, tab);
             }
@@ -176,10 +176,15 @@ fn main() -> Result<(), slint::PlatformError> {
             // re-fetch, but the user still asked to refresh — force
             // a re-render at the current size by resetting the
             // last-requested dims.
-            if !tab.page.borrow().reload_current_url() {
+            if tab.page.borrow().reload_current_url() {
+                tab.loading.set(Loading::AwaitingState);
+            } else {
                 tab.last_requested.set((0, 0));
+                // The same page state is rendered again, so a frame of
+                // its generation ends the reload.
+                let generation = tab.page.borrow().state_generation();
+                tab.loading.set(Loading::AwaitingFrame(generation));
             }
-            tab.expecting_paint.set(true);
             window.set_loading(true);
             refresh_tab_entry(&tab_model, i, tab);
         });
@@ -310,9 +315,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 *tab.url_text.borrow_mut() = page.current_url().unwrap_or_default();
                 tab.can_go_back.set(page.can_go_back());
                 tab.can_go_forward.set(page.can_go_forward());
-                // `expecting_paint` was set when the navigation
-                // was initiated; leave it true — clearing happens
-                // when the post-swap frame arrives.
+                // The tab stays loading until a frame of this state
+                // is shown. That covers swaps no navigation started,
+                // such as an error page replacing a page that
+                // panicked while rendering.
+                tab.loading.set(Loading::AwaitingFrame(page.state_generation()));
                 tab.last_requested.set((0, 0));
                 drop(page);
                 refresh_tab_entry(&tab_model_for_tick, i, tab);
@@ -321,16 +328,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            if let Some(image) = tab.page.borrow().try_take_render_image() {
-                *tab.last_image.borrow_mut() = Some(image.clone());
+            if let Some(frame) = tab.page.borrow().try_take_render_image() {
+                // A frame of an earlier page state is still shown (it is
+                // what the tab has), but only a frame of the awaited
+                // state ends loading.
+                *tab.last_image.borrow_mut() = Some(frame.image.clone());
                 if i == active_idx {
-                    window.set_viewport_source(image);
+                    window.set_viewport_source(frame.image);
                 }
-                if tab.expecting_paint.get() {
-                    tab.expecting_paint.set(false);
+                let before = tab.loading.get();
+                let after = before.after_frame(frame.generation);
+                if after != before {
+                    tab.loading.set(after);
                     refresh_tab_entry(&tab_model_for_tick, i, tab);
                     if i == active_idx {
-                        window.set_loading(false);
+                        window.set_loading(after.is_loading());
                     }
                 }
             }
@@ -385,9 +397,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
 /// Append a tab to both the Rust-side `tabs` vec and the
 /// Slint-side `tab_model`, keeping them in lockstep. The new
-/// entry's `loading` flag starts true to match
-/// `TabState::expecting_paint` — the first render of the landing
-/// page is the awaited paint and should show a spinner.
+/// entry's `loading` flag mirrors `TabState::loading`, which starts
+/// out awaiting the landing page's first frame.
 fn push_tab(
     tabs: &Rc<RefCell<Vec<Rc<TabState>>>>,
     tab_model: &Rc<VecModel<TabEntry>>,
@@ -395,7 +406,7 @@ fn push_tab(
 ) {
     let entry = TabEntry {
         title: SharedString::from(state.title.borrow().as_str()),
-        loading: state.expecting_paint.get(),
+        loading: state.loading.get().is_loading(),
     };
     tabs.borrow_mut().push(Rc::new(state));
     tab_model.push(entry);
@@ -408,7 +419,7 @@ fn push_tab(
 fn refresh_tab_entry(model: &VecModel<TabEntry>, index: usize, state: &TabState) {
     let entry = TabEntry {
         title: SharedString::from(state.title.borrow().as_str()),
-        loading: state.expecting_paint.get(),
+        loading: state.loading.get().is_loading(),
     };
     model.set_row_data(index, entry);
 }
@@ -434,7 +445,7 @@ fn sync_window_to_active_tab(window: &MainWindow, active_idx: usize, tab: &TabSt
     }
     window.set_back_enabled(tab.can_go_back.get());
     window.set_forward_enabled(tab.can_go_forward.get());
-    window.set_loading(tab.expecting_paint.get());
+    window.set_loading(tab.loading.get().is_loading());
     let image = tab.last_image.borrow().clone().unwrap_or_default();
     window.set_viewport_source(image);
 }
