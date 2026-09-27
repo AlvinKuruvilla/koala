@@ -10,8 +10,8 @@ use std::cell::Cell;
 use koala_dom::{DomTree, Namespace, NodeId, NodeType};
 
 use crate::style::computed::{
-    AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
-    ListStyleType, Overflow, TrackList, Visibility, WhiteSpace,
+    AlignItems, AlignSelf, Content, ContentItem, FlexDirection, FlexWrap, GridAutoFlow, GridLine,
+    JustifyContent, ListStyleType, Overflow, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
     AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, ComputedStyle, DisplayValue,
@@ -21,6 +21,8 @@ use crate::style::{
 use crate::style::values::{
     ClearSide, FloatSide, FontStyle, PositionType, TextAlign, TextDecorationLine,
 };
+
+use crate::selector::PseudoElement;
 
 use super::box_model::{BoxDimensions, Rect};
 use super::default_display_for_element;
@@ -52,16 +54,19 @@ fn collapse_two_margins(a: f32, b: f32) -> f32 {
     }
 }
 
-/// Find a child `LayoutBox` by `NodeId`, searching recursively.
+/// Find a child `LayoutBox` by [`ElementBoxId`], searching recursively.
 ///
 /// Used to locate inline-block children for repositioning after line
 /// finalization.
-fn find_child_by_node_id(children: &mut [LayoutBox], target: NodeId) -> Option<&mut LayoutBox> {
+fn find_child_by_box_id(
+    children: &mut [LayoutBox],
+    target: ElementBoxId,
+) -> Option<&mut LayoutBox> {
     for child in children.iter_mut() {
-        if let BoxType::Principal(id) = child.box_type && id == target {
+        if child.box_type.element_box_id() == Some(target) {
             return Some(child);
         }
-        if let Some(found) = find_child_by_node_id(&mut child.children, target) {
+        if let Some(found) = find_child_by_box_id(&mut child.children, target) {
             return Some(found);
         }
     }
@@ -99,7 +104,7 @@ fn layout_inline_content(
     font_metrics: &dyn FontMetrics,
     content_rect: Rect,
     abs_cb: Rect,
-    inline_block_positions: &mut Vec<(NodeId, Rect)>,
+    inline_block_positions: &mut Vec<(ElementBoxId, Rect)>,
     float_ctx: &mut FloatContext,
 ) {
     for child in children.iter_mut() {
@@ -159,7 +164,7 @@ fn layout_inline_content(
             {
                 inline_layout.add_line_break(inherited_font_size, font_metrics);
             }
-            BoxType::Principal(node_id)
+            BoxType::Principal(_) | BoxType::PseudoElement(..)
                 if child.display.outer == OuterDisplayType::Inline
                     && child.display.inner == InnerDisplayType::FlowRoot =>
             {
@@ -172,7 +177,10 @@ fn layout_inline_content(
                 //
                 // "Inline-block elements participate in their parent's inline
                 // formatting context as a single opaque box."
-                let node_id = *node_id;
+                let box_id = child
+                    .box_type
+                    .element_box_id()
+                    .expect("principal and pseudo-element boxes have an element");
 
                 // STEP 1: Resolve width. If auto, use shrink-to-fit.
                 if child.width.is_none() || matches!(child.width, Some(AutoLength::Auto)) {
@@ -193,10 +201,10 @@ fn layout_inline_content(
 
                 // STEP 3: Record margin box and place on the inline line.
                 let mb = child.dimensions.margin_box();
-                inline_layout.add_inline_block(node_id, mb.width, mb.height);
+                inline_layout.add_inline_block(box_id, mb.width, mb.height);
 
                 // Record the temporary position for post-layout repositioning.
-                inline_block_positions.push((node_id, mb));
+                inline_block_positions.push((box_id, mb));
             }
             BoxType::Principal(node_id)
                 if child.display.outer == OuterDisplayType::Inline && child.is_replaced =>
@@ -213,7 +221,10 @@ fn layout_inline_content(
                 // inline-block: laid out on its own, then placed whole. Its
                 // size comes from `layout_replaced` (§ 10.3.2, § 10.6.2),
                 // which `layout` dispatches to, so no shrink-to-fit step.
-                let node_id = *node_id;
+                let box_id = ElementBoxId {
+                    node: *node_id,
+                    pseudo_element: None,
+                };
                 let temp_cb = Rect {
                     x: content_rect.x,
                     y: inline_layout.current_y,
@@ -222,10 +233,12 @@ fn layout_inline_content(
                 };
                 child.layout(temp_cb, viewport, font_metrics, abs_cb);
                 let mb = child.dimensions.margin_box();
-                inline_layout.add_inline_block(node_id, mb.width, mb.height);
-                inline_block_positions.push((node_id, mb));
+                inline_layout.add_inline_block(box_id, mb.width, mb.height);
+                inline_block_positions.push((box_id, mb));
             }
-            BoxType::Principal(_) if child.display.outer == OuterDisplayType::Inline => {
+            BoxType::Principal(_) | BoxType::PseudoElement(..)
+                if child.display.outer == OuterDisplayType::Inline =>
+            {
                 // [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
                 //
                 // "An inline box is one that is both inline-level and whose
@@ -283,7 +296,7 @@ fn layout_inline_content(
                 // STEP 4: Close the inline box (apply right edge).
                 inline_layout.end_inline_box(right_mbp);
             }
-            BoxType::Principal(_) | BoxType::AnonymousBlock => {
+            BoxType::Principal(_) | BoxType::PseudoElement(..) | BoxType::AnonymousBlock => {
                 // [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)
                 //
                 // "When an inline box contains an in-flow block-level box,
@@ -352,6 +365,49 @@ pub enum BoxType {
     /// "In a document like this: `<div>`Some text`<p>`More text`</p></div>`
     /// ...the 'Some text' part generates an anonymous block box."
     AnonymousBlock,
+
+    /// [CSS 2.1 § 12.1 The :before and :after pseudo-elements](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+    ///
+    /// The box of element `NodeId`'s `::before` or `::after`. "The :before
+    /// and :after pseudo-elements interact with other boxes as if they were
+    /// real elements inserted just inside their associated element", so it
+    /// is laid out like an element's principal box. Its style is the
+    /// element's `ComputedStyle::before` or `ComputedStyle::after`.
+    PseudoElement(NodeId, PseudoElement),
+}
+
+impl BoxType {
+    /// The element this box was generated for, for a principal or
+    /// pseudo-element box; `None` for an anonymous box.
+    #[must_use]
+    pub const fn element_box_id(&self) -> Option<ElementBoxId> {
+        match *self {
+            Self::Principal(node) => Some(ElementBoxId {
+                node,
+                pseudo_element: None,
+            }),
+            Self::PseudoElement(node, pseudo_element) => Some(ElementBoxId {
+                node,
+                pseudo_element: Some(pseudo_element),
+            }),
+            Self::AnonymousInline(_) | Self::AnonymousBlock => None,
+        }
+    }
+}
+
+/// Which of an element's boxes a box is: its principal box, or its
+/// `::before` or `::after`.
+///
+/// A `NodeId` alone does not tell them apart, and inline layout finds an
+/// inline-block box again by this after the line is finished; an
+/// `inline-block` `::before` searched for by `NodeId` would find its own
+/// element first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElementBoxId {
+    /// The element.
+    pub node: NodeId,
+    /// `None` for the element's principal box.
+    pub pseudo_element: Option<PseudoElement>,
 }
 
 /// A node in the layout tree (render tree with computed layout).
@@ -1301,6 +1357,45 @@ impl LayoutBox {
                 layout_box.colspan =
                     data.attrs.get("colspan").and_then(|v| v.parse().ok()).unwrap_or(1);
                 layout_box.tag_name = Some(tag);
+
+                // [CSS 2.1 § 12.1](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+                //
+                // "The :before and :after pseudo-elements interact with other
+                // boxes as if they were real elements inserted just inside
+                // their associated element": `::before` as the first child,
+                // `::after` as the last.
+                //
+                // "This specification does not fully define the interaction
+                // of :before and :after with replaced elements (such as IMG
+                // in HTML)." A replaced element's children are not laid out,
+                // so none are generated for one.
+                if !layout_box.is_replaced
+                    && let Some(style) = style
+                {
+                    if let Some(before) = style.before.as_deref().and_then(|before| {
+                        Self::pseudo_element_box(
+                            node_id,
+                            PseudoElement::Before,
+                            before,
+                            &data.attrs,
+                            is_flex_or_grid,
+                        )
+                    }) {
+                        layout_box.children.insert(0, before);
+                    }
+                    if let Some(after) = style.after.as_deref().and_then(|after| {
+                        Self::pseudo_element_box(
+                            node_id,
+                            PseudoElement::After,
+                            after,
+                            &data.attrs,
+                            is_flex_or_grid,
+                        )
+                    }) {
+                        layout_box.children.push(after);
+                    }
+                }
+
                 Some(layout_box)
             }
             // [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
@@ -1337,79 +1432,162 @@ impl LayoutBox {
                 if !preserve_whitespace && text.trim().is_empty() {
                     return None;
                 }
-                Some(Self {
-                    box_type: BoxType::AnonymousInline(text.clone()),
-                    dimensions: BoxDimensions::default(),
-                    display: DisplayValue::inline(),
-                    children: Vec::new(),
-                    // Anonymous inline boxes have no margin/padding/border (all None = 0 when resolved)
-                    margin: UnresolvedAutoEdgeSizes::default(),
-                    padding: UnresolvedEdgeSizes::default(),
-                    border_width: UnresolvedEdgeSizes::default(),
-                    width: None,
-                    height: None,
-                    min_width: None,
-                    max_width: None,
-                    min_height: None,
-                    max_height: None,
-                    // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
-                    //
-                    // Text nodes inherit font-size and color from their parent.
-                    // These defaults are overridden during inline layout by the
-                    // parent's resolved values.
-                    font_size: 16.0,
-                    color: ColorValue::BLACK,
-                    text_align: TextAlign::default(),
-                    font_weight: 400,
-                    font_style: FontStyle::Normal,
-                    text_decoration: TextDecorationLine::default(),
-                    letter_spacing: 0.0,
-                    line_boxes: Vec::new(),
-                    collapsed_margin_top: None,
-                    collapsed_margin_bottom: None,
-                    is_replaced: false,
-                    replaced_src: None,
-                    is_inline_svg: false,
-                    intrinsic_ratio: None,
-                    intrinsic_width: None,
-                    intrinsic_height: None,
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::FlexStart,
-                    align_items: AlignItems::Stretch,
-                    align_self: AlignSelf::Auto,
-                    flex_grow: 0.0,
-                    flex_shrink: 1.0,
-                    flex_basis: None,
-                    flex_wrap: FlexWrap::default(),
-                    grid_template_columns: TrackList::default(),
-                    grid_template_rows: TrackList::default(),
-                    grid_auto_flow: GridAutoFlow::default(),
-                    row_gap: 0.0,
-                    column_gap: 0.0,
-                    grid_column_start: GridLine::Auto,
-                    grid_column_end: GridLine::Auto,
-                    grid_row_start: GridLine::Auto,
-                    grid_row_end: GridLine::Auto,
-                    position_type: PositionType::Static,
-                    offsets: BoxOffsets::default(),
-                    box_sizing_border_box: false,
-                    float_side: None,
-                    clear_side: None,
-                    overflow: Overflow::Visible,
-                    white_space: WhiteSpace::default(),
-                    visibility: Visibility::default(),
-                    opacity: 1.0,
-                    box_shadow: Vec::new(),
-                    border_radius: BorderRadius::default(),
-                    list_style_type: None,
-                    marker_text: None,
-                    tag_name: None,
-                    colspan: 1,
-                })
+                Some(Self::anonymous_inline(text.clone()))
             }
             // Comments do not generate boxes and are not part of the render tree.
             NodeType::Comment(_) => None,
         }
+    }
+
+    /// [§ 9.2.1.1 Anonymous inline boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-inline)
+    ///
+    /// The box for a run of text: a text node's, or the text a `::before`
+    /// or `::after` generates.
+    fn anonymous_inline(text: String) -> Self {
+        Self {
+            box_type: BoxType::AnonymousInline(text),
+            dimensions: BoxDimensions::default(),
+            display: DisplayValue::inline(),
+            children: Vec::new(),
+            // Anonymous inline boxes have no margin/padding/border (all None = 0 when resolved)
+            margin: UnresolvedAutoEdgeSizes::default(),
+            padding: UnresolvedEdgeSizes::default(),
+            border_width: UnresolvedEdgeSizes::default(),
+            width: None,
+            height: None,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            // [§ 4 Inheritance](https://www.w3.org/TR/css-cascade-4/#inheriting)
+            //
+            // Text nodes inherit font-size and color from their parent.
+            // These defaults are overridden during inline layout by the
+            // parent's resolved values.
+            font_size: 16.0,
+            color: ColorValue::BLACK,
+            text_align: TextAlign::default(),
+            font_weight: 400,
+            font_style: FontStyle::Normal,
+            text_decoration: TextDecorationLine::default(),
+            letter_spacing: 0.0,
+            line_boxes: Vec::new(),
+            collapsed_margin_top: None,
+            collapsed_margin_bottom: None,
+            is_replaced: false,
+            replaced_src: None,
+            is_inline_svg: false,
+            intrinsic_ratio: None,
+            intrinsic_width: None,
+            intrinsic_height: None,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Stretch,
+            align_self: AlignSelf::Auto,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: None,
+            flex_wrap: FlexWrap::default(),
+            grid_template_columns: TrackList::default(),
+            grid_template_rows: TrackList::default(),
+            grid_auto_flow: GridAutoFlow::default(),
+            row_gap: 0.0,
+            column_gap: 0.0,
+            grid_column_start: GridLine::Auto,
+            grid_column_end: GridLine::Auto,
+            grid_row_start: GridLine::Auto,
+            grid_row_end: GridLine::Auto,
+            position_type: PositionType::Static,
+            offsets: BoxOffsets::default(),
+            box_sizing_border_box: false,
+            float_side: None,
+            clear_side: None,
+            overflow: Overflow::Visible,
+            white_space: WhiteSpace::default(),
+            visibility: Visibility::default(),
+            opacity: 1.0,
+            box_shadow: Vec::new(),
+            border_radius: BorderRadius::default(),
+            list_style_type: None,
+            marker_text: None,
+            tag_name: None,
+            colspan: 1,
+        }
+    }
+
+    /// [CSS 2.1 § 12.1 The :before and :after pseudo-elements](https://www.w3.org/TR/CSS2/generate.html#before-after-content)
+    ///
+    /// The box element `node_id`'s `pseudo_element` generates under `style`,
+    /// or `None` if it generates none.
+    ///
+    /// `attrs` are the element's attributes, for `attr()`; `inside_flex_or_grid`
+    /// says whether the element is a flex or grid container, which makes the
+    /// box a flex or grid item.
+    fn pseudo_element_box(
+        node_id: NodeId,
+        pseudo_element: PseudoElement,
+        style: &ComputedStyle,
+        attrs: &koala_dom::AttributesMap,
+        inside_flex_or_grid: bool,
+    ) -> Option<Self> {
+        // [CSS 2.1 § 12.2](https://www.w3.org/TR/CSS2/generate.html#content)
+        //
+        // "none: The pseudo-element is not generated." "normal: Computes to
+        // 'none' for the :before and :after pseudo-elements." 'normal' is
+        // also the initial value, so a pseudo-element no rule gave a
+        // `content` is not generated either.
+        let Some(Content::Items(items)) = &style.content else {
+            return None;
+        };
+
+        // [§ 2.6 display: none](https://www.w3.org/TR/css-display-3/#valdef-display-none)
+        //
+        // "The element and its descendants generate no boxes or text runs."
+        if style.display_none {
+            return None;
+        }
+
+        // "<string>: Text content"; "attr(X): This function returns as a
+        // string the value of attribute X for the subject of the selector.
+        // [...] If the subject of the selector does not have an attribute X,
+        // an empty string is returned."
+        let text: String = items
+            .iter()
+            .map(|item| match item {
+                ContentItem::String(text) => text.as_str(),
+                ContentItem::Attr(name) => attrs.get(name).map_or("", String::as_str),
+            })
+            .collect();
+
+        // "the initial value of the 'display' property is 'inline'", so a
+        // generated box is inline unless a rule says otherwise.
+        let display = style.display.unwrap_or_else(DisplayValue::inline);
+        let display = if inside_flex_or_grid {
+            display.blockified()
+        } else {
+            display
+        };
+
+        // The text is laid out as the box's only child, and white space in it
+        // is "still subject to the 'white-space' property" (§ 12.2), as the
+        // Text arm of `build_box` treats a text node. `content: ''`, the
+        // clearfix's value, produces no text box at all.
+        let preserve_whitespace = matches!(
+            style.white_space.unwrap_or_default(),
+            WhiteSpace::Pre | WhiteSpace::PreWrap
+        );
+        let children = if !preserve_whitespace && text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![Self::anonymous_inline(text)]
+        };
+
+        Some(Self::from_style(
+            BoxType::PseudoElement(node_id, pseudo_element),
+            Some(style),
+            display,
+            children,
+        ))
     }
 
     /// Build a box whose properties all come from `style`.
@@ -3502,7 +3680,7 @@ impl LayoutBox {
             );
         }
 
-        let mut inline_block_positions: Vec<(NodeId, Rect)> = Vec::new();
+        let mut inline_block_positions: Vec<(ElementBoxId, Rect)> = Vec::new();
 
         layout_inline_content(
             &mut self.children,
@@ -3560,18 +3738,18 @@ impl LayoutBox {
         if !inline_block_positions.is_empty() {
             for line_box in &self.line_boxes {
                 for fragment in &line_box.fragments {
-                    if let FragmentContent::InlineBlock(frag_node_id) = &fragment.content {
-                        // Find the temp position for this node_id.
+                    if let FragmentContent::InlineBlock(frag_box_id) = &fragment.content {
+                        // Find the temp position for this box.
                         if let Some((_, temp_mb)) = inline_block_positions
                             .iter()
-                            .find(|(nid, _)| nid == frag_node_id)
+                            .find(|(box_id, _)| box_id == frag_box_id)
                         {
                             let dx = fragment.bounds.x - temp_mb.x;
                             let dy = fragment.bounds.y - temp_mb.y;
                             if dx != 0.0 || dy != 0.0 {
-                                // Find the child LayoutBox by NodeId and shift it.
+                                // Find the child LayoutBox and shift it.
                                 if let Some(child) =
-                                    find_child_by_node_id(&mut self.children, *frag_node_id)
+                                    find_child_by_box_id(&mut self.children, *frag_box_id)
                                 {
                                     Self::shift_box_tree(child, dx, dy);
                                 }
