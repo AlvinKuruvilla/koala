@@ -729,3 +729,46 @@ fn test_column_group() {
     let colgroup = find_element(&implied, table, "colgroup").expect("colgroup exists");
     assert_eq!(tags(&implied, colgroup), ["col"]);
 }
+
+/// [§ 13.2.6.4.14](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inrow)
+///
+/// "Clear the stack back to a table row context" stops at an HTML `tr`,
+/// `template`, or `html` element. `<template>` inside `<svg>` is an SVG element,
+/// so `</tr>` has to pop it along with the `<svg>` and then close the `<tr>`.
+/// When the check compared tag names alone, it stopped at the SVG `template`,
+/// popped that in place of the `<tr>`, and the following `<td>` landed inside
+/// the `<svg>`.
+#[test]
+fn test_clear_stack_ignores_foreign_elements() {
+    use koala_dom::Namespace::{Html, Svg};
+
+    let tree = parse("<table><tr><svg><template></tr><td>x</td></table>");
+    let body = find_element(&tree, tree.root(), "body").expect("body exists");
+    assert_eq!(
+        child_elements(&tree, body),
+        [("svg".to_string(), Svg), ("table".to_string(), Html)]
+    );
+    let tbody = find_element(&tree, body, "tbody").expect("tbody exists");
+    let rows = element_children(&tree, tbody, "tr");
+    assert_eq!(rows.len(), 2);
+    assert!(child_elements(&tree, rows[0]).is_empty());
+    assert_eq!(child_elements(&tree, rows[1]), [("td".to_string(), Html)]);
+}
+
+/// [§ 13.1.1 Special](https://html.spec.whatwg.org/multipage/parsing.html#special)
+///
+/// MathML `mi` is in the special category, so `<li>`'s walk up the stack stops
+/// at it and the new `<li>` nests inside the `<mi>`. When the category was a
+/// list of tag names with no namespace, `mi` was not special, and the walk went
+/// on to close the outer `<li>`.
+#[test]
+fn test_special_category_includes_foreign_elements() {
+    use koala_dom::Namespace::{Html, MathMl};
+
+    let tree = parse("<ul><li><math><mi><li>x</ul>");
+    let ul = find_element(&tree, tree.root(), "ul").expect("ul exists");
+    assert_eq!(child_elements(&tree, ul), [("li".to_string(), Html)]);
+    let mi = find_element(&tree, ul, "mi").expect("mi exists");
+    assert_eq!(tree.as_element(mi).expect("mi is an element").namespace, MathMl);
+    assert_eq!(child_elements(&tree, mi), [("li".to_string(), Html)]);
+}
