@@ -53,7 +53,7 @@ impl BlockFormattingContext {
         Self {
             current_y: containing_block.y,
             containing_width: containing_block.width,
-            float_context: FloatContext::new(containing_block),
+            float_context: FloatContext::new(),
         }
     }
 

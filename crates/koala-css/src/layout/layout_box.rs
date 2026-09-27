@@ -11,7 +11,7 @@ use koala_dom::{DomTree, Namespace, NodeId, NodeType};
 
 use crate::style::computed::{
     AlignItems, AlignSelf, FlexDirection, FlexWrap, GridAutoFlow, GridLine, JustifyContent,
-    ListStyleType, TrackList, Visibility, WhiteSpace,
+    ListStyleType, Overflow, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
     AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, ComputedStyle, DisplayValue,
@@ -100,6 +100,7 @@ fn layout_inline_content(
     content_rect: Rect,
     abs_cb: Rect,
     inline_block_positions: &mut Vec<(NodeId, Rect)>,
+    float_ctx: &mut FloatContext,
 ) {
     for child in children.iter_mut() {
         // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
@@ -276,6 +277,7 @@ fn layout_inline_content(
                     content_rect,
                     abs_cb,
                     inline_block_positions,
+                    float_ctx,
                 );
 
                 // STEP 4: Close the inline box (apply right edge).
@@ -308,8 +310,10 @@ fn layout_inline_content(
                     height: f32::MAX,
                 };
 
-                // STEP 3: Layout the block child.
-                child.layout(block_cb, viewport, font_metrics, abs_cb);
+                // STEP 3: Layout the block child. It is in the flow of the
+                // block container that owns this inline formatting context,
+                // so it shares that container's block formatting context.
+                child.layout_in_flow(block_cb, viewport, font_metrics, abs_cb, float_ctx);
 
                 // STEP 4: Advance past the block child's margin box.
                 inline_layout.current_y += child.dimensions.margin_box().height;
@@ -677,6 +681,12 @@ pub struct LayoutBox {
     ///
     /// None means no clearance (clear: none).
     pub clear_side: Option<ClearSide>,
+
+    /// [§ 11.1.1 Overflow: the 'overflow' property](https://www.w3.org/TR/CSS2/visufx.html#overflow)
+    ///
+    /// Layout reads it only to decide whether the box starts a block
+    /// formatting context (§ 9.4.1); clipping is done by the painter.
+    pub overflow: Overflow,
 
     /// [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
     ///
@@ -1140,6 +1150,7 @@ impl LayoutBox {
                     box_sizing_border_box: false,
                     float_side: None,
                     clear_side: None,
+                    overflow: Overflow::Visible,
                     white_space: WhiteSpace::default(),
                     visibility: Visibility::default(),
                     opacity: 1.0,
@@ -1369,6 +1380,7 @@ impl LayoutBox {
                 //
                 // Extract float and clear from computed style.
                 let clear_side = style.and_then(|s| s.clear);
+                let overflow = style.and_then(|s| s.overflow).unwrap_or(Overflow::Visible);
 
                 // [§ 9.7 Relationships between 'display', 'position', and 'float'](https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo)
                 //
@@ -1548,6 +1560,7 @@ impl LayoutBox {
                     box_sizing_border_box,
                     float_side,
                     clear_side,
+                    overflow,
                     white_space,
                     visibility,
                     opacity,
@@ -1651,6 +1664,7 @@ impl LayoutBox {
                     box_sizing_border_box: false,
                     float_side: None,
                     clear_side: None,
+                    overflow: Overflow::Visible,
                     white_space: WhiteSpace::default(),
                     visibility: Visibility::default(),
                     opacity: 1.0,
@@ -1772,12 +1786,73 @@ impl LayoutBox {
     /// `abs_cb` is the padding box of the nearest positioned ancestor.
     /// Used as the containing block for absolutely positioned descendants.
     /// The initial value (at the root) is the viewport.
+    ///
+    /// A block box laid out through this method starts its own float
+    /// context, as if it were a block formatting context root. That is right
+    /// for every caller except a block container laying out its in-flow
+    /// children, which uses [`Self::layout_in_flow`] instead.
     pub fn layout(
         &mut self,
         containing_block: Rect,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
         abs_cb: Rect,
+    ) {
+        self.layout_with_floats(containing_block, viewport, font_metrics, abs_cb, None);
+    }
+
+    /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    ///
+    /// Lay out an in-flow child of a block container. If the child is an
+    /// ordinary block box, it joins its parent's block formatting context:
+    /// floats inside it are placed in `float_ctx`, and its line boxes and
+    /// cleared descendants see floats placed there earlier. If the child
+    /// starts a block formatting context of its own, this is the same as
+    /// [`Self::layout`].
+    pub(crate) fn layout_in_flow(
+        &mut self,
+        containing_block: Rect,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
+        float_ctx: &mut FloatContext,
+    ) {
+        self.layout_with_floats(containing_block, viewport, font_metrics, abs_cb, Some(float_ctx));
+    }
+
+    /// [§ 9.4.1 Block formatting contexts](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
+    ///
+    /// "Floats, absolutely positioned elements, block containers (such as
+    /// inline-blocks, table-cells, and table-captions) that are not block
+    /// boxes, and block boxes with 'overflow' other than 'visible' (except
+    /// when that value has been propagated to the viewport) establish new
+    /// block formatting contexts for their contents."
+    ///
+    /// Flex, grid and table containers and replaced elements are included
+    /// too. They do not contain a block formatting context but a formatting
+    /// context of another kind, and floats outside them do not reach into it
+    /// either.
+    ///
+    /// NOTE: `overflow` on the root or `<body>` is propagated to the viewport
+    /// (CSS 2.1 § 11.1.1), and then does not make the element a root. Koala
+    /// does not propagate it, so an `overflow: hidden` `<body>` starts one
+    /// here. The root element's box is laid out through [`Self::layout`], so
+    /// it is a root either way.
+    fn establishes_block_formatting_context(&self) -> bool {
+        self.is_replaced
+            || self.float_side.is_some()
+            || matches!(self.position_type, PositionType::Absolute | PositionType::Fixed)
+            || self.display.inner != InnerDisplayType::Flow
+            || self.overflow != Overflow::Visible
+    }
+
+    fn layout_with_floats(
+        &mut self,
+        containing_block: Rect,
+        viewport: Rect,
+        font_metrics: &dyn FontMetrics,
+        abs_cb: Rect,
+        parent_floats: Option<&mut FloatContext>,
     ) {
         #[cfg(feature = "layout-trace")]
         let _depth = {
@@ -1812,6 +1887,10 @@ impl LayoutBox {
         //
         // Replaced elements use their own sizing algorithm instead of the
         // normal block/inline layout dispatch.
+        //
+        // A box that starts its own block formatting context keeps none of
+        // its parent's floats, whichever path laid it out.
+        let parent_floats = parent_floats.filter(|_| !self.establishes_block_formatting_context());
         if self.is_replaced {
             self.layout_replaced(containing_block, viewport);
         } else if self.display.inner == InnerDisplayType::Flex {
@@ -1832,7 +1911,7 @@ impl LayoutBox {
         } else {
             match self.display.outer {
                 OuterDisplayType::Block | OuterDisplayType::ListItem => {
-                    self.layout_block(containing_block, viewport, font_metrics, abs_cb);
+                    self.layout_block(containing_block, viewport, font_metrics, abs_cb, parent_floats);
                 }
                 OuterDisplayType::Inline => {
                     // TODO: Implement proper inline layout with line box construction
@@ -1866,7 +1945,7 @@ impl LayoutBox {
                     //
                     // TEMPORARY: Fall back to block layout until inline is implemented.
                     // This causes inline elements to stack vertically instead of horizontally.
-                    self.layout_block(containing_block, viewport, font_metrics, abs_cb);
+                    self.layout_block(containing_block, viewport, font_metrics, abs_cb, parent_floats);
                 }
                 OuterDisplayType::RunIn => {
                     // [§ 9.2.3 Run-in boxes](https://www.w3.org/TR/CSS2/visuren.html#run-in)
@@ -1895,6 +1974,64 @@ impl LayoutBox {
     /// Returns true if this box is positioned (i.e., `position` is not `static`).
     /// Positioned boxes establish a containing block for absolutely positioned
     /// descendants.
+    /// [§ 10.6.7 'Auto' heights for block formatting context roots](https://www.w3.org/TR/CSS2/visudet.html#root-height)
+    ///
+    /// "In addition, if the element has any floating descendants whose
+    /// bottom margin edge is below the element's bottom content edge, then
+    /// the height is increased to include those edges. Only floats that
+    /// participate in this block formatting context are taken into account"
+    ///
+    /// Call on a block formatting context root, after its auto height has
+    /// been computed from its in-flow content, with the float context it
+    /// started. Does nothing when `height` is not `auto`.
+    pub(crate) fn extend_height_to_floats(
+        &mut self,
+        float_ctx: &FloatContext,
+        containing_block: Rect,
+    ) {
+        if !self.height_computes_to_auto(containing_block) || float_ctx.is_empty() {
+            return;
+        }
+        let float_bottom = float_ctx.max_float_bottom();
+        let content_bottom = self.dimensions.content.y + self.dimensions.content.height;
+        if float_bottom > content_bottom {
+            self.dimensions.content.height = float_bottom - self.dimensions.content.y;
+        }
+    }
+
+    /// [§ 10.5 Content height: the 'height' property](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+    ///
+    /// Whether `height` is `auto`, either as specified or because a
+    /// percentage has nothing to resolve against: "If the height of the
+    /// containing block is not specified explicitly (i.e., it depends on
+    /// content height), and this element is not absolutely positioned, the
+    /// value computes to 'auto'."
+    ///
+    /// A containing block whose height depends on content arrives with
+    /// `height` set to `f32::MAX`.
+    fn height_computes_to_auto(&self, containing_block: Rect) -> bool {
+        match &self.height {
+            None | Some(AutoLength::Auto) => true,
+            Some(AutoLength::Length(LengthValue::Percent(_))) => {
+                containing_block.height >= f32::MAX / 2.0
+                    && !matches!(self.position_type, PositionType::Absolute | PositionType::Fixed)
+            }
+            Some(AutoLength::Length(_)) => false,
+        }
+    }
+
+    /// [§ 9.3 Positioning schemes](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+    ///
+    /// "An element is called out of flow if it is floated, absolutely
+    /// positioned, or is the root element. An element is called in-flow if it
+    /// is not out-of-flow."
+    ///
+    /// Only asked of children, so the root element case does not come up.
+    pub(crate) const fn is_in_flow(&self) -> bool {
+        self.float_side.is_none()
+            && !matches!(self.position_type, PositionType::Absolute | PositionType::Fixed)
+    }
+
     pub(crate) const fn is_positioned(&self) -> bool {
         matches!(
             self.position_type,
@@ -1905,12 +2042,15 @@ impl LayoutBox {
         )
     }
 
+    /// `parent_floats` is the float context of the block formatting context
+    /// this box takes part in, or `None` if the box starts one of its own.
     fn layout_block(
         &mut self,
         containing_block: Rect,
         viewport: Rect,
         font_metrics: &dyn FontMetrics,
         abs_cb: Rect,
+        parent_floats: Option<&mut FloatContext>,
     ) {
         // STEP 1: Calculate width
         // [§ 10.3.3](https://www.w3.org/TR/CSS2/visudet.html#blockwidth)
@@ -1973,12 +2113,17 @@ impl LayoutBox {
             self.all_children_inline()
         );
 
-        // STEP 4: Create a FloatContext for this block formatting context.
-        // [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+        // STEP 4: Find the float context of this box's block formatting context.
+        // [§ 9.5.1](https://www.w3.org/TR/CSS2/visuren.html#float-position)
         //
-        // Floats are scoped to their block formatting context. Each block
-        // container gets its own FloatContext that tracks placed floats.
-        let mut float_ctx = FloatContext::new(self.dimensions.content);
+        // "References to other elements in these rules refer only to other
+        // elements in the same block formatting context as the float."
+        //
+        // A box that takes part in its parent's context places its floats
+        // there; a root starts an empty one.
+        let mut own_floats = FloatContext::new();
+        let is_bfc_root = parent_floats.is_none();
+        let float_ctx: &mut FloatContext = parent_floats.unwrap_or(&mut own_floats);
 
         // STEP 5: Layout children.
         // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -1992,7 +2137,7 @@ impl LayoutBox {
                 "[BLOCK STEP5] layout_inline_children for {:?}",
                 self.box_type
             );
-            self.layout_inline_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
+            self.layout_inline_children(viewport, font_metrics, child_abs_cb, float_ctx);
         } else {
             #[cfg(feature = "layout-trace")]
             eprintln!(
@@ -2000,7 +2145,7 @@ impl LayoutBox {
                 self.box_type,
                 self.children.len()
             );
-            self.layout_block_children(viewport, font_metrics, child_abs_cb, &mut float_ctx);
+            self.layout_block_children(viewport, font_metrics, child_abs_cb, float_ctx);
         }
 
         // STEP 6: Calculate height
@@ -2016,19 +2161,11 @@ impl LayoutBox {
         // collapse with the element's bottom margin"
         self.calculate_block_height(containing_block, viewport, font_metrics);
 
-        // [§ 10.6.7](https://www.w3.org/TR/CSS2/visudet.html#root-height)
-        //
-        // "If the element has any floating descendants whose bottom margin
-        // edge is below the element's bottom content edge, then the height
-        // is increased to include those edges."
-        //
-        // Only applies when height is auto (not explicitly set).
-        if self.height.is_none() && !float_ctx.is_empty() {
-            let float_bottom = float_ctx.max_float_bottom();
-            let content_bottom = self.dimensions.content.y + self.dimensions.content.height;
-            if float_bottom > content_bottom {
-                self.dimensions.content.height = float_bottom - self.dimensions.content.y;
-            }
+        // Only a root grows to contain its floats. A box that is not a root
+        // follows § 10.6.3, where "floating boxes and absolutely positioned
+        // boxes are ignored", so its floats can hang out of it.
+        if is_bfc_root {
+            self.extend_height_to_floats(float_ctx, containing_block);
         }
 
         // [§ 10.7](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
@@ -2454,8 +2591,13 @@ impl LayoutBox {
 
                 // Place the float using its margin box dimensions.
                 let child_mb = child.dimensions.margin_box();
-                let placed =
-                    float_ctx.place_float(float_side, child_mb.width, child_mb.height, current_y);
+                let placed = float_ctx.place_float(
+                    float_side,
+                    child_mb.width,
+                    child_mb.height,
+                    current_y,
+                    content_box,
+                );
 
                 // Relocate the child from its temporary position to the
                 // placed position. The shift is the difference between
@@ -2547,7 +2689,7 @@ impl LayoutBox {
                     width: content_box.width,
                     height: f32::MAX,
                 };
-                child.layout(child_containing_block, viewport, font_metrics, abs_cb);
+                child.layout_in_flow(child_containing_block, viewport, font_metrics, abs_cb, float_ctx);
 
                 // The empty box's self-collapsed margin merges with the
                 // accumulated prev_margin_bottom for subsequent sibling
@@ -2566,7 +2708,7 @@ impl LayoutBox {
                 height: f32::MAX, // Height is unconstrained for normal flow
             };
 
-            child.layout(child_containing_block, viewport, font_metrics, abs_cb);
+            child.layout_in_flow(child_containing_block, viewport, font_metrics, abs_cb, float_ctx);
 
             // STEP 4: Advance the Y position.
             // [§ 9.4.1](https://www.w3.org/TR/CSS2/visuren.html#block-formatting)
@@ -2587,13 +2729,8 @@ impl LayoutBox {
         // that has clearance."
         let no_bottom_separator =
             self.dimensions.border.bottom == 0.0 && self.dimensions.padding.bottom == 0.0;
-        // Find the last in-flow child (skip absolute/fixed).
-        let last_inflow = self.children.iter().rev().find(|c| {
-            !matches!(
-                c.position_type,
-                PositionType::Absolute | PositionType::Fixed
-            )
-        });
+        // Find the last in-flow child (skip floats and absolute/fixed).
+        let last_inflow = self.children.iter().rev().find(|c| c.is_in_flow());
         if no_bottom_separator
             && self.height.is_none()
             && let Some(last) = last_inflow
@@ -2641,13 +2778,7 @@ impl LayoutBox {
             // f32::MAX is the sentinel for "auto" containing block height.
             // When the CB height is auto, percentage heights become auto —
             // fall through to the auto height computation below.
-            if matches!(l, LengthValue::Percent(_))
-                && containing_block.height >= f32::MAX / 2.0
-                && !matches!(
-                    self.position_type,
-                    PositionType::Absolute | PositionType::Fixed
-                )
-            {
+            if self.height_computes_to_auto(containing_block) {
                 // Percentage height with auto CB height → treat as auto.
                 // Fall through to STEP 2 below.
             } else {
@@ -2753,18 +2884,16 @@ impl LayoutBox {
         // Compute height from the last child's actual position rather than
         // summing margin_box heights. This correctly accounts for collapsed
         // margins between siblings (which reduce the effective spacing).
-        // Use the last in-flow child (skip absolute/fixed) for auto height.
-        // [§ 9.3](https://www.w3.org/TR/CSS2/visuren.html#positioning-scheme)
+        // Use the last in-flow child for auto height.
+        // [§ 10.6.3](https://www.w3.org/TR/CSS2/visudet.html#normal-block)
         //
-        // "In the absolute positioning model, a box is removed from the
-        // normal flow entirely." — absolute children do not contribute
-        // to the parent's auto height.
-        let last_inflow = self.children.iter().rev().find(|c| {
-            !matches!(
-                c.position_type,
-                PositionType::Absolute | PositionType::Fixed
-            )
-        });
+        // "Only children in the normal flow are taken into account (i.e.,
+        // floating boxes and absolutely positioned boxes are ignored, and
+        // relatively positioned boxes are considered without their offset)."
+        //
+        // A block formatting context root takes its floats back into account
+        // afterwards, in `extend_height_to_floats` (§ 10.6.7).
+        let last_inflow = self.children.iter().rev().find(|c| c.is_in_flow());
         if let Some(last) = last_inflow {
             let last_mb = last.dimensions.margin_box();
             let mut height = (last_mb.y + last_mb.height) - self.dimensions.content.y;
@@ -2780,6 +2909,9 @@ impl LayoutBox {
             }
 
             self.dimensions.content.height = height;
+        } else {
+            // "zero, otherwise"
+            self.dimensions.content.height = 0.0;
         }
     }
 
@@ -3157,6 +3289,7 @@ impl LayoutBox {
             box_sizing_border_box: false,
             float_side: None,
             clear_side: None,
+            overflow: Overflow::Visible,
             white_space: WhiteSpace::default(),
             visibility: Visibility::default(),
             opacity: 1.0,
@@ -3237,8 +3370,13 @@ impl LayoutBox {
             let child_mb = child.dimensions.margin_box();
             // Floats are placed before any line box exists, so the highest
             // position available is the top of the content box.
-            let placed =
-                float_ctx.place_float(float_side, child_mb.width, child_mb.height, content_rect.y);
+            let placed = float_ctx.place_float(
+                float_side,
+                child_mb.width,
+                child_mb.height,
+                content_rect.y,
+                content_rect,
+            );
 
             // Relocate from temporary position to placed position.
             let dx = placed.x - child_mb.x;
@@ -3258,8 +3396,11 @@ impl LayoutBox {
         // using the content area's top edge. Per-line queries are a v2
         // enhancement.
         let line_height = font_metrics.line_height(self.font_size);
-        let (left_edge, avail_width) =
-            float_ctx.available_width_at(self.dimensions.content.y, line_height);
+        let (left_edge, avail_width) = float_ctx.available_width_at(
+            self.dimensions.content.y,
+            line_height,
+            self.dimensions.content,
+        );
         // `InlineLayout` wants the offset into this box's content area.
         let left_offset = left_edge - self.dimensions.content.x;
 
@@ -3351,6 +3492,7 @@ impl LayoutBox {
             content_rect,
             abs_cb,
             &mut inline_block_positions,
+            float_ctx,
         );
 
         // STEP 3: Finalize the last line.
