@@ -14,7 +14,7 @@ use crate::style::computed::{
     ListStyleType, TrackList, Visibility, WhiteSpace,
 };
 use crate::style::{
-    AutoLength, BorderRadius, BoxShadow, ColorValue, ComputedStyle, DisplayValue,
+    AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, ComputedStyle, DisplayValue,
     InnerDisplayType, LengthValue, OuterDisplayType,
 };
 
@@ -1633,12 +1633,13 @@ impl LayoutBox {
         //
         // "The initial value of border width is 'medium' (implementation-defined)."
         //
-        // Extract the width LengthValue from BorderValue. Resolution happens during layout.
+        // The width layout uses, which is zero for a style of none or hidden.
+        // Resolution happens during layout.
         let border_width = UnresolvedEdgeSizes {
-            top: s.border_top.as_ref().map(|b| b.width),
-            right: s.border_right.as_ref().map(|b| b.width),
-            bottom: s.border_bottom.as_ref().map(|b| b.width),
-            left: s.border_left.as_ref().map(|b| b.width),
+            top: s.border_top.as_ref().map(BorderValue::computed_width),
+            right: s.border_right.as_ref().map(BorderValue::computed_width),
+            bottom: s.border_bottom.as_ref().map(BorderValue::computed_width),
+            left: s.border_left.as_ref().map(BorderValue::computed_width),
         };
 
         // [§ 10.2 Content width](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)

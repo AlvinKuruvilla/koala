@@ -68,3 +68,25 @@ pub struct BorderValue {
     /// [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
     pub color: ColorValue,
 }
+
+impl BorderValue {
+    /// The width that layout and painting use.
+    ///
+    /// [§ 3.3 Line Thickness](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+    ///
+    /// "Computed value: absolute length, snapped as a border width; zero if
+    /// the border style is none or hidden"
+    ///
+    /// Read the width through this, never through `width` directly: the
+    /// style and width can come from separate declarations in any order
+    /// (`border-width: 5px; border-style: none`), so the zeroing cannot
+    /// happen when either is parsed.
+    #[must_use]
+    pub fn computed_width(&self) -> LengthValue {
+        if matches!(self.style.as_str(), "none" | "hidden") {
+            LengthValue::Px(0.0)
+        } else {
+            self.width
+        }
+    }
+}

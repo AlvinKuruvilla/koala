@@ -784,6 +784,54 @@ fn significant_count(values: &[ComponentValue]) -> usize {
         .count()
 }
 
+/// [§ 6 Distance Units: the `<length>` type](https://www.w3.org/TR/css-values-4/#lengths)
+///
+/// A `<length>` and nothing wider. "For zero lengths the unit identifier is
+/// optional (i.e. can be syntactically represented as the <number> 0)."
+/// Percentages are a separate type, `<length-percentage>`, which the
+/// grammars that use this do not accept; `parse_single_length` also
+/// returns them, for the properties that do.
+fn parse_length_only(v: &ComponentValue) -> Option<LengthValue> {
+    parse_single_length(v).filter(|len| !matches!(len, LengthValue::Percent(_)))
+}
+
+/// [§ 3.3 Line Thickness](https://www.w3.org/TR/css-backgrounds-3/#border-width)
+///
+/// "<line-width> = <length [0,∞]> | thin | medium | thick"
+///
+/// "Negative values are invalid. The thin, medium, and thick keywords are
+/// equivalent to 1px, 3px, and 5px, respectively."
+fn parse_line_width(v: &ComponentValue) -> Option<LengthValue> {
+    if let ComponentValue::Token(CSSToken::Ident(ident)) = v {
+        return match ident.to_ascii_lowercase().as_str() {
+            "thin" => Some(LengthValue::Px(1.0)),
+            "medium" => Some(LengthValue::Px(3.0)),
+            "thick" => Some(LengthValue::Px(5.0)),
+            _ => None,
+        };
+    }
+    parse_length_only(v).filter(|len| match len {
+        LengthValue::Px(n)
+        | LengthValue::Em(n)
+        | LengthValue::Vw(n)
+        | LengthValue::Vh(n)
+        | LengthValue::Ch(n)
+        | LengthValue::Percent(n) => *n >= 0.0,
+    })
+}
+
+/// A value that is exactly one `<line-width>`, the grammar of the
+/// `border-*-width` longhands.
+fn parse_sole_line_width(values: &[ComponentValue]) -> Option<LengthValue> {
+    let mut significant = values
+        .iter()
+        .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)));
+    match (significant.next(), significant.next()) {
+        (Some(v), None) => parse_line_width(v),
+        _ => None,
+    }
+}
+
 /// Report `decl` as dropped because its value was not understood.
 ///
 /// Every arm of [`ComputedStyle::apply_declaration`] calls this on the path
@@ -1270,28 +1318,28 @@ impl ComputedStyle {
             // "These properties set the thickness of the border."
             // "<line-width> = <length [0,∞]> | thin | medium | thick"
             "border-top-width" => {
-                if let Some(len) = parse_length_value(values) {
+                if let Some(len) = parse_sole_line_width(values) {
                     self.ensure_border_top().width = self.resolve_length(len);
                 } else {
                     reject(decl);
                 }
             }
             "border-right-width" => {
-                if let Some(len) = parse_length_value(values) {
+                if let Some(len) = parse_sole_line_width(values) {
                     self.ensure_border_right().width = self.resolve_length(len);
                 } else {
                     reject(decl);
                 }
             }
             "border-bottom-width" => {
-                if let Some(len) = parse_length_value(values) {
+                if let Some(len) = parse_sole_line_width(values) {
                     self.ensure_border_bottom().width = self.resolve_length(len);
                 } else {
                     reject(decl);
                 }
             }
             "border-left-width" => {
-                if let Some(len) = parse_length_value(values) {
+                if let Some(len) = parse_sole_line_width(values) {
                     self.ensure_border_left().width = self.resolve_length(len);
                 } else {
                     reject(decl);
@@ -2352,7 +2400,8 @@ impl ComputedStyle {
     ///
     /// Shorthand following the same 1-4 value expansion as margin/padding.
     fn apply_border_width_shorthand(&mut self, values: &[ComponentValue]) -> bool {
-        let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
+        // "Value: <line-width>{1,4}"
+        let lengths: Vec<LengthValue> = values.iter().filter_map(parse_line_width).collect();
         if lengths.len() != significant_count(values) {
             return false;
         }
@@ -2697,60 +2746,73 @@ impl ComputedStyle {
 
     /// Parse a single `<shadow>` value.
     ///
-    /// [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
+    /// [§ 6.1 Drop Shadows](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
     ///
-    /// `<shadow> = inset? && <length>{2,4} && <color>?`
+    /// "<shadow> = <color>? && [<length>{2} <length [0,∞]>? <length>?] && inset?"
     ///
-    /// "The lengths are interpreted as follows:
-    /// - The first length is the horizontal offset (positive = right).
-    /// - The second length is the vertical offset (positive = down).
-    /// - The third length is the blur radius (must be >= 0, default 0).
-    /// - The fourth length is the spread distance (default 0)."
+    /// [§ 2.2 Component value combinators](https://www.w3.org/TR/css-values-4/#component-combinators)
+    ///
+    /// "A double ampersand (&&) separates two or more components, all of
+    /// which must occur, in any order." With `?` each of the color and
+    /// `inset` occurs at most once, and the bracketed lengths are one
+    /// juxtaposed run, so nothing may come between them. A token that fits
+    /// none of the three makes the shadow invalid, and with it the whole
+    /// declaration.
     #[allow(clippy::cast_possible_truncation)]
     fn parse_single_shadow(&self, values: &[&ComponentValue]) -> Option<BoxShadow> {
         let mut inset = false;
         let mut lengths: Vec<f32> = Vec::new();
+        // Set once a token follows the length run, so a later length would
+        // split it.
+        let mut lengths_closed = false;
         let mut color: Option<ColorValue> = None;
 
         for &v in values {
-            // Skip whitespace tokens
             if matches!(v, ComponentValue::Token(CSSToken::Whitespace)) {
                 continue;
             }
-
-            // Check for "inset" keyword
             if let ComponentValue::Token(CSSToken::Ident(ident)) = v
                 && ident.eq_ignore_ascii_case("inset")
             {
+                if inset {
+                    return None;
+                }
                 inset = true;
-                continue;
-            }
-
-            // Try to parse as a length
-            if let Some(len) = parse_single_length(v) {
+            } else if let Some(len) = parse_length_only(v) {
+                if lengths_closed || lengths.len() == 4 {
+                    return None;
+                }
                 lengths.push(self.resolve_length(len).to_px() as f32);
                 continue;
-            }
-
-            // Try to parse as a color
-            if color.is_none()
-                && let Some(c) = parse_single_color(v)
-            {
+            } else {
+                // Anything that is not inset, a length, or a color is invalid.
+                let c = parse_single_color(v)?;
+                if color.is_some() {
+                    return None;
+                }
                 color = Some(c);
             }
+            lengths_closed = !lengths.is_empty();
         }
 
-        // Need at least 2 lengths (offset-x, offset-y)
         if lengths.len() < 2 {
             return None;
         }
 
+        // "1st <length> Specifies the horizontal offset of the shadow."
+        // "2nd <length> Specifies the vertical offset of the shadow."
         let offset_x = lengths[0];
         let offset_y = lengths[1];
-        let blur_radius = lengths.get(2).copied().unwrap_or(0.0).max(0.0);
+        // "3rd <length [0,∞]> Specifies the blur radius. Negative values are
+        // invalid."
+        let blur_radius = lengths.get(2).copied().unwrap_or(0.0);
+        if blur_radius < 0.0 {
+            return None;
+        }
+        // "4th <length> Specifies the spread distance."
         let spread_radius = lengths.get(3).copied().unwrap_or(0.0);
 
-        // "If the color is absent, the used color is taken from the 'color' property."
+        // "If the color is absent, it defaults to currentColor."
         let color = color.unwrap_or_else(|| self.color.clone().unwrap_or(ColorValue::BLACK));
 
         Some(BoxShadow {
@@ -2812,51 +2874,67 @@ impl ComputedStyle {
         }
     }
 
-    /// [§ 4.4 border-top, border-right, border-bottom, border-left](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
+    /// Parse the value of `border` or one of `border-top`, `border-right`,
+    /// `border-bottom`, `border-left`.
     ///
-    /// Parse a single border side value.
+    /// [§ 3.3 Line Thickness](https://www.w3.org/TR/css-backgrounds-3/#border-width):
+    /// "<line-width> = <length [0,∞]> | thin | medium | thick"
     ///
-    /// Syntax: `<line-width> || <line-style> || <color>`
+    /// [§ 3.2 Line Patterns](https://www.w3.org/TR/css-backgrounds-3/#border-style):
+    /// "<line-style> = none | hidden | dotted | dashed | solid | double |
+    /// groove | ridge | inset | outset"
     ///
-    /// [§ 4.1 Line Width](https://www.w3.org/TR/css-backgrounds-3/#border-width)
-    /// "`<line-width>` = `<length>` \[0,Inf\] | thin | medium | thick"
+    /// [§ 3.4 Border Shorthand Properties](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
     ///
-    /// [§ 4.2 Line Style](https://www.w3.org/TR/css-backgrounds-3/#border-style)
-    /// "`<line-style>` = none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset"
+    /// "Value: <line-width> || <line-style> || <color>"
     ///
-    /// [§ 4.3 Line Color](https://www.w3.org/TR/css-backgrounds-3/#border-color)
-    /// "`<color>`"
+    /// [§ 2.2 Component value combinators](https://www.w3.org/TR/css-values-4/#component-combinators)
     ///
-    /// Values can appear in any order. Missing values use initial values:
-    /// - width: medium (typically 3px)
-    /// - style: solid
-    /// - color: currentcolor (use computed 'color' property, or black)
+    /// "A double bar (||) separates two or more options: one or more of them
+    /// must occur, in any order." Each occurs at most once, and a token that
+    /// is none of them makes the value invalid.
+    ///
+    /// "Omitted values are set to their initial values": `medium`, `none`
+    /// and `currentColor` (see [`Self::default_border`]). So `1px red` sets
+    /// the style to `none`, and [`BorderValue::computed_width`] then makes
+    /// the border zero wide, as in browsers.
     fn parse_border_side(&self, values: &[ComponentValue]) -> Option<BorderValue> {
         let mut width = None;
         let mut style = None;
         let mut color = None;
 
         for v in values {
-            if width.is_none()
-                && let Some(len) = parse_single_length(v)
-            {
+            if matches!(v, ComponentValue::Token(CSSToken::Whitespace)) {
+                continue;
+            }
+            if let Some(len) = parse_line_width(v) {
+                if width.is_some() {
+                    return None;
+                }
                 width = Some(self.resolve_length(len));
-            } else if color.is_none()
-                && let Some(c) = parse_single_color(v)
-            {
-                color = Some(c);
-            } else if style.is_none()
-                && let Some(s) = Self::parse_border_style(v)
-            {
+            } else if let Some(s) = Self::parse_border_style(v) {
+                if style.is_some() {
+                    return None;
+                }
                 style = Some(s);
+            } else {
+                // Anything that is not a width, a style, or a color is invalid.
+                let c = parse_single_color(v)?;
+                if color.is_some() {
+                    return None;
+                }
+                color = Some(c);
             }
         }
 
-        // Return Some if at least one value was parsed
-        (width.is_some() || style.is_some() || color.is_some()).then(|| BorderValue {
-            width: width.unwrap_or(LengthValue::Px(3.0)),
-            style: style.unwrap_or_else(|| "solid".to_string()),
-            color: color.unwrap_or_else(|| self.color.clone().unwrap_or(ColorValue::BLACK)),
+        if width.is_none() && style.is_none() && color.is_none() {
+            return None;
+        }
+        let initial = self.default_border();
+        Some(BorderValue {
+            width: width.unwrap_or(initial.width),
+            style: style.unwrap_or(initial.style),
+            color: color.unwrap_or(initial.color),
         })
     }
 

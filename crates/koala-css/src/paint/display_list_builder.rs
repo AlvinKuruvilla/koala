@@ -337,19 +337,19 @@ impl<'a> DisplayListBuilder<'a> {
         let top_width = style
             .border_top
             .as_ref()
-            .map_or(0.0, |b| b.width.to_px() as f32);
+            .map_or(0.0, |b| b.computed_width().to_px() as f32);
         let right_width = style
             .border_right
             .as_ref()
-            .map_or(0.0, |b| b.width.to_px() as f32);
+            .map_or(0.0, |b| b.computed_width().to_px() as f32);
         let bottom_width = style
             .border_bottom
             .as_ref()
-            .map_or(0.0, |b| b.width.to_px() as f32);
+            .map_or(0.0, |b| b.computed_width().to_px() as f32);
         let left_width = style
             .border_left
             .as_ref()
-            .map_or(0.0, |b| b.width.to_px() as f32);
+            .map_or(0.0, |b| b.computed_width().to_px() as f32);
 
         // Top border: spans full width including corners
         if let Some(border) = &style.border_top

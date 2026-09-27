@@ -1053,3 +1053,80 @@ fn dropped_declarations_are_reported() {
         keyword: "inherit".to_string(),
     }));
 }
+
+/// The computed style of a lone `<div>` under `css`.
+fn div_style(css: &str) -> koala_css::ComputedStyle {
+    let stylesheet = parse_css(css);
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+    compute_styles(&tree, &empty_stylesheet(), &stylesheet)
+        .remove(&div_id)
+        .expect("div has a computed style")
+}
+
+/// Backgrounds 3 § 6.1: "<shadow> = <color>? && [<length>{2}
+/// <length [0,∞]>? <length>?] && inset?". Before, the parser skipped any
+/// token it did not recognise and filled in the text color, so a shadow
+/// with a color syntax Koala lacks painted solid in the text color.
+#[test]
+fn box_shadow_follows_the_shadow_grammar() {
+    for valid in ["1px 2px", "1px 2px 3px 4px red inset", "inset red 1px 2px", "0 0 3px"] {
+        let style = div_style(&format!("div {{ box-shadow: {valid}; }}"));
+        assert!(style.box_shadow.is_some(), "rejected valid shadow '{valid}'");
+    }
+    for invalid in [
+        "1px red 2px",                // a color splits the length run
+        "1px 2px -3px",               // "Negative values are invalid" for blur
+        "1px 2px red blue",           // <color>? occurs at most once
+        "inset 1px 2px inset",        // inset? occurs at most once
+        "1px 2px oklch(0.5 0.1 100)", // a color Koala cannot parse
+        "10% 10%",                    // <length> excludes percentages
+        "1px 2px 3px 4px 5px",        // at most four lengths
+    ] {
+        let style = div_style(&format!("div {{ box-shadow: {invalid}; }}"));
+        assert!(style.box_shadow.is_none(), "accepted invalid shadow '{invalid}'");
+    }
+}
+
+/// Backgrounds 3 § 3.4: "<line-width> || <line-style> || <color>", with
+/// omitted values set to their initial values (style `none`), and § 3.3: a
+/// style of none or hidden computes the width to zero. Before, a missing
+/// style defaulted to `solid` and unknown tokens were skipped.
+#[test]
+fn border_shorthand_follows_its_grammar() {
+    let border = div_style("div { border: thin solid red; }")
+        .border_top
+        .expect("valid border");
+    assert_eq!(border.computed_width(), koala_css::LengthValue::Px(1.0));
+    assert_eq!(border.style, "solid");
+
+    // No style given: it is `none`, so the border takes no space.
+    let border = div_style("div { border: 1px red; }").border_top.expect("valid border");
+    assert_eq!(border.style, "none");
+    assert_eq!(border.computed_width(), koala_css::LengthValue::Px(0.0));
+
+    for invalid in [
+        "solid solid",                  // each component at most once
+        "1px solid oklch(0.5 0.1 100)", // a color Koala cannot parse
+        "-1px solid",                   // <length [0,∞]>
+        "10% solid",                    // <length> excludes percentages
+    ] {
+        let style = div_style(&format!("div {{ border: {invalid}; }}"));
+        assert!(style.border_top.is_none(), "accepted invalid border '{invalid}'");
+    }
+}
+
+/// § 3.3: the thin/medium/thick keywords, and a later `border-style: none`
+/// zeroing a width set by an earlier declaration.
+#[test]
+fn border_width_keywords_and_style_none() {
+    let style = div_style("div { border-top-width: thick; border-top-style: solid; }");
+    let border = style.border_top.expect("border-top set");
+    assert_eq!(border.computed_width(), koala_css::LengthValue::Px(5.0));
+
+    let style = div_style("div { border: 5px solid black; border-style: none; }");
+    let border = style.border_top.expect("border-top set");
+    assert_eq!(border.width, koala_css::LengthValue::Px(5.0));
+    assert_eq!(border.computed_width(), koala_css::LengthValue::Px(0.0));
+}
