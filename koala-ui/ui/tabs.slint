@@ -16,7 +16,8 @@
 // let both fire and we'd activate a row immediately before
 // removing it.
 
-import { Spinner, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
+import { Throbber } from "throbber.slint";
 
 export struct TabEntry {
     title: string,
@@ -59,8 +60,8 @@ export component TabItem inherits Rectangle {
                 spacing: 6px;
                 alignment: stretch;
 
-                if root.loading: Spinner {
-                    indeterminate: true;
+                if root.loading: Throbber {
+                    color: Palette.accent-background;
                     width: 14px;
                     height: 14px;
                 }
