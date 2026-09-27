@@ -1,7 +1,7 @@
 use strum_macros::Display;
 
 use koala_common::diagnostics::{self, Diagnostic};
-use koala_dom::{AttributesMap, DomTree, ElementData, NodeId, NodeType};
+use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
 
 use super::foreign_content::{
     adjust_foreign_attributes, adjust_mathml_attributes, adjust_svg_attributes,
@@ -463,15 +463,22 @@ impl HTMLParser {
 
     /// [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#create-an-element-for-the-token)
     ///
-    /// "Create an element for a token"
+    /// "To create an element for a token, given a token token, a string
+    /// namespace, and a Node object intendedParent"
     ///
     /// Creates a new element node in the DOM arena.
-    /// NOTE: This is a simplified version; full algorithm handles namespaces,
-    /// custom elements, and the "will execute script" flag.
-    fn create_element(&mut self, tag_name: &str, attributes: &[Attribute]) -> NodeId {
+    /// NOTE: This is a simplified version; the full algorithm also handles
+    /// custom elements and the "will execute script" flag.
+    fn create_element(
+        &mut self,
+        namespace: Namespace,
+        tag_name: &str,
+        attributes: &[Attribute],
+    ) -> NodeId {
         self.tree.alloc(NodeType::Element(ElementData {
             tag_name: tag_name.into(),
             attrs: Self::attributes_to_map(attributes),
+            namespace,
         }))
     }
 
@@ -575,40 +582,55 @@ impl HTMLParser {
 
     /// [§ 13.2.6.1 Insert an HTML element](https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element)
     ///
-    /// "When the steps below require the user agent to insert an HTML element
-    /// for a token, the user agent must insert a foreign element for the token,
-    /// in the HTML namespace."
+    /// "To insert an HTML element given a token token: insert a foreign
+    /// element given token, the HTML namespace, and false."
+    fn insert_html_element(&mut self, token: &Token) -> NodeId {
+        self.insert_foreign_element(token, Namespace::Html)
+    }
+
+    /// [§ 13.2.6.1 Insert a foreign element](https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element)
+    ///
+    /// "To insert a foreign element, given a token token, a string
+    /// namespace, and a boolean onlyAddToElementStack:"
+    ///
+    /// Implementation note: onlyAddToElementStack is always false here; the
+    /// spec passes true only when parsing declarative shadow roots, which
+    /// Koala does not support.
     ///
     /// # Panics
     ///
     /// Panics if called with a non-`StartTag` token, indicating a parser bug.
-    fn insert_html_element(&mut self, token: &Token) -> NodeId {
-        if let Token::StartTag {
+    fn insert_foreign_element(&mut self, token: &Token, namespace: Namespace) -> NodeId {
+        let Token::StartTag {
             name, attributes, ..
         } = token
-        {
-            // STEP 1: "Create an element for the token"
-            let element_id = self.create_element(name, attributes);
+        else {
+            panic!("insert_foreign_element called with non-StartTag token");
+        };
 
-            // STEP 2: "Let the adjusted insertion location be the appropriate
-            //         place for inserting a node."
-            let (parent_id, before_id) = self.adjusted_insertion_location();
+        // STEP 1: "Let adjustedInsertionLocation be the appropriate place
+        //         for inserting a node."
+        let (parent_id, before_id) = self.adjusted_insertion_location();
 
-            // STEP 3: "Append the new element to the node at the adjusted
-            //         insertion location."
-            if let Some(ref_id) = before_id {
-                self.tree.insert_before(parent_id, element_id, ref_id);
-            } else {
-                self.append_child(parent_id, element_id);
-            }
+        // STEP 2: "Let element be the result of creating an element for the
+        //         token given token, namespace, and adjustedInsertionLocation's
+        //         target parent."
+        let element_id = self.create_element(namespace, name, attributes);
 
-            // STEP 4: "Push the element onto the stack of open elements."
-            self.stack_of_open_elements.push(element_id);
-
-            element_id
+        // STEP 3: "If onlyAddToElementStack is false, then run insert an
+        //         element at the adjusted insertion location with element."
+        if let Some(ref_id) = before_id {
+            self.tree.insert_before(parent_id, element_id, ref_id);
         } else {
-            panic!("insert_html_element called with non-StartTag token");
+            self.append_child(parent_id, element_id);
         }
+
+        // STEP 4: "Push element onto the stack of open elements so that it
+        //         is the new current node."
+        self.stack_of_open_elements.push(element_id);
+
+        // STEP 5: "Return element."
+        element_id
     }
 
     /// [§ 13.2.4.3 The stack of open elements](https://html.spec.whatwg.org/multipage/parsing.html#the-stack-of-open-elements)
@@ -1291,7 +1313,7 @@ impl HTMLParser {
             name, attributes, ..
         } = token
         {
-            self.create_element(name, attributes)
+            self.create_element(Namespace::Html, name, attributes)
         } else {
             panic!("create_element_for_token called with non-StartTag token");
         }
@@ -1743,7 +1765,7 @@ impl HTMLParser {
             Token::StartTag {
                 name, attributes, ..
             } if name == "html" => {
-                let html_idx = self.create_element(name, attributes);
+                let html_idx = self.create_element(Namespace::Html, name, attributes);
                 self.append_child(NodeId::ROOT, html_idx);
                 self.stack_of_open_elements.push(html_idx);
                 self.insertion_mode = InsertionMode::BeforeHead;
@@ -1765,7 +1787,7 @@ impl HTMLParser {
     /// reprocess the token."
     fn handle_before_html_anything_else(&mut self, token: &Token) {
         // STEP 1: "Create an html element whose node document is the Document object."
-        let html_idx = self.create_element("html", &[]);
+        let html_idx = self.create_element(Namespace::Html, "html", &[]);
 
         // STEP 2: "Append it to the Document object."
         self.append_child(NodeId::ROOT, html_idx);
@@ -1840,7 +1862,7 @@ impl HTMLParser {
     /// Switch the insertion mode to "in head". Reprocess the current token."
     fn handle_before_head_anything_else(&mut self, token: &Token) {
         // STEP 1: "Insert an HTML element for a 'head' start tag token with no attributes."
-        let head_idx = self.create_element("head", &[]);
+        let head_idx = self.create_element(Namespace::Html, "head", &[]);
         let parent_idx = self.current_node().unwrap_or(NodeId::ROOT);
         self.append_child(parent_idx, head_idx);
         self.stack_of_open_elements.push(head_idx);
@@ -2205,7 +2227,7 @@ impl HTMLParser {
         // [§ 13.2.6.1 Creating and inserting nodes](https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element)
         // We manually create the body element and insert it, since we don't
         // have a real "body" start tag token.
-        let body_idx = self.create_element("body", &[]);
+        let body_idx = self.create_element(Namespace::Html, "body", &[]);
         let parent_idx = self.current_node().unwrap_or(NodeId::ROOT);
         self.append_child(parent_idx, body_idx);
         self.stack_of_open_elements.push(body_idx);

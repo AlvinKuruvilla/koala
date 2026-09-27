@@ -99,8 +99,9 @@ pub enum NodeType {
 ///   custom element definition, is value."
 /// - "When an element is created, its local name is always given."
 ///
-/// NOTE: We only store `tag_name` (local name) and attrs for simplicity.
-/// Full spec compliance would require namespace handling, custom elements, etc.
+/// NOTE: We store the namespace, local name (`tag_name`) and attributes.
+/// Namespace prefixes, custom element state and the is value are not
+/// represented.
 #[derive(Debug, Clone)]
 pub struct ElementData {
     /// "An element's local name"
@@ -111,6 +112,37 @@ pub struct ElementData {
     pub tag_name: FlyString,
     /// "An element has an associated attribute list"
     pub attrs: AttributesMap,
+    /// "Elements have an associated namespace". Only the namespaces the
+    /// HTML parser creates elements in are representable.
+    pub namespace: Namespace,
+}
+
+/// [Infra § 8 Namespaces](https://infra.spec.whatwg.org/#namespaces)
+///
+/// The namespaces an HTML document's elements can be in. The HTML parser
+/// puts elements inside `<svg>` in the SVG namespace and inside `<math>` in
+/// the MathML namespace (HTML § 13.2.6.5); everything else is HTML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Namespace {
+    /// "The HTML namespace is "http://www.w3.org/1999/xhtml"."
+    #[default]
+    Html,
+    /// "The SVG namespace is "http://www.w3.org/2000/svg"."
+    Svg,
+    /// "The MathML namespace is "http://www.w3.org/1998/Math/MathML"."
+    MathMl,
+}
+
+impl Namespace {
+    /// The namespace URL, as written into serialized markup.
+    #[must_use]
+    pub const fn url(self) -> &'static str {
+        match self {
+            Self::Html => "http://www.w3.org/1999/xhtml",
+            Self::Svg => "http://www.w3.org/2000/svg",
+            Self::MathMl => "http://www.w3.org/1998/Math/MathML",
+        }
+    }
 }
 
 impl ElementData {

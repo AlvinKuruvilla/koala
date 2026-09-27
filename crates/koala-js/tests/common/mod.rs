@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use koala_dom::{AttributesMap, DomTree, ElementData, NodeType};
+use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeType};
 use koala_js::DomHandle;
 
 /// Minimal fixture: `<html><body><div id="hello" class="greeting prominent"
@@ -22,11 +22,13 @@ pub fn fixture() -> DomHandle {
     let html = tree.alloc(NodeType::Element(ElementData {
         tag_name: "html".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(root, html);
     let body = tree.alloc(NodeType::Element(ElementData {
         tag_name: "body".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(html, body);
 
@@ -37,6 +39,7 @@ pub fn fixture() -> DomHandle {
     let div = tree.alloc(NodeType::Element(ElementData {
         tag_name: "div".into(),
         attrs: div_attrs,
+        namespace: Namespace::Html,
     }));
     tree.append_child(body, div);
     let text = tree.alloc(NodeType::Text("hi".into()));
@@ -55,11 +58,13 @@ pub fn list_fixture() -> DomHandle {
     let html = tree.alloc(NodeType::Element(ElementData {
         tag_name: "html".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(root, html);
     let body = tree.alloc(NodeType::Element(ElementData {
         tag_name: "body".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(html, body);
 
@@ -68,6 +73,7 @@ pub fn list_fixture() -> DomHandle {
     let list = tree.alloc(NodeType::Element(ElementData {
         tag_name: "ul".into(),
         attrs: list_attrs,
+        namespace: Namespace::Html,
     }));
     tree.append_child(body, list);
 
@@ -77,6 +83,7 @@ pub fn list_fixture() -> DomHandle {
         let li = tree.alloc(NodeType::Element(ElementData {
             tag_name: "li".into(),
             attrs,
+            namespace: Namespace::Html,
         }));
         tree.append_child(list, li);
         let text = tree.alloc(NodeType::Text(id.to_ascii_uppercase()));
@@ -94,16 +101,19 @@ pub fn fixture_with_head() -> DomHandle {
     let html = tree.alloc(NodeType::Element(ElementData {
         tag_name: "html".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(root, html);
     let head = tree.alloc(NodeType::Element(ElementData {
         tag_name: "head".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(html, head);
     let title = tree.alloc(NodeType::Element(ElementData {
         tag_name: "title".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(head, title);
     let title_text = tree.alloc(NodeType::Text("koala test page".into()));
@@ -111,6 +121,7 @@ pub fn fixture_with_head() -> DomHandle {
     let body = tree.alloc(NodeType::Element(ElementData {
         tag_name: "body".into(),
         attrs: AttributesMap::new(),
+        namespace: Namespace::Html,
     }));
     tree.append_child(html, body);
     Rc::new(RefCell::new(tree))
