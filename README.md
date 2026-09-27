@@ -5,7 +5,7 @@
 <h1 align="center">Koala</h1>
 
 <p align="center">
-  A browser engine written in Rust from the HTML and CSS specs.
+  A browser engine for AI agents, written from scratch in Rust.
 </p>
 
 <p align="center">
@@ -15,18 +15,16 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
 </p>
 
-Koala parses, styles, lays out, and paints web pages without WebKit, Blink,
-or Gecko. Each algorithm cites its section of the WHATWG or CSS spec and
-quotes the spec text next to the code that implements it. JavaScript runs on
-[Boa](https://github.com/boa-dev/boa).
+Agents that browse the web today drive Chromium from outside, through
+screenshots or accessibility-tree snapshots. Koala is a browser engine built
+to be driven by agents directly: it will hand an agent the layout tree as
+typed data (boxes, roles, reading order) and each page's forms, links, and
+buttons as actions. People watch the same pages in a desktop browser.
 
-The goal is a browser that LLM agents can drive directly. Agents that browse
-today drive Chromium from outside, through screenshots or accessibility-tree
-snapshots. Koala will instead hand an agent the layout tree as typed data
-(boxes, roles, reading order) and each page's forms, links, and buttons as
-actions. That interface does not exist yet.
-Today Koala renders pages to PNG from the command line, or in a desktop
-browser with tabs.
+The agent interface does not exist yet. Today Koala parses, styles, lays
+out, and paints pages without WebKit, Blink, or Gecko, and renders them to
+PNG from the command line or in the desktop browser. JavaScript runs on
+[Boa](https://github.com/boa-dev/boa).
 
 ## Contents
 
