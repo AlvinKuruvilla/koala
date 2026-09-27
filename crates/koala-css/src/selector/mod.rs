@@ -3,6 +3,7 @@
 //! This module implements selector parsing and matching per
 //! [Selectors Level 4](https://www.w3.org/TR/selectors-4/).
 
+use koala_common::diagnostics::{self, Diagnostic};
 use koala_dom::{DomTree, ElementData, NodeId, NodeType};
 
 /// [§ 5 Elemental selectors](https://www.w3.org/TR/selectors-4/#elemental-selectors)
@@ -734,6 +735,39 @@ fn parse_attr_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Opt
     }
 }
 
+/// Report a pseudo-class the parser turned into "never matches", saying
+/// whether Koala does not implement it or it does not exist.
+///
+/// [§ 11.3 Legacy pseudo-elements](https://www.w3.org/TR/selectors-4/#pseudo-element-syntax)
+///
+/// "For compatibility with existing style sheets, user agents must also
+/// accept the previous one-colon notation for pseudo-elements introduced in
+/// CSS levels 1 and 2 (namely, :first-line, :first-letter, :before and
+/// :after)."
+fn report_unmatched_pseudo_class(name: &str, is_functional: bool) {
+    // Pseudo-classes defined in Selectors Level 4 and HTML that Koala does
+    // not implement. Anything outside this list is unknown, which per spec
+    // makes the selector invalid.
+    const DEFINED: &[&str] = &[
+        "active", "any-link", "autofill", "blank", "checked", "current", "default", "defined",
+        "dir", "focus", "focus-visible", "focus-within", "fullscreen", "future", "has", "host",
+        "hover", "in-range", "indeterminate", "invalid", "is", "lang", "local-link", "modal",
+        "not", "nth-child", "nth-last-child", "nth-last-of-type", "nth-of-type", "only-of-type",
+        "open", "optional", "out-of-range", "past", "paused", "placeholder-shown", "playing",
+        "popover-open", "read-only", "read-write", "required", "scope", "target",
+        "target-within", "user-invalid", "user-valid", "valid", "visited", "where",
+    ];
+    let name = name.to_string();
+    if matches!(name.as_str(), "before" | "after" | "first-line" | "first-letter") {
+        diagnostics::report(|| Diagnostic::UnsupportedPseudoElement { name });
+    } else if DEFINED.contains(&name.as_str()) {
+        let name = if is_functional { format!("{name}()") } else { name };
+        diagnostics::report(|| Diagnostic::UnsupportedPseudoClass { name });
+    } else {
+        diagnostics::report(|| Diagnostic::UnknownPseudoClass { name });
+    }
+}
+
 /// Parse a raw selector string into a `ParsedSelector`.
 ///
 /// [§ 4 Selector syntax](https://www.w3.org/TR/selectors-4/#syntax)
@@ -982,7 +1016,8 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
 
                 // If followed by '(', consume balanced parentheses
                 // (for :nth-child(...), :not(...), etc.)
-                if chars.peek() == Some(&'(') {
+                let is_functional = chars.peek() == Some(&'(');
+                if is_functional {
                     let _ = chars.next(); // consume '('
                     let mut depth = 1u32;
                     for ch in chars.by_ref() {
@@ -1006,6 +1041,9 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
 
                 if is_pseudo_element {
                     // All pseudo-elements → NeverMatch (we don't render ::before, ::after, etc.)
+                    diagnostics::report(|| Diagnostic::UnsupportedPseudoElement {
+                        name: pseudo_lower.clone(),
+                    });
                     current_compound.push(SimpleSelector::NeverMatch);
                 } else {
                     // Dispatch pseudo-class by name
@@ -1040,6 +1078,7 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                         // (:before, :after), functional pseudo-classes (:nth-child, :not,
                         // :is, :where, :has), and unknown → NeverMatch (graceful degradation)
                         _ => {
+                            report_unmatched_pseudo_class(&pseudo_lower, is_functional);
                             current_compound.push(SimpleSelector::NeverMatch);
                         }
                     }
