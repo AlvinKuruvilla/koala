@@ -284,6 +284,28 @@ impl Diagnostics {
 /// ```
 impl fmt::Display for Diagnostics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_lines(f, false)
+    }
+}
+
+impl Diagnostics {
+    /// The same lines as `Display`, coloured when stderr is a terminal that
+    /// takes colour (and `NO_COLOR` is unset): area labels yellow, counts
+    /// dimmed. For output that goes to stderr.
+    #[must_use]
+    pub fn to_stderr_string(&self) -> String {
+        struct Coloured<'a>(&'a Diagnostics);
+        impl fmt::Display for Coloured<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.write_lines(f, true)
+            }
+        }
+        Coloured(self).to_string()
+    }
+
+    fn write_lines(&self, f: &mut fmt::Formatter<'_>, colour: bool) -> fmt::Result {
+        use owo_colors::{OwoColorize, Stream::Stderr};
+
         let mut areas: Vec<&'static str> = Vec::new();
         for (diagnostic, _) in &self.entries {
             if !areas.contains(&diagnostic.area()) {
@@ -291,10 +313,20 @@ impl fmt::Display for Diagnostics {
             }
         }
         for area in areas {
+            let label = format!("{area:<6}");
             for (diagnostic, count) in self.entries.iter().filter(|(d, _)| d.area() == area) {
-                write!(f, "  {area:<6} {diagnostic}")?;
+                if colour {
+                    write!(f, "  {} {diagnostic}", label.if_supports_color(Stderr, |t| t.yellow()))?;
+                } else {
+                    write!(f, "  {label} {diagnostic}")?;
+                }
                 if *count > 1 {
-                    write!(f, " (x{count})")?;
+                    let count = format!("(x{count})");
+                    if colour {
+                        write!(f, " {}", count.if_supports_color(Stderr, |t| t.dimmed()))?;
+                    } else {
+                        write!(f, " {count}")?;
+                    }
                 }
                 writeln!(f)?;
             }

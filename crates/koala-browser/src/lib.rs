@@ -102,23 +102,29 @@ impl LoadedDocument {
     /// stderr: the diagnostics, then parse issues and script errors, one
     /// per line. `None` when there is nothing to report, or in quiet mode.
     ///
+    /// Coloured when stderr is a terminal that takes colour and `NO_COLOR`
+    /// is unset: the heading bold, area labels yellow, script errors red.
+    ///
     /// `label` names the page in the heading, since several loads can
     /// print into one terminal.
     #[must_use]
     pub fn problem_report(&self, label: &str) -> Option<String> {
+        use owo_colors::{OwoColorize, Stream::Stderr};
         use std::fmt::Write as _;
 
         if warning::is_quiet() || (self.diagnostics.is_empty() && self.parse_issues.is_empty()) {
             return None;
         }
         let count = self.diagnostics.len() + self.parse_issues.len();
-        let mut out = format!("koala: {count} problem(s) loading {label}\n");
-        out.push_str(&self.diagnostics.to_string());
+        let heading = format!("koala: {count} problem(s) loading {label}");
+        let mut out = format!("{}\n", heading.if_supports_color(Stderr, |t| t.bold()));
+        out.push_str(&self.diagnostics.to_stderr_string());
+        let page = format!("{:<6}", "page");
         for issue in &self.parse_issues {
             // Script errors carry a multi-line stack trace; keep its
             // continuation lines under the message.
             let issue = issue.replace('\n', "\n         ");
-            let _ = writeln!(out, "  {:<6} {issue}", "page");
+            let _ = writeln!(out, "  {} {issue}", page.if_supports_color(Stderr, |t| t.red()));
         }
         Some(out)
     }

@@ -8,6 +8,7 @@ description = "Shared utilities for the Koala renderer"
 [dependencies]
 backtrace = { version = "0.3.76", optional = true }
 koala-std.workspace = true
+owo-colors = { workspace = true, features = ["supports-colors"] }
 url = "2.5.8"
 
 [lints]
