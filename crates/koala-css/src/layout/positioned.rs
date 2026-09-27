@@ -271,7 +271,7 @@ impl PositionedLayout {
             let child_abs_cb = layout_box.dimensions.padding_box();
 
             let mut float_ctx =
-                super::float::FloatContext::new(layout_box.dimensions.content);
+                super::float::FloatContext::new();
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
                 layout_box.layout_inline_children(
                     viewport,
@@ -289,7 +289,10 @@ impl PositionedLayout {
             }
 
             // Auto height: use the content height computed by child layout.
+            // An absolutely positioned box is a block formatting context
+            // root, so its floats count too (§ 10.6.7).
             layout_box.calculate_block_height(containing_block, viewport, font_metrics);
+            layout_box.extend_height_to_floats(&float_ctx, containing_block);
 
             // Now resolve vertical constraint with the known content height.
             let content_height = layout_box.dimensions.content.height;
@@ -360,7 +363,7 @@ impl PositionedLayout {
             layout_box.generate_anonymous_boxes();
             let child_abs_cb = layout_box.dimensions.padding_box();
             let mut float_ctx2 =
-                super::float::FloatContext::new(layout_box.dimensions.content);
+                super::float::FloatContext::new();
             if layout_box.all_children_inline() && !layout_box.children.is_empty() {
                 layout_box.layout_inline_children(
                     viewport,

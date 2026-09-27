@@ -34,31 +34,36 @@ pub struct PlacedFloat {
 /// the float are shortened as necessary to make room for the margin box
 /// of the float."
 ///
-/// Every position it takes and returns is in the same absolute coordinates
-/// as `BoxDimensions`. The placement rules are stated against the containing
-/// block's edges ("may not be to the left of the left edge of its containing
-/// block", "may not be higher than the top of its containing block"), so the
-/// context keeps those edges rather than measuring from 0.
+/// One context holds every float in a block formatting context, however
+/// deeply nested: "References to other elements in these rules refer only to
+/// other elements in the same block formatting context as the float." A float
+/// inside one block therefore shortens the line boxes of the blocks after it,
+/// and `clear` in a later block sees it.
+///
+/// The containing block is passed with each call rather than stored. The
+/// placement rules are stated against the float's own containing block ("may
+/// not be to the left of the left edge of its containing block", "may not be
+/// higher than the top of its containing block"), and floats in one context
+/// can have different containing blocks: the root's content box for a float
+/// that is its child, a nested block's for a float further down. Every
+/// position taken and returned is in the same absolute coordinates as
+/// `BoxDimensions`.
+#[derive(Default)]
 pub struct FloatContext {
     /// All left floats that have been placed.
     pub left_floats: Vec<PlacedFloat>,
     /// All right floats that have been placed.
     pub right_floats: Vec<PlacedFloat>,
-    /// The containing block's content box. Its `height` is not read: floats
-    /// are placed while the block's children are laid out, before an auto
-    /// height is known.
-    pub containing_block: Rect,
 }
 
 impl FloatContext {
-    /// Create a new float context for the containing block whose content box
-    /// is `containing_block`.
+    /// Create an empty float context, for a box that starts a new block
+    /// formatting context.
     #[must_use]
-    pub const fn new(containing_block: Rect) -> Self {
+    pub const fn new() -> Self {
         Self {
             left_floats: Vec::new(),
             right_floats: Vec::new(),
-            containing_block,
         }
     }
 
@@ -104,12 +109,17 @@ impl FloatContext {
     /// - Rules 4, 5, 8: Float is placed as high as possible (at or below `current_y`).
     /// - Rule 9: Left floats go as far left as possible; right floats as far right.
     /// - Rules 2, 3, 7: Floats do not overlap each other.
+    ///
+    /// `containing_block` is the float's containing block's content box; its
+    /// `height` is not read, since floats are placed before an auto height is
+    /// known.
     pub fn place_float(
         &mut self,
         side: FloatSide,
         box_width: f32,
         box_height: f32,
         current_y: f32,
+        containing_block: Rect,
     ) -> Rect {
         // STEP 1: Start at the highest allowed position.
         // [§ 9.5.1 Rule 4](https://www.w3.org/TR/CSS2/visuren.html#float-position)
@@ -120,7 +130,7 @@ impl FloatContext {
         // [§ 9.5.1 Rule 8](https://www.w3.org/TR/CSS2/visuren.html#float-position)
         //
         // "A floating box must be placed as high as possible."
-        let mut y = current_y.max(self.containing_block.y);
+        let mut y = current_y.max(containing_block.y);
 
         // STEP 2: Find a position where the float fits.
         // [§ 9.5.1 Rules 2, 3, 7](https://www.w3.org/TR/CSS2/visuren.html#float-position)
@@ -128,9 +138,9 @@ impl FloatContext {
         // The float must not overlap other floats. Scan downward until
         // available width at the candidate Y is sufficient.
         loop {
-            let (left_edge, avail_width) = self.available_width_at(y, box_height);
+            let (left_edge, avail_width) = self.available_width_at(y, box_height, containing_block);
 
-            if avail_width >= box_width || avail_width >= self.containing_block.width {
+            if avail_width >= box_width || avail_width >= containing_block.width {
                 // STEP 3: Place the float.
                 // [§ 9.5.1 Rule 9](https://www.w3.org/TR/CSS2/visuren.html#float-position)
                 //
@@ -144,7 +154,7 @@ impl FloatContext {
                     FloatSide::Left => left_edge,
                     // "An analogous rule holds for right-floating elements."
                     FloatSide::Right => {
-                        (left_edge + avail_width - box_width).max(self.containing_block.x)
+                        (left_edge + avail_width - box_width).max(containing_block.x)
                     }
                 };
 
@@ -178,7 +188,7 @@ impl FloatContext {
                 let x = match side {
                     FloatSide::Left => left_edge,
                     FloatSide::Right => {
-                        (left_edge + avail_width - box_width).max(self.containing_block.x)
+                        (left_edge + avail_width - box_width).max(containing_block.x)
                     }
                 };
 
@@ -250,14 +260,14 @@ impl FloatContext {
     /// shortened as necessary to make room for the margin box of the float."
     ///
     /// Returns `(left_edge, available_width)` for content at a given Y
-    /// position, accounting for floats on both sides. `left_edge` is absolute,
-    /// like every other position here; subtract the containing block's `x`
-    /// for an offset into its content box.
+    /// position inside `containing_block`, accounting for floats on both
+    /// sides. `left_edge` is absolute, like every other position here;
+    /// subtract `containing_block.x` for an offset into its content box.
     ///
     /// A float is "active" at the band `[y, y+height)` if its margin box
     /// vertically overlaps that band.
     #[must_use]
-    pub fn available_width_at(&self, y: f32, height: f32) -> (f32, f32) {
+    pub fn available_width_at(&self, y: f32, height: f32, containing_block: Rect) -> (f32, f32) {
         let band_top = y;
         let band_bottom = y + height;
 
@@ -266,7 +276,7 @@ impl FloatContext {
         //
         // "line boxes created next to the float are shortened as necessary
         // to make room for the margin box of the float."
-        let mut left_edge: f32 = self.containing_block.x;
+        let mut left_edge: f32 = containing_block.x;
         for f in &self.left_floats {
             let f_top = f.margin_box.y;
             let f_bottom = f_top + f.margin_box.height;
@@ -280,7 +290,7 @@ impl FloatContext {
         }
 
         // STEP 2: Find the leftmost left-edge of active right floats.
-        let mut right_edge: f32 = self.containing_block.x + self.containing_block.width;
+        let mut right_edge: f32 = containing_block.x + containing_block.width;
         for f in &self.right_floats {
             let f_top = f.margin_box.y;
             let f_bottom = f_top + f.margin_box.height;

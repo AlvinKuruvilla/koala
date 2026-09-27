@@ -1848,24 +1848,105 @@ fn test_float_display_blockification() {
 
 /// [§ 10.6.7 'Auto' heights for block formatting context roots](https://www.w3.org/TR/CSS2/visudet.html#root-height)
 ///
-/// "If the element has any floating descendants whose bottom margin edge
-/// is below the element's bottom content edge, then the height is
+/// "In addition, if the element has any floating descendants whose bottom
+/// margin edge is below the element's bottom content edge, then the height is
 /// increased to include those edges."
+///
+/// That applies to "an element that establishes a block formatting context",
+/// which `overflow: hidden` makes the first container. The second is an
+/// ordinary block, whose auto height follows § 10.6.3 instead: "floating boxes
+/// and absolutely positioned boxes are ignored", so it is 0px tall and its
+/// float hangs out of it. This test used to assert the second container grew
+/// to 120px too.
 #[test]
 fn test_float_height_extension() {
     let root = layout_html(
-        "<html><body><style>body { margin: 0; } .container { background-color: #ccc; } .floated { float: left; width: 100px; height: 120px; }</style><div class='container'><div class='floated'></div></div></body></html>",
+        "<html><body><style>body { margin: 0; } \
+         .floated { float: left; width: 100px; height: 120px; }</style>\
+         <div style='overflow: hidden'><div class='floated'></div></div>\
+         <div><div class='floated'></div></div></body></html>",
     );
 
     let body = box_at_depth(&root, 2);
-    let container = &body.children[0];
+    let heights: Vec<f32> = body
+        .children
+        .iter()
+        .map(|container| container.dimensions.content.height)
+        .collect();
+    assert_eq!(heights, [120.0, 0.0]);
+}
 
-    // The container's auto height should extend to include the float (120px).
-    assert!(
-        container.dimensions.content.height >= 119.9,
-        "container auto height should extend to include float (120), got {:.1}",
-        container.dimensions.content.height
+/// [§ 10.5 Content height](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
+///
+/// "If the height of the containing block is not specified explicitly (i.e.,
+/// it depends on content height), and this element is not absolutely
+/// positioned, the value computes to 'auto'."
+///
+/// So `height: 100%` under an auto-height `<body>` is `auto`, and the
+/// `overflow: hidden` container still grows to contain its float (§ 10.6.7).
+/// Floats do not count toward a box's in-flow height, so this depends on the
+/// § 10.6.7 step treating the percentage as `auto`; reading any specified
+/// height as not-auto leaves the container 0px tall. book.io's
+/// `<main class="container">` is exactly this, and the footer was drawn over
+/// the page.
+#[test]
+fn test_float_height_extension_with_percentage_height() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } \
+         .floated { float: left; width: 100px; height: 120px; }</style>\
+         <div style='overflow: hidden; height: 100%'><div class='floated'></div></div>\
+         </body></html>",
     );
+
+    let body = box_at_depth(&root, 2);
+    assert_eq!(body.children[0].dimensions.content.height, 120.0);
+}
+
+/// [§ 9.5 Floats](https://www.w3.org/TR/CSS2/visuren.html#floats)
+///
+/// "However, the current and subsequent line boxes created next to the float
+/// are shortened as necessary to make room for the margin box of the float."
+///
+/// The float is inside a `<div>` that ends at 0px tall, and the paragraph
+/// after that `<div>` sits beside it: both are in the root's block
+/// formatting context, so the paragraph's line starts at the float's right
+/// edge. With a float context per block box, the paragraph never saw the
+/// float and its text started at x=0, underneath it.
+#[test]
+fn test_float_shortens_line_boxes_in_following_block() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } p { margin: 0; } \
+         .floated { float: left; width: 100px; height: 50px; }</style>\
+         <div><div class='floated'></div></div><p>Beside the float</p></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let paragraph = &body.children[1];
+    let first_fragment = &paragraph.line_boxes[0].fragments[0];
+    assert_eq!(first_fragment.bounds.x, 100.0);
+}
+
+/// [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
+///
+/// "This property indicates which sides of an element's box(es) may not be
+/// adjacent to an earlier floating box."
+///
+/// The float is earlier in the same block formatting context, though not a
+/// sibling, so the cleared block moves below it, to y=50. The `<div>` holding
+/// the float is 20px tall, so without clearance the block would start at
+/// y=20: that is where it went when each block box kept its own floats.
+#[test]
+fn test_clear_moves_below_float_in_earlier_block() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } \
+         .floated { float: left; width: 100px; height: 50px; }</style>\
+         <div style='height: 20px'><div class='floated'></div></div>\
+         <div style='clear: left'>Below</div></body></html>",
+    );
+
+    let body = box_at_depth(&root, 2);
+    let cleared = &body.children[1];
+    assert_eq!(cleared.dimensions.border_box().y, 50.0);
 }
 
 /// [§ 9.5.1 Rules 2, 3, 7](https://www.w3.org/TR/CSS2/visuren.html#float-position)
