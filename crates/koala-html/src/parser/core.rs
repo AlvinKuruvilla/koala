@@ -3166,6 +3166,15 @@ impl HTMLParser {
                 attributes,
                 self_closing,
             } if name == "svg" => {
+                // Implementation note: what follows inserts the element as
+                // HTML, and § 13.2.6.5 is not implemented, so the rest of the
+                // subtree is parsed as HTML too. Say so, because the result
+                // (self-closing children left open, nesting into each other)
+                // is wrong in a way nothing else reports.
+                diagnostics::report(|| Diagnostic::ForeignContentParsedAsHtml {
+                    element: "svg".to_string(),
+                });
+
                 // STEP 1: Reconstruct the active formatting elements, if any.
                 //   [§ 13.2.4.3](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)
                 self.reconstruct_active_formatting_elements();
@@ -3206,6 +3215,15 @@ impl HTMLParser {
                 attributes,
                 self_closing,
             } if name == "math" => {
+                // Implementation note: what follows inserts the element as
+                // HTML, and § 13.2.6.5 is not implemented, so the rest of the
+                // subtree is parsed as HTML too. Say so, because the result
+                // (self-closing children left open, nesting into each other)
+                // is wrong in a way nothing else reports.
+                diagnostics::report(|| Diagnostic::ForeignContentParsedAsHtml {
+                    element: "math".to_string(),
+                });
+
                 // STEP 1: Reconstruct the active formatting elements, if any.
                 self.reconstruct_active_formatting_elements();
 
