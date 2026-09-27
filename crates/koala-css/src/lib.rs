@@ -75,7 +75,8 @@ pub use layout::{
 pub use paint::{DisplayCommand, DisplayList, DisplayListBuilder};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
 pub use selector::{
-    AttributeSelector, ParsedSelector, PseudoClass, SimpleSelector, Specificity, parse_selector,
+    AttributeSelector, ParsedSelector, PseudoClass, PseudoElement, SimpleSelector, Specificity,
+    parse_selector,
 };
 pub use style::ComputedStyle;
 pub use style::computed::{

@@ -5,7 +5,8 @@
 use koala_std::collections::HashMap;
 
 use koala_css::selector::{
-    AttributeSelector, Combinator, PseudoClass, SimpleSelector, Specificity, parse_selector,
+    AttributeSelector, Combinator, PseudoClass, PseudoElement, SimpleSelector, Specificity,
+    parse_selector,
 };
 use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
 
@@ -532,35 +533,80 @@ fn test_parse_hover_pseudo_class() {
     ));
 }
 
+/// [§ 3.6.2](https://www.w3.org/TR/selectors-4/#pseudo-element-attachment)
+///
+/// `::before` with no compound in front belongs to any element: the
+/// originating element is an implied `*`.
 #[test]
 fn test_parse_pseudo_element_before() {
-    // ::before → pseudo-element → NeverMatch
     let selector = parse_selector("::before").unwrap();
-    assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
-    assert!(matches!(
-        &selector.complex.subject.simple_selectors[0],
-        SimpleSelector::NeverMatch
-    ));
+    assert_eq!(selector.pseudo_element, Some(PseudoElement::Before));
+    assert_eq!(
+        selector.complex.subject.simple_selectors,
+        [SimpleSelector::Universal]
+    );
 }
 
 #[test]
 fn test_parse_pseudo_element_after() {
-    // ::after → pseudo-element → NeverMatch
-    let selector = parse_selector("::after").unwrap();
-    assert!(matches!(
-        &selector.complex.subject.simple_selectors[0],
-        SimpleSelector::NeverMatch
-    ));
+    let selector = parse_selector("p.note::after").unwrap();
+    assert_eq!(selector.pseudo_element, Some(PseudoElement::After));
+    assert_eq!(
+        selector.complex.subject.simple_selectors,
+        [
+            SimpleSelector::Type("p".to_string()),
+            SimpleSelector::Class("note".to_string())
+        ]
+    );
 }
 
+/// [§ 3.6.1](https://www.w3.org/TR/selectors-4/#pseudo-element-syntax)
+///
+/// "user agents must also accept the previous one-colon notation for the
+/// Level 1 & 2 pseudo-elements (::before, ::after, ::first-line, and
+/// ::first-letter)."
+///
+/// The micro clearfix, `.clearfix:after { clear: both }`, is written this way,
+/// and floated layouts depend on it.
 #[test]
 fn test_parse_legacy_pseudo_element_before() {
-    // :before (single colon, legacy syntax) → NeverMatch
-    let selector = parse_selector(":before").unwrap();
-    assert!(matches!(
-        &selector.complex.subject.simple_selectors[0],
-        SimpleSelector::NeverMatch
-    ));
+    assert_eq!(
+        parse_selector(":before").unwrap().pseudo_element,
+        Some(PseudoElement::Before)
+    );
+    assert_eq!(
+        parse_selector(".clearfix:after").unwrap().pseudo_element,
+        Some(PseudoElement::After)
+    );
+}
+
+/// [§ 3.6.1](https://www.w3.org/TR/selectors-4/#pseudo-element-syntax)
+///
+/// "Syntactically, a pseudo-element immediately follows the compound selector
+/// representing its originating element." Anything after it makes the
+/// selector invalid.
+#[test]
+fn test_pseudo_element_must_be_last() {
+    assert!(parse_selector("p::before span").is_none());
+    assert!(parse_selector("p::before.note").is_none());
+    assert!(parse_selector("p::before ").is_some());
+}
+
+/// [§ 3.6.1](https://www.w3.org/TR/selectors-4/#pseudo-element-syntax)
+///
+/// "Pseudo-elements are featureless, and so can't be matched by any other
+/// selector." A `::before` selector matches no element, not even the one it
+/// belongs to; the cascade finds that one through
+/// `originating_element_matches`.
+#[test]
+fn test_pseudo_element_selector_matches_no_element() {
+    let mut tree = DomTree::new();
+    let p_id = tree.alloc(make_element_type("p", None, &["note"]));
+    tree.append_child(NodeId::ROOT, p_id);
+
+    let selector = parse_selector("p.note::before").unwrap();
+    assert!(!selector.matches_in_tree(&tree, p_id));
+    assert!(selector.originating_element_matches(&tree, p_id));
 }
 
 #[test]
@@ -1082,9 +1128,18 @@ fn test_specificity_type_with_attribute() {
     assert_eq!(selector.specificity, Specificity(0, 1, 1));
 }
 
+/// [§ 17](https://www.w3.org/TR/selectors-4/#specificity-rules)
+///
+/// "count the number of type selectors and pseudo-elements in the selector
+/// (= C)". The implied `*` in `::before` counts nothing.
 #[test]
 fn test_specificity_pseudo_element() {
-    // ::before → NeverMatch = (0,0,0) (pseudo-element would be C but we use NeverMatch)
-    let selector = parse_selector("::before").unwrap();
-    assert_eq!(selector.specificity, Specificity(0, 0, 0));
+    assert_eq!(
+        parse_selector("::before").unwrap().specificity,
+        Specificity(0, 0, 1)
+    );
+    assert_eq!(
+        parse_selector("p.note:after").unwrap().specificity,
+        Specificity(0, 1, 2)
+    );
 }
