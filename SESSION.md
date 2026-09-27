@@ -729,3 +729,16 @@ Rendering example.com (and its 404 page, which is the same markup) puts
 the grey `div` flush against the top of the viewport, and the paragraph
 text runs past its right edge. Chrome centers the box with space above
 and keeps the text inside it. Reproduce: `just cli example shot.png`.
+
+## Internal pages have no URL (2026-09-26)
+
+The start page and error page are `include_str!` strings parsed with no
+base URL (`load_landing_page` sets `current_url = None`). So they cannot
+reference separate files (the start page's site icons are inline SVG),
+they have no origin for `localStorage` (the theme toggle cannot persist
+its choice), and they get no real history entry or reload. Browsers serve
+these from a scheme they own (`chrome://newtab`, `about:newtab`) backed by
+files packed into the binary. Proposal: a `koala:` scheme in koala-fetch
+serving embedded files, with `koala://newtab` and the error page moved
+onto it. Open questions: the scheme name, and whether its pages get any
+privileges ordinary pages do not.
