@@ -10,7 +10,7 @@ use super::values::{
     parse_single_auto_length, parse_single_color, parse_single_length,
 };
 use super::writing_mode::{PhysicalSide, WritingMode, parse_writing_mode};
-use crate::parser::{ComponentValue, Declaration};
+use crate::parser::{ComponentValue, Declaration, serialize_component_values};
 use crate::style::substitute::{contains_var, substitute_var};
 use crate::style::values::{
     ClearSide, FloatSide, FontStyle, PositionType, TextAlign, TextDecorationLine,
@@ -775,6 +775,51 @@ pub struct ComputedStyle {
     pub margin_left_source_order: Option<u32>,
 }
 
+/// The number of component values that are not whitespace: what a shorthand
+/// parser must account for, one by one, to have understood the whole value.
+fn significant_count(values: &[ComponentValue]) -> usize {
+    values
+        .iter()
+        .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+        .count()
+}
+
+/// Report `decl` as dropped because its value was not understood.
+///
+/// Every arm of [`ComputedStyle::apply_declaration`] calls this on the path
+/// where it gives up on the value, so a declaration Koala ignores is never
+/// silent. A CSS-wide keyword gets its own diagnostic, since the value is
+/// valid everywhere and the gap is Koala's support for it.
+fn reject(decl: &Declaration) {
+    diagnostics::report(|| {
+        // [§ 7.3 CSS-wide keywords](https://www.w3.org/TR/css-values-4/#common-keywords)
+        //
+        // "All CSS properties accept the CSS-wide keyword values as the
+        // sole component of their property value."
+        let significant: Vec<&ComponentValue> = decl
+            .value
+            .iter()
+            .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+            .collect();
+        match significant.as_slice() {
+            [ComponentValue::Token(CSSToken::Ident(ident))]
+                if ["inherit", "initial", "unset", "revert", "revert-layer"]
+                    .iter()
+                    .any(|k| ident.eq_ignore_ascii_case(k)) =>
+            {
+                Diagnostic::UnsupportedCssWideKeyword {
+                    property: decl.name.clone(),
+                    keyword: ident.clone(),
+                }
+            }
+            _ => Diagnostic::InvalidCssValue {
+                property: decl.name.clone(),
+                value: serialize_component_values(&decl.value),
+            },
+        }
+    });
+}
+
 impl ComputedStyle {
     /// Apply a CSS declaration to update this computed style.
     pub fn apply_declaration(&mut self, decl: &Declaration) {
@@ -799,13 +844,16 @@ impl ComputedStyle {
         // time, after var() functions have been substituted."
         let resolved_values: Vec<ComponentValue>;
         let values: &[ComponentValue] = if contains_var(&decl.value) {
-            match substitute_var(&decl.value, &self.custom_properties, 0) {
-                Some(v) => {
-                    resolved_values = v;
-                    &resolved_values
-                }
-                None => return, // Invalid at computed-value time
-            }
+            let Some(v) = substitute_var(&decl.value, &self.custom_properties, 0) else {
+                // Invalid at computed-value time.
+                diagnostics::report(|| Diagnostic::UnresolvedCssVar {
+                    property: decl.name.clone(),
+                    value: serialize_component_values(&decl.value),
+                });
+                return;
+            };
+            resolved_values = v;
+            &resolved_values
         } else {
             &decl.value
         };
@@ -823,6 +871,8 @@ impl ComputedStyle {
                     // "The element and its descendants generate no boxes or text runs."
                     self.display = None;
                     self.display_none = true;
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 2 Block Flow Direction](https://www.w3.org/TR/css-writing-modes-4/#block-flow)
@@ -835,37 +885,51 @@ impl ComputedStyle {
             "writing-mode" => {
                 if let Some(wm) = parse_writing_mode(values) {
                     self.writing_mode = wm;
+                } else {
+                    reject(decl);
                 }
             }
             "color" => {
                 if let Some(color) = parse_color_value(values) {
                     self.color = Some(color);
+                } else {
+                    reject(decl);
                 }
             }
             "background-color" => {
                 if let Some(color) = parse_color_value(values) {
                     self.background_color = Some(color);
+                } else {
+                    reject(decl);
                 }
             }
             "font-family" => {
                 if let Some(family) = parse_font_family(values) {
                     self.font_family = Some(family);
+                } else {
+                    reject(decl);
                 }
             }
             "line-height" => {
                 if let Some(lh) = parse_line_height(values) {
                     self.line_height = Some(lh);
+                } else {
+                    reject(decl);
                 }
             }
             "letter-spacing" => {
                 if let Some(ls) = parse_letter_spacing(values) {
                     self.letter_spacing = Some(ls);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 3.2 font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop)
             "font-weight" => {
                 if let Some(weight) = parse_font_weight(values) {
                     self.font_weight = Some(weight);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 3.3 font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
@@ -878,8 +942,10 @@ impl ComputedStyle {
                         "normal" => self.font_style = Some(FontStyle::Normal),
                         "italic" => self.font_style = Some(FontStyle::Italic),
                         "oblique" => self.font_style = Some(FontStyle::Oblique),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
@@ -979,13 +1045,17 @@ impl ComputedStyle {
                         "right" => self.text_align = Some(TextAlign::Right),
                         "center" => self.text_align = Some(TextAlign::Center),
                         "justify" => self.text_align = Some(TextAlign::Justify),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 9.2 Shorthand properties](https://www.w3.org/TR/css-cascade-4/#shorthand)
             "margin" => {
-                self.apply_margin_shorthand(values);
+                if !self.apply_margin_shorthand(values) {
+                    reject(decl);
+                }
             }
             // [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
             //
@@ -997,35 +1067,51 @@ impl ComputedStyle {
             // Physical and logical properties compete in the cascade. We track
             // source_order to determine which declaration wins.
             "margin-top" => {
-                if let Some(al) = parse_auto_length_value(values)
-                    && self.should_update_margin(PhysicalSide::Top, decl.source_order)
-                {
-                    self.margin_top = Some(self.resolve_auto_length(al));
-                    self.margin_top_source_order = Some(decl.source_order);
+                // A value that parses but loses to a later logical margin is
+                // understood, not dropped, so only a parse failure rejects.
+                if let Some(al) = parse_auto_length_value(values) {
+                    if self.should_update_margin(PhysicalSide::Top, decl.source_order) {
+                        self.margin_top = Some(self.resolve_auto_length(al));
+                        self.margin_top_source_order = Some(decl.source_order);
+                    }
+                } else {
+                    reject(decl);
                 }
             }
             "margin-right" => {
-                if let Some(al) = parse_auto_length_value(values)
-                    && self.should_update_margin(PhysicalSide::Right, decl.source_order)
-                {
-                    self.margin_right = Some(self.resolve_auto_length(al));
-                    self.margin_right_source_order = Some(decl.source_order);
+                // A value that parses but loses to a later logical margin is
+                // understood, not dropped, so only a parse failure rejects.
+                if let Some(al) = parse_auto_length_value(values) {
+                    if self.should_update_margin(PhysicalSide::Right, decl.source_order) {
+                        self.margin_right = Some(self.resolve_auto_length(al));
+                        self.margin_right_source_order = Some(decl.source_order);
+                    }
+                } else {
+                    reject(decl);
                 }
             }
             "margin-bottom" => {
-                if let Some(al) = parse_auto_length_value(values)
-                    && self.should_update_margin(PhysicalSide::Bottom, decl.source_order)
-                {
-                    self.margin_bottom = Some(self.resolve_auto_length(al));
-                    self.margin_bottom_source_order = Some(decl.source_order);
+                // A value that parses but loses to a later logical margin is
+                // understood, not dropped, so only a parse failure rejects.
+                if let Some(al) = parse_auto_length_value(values) {
+                    if self.should_update_margin(PhysicalSide::Bottom, decl.source_order) {
+                        self.margin_bottom = Some(self.resolve_auto_length(al));
+                        self.margin_bottom_source_order = Some(decl.source_order);
+                    }
+                } else {
+                    reject(decl);
                 }
             }
             "margin-left" => {
-                if let Some(al) = parse_auto_length_value(values)
-                    && self.should_update_margin(PhysicalSide::Left, decl.source_order)
-                {
-                    self.margin_left = Some(self.resolve_auto_length(al));
-                    self.margin_left_source_order = Some(decl.source_order);
+                // A value that parses but loses to a later logical margin is
+                // understood, not dropped, so only a parse failure rejects.
+                if let Some(al) = parse_auto_length_value(values) {
+                    if self.should_update_margin(PhysicalSide::Left, decl.source_order) {
+                        self.margin_left = Some(self.resolve_auto_length(al));
+                        self.margin_left_source_order = Some(decl.source_order);
+                    }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
@@ -1052,6 +1138,8 @@ impl ComputedStyle {
                         self.margin_block_start = Some(self.resolve_auto_length(al));
                         self.set_margin_for_side(physical_side, al, decl.source_order);
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.2 Flow-Relative Margins](https://drafts.csswg.org/css-logical-1/#margin-properties)
@@ -1063,34 +1151,48 @@ impl ComputedStyle {
                         self.margin_block_end = Some(self.resolve_auto_length(al));
                         self.set_margin_for_side(physical_side, al, decl.source_order);
                     }
+                } else {
+                    reject(decl);
                 }
             }
 
             "padding" => {
-                self.apply_padding_shorthand(values);
+                if !self.apply_padding_shorthand(values) {
+                    reject(decl);
+                }
             }
             "padding-top" => {
                 if let Some(len) = parse_length_value(values) {
                     self.padding_top = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             "padding-right" => {
                 if let Some(len) = parse_length_value(values) {
                     self.padding_right = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             "padding-bottom" => {
                 if let Some(len) = parse_length_value(values) {
                     self.padding_bottom = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             "padding-left" => {
                 if let Some(len) = parse_length_value(values) {
                     self.padding_left = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             "border" => {
-                self.apply_border_shorthand(values);
+                if !self.apply_border_shorthand(values) {
+                    reject(decl);
+                }
             }
             // [§ 4.4 border-top](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             //
@@ -1102,24 +1204,32 @@ impl ComputedStyle {
             "border-top" => {
                 if let Some(border) = self.parse_border_side(values) {
                     self.border_top = Some(border);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.4 border-right](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             "border-right" => {
                 if let Some(border) = self.parse_border_side(values) {
                     self.border_right = Some(border);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.4 border-bottom](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             "border-bottom" => {
                 if let Some(border) = self.parse_border_side(values) {
                     self.border_bottom = Some(border);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.4 border-left](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)
             "border-left" => {
                 if let Some(border) = self.parse_border_side(values) {
                     self.border_left = Some(border);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.1 'border-top-color', etc.](https://www.w3.org/TR/css-backgrounds-3/#border-color)
@@ -1130,21 +1240,29 @@ impl ComputedStyle {
             "border-top-color" => {
                 if let Some(color) = parse_color_value(values) {
                     self.ensure_border_top().color = color;
+                } else {
+                    reject(decl);
                 }
             }
             "border-right-color" => {
                 if let Some(color) = parse_color_value(values) {
                     self.ensure_border_right().color = color;
+                } else {
+                    reject(decl);
                 }
             }
             "border-bottom-color" => {
                 if let Some(color) = parse_color_value(values) {
                     self.ensure_border_bottom().color = color;
+                } else {
+                    reject(decl);
                 }
             }
             "border-left-color" => {
                 if let Some(color) = parse_color_value(values) {
                     self.ensure_border_left().color = color;
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.3 'border-top-width', etc.](https://www.w3.org/TR/css-backgrounds-3/#border-width)
@@ -1154,21 +1272,29 @@ impl ComputedStyle {
             "border-top-width" => {
                 if let Some(len) = parse_length_value(values) {
                     self.ensure_border_top().width = self.resolve_length(len);
+                } else {
+                    reject(decl);
                 }
             }
             "border-right-width" => {
                 if let Some(len) = parse_length_value(values) {
                     self.ensure_border_right().width = self.resolve_length(len);
+                } else {
+                    reject(decl);
                 }
             }
             "border-bottom-width" => {
                 if let Some(len) = parse_length_value(values) {
                     self.ensure_border_bottom().width = self.resolve_length(len);
+                } else {
+                    reject(decl);
                 }
             }
             "border-left-width" => {
                 if let Some(len) = parse_length_value(values) {
                     self.ensure_border_left().width = self.resolve_length(len);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.2 'border-top-style', etc.](https://www.w3.org/TR/css-backgrounds-3/#border-style)
@@ -1181,6 +1307,8 @@ impl ComputedStyle {
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_top().style = s;
+                } else {
+                    reject(decl);
                 }
             }
             "border-right-style" => {
@@ -1188,6 +1316,8 @@ impl ComputedStyle {
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_right().style = s;
+                } else {
+                    reject(decl);
                 }
             }
             "border-bottom-style" => {
@@ -1195,6 +1325,8 @@ impl ComputedStyle {
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_bottom().style = s;
+                } else {
+                    reject(decl);
                 }
             }
             "border-left-style" => {
@@ -1202,6 +1334,8 @@ impl ComputedStyle {
                     && let Some(s) = Self::parse_border_style(first)
                 {
                     self.ensure_border_left().style = s;
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.1 'border-color'](https://www.w3.org/TR/css-backgrounds-3/#border-color)
@@ -1210,7 +1344,9 @@ impl ComputedStyle {
             // 'border-top-color', 'border-right-color', 'border-bottom-color',
             // and 'border-left-color'."
             "border-color" => {
-                self.apply_border_color_shorthand(values);
+                if !self.apply_border_color_shorthand(values) {
+                    reject(decl);
+                }
             }
             // [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
             //
@@ -1218,7 +1354,9 @@ impl ComputedStyle {
             // 'border-top-width', 'border-right-width', 'border-bottom-width',
             // and 'border-left-width'."
             "border-width" => {
-                self.apply_border_width_shorthand(values);
+                if !self.apply_border_width_shorthand(values) {
+                    reject(decl);
+                }
             }
             // [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
             //
@@ -1226,14 +1364,20 @@ impl ComputedStyle {
             // 'border-top-style', 'border-right-style', 'border-bottom-style',
             // and 'border-left-style'."
             "border-style" => {
-                self.apply_border_style_shorthand(values);
+                if !self.apply_border_style_shorthand(values) {
+                    reject(decl);
+                }
             }
             "background" => {
-                self.apply_background_shorthand(values);
+                if !self.apply_background_shorthand(values) {
+                    reject(decl);
+                }
             }
             "font-size" => {
                 if let Some(len) = parse_length_value(values) {
                     self.font_size = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.2 'width'](https://www.w3.org/TR/CSS2/visudet.html#the-width-property)
@@ -1245,6 +1389,8 @@ impl ComputedStyle {
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.width = Some(self.resolve_auto_length(auto_len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.5 'height'](https://www.w3.org/TR/CSS2/visudet.html#the-height-property)
@@ -1256,6 +1402,8 @@ impl ComputedStyle {
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.height = Some(self.resolve_auto_length(auto_len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.4 'min-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
@@ -1265,6 +1413,8 @@ impl ComputedStyle {
             "min-width" => {
                 if let Some(len) = parse_length_value(values) {
                     self.min_width = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.4 'max-width'](https://www.w3.org/TR/CSS2/visudet.html#min-max-widths)
@@ -1278,6 +1428,8 @@ impl ComputedStyle {
                     self.max_width = None;
                 } else if let Some(len) = parse_length_value(values) {
                     self.max_width = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.7 'min-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
@@ -1287,6 +1439,8 @@ impl ComputedStyle {
             "min-height" => {
                 if let Some(len) = parse_length_value(values) {
                     self.min_height = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.7 'max-height'](https://www.w3.org/TR/CSS2/visudet.html#min-max-heights)
@@ -1300,6 +1454,8 @@ impl ComputedStyle {
                     self.max_height = None;
                 } else if let Some(len) = parse_length_value(values) {
                     self.max_height = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 5.1 'flex-direction'](https://www.w3.org/TR/css-flexbox-1/#flex-direction-property)
@@ -1314,8 +1470,10 @@ impl ComputedStyle {
                         "column-reverse" => {
                             self.flex_direction = Some(FlexDirection::ColumnReverse);
                         }
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.2 'justify-content'](https://www.w3.org/TR/css-flexbox-1/#justify-content-property)
@@ -1331,8 +1489,10 @@ impl ComputedStyle {
                             self.justify_content = Some(JustifyContent::SpaceBetween);
                         }
                         "space-around" => self.justify_content = Some(JustifyContent::SpaceAround),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.3 'align-items'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
@@ -1346,8 +1506,10 @@ impl ComputedStyle {
                         "center" => self.align_items = Some(AlignItems::Center),
                         "baseline" => self.align_items = Some(AlignItems::Baseline),
                         "stretch" => self.align_items = Some(AlignItems::Stretch),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.3 'align-self'](https://www.w3.org/TR/css-flexbox-1/#align-items-property)
@@ -1362,8 +1524,10 @@ impl ComputedStyle {
                         "center" => self.align_self = Some(AlignSelf::Center),
                         "baseline" => self.align_self = Some(AlignSelf::Baseline),
                         "stretch" => self.align_self = Some(AlignSelf::Stretch),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 7.2 'flex-grow'](https://www.w3.org/TR/css-flexbox-1/#flex-grow-property)
@@ -1371,29 +1535,23 @@ impl ComputedStyle {
             // "The flex-grow property sets the flex grow factor to the provided
             // `<number>`. Negative values are invalid."
             #[allow(clippy::cast_possible_truncation)]
-            "flex-grow" => {
-                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) = values.first()
-                {
-                    let val = *value as f32;
-                    if val >= 0.0 {
-                        self.flex_grow = Some(val);
-                    }
+            "flex-grow" => match values.first() {
+                Some(ComponentValue::Token(CSSToken::Number { value, .. })) if *value >= 0.0 => {
+                    self.flex_grow = Some(*value as f32);
                 }
-            }
+                _ => reject(decl),
+            },
             // [§ 7.3 'flex-shrink'](https://www.w3.org/TR/css-flexbox-1/#flex-shrink-property)
             //
             // "The flex-shrink property sets the flex shrink factor to the provided
             // `<number>`. Negative values are invalid."
             #[allow(clippy::cast_possible_truncation)]
-            "flex-shrink" => {
-                if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) = values.first()
-                {
-                    let val = *value as f32;
-                    if val >= 0.0 {
-                        self.flex_shrink = Some(val);
-                    }
+            "flex-shrink" => match values.first() {
+                Some(ComponentValue::Token(CSSToken::Number { value, .. })) if *value >= 0.0 => {
+                    self.flex_shrink = Some(*value as f32);
                 }
-            }
+                _ => reject(decl),
+            },
             // [§ 7.1 'flex-basis'](https://www.w3.org/TR/css-flexbox-1/#flex-basis-property)
             //
             // "Values: auto | <length>"
@@ -1402,6 +1560,8 @@ impl ComputedStyle {
                     && let Some(auto_len) = parse_single_auto_length(first)
                 {
                     self.flex_basis = Some(self.resolve_auto_length(auto_len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 7 'flex' shorthand](https://www.w3.org/TR/css-flexbox-1/#flex-property)
@@ -1417,7 +1577,9 @@ impl ComputedStyle {
             //   flex: <number> → flex: <number> 1 0 (note: basis is 0, not auto!)
             #[allow(clippy::cast_possible_truncation)]
             "flex" => {
-                self.parse_flex_shorthand(values);
+                if !self.parse_flex_shorthand(values) {
+                    reject(decl);
+                }
             }
             // [§ 5.2 'flex-wrap'](https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property)
             //
@@ -1428,8 +1590,10 @@ impl ComputedStyle {
                         "nowrap" => self.flex_wrap = Some(FlexWrap::Nowrap),
                         "wrap" => self.flex_wrap = Some(FlexWrap::Wrap),
                         "wrap-reverse" => self.flex_wrap = Some(FlexWrap::WrapReverse),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 5.3 'flex-flow' shorthand](https://www.w3.org/TR/css-flexbox-1/#flex-flow-property)
@@ -1462,8 +1626,10 @@ impl ComputedStyle {
                         "left" => self.float = Some(FloatSide::Left),
                         "right" => self.float = Some(FloatSide::Right),
                         "none" => self.float = None,
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 9.5.2 Controlling flow next to floats: the 'clear' property](https://www.w3.org/TR/CSS2/visuren.html#flow-control)
@@ -1476,8 +1642,10 @@ impl ComputedStyle {
                         "right" => self.clear = Some(ClearSide::Right),
                         "both" => self.clear = Some(ClearSide::Both),
                         "none" => self.clear = None,
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 9.3.1 'position'](https://www.w3.org/TR/CSS2/visuren.html#choose-position)
@@ -1493,8 +1661,10 @@ impl ComputedStyle {
                         "absolute" => self.position = Some(PositionType::Absolute),
                         "fixed" => self.position = Some(PositionType::Fixed),
                         "sticky" => self.position = Some(PositionType::Sticky),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 9.3.2 Box offsets: 'top', 'right', 'bottom', 'left'](https://www.w3.org/TR/CSS2/visuren.html#position-props)
@@ -1503,21 +1673,29 @@ impl ComputedStyle {
             "top" => {
                 if let Some(al) = parse_auto_length_value(values) {
                     self.top = Some(self.resolve_auto_length(al));
+                } else {
+                    reject(decl);
                 }
             }
             "right" => {
                 if let Some(al) = parse_auto_length_value(values) {
                     self.right = Some(self.resolve_auto_length(al));
+                } else {
+                    reject(decl);
                 }
             }
             "bottom" => {
                 if let Some(al) = parse_auto_length_value(values) {
                     self.bottom = Some(self.resolve_auto_length(al));
+                } else {
+                    reject(decl);
                 }
             }
             "left" => {
                 if let Some(al) = parse_auto_length_value(values) {
                     self.left = Some(self.resolve_auto_length(al));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 3.1 'list-style-type'](https://www.w3.org/TR/css-lists-3/#list-style-type)
@@ -1538,8 +1716,10 @@ impl ComputedStyle {
                         "lower-roman" => self.list_style_type = Some(ListStyleType::LowerRoman),
                         "upper-roman" => self.list_style_type = Some(ListStyleType::UpperRoman),
                         "none" => self.list_style_type = Some(ListStyleType::None),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 11.1.1 overflow](https://www.w3.org/TR/CSS2/visufx.html#overflow)
@@ -1552,8 +1732,10 @@ impl ComputedStyle {
                         "hidden" => self.overflow = Some(Overflow::Hidden),
                         "scroll" => self.overflow = Some(Overflow::Scroll),
                         "auto" => self.overflow = Some(Overflow::Auto),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 4.4 box-sizing](https://www.w3.org/TR/css-box-4/#box-sizing)
@@ -1564,8 +1746,10 @@ impl ComputedStyle {
                     match ident.to_ascii_lowercase().as_str() {
                         "border-box" => self.box_sizing_border_box = Some(true),
                         "content-box" => self.box_sizing_border_box = Some(false),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 16.6 'white-space'](https://www.w3.org/TR/CSS2/text.html#white-space-prop)
@@ -1580,8 +1764,10 @@ impl ComputedStyle {
                         "nowrap" => self.white_space = Some(WhiteSpace::Nowrap),
                         "pre-wrap" => self.white_space = Some(WhiteSpace::PreWrap),
                         "pre-line" => self.white_space = Some(WhiteSpace::PreLine),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 11.2 'visibility'](https://www.w3.org/TR/CSS2/visufx.html#visibility)
@@ -1593,8 +1779,10 @@ impl ComputedStyle {
                         "visible" => self.visibility = Some(Visibility::Visible),
                         "hidden" => self.visibility = Some(Visibility::Hidden),
                         "collapse" => self.visibility = Some(Visibility::Collapse),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
@@ -1606,6 +1794,8 @@ impl ComputedStyle {
                 if let Some(ComponentValue::Token(CSSToken::Number { value, .. })) = values.first()
                 {
                     self.opacity = Some((*value as f32).clamp(0.0, 1.0));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 6.1 'box-shadow'](https://www.w3.org/TR/css-backgrounds-3/#box-shadow)
@@ -1618,8 +1808,12 @@ impl ComputedStyle {
                     && ident.eq_ignore_ascii_case("none")
                 {
                     self.box_shadow = None;
+                } else if let Some(shadows) = self.parse_box_shadow(values) {
+                    self.box_shadow = Some(shadows);
                 } else {
-                    self.box_shadow = self.parse_box_shadow(values);
+                    // An invalid value leaves an earlier declaration's
+                    // shadows in place, like any other invalid declaration.
+                    reject(decl);
                 }
             }
 
@@ -1634,7 +1828,9 @@ impl ComputedStyle {
             //   3 values: top-left, top-right/bottom-left, bottom-right
             //   4 values: top-left, top-right, bottom-right, bottom-left
             "border-radius" => {
-                self.apply_border_radius_shorthand(values);
+                if !self.apply_border_radius_shorthand(values) {
+                    reject(decl);
+                }
             }
             // [§ 5.1 'border-top-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-left-radius)
             #[allow(clippy::cast_possible_truncation)]
@@ -1647,6 +1843,8 @@ impl ComputedStyle {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.top_left = resolved;
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 5.2 'border-top-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-top-right-radius)
@@ -1660,6 +1858,8 @@ impl ComputedStyle {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.top_right = resolved;
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 5.3 'border-bottom-right-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-right-radius)
@@ -1673,6 +1873,8 @@ impl ComputedStyle {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.bottom_right = resolved;
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 5.4 'border-bottom-left-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-bottom-left-radius)
@@ -1686,6 +1888,8 @@ impl ComputedStyle {
                     let resolved = self.resolve_length(len).to_px() as f32;
                     let br = self.border_radius.get_or_insert_with(BorderRadius::default);
                     br.bottom_left = resolved;
+                } else {
+                    reject(decl);
                 }
             }
 
@@ -1698,12 +1902,16 @@ impl ComputedStyle {
             "grid-template-columns" => {
                 if let Some(tl) = self.parse_track_list(values) {
                     self.grid_template_columns = Some(tl);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 7.2 'grid-template-rows'](https://www.w3.org/TR/css-grid-1/#track-sizing)
             "grid-template-rows" => {
                 if let Some(tl) = self.parse_track_list(values) {
                     self.grid_template_rows = Some(tl);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 7.6 'grid-auto-flow'](https://www.w3.org/TR/css-grid-1/#auto-placement-algo)
@@ -1714,20 +1922,26 @@ impl ComputedStyle {
                     match ident.to_ascii_lowercase().as_str() {
                         "row" => self.grid_auto_flow = Some(GridAutoFlow::Row),
                         "column" => self.grid_auto_flow = Some(GridAutoFlow::Column),
-                        _ => {}
+                        _ => reject(decl),
                     }
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.1 'row-gap'](https://www.w3.org/TR/css-align-3/#row-gap)
             "row-gap" | "grid-row-gap" => {
                 if let Some(len) = parse_length_value(values) {
                     self.row_gap = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.1 'column-gap'](https://www.w3.org/TR/css-align-3/#column-gap)
             "column-gap" | "grid-column-gap" => {
                 if let Some(len) = parse_length_value(values) {
                     self.column_gap = Some(self.resolve_length(len));
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 10.1 'gap'](https://www.w3.org/TR/css-align-3/#gap-shorthand)
@@ -1748,31 +1962,39 @@ impl ComputedStyle {
                         self.row_gap = Some(self.resolve_length(lengths[0]));
                         self.column_gap = Some(self.resolve_length(lengths[1]));
                     }
-                    _ => {}
+                    _ => reject(decl),
                 }
             }
             // [§ 8.3 'grid-column-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-column-start" => {
                 if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_column_start = Some(gl);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.3 'grid-column-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-column-end" => {
                 if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_column_end = Some(gl);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.3 'grid-row-start'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-row-start" => {
                 if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_row_start = Some(gl);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.3 'grid-row-end'](https://www.w3.org/TR/css-grid-1/#line-placement)
             "grid-row-end" => {
                 if let Some(gl) = Self::parse_grid_line(values) {
                     self.grid_row_end = Some(gl);
+                } else {
+                    reject(decl);
                 }
             }
             // [§ 8.4 'grid-column' shorthand](https://www.w3.org/TR/css-grid-1/#propdef-grid-column)
@@ -1804,7 +2026,9 @@ impl ComputedStyle {
             // "All subproperties of the font shorthand are first reset to their
             // initial values, including those not explicitly set."
             "font" => {
-                self.parse_font_shorthand(values);
+                if !self.parse_font_shorthand(values) {
+                    reject(decl);
+                }
             }
             unknown => {
                 // [§ 4.1.1 Declarations](https://www.w3.org/TR/css-syntax-3/#consume-declaration)
@@ -1868,13 +2092,16 @@ impl ComputedStyle {
     ///
     /// "Value: `<margin-width>`{1,4} | inherit"
     /// "`<margin-width>` = `<length>` | `<percentage>` | auto"
-    fn apply_margin_shorthand(&mut self, values: &[ComponentValue]) {
+    fn apply_margin_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         // STEP 1: Parse all <margin-width> values from the declaration.
         // [§ 8.3](https://www.w3.org/TR/CSS2/box.html#margin-properties)
         //
         // "<margin-width> = <length> | <percentage> | auto"
         let auto_lengths: Vec<AutoLength> =
             values.iter().filter_map(parse_single_auto_length).collect();
+        if auto_lengths.len() != significant_count(values) {
+            return false;
+        }
 
         // STEP 2: Apply the shorthand expansion rules.
         // [§ 8.3](https://www.w3.org/TR/CSS2/box.html#margin-properties)
@@ -1917,13 +2144,17 @@ impl ComputedStyle {
                 self.margin_bottom = Some(self.resolve_auto_length(auto_lengths[2]));
                 self.margin_left = Some(self.resolve_auto_length(auto_lengths[3]));
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     /// [§ 6.2 Padding](https://www.w3.org/TR/css-box-4/#paddings)
-    fn apply_padding_shorthand(&mut self, values: &[ComponentValue]) {
+    fn apply_padding_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
+        if lengths.len() != significant_count(values) {
+            return false;
+        }
 
         match lengths.len() {
             1 => {
@@ -1950,8 +2181,9 @@ impl ComputedStyle {
                 self.padding_bottom = Some(self.resolve_length(lengths[2]));
                 self.padding_left = Some(self.resolve_length(lengths[3]));
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     /// [§ 5 'border-radius'](https://www.w3.org/TR/css-backgrounds-3/#border-radius)
@@ -1967,12 +2199,15 @@ impl ComputedStyle {
     ///   3 values: top-left, top-right/bottom-left, bottom-right
     ///   4 values: top-left, top-right, bottom-right, bottom-left
     #[allow(clippy::cast_possible_truncation)]
-    fn apply_border_radius_shorthand(&mut self, values: &[ComponentValue]) {
+    fn apply_border_radius_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         let lengths: Vec<f32> = values
             .iter()
             .filter_map(parse_single_length)
             .map(|l| self.resolve_length(l).to_px() as f32)
             .collect();
+        if lengths.len() != significant_count(values) {
+            return false;
+        }
 
         let br = match lengths.len() {
             // 1 value: all four corners
@@ -2003,21 +2238,24 @@ impl ComputedStyle {
                 bottom_right: lengths[2],
                 bottom_left: lengths[3],
             },
-            _ => return,
+            _ => return false,
         };
 
         self.border_radius = Some(br);
+        true
     }
 
     /// [§ 3.1 border shorthand](https://www.w3.org/TR/css-backgrounds-3/#the-border-shorthands)
     /// "border: 1px solid #ddd" sets all four borders
-    fn apply_border_shorthand(&mut self, values: &[ComponentValue]) {
-        if let Some(border) = self.parse_border_side(values) {
-            self.border_top = Some(border.clone());
-            self.border_right = Some(border.clone());
-            self.border_bottom = Some(border.clone());
-            self.border_left = Some(border);
-        }
+    fn apply_border_shorthand(&mut self, values: &[ComponentValue]) -> bool {
+        let Some(border) = self.parse_border_side(values) else {
+            return false;
+        };
+        self.border_top = Some(border.clone());
+        self.border_right = Some(border.clone());
+        self.border_bottom = Some(border.clone());
+        self.border_left = Some(border);
+        true
     }
 
     /// [§ 4 Borders](https://www.w3.org/TR/css-backgrounds-3/#borders)
@@ -2072,8 +2310,11 @@ impl ComputedStyle {
     /// "Value: <color>{1,4}"
     ///
     /// Shorthand following the same 1-4 value expansion as margin/padding.
-    fn apply_border_color_shorthand(&mut self, values: &[ComponentValue]) {
+    fn apply_border_color_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         let colors: Vec<ColorValue> = values.iter().filter_map(parse_single_color).collect();
+        if colors.len() != significant_count(values) {
+            return false;
+        }
 
         match colors.len() {
             1 => {
@@ -2100,8 +2341,9 @@ impl ComputedStyle {
                 self.ensure_border_bottom().color = colors[2].clone();
                 self.ensure_border_left().color = colors[3].clone();
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     /// [§ 4.3 'border-width'](https://www.w3.org/TR/css-backgrounds-3/#border-width)
@@ -2109,8 +2351,11 @@ impl ComputedStyle {
     /// "Value: <line-width>{1,4}"
     ///
     /// Shorthand following the same 1-4 value expansion as margin/padding.
-    fn apply_border_width_shorthand(&mut self, values: &[ComponentValue]) {
+    fn apply_border_width_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         let lengths: Vec<LengthValue> = values.iter().filter_map(parse_single_length).collect();
+        if lengths.len() != significant_count(values) {
+            return false;
+        }
 
         match lengths.len() {
             1 => {
@@ -2147,8 +2392,9 @@ impl ComputedStyle {
                 self.ensure_border_bottom().width = b;
                 self.ensure_border_left().width = l;
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     /// [§ 4.2 'border-style'](https://www.w3.org/TR/css-backgrounds-3/#border-style)
@@ -2156,8 +2402,11 @@ impl ComputedStyle {
     /// "Value: <line-style>{1,4}"
     ///
     /// Shorthand following the same 1-4 value expansion as margin/padding.
-    fn apply_border_style_shorthand(&mut self, values: &[ComponentValue]) {
+    fn apply_border_style_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         let styles: Vec<String> = values.iter().filter_map(Self::parse_border_style).collect();
+        if styles.len() != significant_count(values) {
+            return false;
+        }
 
         match styles.len() {
             1 => {
@@ -2184,8 +2433,9 @@ impl ComputedStyle {
                 self.ensure_border_bottom().style.clone_from(&styles[2]);
                 self.ensure_border_left().style.clone_from(&styles[3]);
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     /// [§ 3.10 Background](https://www.w3.org/TR/css-backgrounds-3/#background)
@@ -2196,10 +2446,12 @@ impl ComputedStyle {
     /// TODO: Currently only handles background-color. Full shorthand supports:
     /// background-image, background-position, background-size, background-repeat,
     /// background-attachment, background-origin, background-clip
-    fn apply_background_shorthand(&mut self, values: &[ComponentValue]) {
-        if let Some(color) = parse_color_value(values) {
-            self.background_color = Some(color);
-        }
+    fn apply_background_shorthand(&mut self, values: &[ComponentValue]) -> bool {
+        let Some(color) = parse_color_value(values) else {
+            return false;
+        };
+        self.background_color = Some(color);
+        true
     }
 
     /// [§ 4 Font Shorthand](https://www.w3.org/TR/css-fonts-4/#font-prop)
@@ -2215,7 +2467,7 @@ impl ComputedStyle {
     /// "All subproperties of the font shorthand are first reset to their
     /// initial values, including those not explicitly set."
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn parse_font_shorthand(&mut self, values: &[ComponentValue]) {
+    fn parse_font_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         // STEP 1: Filter whitespace tokens.
         let tokens: Vec<&ComponentValue> = values
             .iter()
@@ -2223,7 +2475,7 @@ impl ComputedStyle {
             .collect();
 
         if tokens.is_empty() {
-            return;
+            return false;
         }
 
         // STEP 2: Check for system font keywords.
@@ -2239,7 +2491,7 @@ impl ComputedStyle {
                 lower.as_str(),
                 "caption" | "icon" | "menu" | "message-box" | "small-caption" | "status-bar"
             ) {
-                return;
+                return false;
             }
         }
 
@@ -2307,11 +2559,11 @@ impl ComputedStyle {
         // [§ 4](https://www.w3.org/TR/css-fonts-4/#font-prop)
         // "font-size is a required value"
         if i >= tokens.len() {
-            return;
+            return false;
         }
         let font_size = parse_single_length(tokens[i]);
         if font_size.is_none() {
-            return; // Invalid font-size — entire shorthand is invalid
+            return false; // Invalid font-size — entire shorthand is invalid
         }
         i += 1;
 
@@ -2358,7 +2610,7 @@ impl ComputedStyle {
             }
         }
         if family.is_none() {
-            return; // Missing required font-family
+            return false; // Missing required font-family
         }
 
         // STEP 7: Apply values.
@@ -2377,6 +2629,7 @@ impl ComputedStyle {
             self.line_height = None; // Reset to initial ("normal")
         }
         self.font_family = family;
+        true
     }
 
     /// Resolve relative length units (em) to absolute units (px).
@@ -2851,7 +3104,7 @@ impl ComputedStyle {
     ///   resulting in an item that receives the specified proportion of the
     ///   free space in the flex container."
     #[allow(clippy::cast_possible_truncation)]
-    fn parse_flex_shorthand(&mut self, values: &[ComponentValue]) {
+    fn parse_flex_shorthand(&mut self, values: &[ComponentValue]) -> bool {
         // Filter whitespace
         let tokens: Vec<&ComponentValue> = values
             .iter()
@@ -2859,7 +3112,7 @@ impl ComputedStyle {
             .collect();
 
         if tokens.is_empty() {
-            return;
+            return false;
         }
 
         // Check for keyword values
@@ -2874,7 +3127,7 @@ impl ComputedStyle {
                     self.flex_grow = Some(0.0);
                     self.flex_shrink = Some(0.0);
                     self.flex_basis = Some(AutoLength::Auto);
-                    return;
+                    return true;
                 }
                 // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
                 //
@@ -2883,7 +3136,7 @@ impl ComputedStyle {
                     self.flex_grow = Some(1.0);
                     self.flex_shrink = Some(1.0);
                     self.flex_basis = Some(AutoLength::Auto);
-                    return;
+                    return true;
                 }
                 // [§ 7.1.1](https://www.w3.org/TR/css-flexbox-1/#flex-common)
                 //
@@ -2892,9 +3145,9 @@ impl ComputedStyle {
                     self.flex_grow = Some(0.0);
                     self.flex_shrink = Some(1.0);
                     self.flex_basis = Some(AutoLength::Auto);
-                    return;
+                    return true;
                 }
-                _ => return,
+                _ => return false,
             }
         }
 
@@ -2913,16 +3166,17 @@ impl ComputedStyle {
                     numbers.push(*value as f32);
                 }
                 ComponentValue::Token(CSSToken::Dimension { .. } | CSSToken::Percentage { .. }) => {
-                    if let Some(auto_len) = parse_single_auto_length(token) {
-                        basis = Some(self.resolve_auto_length(auto_len));
-                    }
+                    let Some(auto_len) = parse_single_auto_length(token) else {
+                        return false;
+                    };
+                    basis = Some(self.resolve_auto_length(auto_len));
                 }
                 ComponentValue::Token(CSSToken::Ident(ident))
                     if ident.eq_ignore_ascii_case("auto") =>
                 {
                     basis = Some(AutoLength::Auto);
                 }
-                _ => {}
+                _ => return false,
             }
         }
 
@@ -2951,7 +3205,8 @@ impl ComputedStyle {
                 self.flex_basis = basis
                     .or_else(|| Some(AutoLength::Length(LengthValue::Px(f64::from(numbers[2])))));
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 }

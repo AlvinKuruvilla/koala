@@ -55,6 +55,81 @@ pub enum ComponentValue {
     },
 }
 
+/// [§ 9 Serialization](https://www.w3.org/TR/css-syntax-3/#serialization)
+///
+/// Component values written back out as CSS text, for messages that quote
+/// a value the way its author wrote it.
+///
+/// Implementation note: this is not the spec's round-trip serialization.
+/// That one inserts comments between tokens that would otherwise re-tokenize
+/// differently, and escapes identifiers and strings; a message only needs to
+/// be recognisable, so tokens are written as they appeared, strings in
+/// double quotes without escaping.
+#[must_use]
+pub fn serialize_component_values(values: &[ComponentValue]) -> String {
+    let mut out = String::new();
+    for value in values {
+        write_component_value(&mut out, value);
+    }
+    out.trim().to_string()
+}
+
+fn write_component_value(out: &mut String, value: &ComponentValue) {
+    match value {
+        ComponentValue::Token(token) => write_token(out, token),
+        ComponentValue::Function { name, value } => {
+            out.push_str(name);
+            out.push('(');
+            for inner in value {
+                write_component_value(out, inner);
+            }
+            out.push(')');
+        }
+        ComponentValue::Block { token, value } => {
+            let close = match token {
+                '(' => ')',
+                '[' => ']',
+                _ => '}',
+            };
+            out.push(*token);
+            for inner in value {
+                write_component_value(out, inner);
+            }
+            out.push(close);
+        }
+    }
+}
+
+fn write_token(out: &mut String, token: &CSSToken) {
+    use std::fmt::Write as _;
+
+    let _ = match token {
+        CSSToken::Ident(v) => write!(out, "{v}"),
+        CSSToken::Function(v) => write!(out, "{v}("),
+        CSSToken::AtKeyword(v) => write!(out, "@{v}"),
+        CSSToken::Hash { value, .. } => write!(out, "#{value}"),
+        CSSToken::String(v) => write!(out, "\"{v}\""),
+        CSSToken::Url(v) => write!(out, "url({v})"),
+        CSSToken::BadString | CSSToken::BadUrl | CSSToken::CDO | CSSToken::CDC | CSSToken::EOF => {
+            Ok(())
+        }
+        CSSToken::Delim(c) => write!(out, "{c}"),
+        CSSToken::Number { value, .. } => write!(out, "{value}"),
+        CSSToken::Percentage { value, .. } => write!(out, "{value}%"),
+        CSSToken::Dimension { value, unit, .. } => write!(out, "{value}{unit}"),
+        CSSToken::Whitespace => write!(out, " "),
+        CSSToken::Colon => write!(out, ":"),
+        CSSToken::Semicolon => write!(out, ";"),
+        CSSToken::Comma => write!(out, ","),
+        CSSToken::LeftBracket => write!(out, "["),
+        CSSToken::RightBracket => write!(out, "]"),
+        CSSToken::LeftParen => write!(out, "("),
+        CSSToken::RightParen => write!(out, ")"),
+        CSSToken::LeftBrace => write!(out, "{{"),
+        CSSToken::RightBrace => write!(out, "}}"),
+    };
+}
+
 /// A CSS selector (simplified representation)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selector {

@@ -5,4 +5,5 @@ pub mod css_parser;
 
 pub use css_parser::{
     AtRule, CSSParser, ComponentValue, Declaration, Rule, Selector, StyleRule, Stylesheet,
+    serialize_component_values,
 };

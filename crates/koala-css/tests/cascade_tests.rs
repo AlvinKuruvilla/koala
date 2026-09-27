@@ -1016,3 +1016,40 @@ fn test_custom_property_override_in_descendant() {
     assert_eq!(color.g, 0x00);
     assert_eq!(color.b, 0xff);
 }
+
+/// A declaration Koala cannot parse is reported, not dropped silently, and
+/// a shorthand with one part it cannot parse is dropped whole. Before, the
+/// cascade ignored `color: oklch(...)` without a word, and `margin: 0 1rem`
+/// applied the `0` to all four sides because the `1rem` was filtered out.
+#[test]
+fn dropped_declarations_are_reported() {
+    use koala_common::diagnostics::{self, Diagnostic};
+
+    let stylesheet = parse_css(
+        "div { color: oklch(0.5 0.1 100); margin: 0 1rem; color: inherit; }",
+    );
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element("div", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+
+    let _ = diagnostics::take();
+    let styles = compute_styles(&tree, &empty_stylesheet(), &stylesheet);
+    let reported: Vec<Diagnostic> = diagnostics::take().iter().map(|(d, _)| d.clone()).collect();
+
+    let div_style = styles.get(&div_id).expect("div has a computed style");
+    assert!(div_style.margin_top.is_none(), "the partly-understood margin applied");
+    for (property, value) in [
+        ("color", "oklch(0.5 0.1 100)"),
+        ("margin", "0 1rem"),
+    ] {
+        let expected = Diagnostic::InvalidCssValue {
+            property: property.to_string(),
+            value: value.to_string(),
+        };
+        assert!(reported.contains(&expected), "missing {expected:?} in {reported:?}");
+    }
+    assert!(reported.contains(&Diagnostic::UnsupportedCssWideKeyword {
+        property: "color".to_string(),
+        keyword: "inherit".to_string(),
+    }));
+}
