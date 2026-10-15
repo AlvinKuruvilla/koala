@@ -1,9 +1,10 @@
 //! A face of a font, and how to open one.
 
-use crate::directory::Header;
+use crate::directory::{Header, TableDirectory};
 use crate::error::FontError;
 use crate::metrics::{DecorationLine, VerticalMetrics};
 use crate::source::FontSource;
+use crate::tables::{head, post};
 
 /// How to open a font.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -16,6 +17,10 @@ pub struct FontSettings {
 /// One face of a font, read on demand from its source.
 pub struct Font<S> {
     source: S,
+    /// `head.unitsPerEm`, in 16..=16384.
+    units_per_em: u16,
+    /// `post`'s underline fields, if the face has a readable `post`.
+    underline: Option<DecorationLine>,
 }
 
 impl<S: FontSource> Font<S> {
@@ -27,8 +32,18 @@ impl<S: FontSource> Font<S> {
     /// OpenType font or collection, the face does not exist, or a table
     /// every face needs is missing or too short.
     pub fn from_source(source: S, settings: FontSettings) -> Result<Self, FontError> {
-        let _ = (source, settings);
-        todo!("read the collection header if any, the table directory, and the v0 tables")
+        // The tables are read here, not on demand, so the accessors below
+        // cannot fail: a face that opens has every value they report.
+        // That costs reading `head` and `post` even for a caller that
+        // wants only one of them, a few dozen bytes each.
+        let directory = TableDirectory::read(&source, settings.collection_index)?;
+        let head = head::read(&source, &directory)?;
+        let underline = post::read(&source, &directory)?;
+        Ok(Self {
+            source,
+            units_per_em: head.units_per_em,
+            underline,
+        })
     }
 
     /// The source this font reads from.
@@ -38,8 +53,8 @@ impl<S: FontSource> Font<S> {
 
     /// `head.unitsPerEm`: font units per em.
     #[must_use]
-    pub fn units_per_em(&self) -> u16 {
-        todo!()
+    pub const fn units_per_em(&self) -> u16 {
+        self.units_per_em
     }
 
     /// `hhea`'s `ascender`, `descender` and `lineGap`.
@@ -59,8 +74,8 @@ impl<S: FontSource> Font<S> {
     /// `post`'s `underlinePosition` and `underlineThickness`, or `None`
     /// if the font has no `post` table.
     #[must_use]
-    pub fn underline(&self) -> Option<DecorationLine> {
-        todo!()
+    pub const fn underline(&self) -> Option<DecorationLine> {
+        self.underline
     }
 
     /// `OS/2`'s `yStrikeoutPosition` and `yStrikeoutSize`, or `None` if
@@ -73,8 +88,7 @@ impl<S: FontSource> Font<S> {
     /// Pixels per font unit at a font size of `px` pixels per em.
     #[must_use]
     pub fn scale_factor(&self, px: f32) -> f32 {
-        let _ = px;
-        todo!()
+        px / f32::from(self.units_per_em)
     }
 }
 

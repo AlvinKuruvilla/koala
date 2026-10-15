@@ -35,6 +35,14 @@ pub enum FontError {
     /// A table every face needs is not in the table directory.
     #[error("the font has no '{0}' table")]
     MissingTable(Tag),
+    /// `head.magicNumber` is not 0x5F0F3CF5, so the table directory's
+    /// `head` record points at something else.
+    #[error("the 'head' table's magicNumber is {0:#010x}, not 0x5f0f3cf5")]
+    HeadMagicNumberMismatch(u32),
+    /// `head.unitsPerEm` is outside the 16 to 16384 the spec allows, so
+    /// nothing in font units can be scaled by it.
+    #[error("the 'head' table's unitsPerEm is {0}; it must be 16 to 16384")]
+    UnitsPerEmOutOfRange(u16),
     /// A table is shorter than the fields read from it.
     #[error("the '{tag}' table is {length} bytes, too short for its fields")]
     TableTooShort {
