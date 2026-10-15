@@ -41,20 +41,33 @@ use super::layout_box::{BoxType, ElementBoxId, LayoutBox};
 use crate::style::computed::{Overflow, Visibility};
 use crate::style::values::{BorderRadius, PositionType};
 
+/// What [`LayoutBox::hit_test`] found under a point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HitTestResult {
+    /// The topmost box that is a target for hit testing. A `::before` or
+    /// `::after` box is returned as itself; its element is
+    /// `ElementBoxId::node`.
+    pub target: ElementBoxId,
+    /// Whether the point is over a run of text in `target`.
+    ///
+    /// [CSS UI 4 § 5.1.1.1](https://drafts.csswg.org/css-ui-4/#cursor)
+    ///
+    /// "auto behaves as text over selectable text or editable elements,
+    /// and default otherwise."
+    pub over_text: bool,
+}
+
 impl LayoutBox {
     /// The topmost box at (`x`, `y`) that is a target for hit testing, or
     /// `None` if there is none. Coordinates are in the same space as the
     /// layout tree's dimensions.
-    ///
-    /// A `::before` or `::after` box is returned as itself; its element is
-    /// `ElementBoxId::node`.
     ///
     /// # Time complexity
     ///
     /// *O*(*n*) in the number of boxes and line fragments, plus a search of
     /// the owning block's descendants for each inline-box fragment hit.
     #[must_use]
-    pub fn hit_test(&self, x: f32, y: f32) -> Option<ElementBoxId> {
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<HitTestResult> {
         // [CSS Overflow 3 § 3](https://drafts.csswg.org/css-overflow-3/#overflow-control)
         //
         // "the box's content is clipped to its overflow clip edge"
@@ -65,6 +78,7 @@ impl LayoutBox {
         let content_reachable =
             self.overflow == Overflow::Visible || contains(self.dimensions.padding_box(), x, y);
 
+        let mut over_text = false;
         if content_reachable {
             // STEP 1: Positioned children, painted last, so tested first.
             for child in self.children.iter().rev() {
@@ -88,14 +102,25 @@ impl LayoutBox {
 
             // STEP 3: The inline boxes on this box's lines. A nested box's
             // fragment follows its parent's, so the first match walking
-            // backwards is the innermost box.
+            // backwards is the innermost box. A text fragment comes after
+            // the inline boxes that contain it, so whether the point is on
+            // text is known by the time its box is found.
             for line in self.line_boxes.iter().rev() {
                 for fragment in line.fragments.iter().rev() {
-                    if let FragmentContent::InlineBox { id, .. } = fragment.content
-                        && contains(fragment.bounds, x, y)
-                        && find_box(&self.children, id).is_some_and(is_hit_target)
-                    {
-                        return Some(id);
+                    if !contains(fragment.bounds, x, y) {
+                        continue;
+                    }
+                    match &fragment.content {
+                        FragmentContent::Text(run) if !run.text.is_empty() => over_text = true,
+                        &FragmentContent::InlineBox { id, .. }
+                            if find_box(&self.children, id).is_some_and(is_hit_target) =>
+                        {
+                            return Some(HitTestResult {
+                                target: id,
+                                over_text,
+                            });
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -110,7 +135,10 @@ impl LayoutBox {
             && !self.is_inline_box()
             && contains_curved(self.dimensions.border_box(), &self.border_radius, x, y)
         {
-            return self.box_type.element_box_id();
+            return self.box_type.element_box_id().map(|target| HitTestResult {
+                target,
+                over_text,
+            });
         }
 
         None

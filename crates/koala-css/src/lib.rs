@@ -70,8 +70,8 @@ pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
 pub use layout::{
     ApproximateFontMetrics, BoxDimensions, BoxType, DecorationMetrics, EdgeSizes, ElementBoxId,
-    FontMetrics, FontStyle, FragmentContent, LayoutBox, PositionType, Rect, TextDecorationLine,
-    TextRun, VerticalFontMetrics,
+    FontMetrics, FontStyle, FragmentContent, HitTestResult, LayoutBox, PositionType, Rect,
+    TextDecorationLine, TextRun, VerticalFontMetrics,
 };
 pub use paint::{DisplayCommand, DisplayList, DisplayListBuilder};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
