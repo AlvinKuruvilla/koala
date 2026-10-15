@@ -9,6 +9,7 @@
 )]
 
 use koala_css::layout::default_display_for_element;
+use koala_css::layout::layout_box::ElementBoxId;
 use koala_css::{
     ApproximateFontMetrics, DisplayValue, FragmentContent, InnerDisplayType, LayoutBox,
     OuterDisplayType, Rect, TextRun,
@@ -4876,4 +4877,157 @@ fn test_inline_block_pseudo_element_moves_with_its_line() {
         .map(|c| c.dimensions.content.x)
         .collect();
     assert_eq!(xs, [360.0, 410.0]);
+}
+
+// Inline box fragments
+//
+// [CSS Fragmentation 3 § 2](https://www.w3.org/TR/css-break-3/#box-fragment)
+//
+// "Breaking inline content into lines is another form of fragmentation,
+// and similarly creates box fragments when it breaks inline boxes across
+// line boxes."
+
+/// The `InlineBox` fragments on a line, in order, with their bounds.
+fn inline_box_fragments(line: &koala_css::layout::inline::LineBox) -> Vec<(ElementBoxId, Rect)> {
+    line.fragments
+        .iter()
+        .filter_map(|f| match f.content {
+            FragmentContent::InlineBox { id, .. } => Some((id, f.bounds)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The text fragments on a line, in order.
+fn text_fragments(line: &koala_css::layout::inline::LineBox) -> Vec<(&str, Rect)> {
+    line.fragments
+        .iter()
+        .filter_map(|f| match &f.content {
+            FragmentContent::Text(run) if !run.text.is_empty() => {
+                Some((run.text.as_str(), f.bounds))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// [§ 10.6.1](https://www.w3.org/TR/CSS2/visudet.html#inline-non-replaced)
+///
+/// "The vertical padding, border and margin of an inline, non-replaced box
+/// start at the top and bottom of the content area, and has nothing to do
+/// with the 'line-height'. But only the 'line-height' is used when
+/// calculating the height of the line box."
+///
+/// With `ApproximateFontMetrics` at 16px: line-height 19.2, text ascent
+/// 1.6 half-leading + 12.8 = 14.4, so the baseline is 14.4 below the line
+/// top. The `<a>`'s content area is the 16px em box with its baseline 12.8
+/// down; 25px of border+padding above puts its border-box top at
+/// 14.4 - 12.8 - 25 = -23.4, above the line box.
+#[test]
+fn test_inline_box_padding_does_not_grow_line_box() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; } \
+         a { padding: 20px; border: 5px solid black; }</style>\
+         <p>x <a>link</a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    assert_eq!(p.line_boxes.len(), 1);
+    let line = &p.line_boxes[0];
+    assert!((line.line_height - 19.2).abs() < 0.01, "{}", line.line_height);
+
+    let fragments = inline_box_fragments(line);
+    assert_eq!(fragments.len(), 1);
+    let (_, a) = fragments[0];
+    assert!((a.height - 66.0).abs() < 0.01, "{}", a.height);
+    assert!((a.y - (line.bounds.y - 23.4)).abs() < 0.01, "{} vs {}", a.y, line.bounds.y);
+
+    // The border box wraps the text with 25px on each side.
+    let (_, text) = *text_fragments(line).last().expect("the link's text");
+    assert!((a.x - (text.x - 25.0)).abs() < 0.01);
+    assert!((a.x + a.width - (text.x + text.width + 25.0)).abs() < 0.01);
+}
+
+/// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+///
+/// "When an inline box is split, margins, borders, and padding have no
+/// visual effect where the split occurs"
+///
+/// An `<a>` that wraps has a fragment on each line. Only the first starts
+/// with the 10px left padding and only the last ends with the right one.
+#[test]
+fn test_wrapped_inline_box_has_a_fragment_per_line() {
+    let root = layout_html_with_viewport(
+        "<html><body><style>body, p { margin: 0; } \
+         a { padding: 0 10px; }</style>\
+         <p><a>aaaa bbbb cccc dddd</a></p></body></html>",
+        100.0,
+        600.0,
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    assert!(p.line_boxes.len() >= 2, "expected the <a> to wrap");
+
+    let first_line = &p.line_boxes[0];
+    let last_line = p.line_boxes.last().expect("at least two lines");
+    let a_id = inline_box_fragments(first_line)[0].0;
+    for line in &p.line_boxes {
+        let fragments = inline_box_fragments(line);
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].0, a_id);
+    }
+
+    // First line: left padding before the text, none after it.
+    let (_, first) = inline_box_fragments(first_line)[0];
+    let first_texts = text_fragments(first_line);
+    let (_, first_text_start) = first_texts[0];
+    let (_, first_text_end) = *first_texts.last().expect("text on the first line");
+    assert_eq!(first.x, 0.0);
+    assert!((first_text_start.x - 10.0).abs() < 0.01);
+    assert!((first.x + first.width - (first_text_end.x + first_text_end.width)).abs() < 0.01);
+
+    // Last line: no left padding, right padding after the text.
+    let (_, last) = inline_box_fragments(last_line)[0];
+    let last_texts = text_fragments(last_line);
+    let (_, last_text_start) = last_texts[0];
+    let (_, last_text_end) = *last_texts.last().expect("text on the last line");
+    assert_eq!(last.x, 0.0);
+    assert_eq!(last_text_start.x, 0.0);
+    assert!((last.x + last.width - (last_text_end.x + last_text_end.width + 10.0)).abs() < 0.01);
+}
+
+/// A nested inline box's fragment follows its parent's on the line, so
+/// the last fragment containing a point is the innermost box.
+#[test]
+fn test_nested_inline_box_fragment_follows_parent() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; }</style>\
+         <p><a>one <em>two</em></a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    let a = &p.children[0];
+    let em = a
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("em"))
+        .expect("<em> inside <a>");
+
+    let ids: Vec<ElementBoxId> = inline_box_fragments(&p.line_boxes[0])
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(ids, [a.box_type.element_box_id().unwrap(), em.box_type.element_box_id().unwrap()]);
+}
+
+/// A `<br>` inside an `<a>` ends the line the `<a>` is on, and the `<a>`
+/// continues on the next one.
+#[test]
+fn test_inline_box_continues_after_br() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; }</style>\
+         <p><a>one<br>two</a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    assert_eq!(p.line_boxes.len(), 2);
+    for line in &p.line_boxes {
+        assert_eq!(inline_box_fragments(line).len(), 1);
+    }
 }

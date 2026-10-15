@@ -24,7 +24,7 @@ use crate::style::values::{
 
 use crate::selector::PseudoElement;
 
-use super::box_model::{BoxDimensions, Rect};
+use super::box_model::{BoxDimensions, EdgeSizes, Rect};
 use super::default_display_for_element;
 use super::float::FloatContext;
 use super::inline::{FontMetrics, FragmentContent, InlineLayout, LineBox};
@@ -263,11 +263,25 @@ fn layout_inline_content(
                 let margin_left = resolved_margin.left.to_px_or(0.0);
                 let margin_right = resolved_margin.right.to_px_or(0.0);
 
-                let left_mbp = margin_left + resolved_border.left + resolved_padding.left;
-                let right_mbp = resolved_padding.right + resolved_border.right + margin_right;
+                let border_padding = EdgeSizes {
+                    top: resolved_border.top + resolved_padding.top,
+                    right: resolved_border.right + resolved_padding.right,
+                    bottom: resolved_border.bottom + resolved_padding.bottom,
+                    left: resolved_border.left + resolved_padding.left,
+                };
 
                 // STEP 2: Open the inline box (apply left edge).
-                inline_layout.begin_inline_box(left_mbp);
+                let box_id = child
+                    .box_type
+                    .element_box_id()
+                    .expect("principal and pseudo-element boxes have an element");
+                inline_layout.begin_inline_box(
+                    box_id,
+                    child.font_size,
+                    margin_left,
+                    margin_right,
+                    border_padding,
+                );
 
                 // STEP 3: Recursively lay out the inline box's children.
                 //
@@ -294,7 +308,7 @@ fn layout_inline_content(
                 );
 
                 // STEP 4: Close the inline box (apply right edge).
-                inline_layout.end_inline_box(right_mbp);
+                inline_layout.end_inline_box();
             }
             BoxType::Principal(_) | BoxType::PseudoElement(..) | BoxType::AnonymousBlock => {
                 // [§ 9.2.1.1 Anonymous block boxes](https://www.w3.org/TR/CSS2/visuren.html#anonymous-block-level)

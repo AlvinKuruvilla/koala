@@ -831,3 +831,21 @@ measuring layout when the resolved size equals the base size is the fix.
   nothing in the document matches `:hover` until the pointer moves.
   Browsers move hover to the nearest remaining ancestor (WPT
   `css/selectors/remove-hovered-element.html`).
+- Vertical font metrics are guessed in four places that disagree: layout's
+  `ASCENDER_RATIO` (0.8 em, `inline.rs`), `line-height: normal` (1.2 em,
+  `koala-browser/src/font_metrics.rs`), the renderer's baseline (1.0 em,
+  `renderer.rs` `draw_text`) and its decoration offsets (0.9 / 0.55 / 0.1
+  em). fontdue's `Font::horizontal_line_metrics` gives the font's real
+  ascent, descent and line gap. Add ascent/descent to `FontMetrics` and
+  have the renderer draw at the line's baseline; this likely explains the
+  mid-text link underline above.
+- A line holding only an empty inline box with non-zero padding, border or
+  margin (`<span style="padding:10px"></span>`) produces no line box. § 9.4.2
+  only treats a line as zero-height when it contains "no inline elements
+  with non-zero margins, padding, or borders".
+- Block inside an inline (`<div><a>one<div>block</div>two</a></div>`): the
+  box-tree builder wraps "one" and "two" in anonymous blocks but drops the
+  `<a>` box, so the text loses the link's style and hit testing cannot
+  find the `<a>`. § 9.2.1.1 breaks the inline box into two, one inside
+  each anonymous block. The block-in-inline arm of `layout_inline_content`
+  is then unreachable through the box tree.
