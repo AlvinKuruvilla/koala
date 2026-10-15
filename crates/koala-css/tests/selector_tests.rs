@@ -31,7 +31,7 @@ fn test_parse_type_selector() {
     let selector = parse_selector("body").unwrap();
     assert_eq!(selector.specificity, Specificity(0, 0, 1));
     assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
-    assert!(selector.complex.combinators.is_empty());
+    assert_eq!(selector.complex.combinators.len(), 0);
     assert!(matches!(
         &selector.complex.subject.simple_selectors[0],
         SimpleSelector::Type(name) if name == "body"
@@ -74,7 +74,7 @@ fn test_parse_compound_selector() {
     let selector = parse_selector("div.highlight#main").unwrap();
     assert_eq!(selector.specificity, Specificity(1, 1, 1));
     assert_eq!(selector.complex.subject.simple_selectors.len(), 3);
-    assert!(selector.complex.combinators.is_empty());
+    assert_eq!(selector.complex.combinators.len(), 0);
 }
 
 // Combinator Parsing Tests
