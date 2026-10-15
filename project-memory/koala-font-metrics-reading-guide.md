@@ -266,6 +266,15 @@ metrics, the source) is yours to decide. The v0 values are tiny, so
 reading them all in `from_source` is reasonable; the glyph tables in
 later slices are what must stay unread until asked for.
 
+Later decisions:
+
+- The spec's data types that are more than an integer have their own
+  types in `types/`: `FWord`/`UFWord` (font units, out only through
+  `scaled` or `font_units`), `Fixed`, `F2Dot14`, `Version16Dot16`,
+  `U24`, and `Tag`, which enforces the spec's rule for tags.
+- A table record whose tag breaks that rule is skipped, not an error:
+  lookups only ever ask for valid tags.
+
 ## Testing
 
 `ttf-parser` 0.25.1, already in the dependency tree through `fontdb`
