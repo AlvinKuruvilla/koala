@@ -26,6 +26,8 @@ pub(crate) struct PageState {
     // The interaction state any selector reads. A hover change restyles
     // only when this contains `ElementState::HOVER`.
     pub(crate) state_dependencies: ElementState,
+    // What links on the page resolve against.
+    pub(crate) base_url: Option<String>,
     // The document's `<title>` text content, trimmed. Empty when
     // the document has no `<title>` element or its text is
     // whitespace-only. Used to set the tab label.
@@ -51,6 +53,7 @@ impl PageState {
                 image_dims: doc.image_dims,
                 inline_svgs: doc.inline_svgs,
                 state_dependencies,
+                base_url: doc.base_url,
                 title,
             })
         })

@@ -64,6 +64,8 @@ pub struct RenderUpdate {
     pub frame: Option<Frame>,
     /// The cursor to show over the viewport, if it changed.
     pub cursor: Option<Cursor>,
+    /// A URL a click on the page asked to load, if one did.
+    pub navigate: Option<String>,
 }
 
 /// A single entry in the per-tab history stack.
@@ -360,6 +362,18 @@ impl BrowserPage {
         self.renderer.send(WorkerMessage::PointerLeft);
     }
 
+    /// The primary button went down over the viewport, in physical pixels.
+    pub fn pointer_pressed(&self, x: f32, y: f32) {
+        self.renderer.send(WorkerMessage::PointerPressed { x, y });
+    }
+
+    /// The primary button came up over the viewport, in physical pixels.
+    /// With a press before it, this is a click, which may follow a link;
+    /// `poll_renderer` then reports the URL.
+    pub fn pointer_released(&self, x: f32, y: f32) {
+        self.renderer.send(WorkerMessage::PointerReleased { x, y });
+    }
+
     /// Non-blocking check for what the render worker sent since the last
     /// poll: the newest frame and the newest cursor, either of which may
     /// be absent. Intended to be called from a `slint::Timer` at ~60 Hz.
@@ -376,10 +390,12 @@ impl BrowserPage {
     /// The caller never has to know about engine panics.
     pub fn poll_renderer(&self) -> RenderUpdate {
         let mut cursor = None;
+        let mut navigate = None;
         let mut newest = None;
         while let Some(reply) = self.renderer.try_recv() {
             match reply {
                 WorkerReply::Cursor(c) => cursor = Some(c),
+                WorkerReply::Navigate(url) => navigate = Some(url),
                 WorkerReply::Frame(result) if !result.error.is_empty() => {
                     self.install_engine_error(&result.error);
                 }
@@ -389,6 +405,7 @@ impl BrowserPage {
         RenderUpdate {
             frame: newest.and_then(to_frame),
             cursor,
+            navigate,
         }
     }
 

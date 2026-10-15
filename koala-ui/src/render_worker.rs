@@ -5,12 +5,10 @@
 use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 
-use koala_browser::css::selector::{ElementState, PseudoElement};
-use koala_browser::css::{
-    ComputedStyle, Cursor, DisplayListBuilder, ElementBoxId, HitTestResult, LayoutBox, Rect,
-    canvas_background,
-};
-use koala_browser::{FontProvider, Renderer, RendererFonts, restyle};
+use koala_browser::css::selector::ElementState;
+use koala_browser::css::{Cursor, DisplayListBuilder, LayoutBox, Rect, canvas_background};
+use koala_browser::dom::NodeId;
+use koala_browser::{FontProvider, Renderer, RendererFonts, input, restyle};
 
 use crate::page_state::PageState;
 use crate::worker::{Inbox, catch_panic};
@@ -56,6 +54,8 @@ pub(crate) enum WorkerReply {
     /// The cursor to show over the viewport from now on. Sent only when
     /// it changes.
     Cursor(Cursor),
+    /// A click followed a link: load this URL in the tab.
+    Navigate(String),
 }
 
 /// What the GUI thread tells the render worker. The worker handles every
@@ -76,6 +76,10 @@ pub(crate) enum WorkerMessage {
     PointerMoved { x: f32, y: f32 },
     /// The pointer left the viewport.
     PointerLeft,
+    /// The primary button went down at this point, in physical pixels.
+    PointerPressed { x: f32, y: f32 },
+    /// The primary button came up at this point, in physical pixels.
+    PointerReleased { x: f32, y: f32 },
 }
 
 /// Render-worker entry point. On each wake-up it applies every message
@@ -128,14 +132,19 @@ struct RenderWorker {
     laid_out: Option<LayoutBox>,
     /// The cursor last sent to the GUI thread.
     cursor: Cursor,
+    /// The node the primary button went down over, until it comes up.
+    pressed: Option<NodeId>,
 }
 
 /// What the messages of one wake-up changed.
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 struct Changes {
     page: bool,
     size: bool,
     pointer: bool,
+    /// Primary-button presses (`true`) and releases (`false`), in order,
+    /// with where they happened.
+    buttons: Vec<(bool, f32, f32)>,
 }
 
 impl RenderWorker {
@@ -143,6 +152,8 @@ impl RenderWorker {
         match message {
             WorkerMessage::Replace { state, generation } => {
                 self.page = Some((state, generation));
+                // A press on the old page names a node of the old DOM.
+                self.pressed = None;
                 changes.page = true;
             }
             WorkerMessage::Resize { width, height } => {
@@ -161,6 +172,8 @@ impl RenderWorker {
                 self.pointer = None;
                 changes.pointer = true;
             }
+            WorkerMessage::PointerPressed { x, y } => changes.buttons.push((true, x, y)),
+            WorkerMessage::PointerReleased { x, y } => changes.buttons.push((false, x, y)),
         }
     }
 
@@ -181,21 +194,12 @@ impl RenderWorker {
         // if the pointer stood still, since the element under it may have
         // changed: Chromium and Gecko send themselves a synthetic mouse
         // move after layout for the same reason.
-        //
-        // [CSSOM View § 5 elementFromPoint()](https://drafts.csswg.org/cssom-view/#dom-document-elementfrompoint)
-        //
-        // "If there is a box in the viewport that would be a target for
-        // hit testing at coordinates x,y, ... return the associated element
-        // and terminate these steps."
-        //
-        // "If the document has a root element, return the root element and
-        // terminate these steps."
         if changes.pointer || repaint {
             let laid_out = self.laid_out.as_ref().expect("laid out in STEP 1");
             let hit = self.pointer.and_then(|(x, y)| laid_out.hit_test(x, y));
             let hovered = self
                 .pointer
-                .and_then(|_| hit.map(|hit| hit.target.node).or_else(|| page.dom.document_element()));
+                .and_then(|_| input::hovered_node(&page.dom, hit));
 
             // STEP 3: Restyle if the hovered node changed and some selector
             // reads :hover. Without such a selector no computed style can
@@ -225,7 +229,7 @@ impl RenderWorker {
             // so that `a:hover { cursor: help }` applies on the move that
             // hovers the link.
             if self.pointer.is_some() {
-                let cursor = cursor_at(page, hit);
+                let cursor = input::cursor_at(&page.dom, &page.styles, hit);
                 if cursor != self.cursor {
                     self.cursor = cursor;
                     out.push(WorkerReply::Cursor(cursor));
@@ -233,7 +237,21 @@ impl RenderWorker {
             }
         }
 
-        // STEP 5: Paint.
+        // STEP 5: Presses and releases, in the order they happened. A
+        // release after a press is a click, which may follow a link.
+        let laid_out = self.laid_out.as_ref().expect("laid out in STEP 1 or 3");
+        for (pressed, x, y) in changes.buttons {
+            let node = input::hovered_node(&page.dom, laid_out.hit_test(x, y));
+            if pressed {
+                self.pressed = node;
+            } else if let (Some(down), Some(up)) = (self.pressed.take(), node)
+                && let Some(url) = input::click(&page.dom, down, up, page.base_url.as_deref())
+            {
+                out.push(WorkerReply::Navigate(url));
+            }
+        }
+
+        // STEP 6: Paint.
         if !repaint {
             return;
         }
@@ -245,40 +263,6 @@ impl RenderWorker {
             pixels: paint(page, laid_out, width, height),
             error: String::new(),
         }));
-    }
-}
-
-/// [CSS UI 4 § 5.1.1](https://drafts.csswg.org/css-ui-4/#cursor)
-///
-/// "In the case of overlapping elements, which element determines the type
-/// of cursor is based on hit testing: the element determining the cursor
-/// is the one that would receive a click initiated from this position."
-///
-/// With no hit, that is the root element, as for `elementFromPoint()`.
-fn cursor_at(page: &PageState, hit: Option<HitTestResult>) -> Cursor {
-    let (style, over_text) = match hit {
-        Some(hit) => (style_of(page, hit.target), hit.over_text),
-        None => (page.dom.document_element().and_then(|root| page.styles.get(&root)), false),
-    };
-    match style.and_then(|style| style.cursor).unwrap_or_default() {
-        // "auto behaves as text over selectable text or editable elements,
-        // and default otherwise."
-        //
-        // NOTE: Koala has no `user-select` and no editing, so all text is
-        // selectable and no element is editable.
-        Cursor::Auto if over_text => Cursor::Text,
-        Cursor::Auto => Cursor::Default,
-        cursor => cursor,
-    }
-}
-
-/// The computed style of the element or pseudo-element `id` names.
-fn style_of(page: &PageState, id: ElementBoxId) -> Option<&ComputedStyle> {
-    let element = page.styles.get(&id.node)?;
-    match id.pseudo_element {
-        None => Some(element),
-        Some(PseudoElement::Before) => element.before.as_deref(),
-        Some(PseudoElement::After) => element.after.as_deref(),
     }
 }
 
@@ -334,18 +318,33 @@ mod tests {
     struct Outcome {
         repainted: bool,
         cursor: Option<Cursor>,
+        navigate: Option<String>,
     }
 
     fn run(worker: &mut RenderWorker, changes: Changes) -> Outcome {
         let mut out = Vec::new();
         worker.update(changes, &mut out);
-        Outcome {
-            repainted: out.iter().any(|reply| matches!(reply, WorkerReply::Frame(_))),
-            cursor: out.iter().find_map(|reply| match reply {
-                WorkerReply::Cursor(cursor) => Some(*cursor),
-                WorkerReply::Frame(_) => None,
-            }),
+        let mut outcome = Outcome {
+            repainted: false,
+            cursor: None,
+            navigate: None,
+        };
+        for reply in out {
+            match reply {
+                WorkerReply::Frame(_) => outcome.repainted = true,
+                WorkerReply::Cursor(cursor) => outcome.cursor = Some(cursor),
+                WorkerReply::Navigate(url) => outcome.navigate = Some(url),
+            }
         }
+        outcome
+    }
+
+    /// Press at one point and release at another, as one wake-up.
+    fn click(worker: &mut RenderWorker, down: (f32, f32), up: (f32, f32)) -> Option<String> {
+        let mut changes = Changes::default();
+        worker.apply(WorkerMessage::PointerPressed { x: down.0, y: down.1 }, &mut changes);
+        worker.apply(WorkerMessage::PointerReleased { x: up.0, y: up.1 }, &mut changes);
+        run(worker, changes).navigate
     }
 
     /// A 300×600 viewport showing `body` under `css`.
@@ -449,5 +448,24 @@ mod tests {
     fn hover_rule_cursor_applies_on_the_same_move() {
         let mut worker = worker_showing("a:hover { cursor: help }");
         assert_eq!(move_pointer(&mut worker, 10.0, 10.0).cursor, Some(Cursor::Help));
+    }
+
+    /// A page parsed from a string has no URL, so an absolute link is the
+    /// only kind that resolves to somewhere loadable.
+    #[test]
+    fn click_on_a_link_navigates() {
+        let mut worker = worker_with(
+            "a { display: block; height: 200px }",
+            "<a href='https://example.com/next'>next</a>",
+        );
+        assert_eq!(click(&mut worker, (10.0, 10.0), (12.0, 12.0)).as_deref(), Some("https://example.com/next"));
+    }
+
+    /// Pressed on the link, released below it: the click lands on their
+    /// nearest common ancestor, which is not a link.
+    #[test]
+    fn press_on_link_release_elsewhere_does_not_navigate() {
+        let mut worker = worker_showing("");
+        assert_eq!(click(&mut worker, (10.0, 10.0), (10.0, 400.0)), None);
     }
 }

@@ -123,13 +123,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let i = active.get();
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(i) else { return };
-            window.set_url_text(SharedString::from(url.as_str()));
-            window.set_committed_url(SharedString::from(url.as_str()));
-            *tab.url_text.borrow_mut() = url.clone();
-            tab.page.borrow().request_load(&url);
-            tab.loading.set(Loading::AwaitingState);
-            window.set_loading(true);
-            refresh_tab_entry(&tab_model, i, tab);
+            start_load(&window, &tab_model, i, tab, &url);
         });
     }
     {
@@ -235,6 +229,30 @@ fn main() -> Result<(), slint::PlatformError> {
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(active.get()) else { return };
             tab.page.borrow().pointer_left();
+        });
+    }
+    {
+        let tabs = tabs.clone();
+        let active = active.clone();
+        let weak = window.as_weak();
+        window.on_pointer_pressed(move |x, y| {
+            let Some(window) = weak.upgrade() else { return };
+            let tabs_ref = tabs.borrow();
+            let Some(tab) = tabs_ref.get(active.get()) else { return };
+            let scale = window.window().scale_factor();
+            tab.page.borrow().pointer_pressed(x * scale, y * scale);
+        });
+    }
+    {
+        let tabs = tabs.clone();
+        let active = active.clone();
+        let weak = window.as_weak();
+        window.on_pointer_released(move |x, y| {
+            let Some(window) = weak.upgrade() else { return };
+            let tabs_ref = tabs.borrow();
+            let Some(tab) = tabs_ref.get(active.get()) else { return };
+            let scale = window.window().scale_factor();
+            tab.page.borrow().pointer_released(x * scale, y * scale);
         });
     }
     {
@@ -368,6 +386,12 @@ fn main() -> Result<(), slint::PlatformError> {
             {
                 window.set_page_cursor(page_cursor(cursor));
             }
+            // Only the active tab receives clicks, so only it navigates.
+            if let Some(url) = update.navigate
+                && i == active_idx
+            {
+                start_load(&window, &tab_model_for_tick, i, tab, &url);
+            }
             if let Some(frame) = update.frame {
                 // A frame of an earlier page state is still shown (it is
                 // what the tab has), but only a frame of the awaited
@@ -456,6 +480,24 @@ fn push_tab(
 /// VecModel implementation fires a `row_changed` notification that
 /// re-renders the corresponding `TabItem` in the strip without
 /// rebuilding the whole `for` loop.
+/// Load `url` in the active tab at `index`, as from the location bar or a
+/// followed link.
+fn start_load(
+    window: &MainWindow,
+    tab_model: &VecModel<TabEntry>,
+    index: usize,
+    tab: &TabState,
+    url: &str,
+) {
+    window.set_url_text(SharedString::from(url));
+    window.set_committed_url(SharedString::from(url));
+    *tab.url_text.borrow_mut() = url.to_owned();
+    tab.page.borrow().request_load(url);
+    tab.loading.set(Loading::AwaitingState);
+    window.set_loading(true);
+    refresh_tab_entry(tab_model, index, tab);
+}
+
 fn refresh_tab_entry(model: &VecModel<TabEntry>, index: usize, state: &TabState) {
     let entry = TabEntry {
         title: SharedString::from(state.title.borrow().as_str()),

@@ -82,6 +82,10 @@ export component MainWindow inherits Window {
     // them to the physical pixels the page is laid out in.
     callback pointer-moved(length, length);
     callback pointer-left();
+    // The primary button went down or came up over the page, at a point
+    // in the same coordinates as `pointer-moved`.
+    callback pointer-pressed(length, length);
+    callback pointer-released(length, length);
 
     // The cursor shown while the pointer is over the page.
     in property <PageCursor> page-cursor: PageCursor.default;
@@ -306,6 +310,12 @@ export component MainWindow inherits Window {
                 pointer-event(event) => {
                     if (event.kind == PointerEventKind.move) {
                         root.pointer-moved(self.mouse-x, self.mouse-y);
+                    } else if (event.button == PointerEventButton.left
+                            && event.kind == PointerEventKind.down) {
+                        root.pointer-pressed(self.mouse-x, self.mouse-y);
+                    } else if (event.button == PointerEventButton.left
+                            && event.kind == PointerEventKind.up) {
+                        root.pointer-released(self.mouse-x, self.mouse-y);
                     }
                 }
                 changed has-hover => {
