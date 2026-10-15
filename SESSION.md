@@ -866,3 +866,8 @@ measuring layout when the resolved size equals the base size is the fix.
   2026-10-15 in release: 0.1-0.4 ms to read each file and 7-9 ms for
   fontdue to parse it, about 35 ms for four. Probably a debug-build or
   pre-rework figure; re-measure before relying on it.
+- `koala-font` cannot open Apple's bitmap-only fonts, such as
+  `/System/Library/Fonts/Supplemental/NISC18030.ttf`: they carry `bhed`
+  in place of `head`, so `Font::from_source` fails with
+  `MissingTable(head)`. ttf-parser rejects the same font. Matters once
+  font fallback can pick such a font.
