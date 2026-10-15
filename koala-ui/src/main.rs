@@ -37,6 +37,9 @@ mod browser_page;
 mod devhud;
 mod error_page;
 mod landing;
+mod load_worker;
+mod page_state;
+mod render_worker;
 mod tab_state;
 
 use std::cell::{Cell, RefCell};
