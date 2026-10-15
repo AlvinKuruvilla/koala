@@ -42,10 +42,6 @@
 // `parse_html_string` / `load_document` and drop the interpreter
 // immediately after.
 
-use std::any::Any;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread::{self, JoinHandle};
-
 use koala_browser::parse_html_string;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -53,25 +49,7 @@ use crate::error_page::Failure;
 use crate::load_worker::{LoadRequest, LoadResult, LoadSource, report_problems, run_load_worker};
 use crate::page_state::PageState;
 use crate::render_worker::{RenderResult, WorkerMessage, run_render_worker};
-
-/// Stack size for the loader and render workers: 16 MiB, the size Boa
-/// gives its own CLI for the same reason (boa-dev/boa#5537).
-///
-/// Boa parses JavaScript by recursive descent with no depth limit, about
-/// fifteen frames per level of expression nesting. Measured 2026-09-26
-/// on google.com's 1.1 MB script bundle, whose deepest nesting is only 19
-/// brackets: a debug build needs 2-4 MiB (frames up to 20 KB each), a
-/// release build 256-512 KiB. Rust's default for spawned threads is
-/// 2 MiB, so debug builds overflowed and aborted the whole process.
-///
-/// 16 MiB leaves 4x headroom over debug google. The size only reserves
-/// address space; memory is committed as the stack is actually used.
-///
-/// NOTE: this raises the threshold, it does not remove it. A script nested
-/// deeply enough still overflows any stack and aborts the process, because
-/// Boa's parser has no recursion guard. The real fix is one in the parser
-/// (JavaScriptCore's turns this into a `RangeError`).
-const WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
+use crate::worker::Worker;
 
 /// Summary returned by `try_take_load_result`. The GUI side uses
 /// `state_swapped` to decide whether to trigger a fresh render, and
@@ -133,54 +111,28 @@ pub struct BrowserPage {
     history: Vec<HistoryEntry>,
     history_index: Option<usize>,
 
-    // Channels to and from the render worker.
-    worker_tx: Sender<WorkerMessage>,
-    render_result_rx: Receiver<RenderResult>,
-    _render_worker: JoinHandle<()>,
+    renderer: Worker<WorkerMessage, RenderResult>,
 
-    // Channels to and from the loader worker.
-    load_request_tx: Sender<LoadRequest>,
-    load_result_rx: Receiver<LoadResult>,
-    // Second sender on the same channel as `load_result_rx`, held
-    // by the GUI thread so `go_back` / `go_forward` can inject
-    // synthetic results when a history entry is the in-memory
-    // landing page rather than a URL the worker would fetch.
-    load_result_tx_main: Sender<LoadResult>,
-    _load_worker: JoinHandle<()>,
+    // `go_back` / `go_forward` post results to it themselves when a
+    // history entry is the in-memory landing page rather than a URL the
+    // worker would fetch, and so does `install_engine_error`.
+    loader: Worker<LoadRequest, LoadResult>,
 }
 
 impl BrowserPage {
     pub fn new() -> Self {
-        let (worker_tx, worker_rx) = mpsc::channel::<WorkerMessage>();
-        let (render_result_tx, render_result_rx) = mpsc::channel::<RenderResult>();
-        let render_worker = thread::Builder::new()
-            .name("koala-ui-render".to_owned())
-            .stack_size(WORKER_STACK_BYTES)
-            .spawn(move || run_render_worker(&worker_rx, &render_result_tx))
-            .expect("failed to spawn koala-ui render worker");
-
-        let (load_request_tx, load_request_rx) = mpsc::channel::<LoadRequest>();
-        let (load_result_tx, load_result_rx) = mpsc::channel::<LoadResult>();
-        let load_result_tx_for_worker = load_result_tx.clone();
-        let load_worker = thread::Builder::new()
-            .name("koala-ui-loader".to_owned())
-            .stack_size(WORKER_STACK_BYTES)
-            .spawn(move || run_load_worker(&load_request_rx, &load_result_tx_for_worker))
-            .expect("failed to spawn koala-ui loader worker");
-
         Self {
             title: String::new(),
             state_generation: 0,
             current_url: None,
             history: Vec::new(),
             history_index: None,
-            worker_tx,
-            render_result_rx,
-            _render_worker: render_worker,
-            load_request_tx,
-            load_result_rx,
-            load_result_tx_main: load_result_tx,
-            _load_worker: load_worker,
+            renderer: Worker::spawn("koala-ui-render", |inbox, replies| {
+                run_render_worker(&inbox, &replies);
+            }),
+            loader: Worker::spawn("koala-ui-loader", |inbox, replies| {
+                run_load_worker(&inbox, &replies);
+            }),
         }
     }
 
@@ -191,7 +143,7 @@ impl BrowserPage {
         self.state_generation += 1;
         self.title = state.as_ref().map(|s| s.title.clone()).unwrap_or_default();
         if let Some(state) = state {
-            let _ = self.worker_tx.send(WorkerMessage::Replace {
+            self.renderer.send(WorkerMessage::Replace {
                 state,
                 generation: self.state_generation,
             });
@@ -243,7 +195,7 @@ impl BrowserPage {
     /// The loader handles `http://`, `https://`, and bare filesystem
     /// paths (forwarded to `koala_browser::load_document`).
     pub fn request_load(&self, url: &str) {
-        let _ = self.load_request_tx.send(LoadRequest {
+        self.loader.send(LoadRequest {
             url: url.to_owned(),
             source: LoadSource::UserNavigation,
         });
@@ -262,12 +214,10 @@ impl BrowserPage {
         let Some(url) = self.current_url.as_ref() else {
             return false;
         };
-        self.load_request_tx
-            .send(LoadRequest {
-                url: url.clone(),
-                source: LoadSource::UserNavigation,
-            })
-            .is_ok()
+        self.loader.send(LoadRequest {
+            url: url.clone(),
+            source: LoadSource::UserNavigation,
+        })
     }
 
     /// Walks one step back in the history stack. Returns `true`
@@ -308,26 +258,22 @@ impl BrowserPage {
     /// through the same code path as a worker result.
     fn navigate_to_entry(&mut self, idx: usize) -> bool {
         match self.history[idx].clone() {
-            HistoryEntry::Url(url) => self
-                .load_request_tx
-                .send(LoadRequest {
-                    url,
-                    source: LoadSource::HistoryNavigation,
-                })
-                .is_ok(),
+            HistoryEntry::Url(url) => self.loader.send(LoadRequest {
+                url,
+                source: LoadSource::HistoryNavigation,
+            }),
             HistoryEntry::Landing => {
                 let Some(state) =
                     PageState::from_document(parse_html_string(crate::landing::LANDING_HTML))
                 else {
                     return false;
                 };
-                self.load_result_tx_main
-                    .send(LoadResult {
-                        url: String::new(),
-                        source: LoadSource::HistoryNavigation,
-                        state,
-                    })
-                    .is_ok()
+                self.loader.post_as_worker(LoadResult {
+                    url: String::new(),
+                    source: LoadSource::HistoryNavigation,
+                    state,
+                });
+                true
             }
         }
     }
@@ -367,7 +313,7 @@ impl BrowserPage {
     /// into an error page inside the worker), so every received
     /// result counts as both `state_swapped` and `load_finished`.
     pub fn try_take_load_result(&mut self) -> LoadPollResult {
-        let Ok(LoadResult { url, source, state }) = self.load_result_rx.try_recv() else {
+        let Some(LoadResult { url, source, state }) = self.loader.try_recv() else {
             return LoadPollResult {
                 state_swapped: false,
                 load_finished: false,
@@ -421,19 +367,19 @@ impl BrowserPage {
         if width == 0 || height == 0 {
             return;
         }
-        let _ = self.worker_tx.send(WorkerMessage::Resize { width, height });
+        self.renderer.send(WorkerMessage::Resize { width, height });
     }
 
     /// Tells the render worker where the pointer is over the viewport, in
     /// physical pixels. A change of hovered element re-renders the page.
     pub fn pointer_moved(&self, x: f32, y: f32) {
-        let _ = self.worker_tx.send(WorkerMessage::PointerMoved { x, y });
+        self.renderer.send(WorkerMessage::PointerMoved { x, y });
     }
 
     /// Tells the render worker the pointer left the viewport, so nothing
     /// on the page is hovered.
     pub fn pointer_left(&self) {
-        let _ = self.worker_tx.send(WorkerMessage::PointerLeft);
+        self.renderer.send(WorkerMessage::PointerLeft);
     }
 
     /// Non-blocking check for a finished frame. Returns `None` when
@@ -451,7 +397,7 @@ impl BrowserPage {
     /// The caller always sees either a real frame or `None` — it
     /// never has to know about engine panics.
     pub fn try_take_render_image(&self) -> Option<Frame> {
-        let Ok(result) = self.render_result_rx.try_recv() else {
+        let Some(result) = self.renderer.try_recv() else {
             return None;
         };
 
@@ -496,24 +442,10 @@ impl BrowserPage {
             eprintln!("[koala-ui] error template failed to parse; engine error was: {message}");
             return;
         };
-        let _ = self.load_result_tx_main.send(LoadResult {
+        self.loader.post_as_worker(LoadResult {
             url,
             source: LoadSource::HistoryNavigation,
             state,
         });
-    }
-}
-
-/// Best-effort extraction of a human-readable message from a panic
-/// payload. `catch_unwind` hands us a `Box<dyn Any>`, so we try the
-/// two concrete types the standard library uses before falling back
-/// to a placeholder.
-pub(crate) fn panic_message(payload: &Box<dyn Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_owned()
-    } else {
-        "engine panicked (no message)".to_owned()
     }
 }

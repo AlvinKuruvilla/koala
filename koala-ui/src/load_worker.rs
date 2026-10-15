@@ -1,14 +1,13 @@
 // The loader worker: fetches and parses a URL into a `PageState`, off
 // the GUI thread.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 
 use koala_browser::{LoadedDocument, load_document, parse_html_string};
 
-use crate::browser_page::panic_message;
 use crate::error_page::Failure;
 use crate::page_state::PageState;
+use crate::worker::{Inbox, catch_panic};
 
 /// Where a load request came from. Used by `try_take_load_result`
 /// to decide whether to push onto the history stack (fresh
@@ -64,14 +63,9 @@ pub(crate) fn report_problems(label: &str, doc: &LoadedDocument) {
 /// and return it as a successful `Loaded` result, preserving the
 /// original `source` so the history stack behaves the same way as it
 /// would for a real page.
-pub(crate) fn run_load_worker(
-    request_rx: &Receiver<LoadRequest>,
-    result_tx: &Sender<LoadResult>,
-) {
-    while let Ok(req) = request_rx.recv() {
-        let LoadRequest { url, source } = req;
-
-        let attempt = catch_unwind(AssertUnwindSafe(|| load_document(&url)));
+pub(crate) fn run_load_worker(inbox: &Inbox<LoadRequest>, result_tx: &Sender<LoadResult>) {
+    while let Some(LoadRequest { url, source }) = inbox.recv() {
+        let attempt = catch_panic(|| load_document(&url));
 
         let state = match attempt {
             Ok(Ok(doc)) => {
@@ -85,8 +79,7 @@ pub(crate) fn run_load_worker(
                 })
             }
             Ok(Err(e)) => error_state(&url, &Failure::Load(&e)),
-            Err(payload) => {
-                let message = panic_message(&payload);
+            Err(message) => {
                 eprintln!("[koala-ui] loader panicked for {url}: {message}");
                 error_state(&url, &Failure::Engine(&message))
             }

@@ -41,6 +41,7 @@ mod load_worker;
 mod page_state;
 mod render_worker;
 mod tab_state;
+mod worker;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

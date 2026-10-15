@@ -2,16 +2,15 @@
 // from the GUI thread into frames. `browser_page.rs` describes how it
 // fits with the loader worker and the GUI thread.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::OnceLock;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 
 use koala_browser::css::selector::ElementState;
 use koala_browser::css::{DisplayListBuilder, LayoutBox, Rect, canvas_background};
 use koala_browser::{FontProvider, Renderer, RendererFonts, restyle};
 
-use crate::browser_page::panic_message;
 use crate::page_state::PageState;
+use crate::worker::{Inbox, catch_panic};
 
 // Process-wide `RendererFonts` cache. Loading four font files from
 // disk costs ~250 ms on macOS; doing it per render was the dominant
@@ -76,22 +75,18 @@ pub(crate) enum WorkerMessage {
 ///
 /// A panic while restyling or rendering drops the page and reports the
 /// panic, and the GUI thread replaces the page with the error page.
-pub(crate) fn run_render_worker(
-    message_rx: &Receiver<WorkerMessage>,
-    result_tx: &Sender<RenderResult>,
-) {
+pub(crate) fn run_render_worker(inbox: &Inbox<WorkerMessage>, result_tx: &Sender<RenderResult>) {
     let mut worker = RenderWorker::default();
-    while let Ok(first) = message_rx.recv() {
+    while let Some(batch) = inbox.recv_batch() {
         let mut changes = Changes::default();
-        for message in std::iter::once(first).chain(message_rx.try_iter()) {
+        for message in batch {
             worker.apply(message, &mut changes);
         }
 
-        let result = match catch_unwind(AssertUnwindSafe(|| worker.update(changes))) {
+        let result = match catch_panic(|| worker.update(changes)) {
             Ok(Some(result)) => result,
             Ok(None) => continue,
-            Err(payload) => {
-                let message = panic_message(&payload);
+            Err(message) => {
                 eprintln!("[koala-ui] render worker panicked: {message}");
                 let generation = worker.page.take().map_or(0, |(_, generation)| generation);
                 worker.laid_out = None;
