@@ -5,8 +5,11 @@
 use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 
-use koala_browser::css::selector::ElementState;
-use koala_browser::css::{DisplayListBuilder, LayoutBox, Rect, canvas_background};
+use koala_browser::css::selector::{ElementState, PseudoElement};
+use koala_browser::css::{
+    ComputedStyle, Cursor, DisplayListBuilder, ElementBoxId, HitTestResult, LayoutBox, Rect,
+    canvas_background,
+};
 use koala_browser::{FontProvider, Renderer, RendererFonts, restyle};
 
 use crate::page_state::PageState;
@@ -47,6 +50,14 @@ pub(crate) struct RenderResult {
     pub(crate) error: String,
 }
 
+/// What the render worker tells the GUI thread.
+pub(crate) enum WorkerReply {
+    Frame(RenderResult),
+    /// The cursor to show over the viewport from now on. Sent only when
+    /// it changes.
+    Cursor(Cursor),
+}
+
 /// What the GUI thread tells the render worker. The worker handles every
 /// message waiting in its queue before it renders, so a burst of pointer
 /// moves or resizes costs one frame.
@@ -75,7 +86,7 @@ pub(crate) enum WorkerMessage {
 ///
 /// A panic while restyling or rendering drops the page and reports the
 /// panic, and the GUI thread replaces the page with the error page.
-pub(crate) fn run_render_worker(inbox: &Inbox<WorkerMessage>, result_tx: &Sender<RenderResult>) {
+pub(crate) fn run_render_worker(inbox: &Inbox<WorkerMessage>, replies: &Sender<WorkerReply>) {
     let mut worker = RenderWorker::default();
     while let Some(batch) = inbox.recv_batch() {
         let mut changes = Changes::default();
@@ -83,24 +94,21 @@ pub(crate) fn run_render_worker(inbox: &Inbox<WorkerMessage>, result_tx: &Sender
             worker.apply(message, &mut changes);
         }
 
-        let result = match catch_panic(|| worker.update(changes)) {
-            Ok(Some(result)) => result,
-            Ok(None) => continue,
-            Err(message) => {
-                eprintln!("[koala-ui] render worker panicked: {message}");
-                let generation = worker.page.take().map_or(0, |(_, generation)| generation);
-                worker.laid_out = None;
-                RenderResult {
-                    generation,
-                    width: 0,
-                    height: 0,
-                    pixels: Vec::new(),
-                    error: message,
-                }
-            }
-        };
+        let mut out = Vec::new();
+        if let Err(message) = catch_panic(|| worker.update(changes, &mut out)) {
+            eprintln!("[koala-ui] render worker panicked: {message}");
+            let generation = worker.page.take().map_or(0, |(_, generation)| generation);
+            worker.laid_out = None;
+            out = vec![WorkerReply::Frame(RenderResult {
+                generation,
+                width: 0,
+                height: 0,
+                pixels: Vec::new(),
+                error: message,
+            })];
+        }
 
-        if result_tx.send(result).is_err() {
+        if out.into_iter().any(|reply| replies.send(reply).is_err()) {
             break;
         }
     }
@@ -118,6 +126,8 @@ struct RenderWorker {
     /// `page`'s layout tree laid out at `size`, from the last frame. Hit
     /// testing reads it.
     laid_out: Option<LayoutBox>,
+    /// The cursor last sent to the GUI thread.
+    cursor: Cursor,
 }
 
 /// What the messages of one wake-up changed.
@@ -154,11 +164,11 @@ impl RenderWorker {
         }
     }
 
-    /// Bring the page up to date with `changes` and return a frame if
-    /// anything visible changed.
-    fn update(&mut self, changes: Changes) -> Option<RenderResult> {
-        let (page, generation) = self.page.as_mut()?;
-        let (width, height) = self.size?;
+    /// Bring the page up to date with `changes`, pushing a frame onto
+    /// `out` if anything visible changed and the cursor if it changed.
+    fn update(&mut self, changes: Changes, out: &mut Vec<WorkerReply>) {
+        let Some((page, generation)) = self.page.as_mut() else { return };
+        let Some((width, height)) = self.size else { return };
 
         // STEP 1: Lay the page out again if it or the viewport changed.
         let mut repaint = false;
@@ -182,12 +192,10 @@ impl RenderWorker {
         // terminate these steps."
         if changes.pointer || repaint {
             let laid_out = self.laid_out.as_ref().expect("laid out in STEP 1");
-            let hovered = self.pointer.and_then(|(x, y)| {
-                laid_out
-                    .hit_test(x, y)
-                    .map(|hit| hit.node)
-                    .or_else(|| page.dom.document_element())
-            });
+            let hit = self.pointer.and_then(|(x, y)| laid_out.hit_test(x, y));
+            let hovered = self
+                .pointer
+                .and_then(|_| hit.map(|hit| hit.target.node).or_else(|| page.dom.document_element()));
 
             // STEP 3: Restyle if the hovered node changed and some selector
             // reads :hover. Without such a selector no computed style can
@@ -212,20 +220,65 @@ impl RenderWorker {
                     repaint = true;
                 }
             }
+
+            // STEP 4: The cursor, from the styles STEP 3 may have changed,
+            // so that `a:hover { cursor: help }` applies on the move that
+            // hovers the link.
+            if self.pointer.is_some() {
+                let cursor = cursor_at(page, hit);
+                if cursor != self.cursor {
+                    self.cursor = cursor;
+                    out.push(WorkerReply::Cursor(cursor));
+                }
+            }
         }
 
-        // STEP 4: Paint.
+        // STEP 5: Paint.
         if !repaint {
-            return None;
+            return;
         }
         let laid_out = self.laid_out.as_ref().expect("laid out in STEP 1 or 3");
-        Some(RenderResult {
+        out.push(WorkerReply::Frame(RenderResult {
             generation: *generation,
             width,
             height,
             pixels: paint(page, laid_out, width, height),
             error: String::new(),
-        })
+        }));
+    }
+}
+
+/// [CSS UI 4 § 5.1.1](https://drafts.csswg.org/css-ui-4/#cursor)
+///
+/// "In the case of overlapping elements, which element determines the type
+/// of cursor is based on hit testing: the element determining the cursor
+/// is the one that would receive a click initiated from this position."
+///
+/// With no hit, that is the root element, as for `elementFromPoint()`.
+fn cursor_at(page: &PageState, hit: Option<HitTestResult>) -> Cursor {
+    let (style, over_text) = match hit {
+        Some(hit) => (style_of(page, hit.target), hit.over_text),
+        None => (page.dom.document_element().and_then(|root| page.styles.get(&root)), false),
+    };
+    match style.and_then(|style| style.cursor).unwrap_or_default() {
+        // "auto behaves as text over selectable text or editable elements,
+        // and default otherwise."
+        //
+        // NOTE: Koala has no `user-select` and no editing, so all text is
+        // selectable and no element is editable.
+        Cursor::Auto if over_text => Cursor::Text,
+        Cursor::Auto => Cursor::Default,
+        cursor => cursor,
+    }
+}
+
+/// The computed style of the element or pseudo-element `id` names.
+fn style_of(page: &PageState, id: ElementBoxId) -> Option<&ComputedStyle> {
+    let element = page.styles.get(&id.node)?;
+    match id.pseudo_element {
+        None => Some(element),
+        Some(PseudoElement::Before) => element.before.as_deref(),
+        Some(PseudoElement::After) => element.after.as_deref(),
     }
 }
 
@@ -272,31 +325,57 @@ fn paint(state: &PageState, laid_out: &LayoutBox, width: u32, height: u32) -> Ve
 
 #[cfg(test)]
 mod tests {
-    use super::{Changes, RenderWorker, WorkerMessage};
+    use super::{Changes, RenderWorker, WorkerMessage, WorkerReply};
     use crate::page_state::PageState;
+    use koala_browser::css::Cursor;
     use koala_browser::parse_html_string;
 
-    /// A 200px-tall link filling the top of the page, so (10, 10) is over
-    /// it and (10, 400) is over the root element only.
-    fn worker_showing(css: &str) -> RenderWorker {
+    /// What one wake-up of the worker sent back.
+    struct Outcome {
+        repainted: bool,
+        cursor: Option<Cursor>,
+    }
+
+    fn run(worker: &mut RenderWorker, changes: Changes) -> Outcome {
+        let mut out = Vec::new();
+        worker.update(changes, &mut out);
+        Outcome {
+            repainted: out.iter().any(|reply| matches!(reply, WorkerReply::Frame(_))),
+            cursor: out.iter().find_map(|reply| match reply {
+                WorkerReply::Cursor(cursor) => Some(*cursor),
+                WorkerReply::Frame(_) => None,
+            }),
+        }
+    }
+
+    /// A 300×600 viewport showing `body` under `css`.
+    fn worker_with(css: &str, body: &str) -> RenderWorker {
         let html = format!(
-            "<html><head><style>body {{ margin: 0 }} \
-             a {{ display: block; height: 200px }} {css}</style></head>\
-             <body><a href='/'>link</a></body></html>"
+            "<html><head><style>body {{ margin: 0 }} {css}</style></head>\
+             <body>{body}</body></html>"
         );
         let mut worker = RenderWorker::default();
         let mut changes = Changes::default();
         let state = PageState::from_document(parse_html_string(&html)).expect("a layout tree");
         worker.apply(WorkerMessage::Replace { state, generation: 1 }, &mut changes);
         worker.apply(WorkerMessage::Resize { width: 300, height: 600 }, &mut changes);
-        assert!(worker.update(changes).is_some(), "the first frame");
+        assert!(run(&mut worker, changes).repainted, "the first frame");
         worker
     }
 
-    fn move_pointer(worker: &mut RenderWorker, x: f32, y: f32) -> bool {
+    /// A 200px-tall link filling the top of the page, so (10, 10) is over
+    /// it and (10, 400) is over the root element only.
+    fn worker_showing(css: &str) -> RenderWorker {
+        worker_with(
+            &format!("a {{ display: block; height: 200px }} {css}"),
+            "<a href='/'>link</a>",
+        )
+    }
+
+    fn move_pointer(worker: &mut RenderWorker, x: f32, y: f32) -> Outcome {
         let mut changes = Changes::default();
         worker.apply(WorkerMessage::PointerMoved { x, y }, &mut changes);
-        worker.update(changes).is_some()
+        run(worker, changes)
     }
 
     fn hovered_tag(worker: &RenderWorker) -> Option<String> {
@@ -308,17 +387,17 @@ mod tests {
     #[test]
     fn hover_change_repaints_when_a_rule_reads_hover() {
         let mut worker = worker_showing("a:hover { color: red }");
-        assert!(move_pointer(&mut worker, 10.0, 10.0));
+        assert!(move_pointer(&mut worker, 10.0, 10.0).repainted);
         assert_eq!(hovered_tag(&worker).as_deref(), Some("a"));
 
         // Moving within the same element changes nothing.
-        assert!(!move_pointer(&mut worker, 20.0, 20.0));
+        assert!(!move_pointer(&mut worker, 20.0, 20.0).repainted);
     }
 
     #[test]
     fn hover_change_without_hover_rules_does_not_repaint() {
         let mut worker = worker_showing("a { color: blue }");
-        assert!(!move_pointer(&mut worker, 10.0, 10.0));
+        assert!(!move_pointer(&mut worker, 10.0, 10.0).repainted);
         // The hovered node is still tracked for when rules need it.
         assert_eq!(hovered_tag(&worker).as_deref(), Some("a"));
     }
@@ -339,7 +418,36 @@ mod tests {
         move_pointer(&mut worker, 10.0, 10.0);
         let mut changes = Changes::default();
         worker.apply(WorkerMessage::PointerLeft, &mut changes);
-        assert!(worker.update(changes).is_some());
+        assert!(run(&mut worker, changes).repainted);
         assert_eq!(hovered_tag(&worker), None);
+    }
+
+    /// The UA stylesheet's `:link { cursor: pointer }`, then the arrow
+    /// below the content. A move that keeps the cursor sends nothing.
+    #[test]
+    fn cursor_follows_the_element_under_the_pointer() {
+        let mut worker = worker_showing("");
+        assert_eq!(move_pointer(&mut worker, 10.0, 10.0).cursor, Some(Cursor::Pointer));
+        assert_eq!(move_pointer(&mut worker, 20.0, 20.0).cursor, None);
+        assert_eq!(move_pointer(&mut worker, 10.0, 400.0).cursor, Some(Cursor::Default));
+    }
+
+    /// [CSS UI 4 § 5.1.1.1](https://drafts.csswg.org/css-ui-4/#cursor):
+    /// "auto behaves as text over selectable text ... and default
+    /// otherwise." The paragraph's text starts at (0, 0); at y = 100 the
+    /// pointer is inside the 200px-tall paragraph but below its one line.
+    #[test]
+    fn auto_cursor_is_text_over_text() {
+        let mut worker = worker_with("p { margin: 0; height: 200px }", "<p>plain words</p>");
+        assert_eq!(move_pointer(&mut worker, 5.0, 5.0).cursor, Some(Cursor::Text));
+        assert_eq!(move_pointer(&mut worker, 5.0, 100.0).cursor, Some(Cursor::Default));
+    }
+
+    /// The cursor is read after the restyle a hover change causes, so a
+    /// `:hover` rule's cursor applies on the move that hovers.
+    #[test]
+    fn hover_rule_cursor_applies_on_the_same_move() {
+        let mut worker = worker_showing("a:hover { cursor: help }");
+        assert_eq!(move_pointer(&mut worker, 10.0, 10.0).cursor, Some(Cursor::Help));
     }
 }

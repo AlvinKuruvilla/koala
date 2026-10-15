@@ -360,7 +360,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            if let Some(frame) = tab.page.borrow().try_take_render_image() {
+            let update = tab.page.borrow().poll_renderer();
+            // Only the active tab is under the pointer, so only its
+            // cursor is shown.
+            if let Some(cursor) = update.cursor
+                && i == active_idx
+            {
+                window.set_page_cursor(page_cursor(cursor));
+            }
+            if let Some(frame) = update.frame {
                 // A frame of an earlier page state is still shown (it is
                 // what the tab has), but only a frame of the awaited
                 // state ends loading.
@@ -532,6 +540,51 @@ fn has_url_scheme(s: &str) -> bool {
     }
     // `host:8080` — bare port, not a scheme.
     !after.is_empty() && !after.chars().all(|c| c.is_ascii_digit())
+}
+
+/// The Slint cursor for a CSS `cursor` value.
+///
+/// Slint has no shape for six of the CSS keywords; each falls back to the
+/// nearest shape it has, the way CSS UI 4 describes them ("Often rendered
+/// as ..."): `cell` and `crosshair` are both plus-signs, `vertical-text`
+/// is an I-beam turned on its side, and `all-scroll`'s four arrows are
+/// `move`'s. `context-menu`, `zoom-in` and `zoom-out` are arrows with a
+/// badge, so the plain arrow.
+fn page_cursor(cursor: koala_browser::css::Cursor) -> PageCursor {
+    use koala_browser::css::Cursor;
+    match cursor {
+        Cursor::Auto | Cursor::Default | Cursor::ContextMenu | Cursor::ZoomIn | Cursor::ZoomOut => {
+            PageCursor::Default
+        }
+        Cursor::None => PageCursor::None,
+        Cursor::Help => PageCursor::Help,
+        Cursor::Pointer => PageCursor::Pointer,
+        Cursor::Progress => PageCursor::Progress,
+        Cursor::Wait => PageCursor::Wait,
+        Cursor::Cell | Cursor::Crosshair => PageCursor::Crosshair,
+        Cursor::Text | Cursor::VerticalText => PageCursor::Text,
+        Cursor::Alias => PageCursor::Alias,
+        Cursor::Copy => PageCursor::Copy,
+        Cursor::Move | Cursor::AllScroll => PageCursor::Move,
+        Cursor::NoDrop => PageCursor::NoDrop,
+        Cursor::NotAllowed => PageCursor::NotAllowed,
+        Cursor::Grab => PageCursor::Grab,
+        Cursor::Grabbing => PageCursor::Grabbing,
+        Cursor::ColResize => PageCursor::ColResize,
+        Cursor::RowResize => PageCursor::RowResize,
+        Cursor::NResize => PageCursor::NResize,
+        Cursor::EResize => PageCursor::EResize,
+        Cursor::SResize => PageCursor::SResize,
+        Cursor::WResize => PageCursor::WResize,
+        Cursor::NeResize => PageCursor::NeResize,
+        Cursor::NwResize => PageCursor::NwResize,
+        Cursor::SeResize => PageCursor::SeResize,
+        Cursor::SwResize => PageCursor::SwResize,
+        Cursor::EwResize => PageCursor::EwResize,
+        Cursor::NsResize => PageCursor::NsResize,
+        Cursor::NeswResize => PageCursor::NeswResize,
+        Cursor::NwseResize => PageCursor::NwseResize,
+    }
 }
 
 #[cfg(test)]
