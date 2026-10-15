@@ -42,6 +42,14 @@ impl FontSource for [u8] {
     }
 }
 
+/// A borrowed source, so a [`Font`](crate::Font) can read bytes or a file
+/// its caller keeps owning.
+impl<T: FontSource + ?Sized> FontSource for &T {
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        (**self).read_exact_at(buf, offset)
+    }
+}
+
 impl FontSource for Vec<u8> {
     fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
         self.as_slice().read_exact_at(buf, offset)
@@ -67,6 +75,19 @@ mod tests {
         let mut buf = [0; 2];
         BYTES.read_exact_at(&mut buf, 1).expect("bytes 1..3 exist");
         assert_eq!(buf, [2, 3]);
+    }
+
+    /// A `Font` can borrow its bytes.
+    #[test]
+    fn a_font_opens_on_borrowed_bytes() {
+        let not_a_font = [0_u8; 16];
+        let error = crate::Font::from_source(not_a_font.as_slice(), crate::FontSettings::default())
+            .err()
+            .expect("zeros are not a font");
+        assert!(matches!(
+            error,
+            crate::FontError::UnrecognizedSignature([0, 0, 0, 0])
+        ));
     }
 
     /// A range ending exactly at the end, and an empty one starting there,
