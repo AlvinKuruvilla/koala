@@ -3,22 +3,31 @@
 // A `BrowserPage` owns two worker threads so that neither network
 // I/O nor CPU rasterization ever runs on the Slint event loop:
 //
-//   - **render worker**: takes a `RenderJob { Arc<PageState>, w, h }`,
-//     runs layout → paint → rasterize, and emits a `RenderResult`
-//     with the raw RGBA bytes.
+//   - **render worker**: owns the page being shown. It takes
+//     `WorkerMessage`s (a new page, a new viewport size, pointer
+//     movement), runs restyle → layout → hit test → paint → rasterize
+//     as they require, and emits a `RenderResult` with the raw RGBA
+//     bytes.
 //   - **loader worker**: takes a `LoadRequest { url }`, does the
 //     blocking HTTP fetch + HTML parse + cascade + layout-tree
-//     build, and emits a fresh `Arc<PageState>` via `LoadResult`.
+//     build, and emits a fresh `PageState` via `LoadResult`.
 //
 // The two threads are independent. A URL load never blocks the
 // rasterizer — the old page keeps rendering cleanly while the new
 // page is being fetched, and once the new `PageState` lands the
-// GUI schedules a fresh render.
+// GUI hands it to the render worker.
 //
-// The Slint main loop drives the flow: it calls `request_render`
-// and `request_load` from the event-loop thread (both non-blocking
-// — they return as soon as the job is in the queue) and polls
-// `try_take_render_image` / `try_take_load_result` from a
+// The render worker is the page's only owner because pointer movement
+// changes the page: the hovered node lives on the `DomTree`, and a
+// change to it can mean a new cascade and layout. Every mature engine
+// splits it the same way: one thread owns the DOM, style and layout,
+// and input reaches it as messages, which it merges so that only the
+// latest pointer position is handled.
+//
+// The Slint main loop drives the flow: it calls `request_render`,
+// `pointer_moved` and `request_load` from the event-loop thread (all
+// non-blocking — they return as soon as the message is in the queue)
+// and polls `try_take_render_image` / `try_take_load_result` from a
 // `slint::Timer` callback at ~60 Hz.
 //
 // The JavaScript runtime that koala-browser builds during parse is
@@ -31,18 +40,20 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::OnceLock;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 
+use koala_browser::css::cascade::state_dependencies;
+use koala_browser::css::selector::ElementState;
 use koala_browser::css::{
-    ComputedStyle, DisplayListBuilder, LayoutBox, Rect, canvas_background,
+    ComputedStyle, DisplayListBuilder, LayoutBox, Rect, Stylesheet, canvas_background,
 };
 use koala_browser::dom::{DomTree, NodeId};
 use koala_browser::inline_svg::InlineSvg;
 use koala_browser::{
     FontProvider, LoadedDocument, LoadedImage, Renderer, RendererFonts, load_document,
-    parse_html_string,
+    parse_html_string, restyle,
 };
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -123,19 +134,24 @@ pub struct Frame {
     pub generation: u64,
 }
 
-/// The Send-able subset of `LoadedDocument` needed to render a page.
+/// The Send-able subset of `LoadedDocument` needed to render a page
+/// and to restyle it when the hovered node changes.
 ///
-/// Excludes the JS runtime, the raw token stream, the parsed
-/// stylesheet AST, the HTML source, and parse diagnostics — nothing
-/// in that list is consulted after layout. Everything here is
-/// `Send + Sync`, so an `Arc<PageState>` can cross thread boundaries
-/// without copying the underlying data.
+/// Excludes the JS runtime, the raw token stream, the HTML source,
+/// and parse diagnostics — nothing in that list is consulted after
+/// layout. Built on the loader thread and moved to the render worker,
+/// which owns it from then on.
 struct PageState {
     dom: DomTree,
+    stylesheet: Stylesheet,
     styles: koala_std::collections::HashMap<NodeId, ComputedStyle>,
     layout_tree: LayoutBox,
     images: koala_std::collections::HashMap<String, LoadedImage>,
+    image_dims: koala_std::collections::HashMap<NodeId, (f32, f32)>,
     inline_svgs: koala_std::collections::HashMap<NodeId, std::sync::Arc<InlineSvg>>,
+    // The interaction state any selector reads. A hover change restyles
+    // only when this contains `ElementState::HOVER`.
+    state_dependencies: ElementState,
     // The document's `<title>` text content, trimmed. Empty when
     // the document has no `<title>` element or its text is
     // whitespace-only. Used to set the tab label.
@@ -147,15 +163,22 @@ impl PageState {
     /// render-relevant fields, dropping the JS runtime and other
     /// parse-time debris. Returns `None` if the document produced
     /// no layout tree (happens only on pathological input).
-    fn from_document(doc: LoadedDocument) -> Option<Self> {
+    fn from_document(doc: LoadedDocument) -> Option<Box<Self>> {
         let title = extract_title(&doc.dom);
-        doc.layout_tree.map(|layout_tree| Self {
-            dom: doc.dom,
-            styles: doc.styles,
-            layout_tree,
-            images: doc.images,
-            inline_svgs: doc.inline_svgs,
-            title,
+        let state_dependencies =
+            state_dependencies(koala_browser::css::ua_stylesheet::ua_stylesheet(), &doc.stylesheet);
+        doc.layout_tree.map(|layout_tree| {
+            Box::new(Self {
+                dom: doc.dom,
+                stylesheet: doc.stylesheet,
+                styles: doc.styles,
+                layout_tree,
+                images: doc.images,
+                image_dims: doc.image_dims,
+                inline_svgs: doc.inline_svgs,
+                state_dependencies,
+                title,
+            })
         })
     }
 }
@@ -186,14 +209,24 @@ fn extract_title(dom: &DomTree) -> String {
     String::new()
 }
 
-/// A single render request sent from the GUI thread to the render worker.
-struct RenderJob {
-    state: Arc<PageState>,
-    /// The generation of `state` (see `BrowserPage::state_generation`),
-    /// carried through to the result.
-    generation: u64,
-    width: u32,
-    height: u32,
+/// What the GUI thread tells the render worker. The worker handles every
+/// message waiting in its queue before it renders, so a burst of pointer
+/// moves or resizes costs one frame.
+enum WorkerMessage {
+    /// Show this page from now on.
+    Replace {
+        state: Box<PageState>,
+        /// The generation of `state` (see `BrowserPage::state_generation`),
+        /// carried through to its frames.
+        generation: u64,
+    },
+    /// The viewport's size in physical pixels.
+    Resize { width: u32, height: u32 },
+    /// The pointer is over the viewport at this point, in physical pixels
+    /// from its top-left corner.
+    PointerMoved { x: f32, y: f32 },
+    /// The pointer left the viewport.
+    PointerLeft,
 }
 
 /// Where a load request came from. Used by `try_take_load_result`
@@ -239,18 +272,16 @@ struct LoadRequest {
 struct LoadResult {
     url: String,
     source: LoadSource,
-    state: Arc<PageState>,
+    state: Box<PageState>,
 }
 
 pub struct BrowserPage {
-    // None until the first `load_html` / `load_landing_page` call
-    // (or a successful URL load). Replaced wholesale on navigation;
-    // old `Arc`s held by in-flight render jobs stay alive until
-    // those jobs complete.
-    state: Option<Arc<PageState>>,
+    // The current page's title. The page itself belongs to the render
+    // worker once `set_state` hands it over.
+    title: String,
 
-    // Counts replacements of `state`; see `state_generation`. Changed
-    // only through `set_state`.
+    // Counts page replacements; see `state_generation`. Changed only
+    // through `set_state`.
     state_generation: u64,
 
     // The URL of the most-recently-committed load, if any. Used by
@@ -271,7 +302,7 @@ pub struct BrowserPage {
     history_index: Option<usize>,
 
     // Channels to and from the render worker.
-    render_job_tx: Sender<RenderJob>,
+    worker_tx: Sender<WorkerMessage>,
     render_result_rx: Receiver<RenderResult>,
     _render_worker: JoinHandle<()>,
 
@@ -288,12 +319,12 @@ pub struct BrowserPage {
 
 impl BrowserPage {
     pub fn new() -> Self {
-        let (render_job_tx, render_job_rx) = mpsc::channel::<RenderJob>();
+        let (worker_tx, worker_rx) = mpsc::channel::<WorkerMessage>();
         let (render_result_tx, render_result_rx) = mpsc::channel::<RenderResult>();
         let render_worker = thread::Builder::new()
             .name("koala-ui-render".to_owned())
             .stack_size(WORKER_STACK_BYTES)
-            .spawn(move || run_render_worker(&render_job_rx, &render_result_tx))
+            .spawn(move || run_render_worker(&worker_rx, &render_result_tx))
             .expect("failed to spawn koala-ui render worker");
 
         let (load_request_tx, load_request_rx) = mpsc::channel::<LoadRequest>();
@@ -306,12 +337,12 @@ impl BrowserPage {
             .expect("failed to spawn koala-ui loader worker");
 
         Self {
-            state: None,
+            title: String::new(),
             state_generation: 0,
             current_url: None,
             history: Vec::new(),
             history_index: None,
-            render_job_tx,
+            worker_tx,
             render_result_rx,
             _render_worker: render_worker,
             load_request_tx,
@@ -321,10 +352,18 @@ impl BrowserPage {
         }
     }
 
-    /// Replace the page state and bump its generation.
-    fn set_state(&mut self, state: Option<Arc<PageState>>) {
-        self.state = state;
+    /// Replace the page, bump its generation, and hand the page to the
+    /// render worker. With `None` (a document that produced no layout
+    /// tree), the worker keeps showing the previous page.
+    fn set_state(&mut self, state: Option<Box<PageState>>) {
         self.state_generation += 1;
+        self.title = state.as_ref().map(|s| s.title.clone()).unwrap_or_default();
+        if let Some(state) = state {
+            let _ = self.worker_tx.send(WorkerMessage::Replace {
+                state,
+                generation: self.state_generation,
+            });
+        }
     }
 
     /// A number that increases every time the page state is replaced:
@@ -341,7 +380,7 @@ impl BrowserPage {
     /// (tests, debugging) — clears the history stack because the
     /// HTML has no identity the user could navigate back to.
     pub fn load_html(&mut self, html: &str) {
-        self.set_state(PageState::from_document(parse_html_string(html)).map(Arc::new));
+        self.set_state(PageState::from_document(parse_html_string(html)));
         self.current_url = None;
         self.history.clear();
         self.history_index = None;
@@ -358,7 +397,7 @@ impl BrowserPage {
     pub fn load_landing_page(&mut self) {
         let doc = parse_html_string(crate::landing::LANDING_HTML);
         report_problems("the new tab page", &doc);
-        self.set_state(PageState::from_document(doc).map(Arc::new));
+        self.set_state(PageState::from_document(doc));
         self.current_url = None;
         self.history.clear();
         self.history.push(HistoryEntry::Landing);
@@ -447,7 +486,6 @@ impl BrowserPage {
             HistoryEntry::Landing => {
                 let Some(state) =
                     PageState::from_document(parse_html_string(crate::landing::LANDING_HTML))
-                        .map(Arc::new)
                 else {
                     return false;
                 };
@@ -489,10 +527,7 @@ impl BrowserPage {
     /// there is no current page or it has no title. Read after every
     /// load to update the tab label.
     pub fn current_title(&self) -> String {
-        self.state
-            .as_ref()
-            .map(|s| s.title.clone())
-            .unwrap_or_default()
+        self.title.clone()
     }
 
     /// Non-blocking check for a completed URL load. The loader
@@ -547,23 +582,26 @@ impl BrowserPage {
         }
     }
 
-    /// Queues a render job on the render worker thread. Returns
-    /// immediately regardless of how long the render will take.
-    /// No-op when there is no current state or the requested
-    /// dimensions are degenerate.
+    /// Asks the render worker for a frame at this size, in physical
+    /// pixels. Returns immediately regardless of how long the render
+    /// will take. No-op when the dimensions are degenerate.
     pub fn request_render(&self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
-        let Some(state) = self.state.as_ref() else {
-            return;
-        };
-        let _ = self.render_job_tx.send(RenderJob {
-            state: Arc::clone(state),
-            generation: self.state_generation,
-            width,
-            height,
-        });
+        let _ = self.worker_tx.send(WorkerMessage::Resize { width, height });
+    }
+
+    /// Tells the render worker where the pointer is over the viewport, in
+    /// physical pixels. A change of hovered element re-renders the page.
+    pub fn pointer_moved(&self, x: f32, y: f32) {
+        let _ = self.worker_tx.send(WorkerMessage::PointerMoved { x, y });
+    }
+
+    /// Tells the render worker the pointer left the viewport, so nothing
+    /// on the page is hovered.
+    pub fn pointer_left(&self) {
+        let _ = self.worker_tx.send(WorkerMessage::PointerLeft);
     }
 
     /// Non-blocking check for a finished frame. Returns `None` when
@@ -622,8 +660,7 @@ impl BrowserPage {
     fn install_engine_error(&self, message: &str) {
         let url = self.current_url.clone().unwrap_or_default();
         let error_html = crate::error_page::render(&url, &Failure::Engine(message));
-        let Some(state) = PageState::from_document(parse_html_string(&error_html)).map(Arc::new)
-        else {
+        let Some(state) = PageState::from_document(parse_html_string(&error_html)) else {
             eprintln!("[koala-ui] error template failed to parse; engine error was: {message}");
             return;
         };
@@ -635,32 +672,166 @@ impl BrowserPage {
     }
 }
 
-/// Render-worker entry point. Drains the job queue on each wake-up,
-/// coalescing queued jobs so we only render the most recent
-/// dimensions. On rapid resizes this keeps us from rendering every
-/// intermediate frame.
-fn run_render_worker(
-    job_rx: &Receiver<RenderJob>,
-    result_tx: &Sender<RenderResult>,
-) {
-    while let Ok(first) = job_rx.recv() {
-        let mut latest = first;
-        while let Ok(newer) = job_rx.try_recv() {
-            latest = newer;
+/// Render-worker entry point. On each wake-up it applies every message
+/// waiting in the queue, then renders at most one frame. A burst of
+/// resizes or pointer moves therefore collapses to its latest state:
+/// the one-move-per-frame coalescing every engine does, here per
+/// wake-up.
+///
+/// A panic while restyling or rendering drops the page and reports the
+/// panic, and the GUI thread replaces the page with the error page.
+fn run_render_worker(message_rx: &Receiver<WorkerMessage>, result_tx: &Sender<RenderResult>) {
+    let mut worker = RenderWorker::default();
+    while let Ok(first) = message_rx.recv() {
+        let mut changes = Changes::default();
+        for message in std::iter::once(first).chain(message_rx.try_iter()) {
+            worker.apply(message, &mut changes);
         }
 
-        let pixels = render_state(&latest.state, latest.width, latest.height);
-        let result = RenderResult {
-            generation: latest.generation,
-            width: latest.width,
-            height: latest.height,
-            pixels,
-            error: String::new(),
+        let result = match catch_unwind(AssertUnwindSafe(|| worker.update(changes))) {
+            Ok(Some(result)) => result,
+            Ok(None) => continue,
+            Err(payload) => {
+                let message = panic_message(&payload);
+                eprintln!("[koala-ui] render worker panicked: {message}");
+                let generation = worker.page.take().map_or(0, |(_, generation)| generation);
+                worker.laid_out = None;
+                RenderResult {
+                    generation,
+                    width: 0,
+                    height: 0,
+                    pixels: Vec::new(),
+                    error: message,
+                }
+            }
         };
 
         if result_tx.send(result).is_err() {
             break;
         }
+    }
+}
+
+/// What the render worker holds between wake-ups.
+#[derive(Default)]
+struct RenderWorker {
+    /// The page shown, with its generation.
+    page: Option<(Box<PageState>, u64)>,
+    /// The viewport, in physical pixels.
+    size: Option<(u32, u32)>,
+    /// Where the pointer is over the viewport, if it is.
+    pointer: Option<(f32, f32)>,
+    /// `page`'s layout tree laid out at `size`, from the last frame. Hit
+    /// testing reads it.
+    laid_out: Option<LayoutBox>,
+}
+
+/// What the messages of one wake-up changed.
+#[derive(Default, Clone, Copy)]
+struct Changes {
+    page: bool,
+    size: bool,
+    pointer: bool,
+}
+
+impl RenderWorker {
+    fn apply(&mut self, message: WorkerMessage, changes: &mut Changes) {
+        match message {
+            WorkerMessage::Replace { state, generation } => {
+                self.page = Some((state, generation));
+                changes.page = true;
+            }
+            WorkerMessage::Resize { width, height } => {
+                // The GUI asks again at the same size after every page
+                // swap; that must not lay the page out a second time.
+                if self.size != Some((width, height)) {
+                    self.size = Some((width, height));
+                    changes.size = true;
+                }
+            }
+            WorkerMessage::PointerMoved { x, y } => {
+                self.pointer = Some((x, y));
+                changes.pointer = true;
+            }
+            WorkerMessage::PointerLeft => {
+                self.pointer = None;
+                changes.pointer = true;
+            }
+        }
+    }
+
+    /// Bring the page up to date with `changes` and return a frame if
+    /// anything visible changed.
+    fn update(&mut self, changes: Changes) -> Option<RenderResult> {
+        let (page, generation) = self.page.as_mut()?;
+        let (width, height) = self.size?;
+
+        // STEP 1: Lay the page out again if it or the viewport changed.
+        let mut repaint = false;
+        if changes.page || changes.size || self.laid_out.is_none() {
+            self.laid_out = Some(lay_out(&page.layout_tree, width, height));
+            repaint = true;
+        }
+
+        // STEP 2: Find the hovered node. After a new layout this runs even
+        // if the pointer stood still, since the element under it may have
+        // changed: Chromium and Gecko send themselves a synthetic mouse
+        // move after layout for the same reason.
+        //
+        // [CSSOM View § 5 elementFromPoint()](https://drafts.csswg.org/cssom-view/#dom-document-elementfrompoint)
+        //
+        // "If there is a box in the viewport that would be a target for
+        // hit testing at coordinates x,y, ... return the associated element
+        // and terminate these steps."
+        //
+        // "If the document has a root element, return the root element and
+        // terminate these steps."
+        if changes.pointer || repaint {
+            let laid_out = self.laid_out.as_ref().expect("laid out in STEP 1");
+            let hovered = self.pointer.and_then(|(x, y)| {
+                laid_out
+                    .hit_test(x, y)
+                    .map(|hit| hit.node)
+                    .or_else(|| page.dom.document_element())
+            });
+
+            // STEP 3: Restyle if the hovered node changed and some selector
+            // reads :hover. Without such a selector no computed style can
+            // change, so neither can the frame.
+            //
+            // The new layout can put another element under the pointer.
+            // That waits for the next pointer move: hit testing again here
+            // would loop forever under a rule like
+            // `a:hover { margin-left: 100px }`, which moves its element
+            // out from under the pointer. Gecko lets only scrolling
+            // trigger another synthetic move, for the same reason.
+            if hovered != page.dom.hovered() {
+                page.dom.set_hovered(hovered);
+                if page.state_dependencies.contains(ElementState::HOVER) {
+                    let restyled = restyle(&page.dom, &page.stylesheet, &page.image_dims);
+                    page.styles = restyled.styles;
+                    page.inline_svgs = restyled.inline_svgs;
+                    if let Some(layout_tree) = restyled.layout_tree {
+                        page.layout_tree = layout_tree;
+                    }
+                    self.laid_out = Some(lay_out(&page.layout_tree, width, height));
+                    repaint = true;
+                }
+            }
+        }
+
+        // STEP 4: Paint.
+        if !repaint {
+            return None;
+        }
+        let laid_out = self.laid_out.as_ref().expect("laid out in STEP 1 or 3");
+        Some(RenderResult {
+            generation: *generation,
+            width,
+            height,
+            pixels: paint(page, laid_out, width, height),
+            error: String::new(),
+        })
     }
 }
 
@@ -689,7 +860,7 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
 
 /// Loader-worker entry point. Fetches each requested URL via
 /// `koala_browser::load_document` (blocking HTTP on this thread
-/// only) and turns the resulting document into an `Arc<PageState>`.
+/// only) and turns the resulting document into a `PageState`.
 ///
 /// The fetch + parse runs inside `catch_unwind` so a panic in any
 /// of koala-browser's dependencies (HTML parser, CSS parser, cascade,
@@ -715,10 +886,9 @@ fn run_load_worker(
                 // isn't an opaque mystery to whoever launched the
                 // app from a terminal.
                 report_problems(&url, &doc);
-                match PageState::from_document(doc) {
-                    Some(state) => Arc::new(state),
-                    None => error_state(&url, &Failure::Engine("document produced no layout tree")),
-                }
+                PageState::from_document(doc).unwrap_or_else(|| {
+                    error_state(&url, &Failure::Engine("document produced no layout tree"))
+                })
             }
             Ok(Err(e)) => error_state(&url, &Failure::Load(&e)),
             Err(payload) => {
@@ -737,44 +907,45 @@ fn run_load_worker(
     }
 }
 
-/// Builds an `Arc<PageState>` from the built-in error template for
+/// Builds a `PageState` from the built-in error template for
 /// the given URL and failure. Falls back to a minimal
 /// hard-coded page when the template itself fails to parse — if
 /// that ever happens it means koala-css is broken enough that the
 /// error page can't even be used, which we handle by showing a
 /// plain-text message.
-fn error_state(url: &str, failure: &Failure<'_>) -> Arc<PageState> {
+fn error_state(url: &str, failure: &Failure<'_>) -> Box<PageState> {
     let html = crate::error_page::render(url, failure);
     let doc = parse_html_string(&html);
     report_problems("the error page", &doc);
     if let Some(state) = PageState::from_document(doc) {
-        return Arc::new(state);
+        return state;
     }
     let fallback = parse_html_string(
         "<!doctype html><html><body><h1>Page couldn't load</h1></body></html>",
     );
-    Arc::new(
-        PageState::from_document(fallback)
-            .expect("trivial fallback HTML must produce a layout tree"),
-    )
+    PageState::from_document(fallback).expect("trivial fallback HTML must produce a layout tree")
 }
 
-/// The full layout → paint → rasterize pipeline, taking a borrowed
-/// `PageState` rather than `&self` so it can run off the main thread.
-fn render_state(state: &PageState, width: u32, height: u32) -> Vec<u8> {
+/// Lay out a copy of `layout_tree` in a viewport of this size. The copy
+/// is laid out, not the tree itself, because layout writes used values
+/// into the boxes and the next layout must start from computed values.
+fn lay_out(layout_tree: &LayoutBox, width: u32, height: u32) -> LayoutBox {
     let viewport = Rect {
         x: 0.0,
         y: 0.0,
         width: width as f32,
         height: height as f32,
     };
-
-    let mut layout = state.layout_tree.clone();
+    let mut laid_out = layout_tree.clone();
     let font_metrics = cached_font_provider().metrics();
-    layout.layout(viewport, viewport, &*font_metrics, viewport);
+    laid_out.layout(viewport, viewport, &*font_metrics, viewport);
+    laid_out
+}
 
+/// Paint and rasterize a laid-out page.
+fn paint(state: &PageState, laid_out: &LayoutBox, width: u32, height: u32) -> Vec<u8> {
     let builder = DisplayListBuilder::new(&state.styles);
-    let display_list = builder.build(&layout);
+    let display_list = builder.build(laid_out);
 
     let mut renderer = Renderer::new_with_fonts(
         width,
@@ -794,4 +965,77 @@ fn render_state(state: &PageState, width: u32, height: u32) -> Vec<u8> {
 
     renderer.render(&display_list);
     renderer.rgba_bytes().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Changes, PageState, RenderWorker, WorkerMessage};
+    use koala_browser::parse_html_string;
+
+    /// A 200px-tall link filling the top of the page, so (10, 10) is over
+    /// it and (10, 400) is over the root element only.
+    fn worker_showing(css: &str) -> RenderWorker {
+        let html = format!(
+            "<html><head><style>body {{ margin: 0 }} \
+             a {{ display: block; height: 200px }} {css}</style></head>\
+             <body><a href='/'>link</a></body></html>"
+        );
+        let mut worker = RenderWorker::default();
+        let mut changes = Changes::default();
+        let state = PageState::from_document(parse_html_string(&html)).expect("a layout tree");
+        worker.apply(WorkerMessage::Replace { state, generation: 1 }, &mut changes);
+        worker.apply(WorkerMessage::Resize { width: 300, height: 600 }, &mut changes);
+        assert!(worker.update(changes).is_some(), "the first frame");
+        worker
+    }
+
+    fn move_pointer(worker: &mut RenderWorker, x: f32, y: f32) -> bool {
+        let mut changes = Changes::default();
+        worker.apply(WorkerMessage::PointerMoved { x, y }, &mut changes);
+        worker.update(changes).is_some()
+    }
+
+    fn hovered_tag(worker: &RenderWorker) -> Option<String> {
+        let (page, _) = worker.page.as_ref()?;
+        let node = page.dom.hovered()?;
+        Some(page.dom.as_element(node)?.tag_name.to_string())
+    }
+
+    #[test]
+    fn hover_change_repaints_when_a_rule_reads_hover() {
+        let mut worker = worker_showing("a:hover { color: red }");
+        assert!(move_pointer(&mut worker, 10.0, 10.0));
+        assert_eq!(hovered_tag(&worker).as_deref(), Some("a"));
+
+        // Moving within the same element changes nothing.
+        assert!(!move_pointer(&mut worker, 20.0, 20.0));
+    }
+
+    #[test]
+    fn hover_change_without_hover_rules_does_not_repaint() {
+        let mut worker = worker_showing("a { color: blue }");
+        assert!(!move_pointer(&mut worker, 10.0, 10.0));
+        // The hovered node is still tracked for when rules need it.
+        assert_eq!(hovered_tag(&worker).as_deref(), Some("a"));
+    }
+
+    /// [CSSOM View § 5](https://drafts.csswg.org/cssom-view/#dom-document-elementfrompoint)
+    ///
+    /// "If the document has a root element, return the root element"
+    #[test]
+    fn pointer_below_content_hovers_the_root_element() {
+        let mut worker = worker_showing("");
+        move_pointer(&mut worker, 10.0, 400.0);
+        assert_eq!(hovered_tag(&worker).as_deref(), Some("html"));
+    }
+
+    #[test]
+    fn pointer_leaving_clears_hover() {
+        let mut worker = worker_showing("a:hover { color: red }");
+        move_pointer(&mut worker, 10.0, 10.0);
+        let mut changes = Changes::default();
+        worker.apply(WorkerMessage::PointerLeft, &mut changes);
+        assert!(worker.update(changes).is_some());
+        assert_eq!(hovered_tag(&worker), None);
+    }
 }
