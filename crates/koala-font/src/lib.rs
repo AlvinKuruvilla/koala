@@ -40,9 +40,16 @@ mod metrics;
 mod source;
 mod tables;
 mod tag;
+mod types;
 
 pub use error::FontError;
 pub use font::{Font, FontSettings, face_count};
 pub use metrics::{DecorationLine, VerticalMetrics};
 pub use source::FontSource;
 pub use tag::Tag;
+pub use types::f2dot14::F2Dot14;
+pub use types::fixed::Fixed;
+pub use types::fword::FWord;
+pub use types::u24::{U24, U24OutOfRange};
+pub use types::ufword::UFWord;
+pub use types::version16dot16::Version16Dot16;

@@ -13,4 +13,4 @@ workspace = true
 
 [dev-dependencies]
 quickcheck = "1"
-ttf-parser = "0.21"
+ttf-parser = "0.25.1"

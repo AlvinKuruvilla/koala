@@ -12,7 +12,9 @@ use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::Arc;
 
-use koala_font::{DecorationLine, Font, FontSettings, FontSource, VerticalMetrics, face_count};
+use koala_font::{
+    DecorationLine, FWord, Font, FontSettings, FontSource, VerticalMetrics, face_count,
+};
 
 /// The most a face's metrics may read from its file.
 ///
@@ -58,27 +60,27 @@ impl Expected {
         Self {
             units_per_em: tables.head.units_per_em,
             hhea: VerticalMetrics {
-                ascender: tables.hhea.ascender,
-                descender: tables.hhea.descender,
-                line_gap: tables.hhea.line_gap,
+                ascender: FWord::from(tables.hhea.ascender),
+                descender: FWord::from(tables.hhea.descender),
+                line_gap: FWord::from(tables.hhea.line_gap),
             },
             os2: tables.os2.map(|os2| {
                 let strikeout = os2.strikeout_metrics();
                 (
                     VerticalMetrics {
-                        ascender: os2.typographic_ascender(),
-                        descender: os2.typographic_descender(),
-                        line_gap: os2.typographic_line_gap(),
+                        ascender: FWord::from(os2.typographic_ascender()),
+                        descender: FWord::from(os2.typographic_descender()),
+                        line_gap: FWord::from(os2.typographic_line_gap()),
                     },
                     DecorationLine {
-                        position: strikeout.position,
-                        thickness: strikeout.thickness,
+                        position: FWord::from(strikeout.position),
+                        thickness: FWord::from(strikeout.thickness),
                     },
                 )
             }),
             underline: tables.post.map(|post| DecorationLine {
-                position: post.underline_metrics.position,
-                thickness: post.underline_metrics.thickness,
+                position: FWord::from(post.underline_metrics.position),
+                thickness: FWord::from(post.underline_metrics.thickness),
             }),
         }
     }

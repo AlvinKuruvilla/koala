@@ -268,8 +268,9 @@ later slices are what must stay unread until asked for.
 
 ## Testing
 
-`ttf-parser` 0.21 is already in the dependency tree through fontdue
-and reads all of these values. As a dev-dependency it is the
+`ttf-parser` 0.25.1, already in the dependency tree through `fontdb`
+and `rustybuzz`, reads all of these values. (fontdue uses 0.21; the
+`OS/2` handling described below is the same in both.) As a dev-dependency it is the
 differential oracle, as Boa is planned to be for the JS engine: for
 every face of every font file on the machine, every value `koala-font`
 reports must equal `ttf-parser`'s. That runs over real data rather
