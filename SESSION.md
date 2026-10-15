@@ -855,3 +855,9 @@ measuring layout when the resolved size equals the base size is the fix.
   hover cost far more today. If a profile shows it: store visibility on
   the fragment, then prune subtrees by descendant bounds (which must take
   in positioned descendants), then cache the last hit until relayout.
+- `compute_styles` re-parses every selector string (`parse_stylesheet_rules`)
+  on each run, and `cascade::state_dependencies` parses them again. A
+  stylesheet could carry its parsed selectors. Unmeasured share of the
+  74 ms Wikipedia cascade, which every hover change now repeats.
+- The cascade skips at-rules (`Rule::At(_) => {}`), so `@media` rules never
+  apply, and `state_dependencies` misses `:hover` rules inside them.

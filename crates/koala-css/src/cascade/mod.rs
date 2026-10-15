@@ -6,7 +6,7 @@
 use koala_std::collections::HashMap;
 
 use crate::parser::{Rule, StyleRule, Stylesheet};
-use crate::selector::{ParsedSelector, PseudoElement, Specificity, parse_selector};
+use crate::selector::{ElementState, ParsedSelector, PseudoElement, Specificity, parse_selector};
 use crate::style::ComputedStyle;
 use koala_common::diagnostics::{self, Diagnostic};
 use koala_dom::{DomTree, NodeId, NodeType};
@@ -99,6 +99,28 @@ fn parse_stylesheet_rules<'a>(
             Rule::At(_) => {} // Skip at-rules for MVP
         }
     }
+}
+
+/// The interaction state any selector the cascade would use reads, in
+/// either stylesheet. A change to a flag outside this set cannot change
+/// any computed style, so it needs no restyle: with no `:hover` rule, the
+/// pointer moving between elements costs nothing beyond the hit test.
+///
+/// Reads the rules [`compute_styles`] reads, so it skips at-rules as the
+/// cascade does. It does not go through `parse_stylesheet_rules`, which
+/// would report each invalid selector a second time.
+#[must_use]
+pub fn state_dependencies(ua_stylesheet: &Stylesheet, author_stylesheet: &Stylesheet) -> ElementState {
+    [ua_stylesheet, author_stylesheet]
+        .into_iter()
+        .flat_map(|stylesheet| &stylesheet.rules)
+        .filter_map(|rule| match rule {
+            Rule::Style(style_rule) => Some(&style_rule.selectors),
+            Rule::At(_) => None,
+        })
+        .flatten()
+        .filter_map(|selector| parse_selector(&selector.text))
+        .fold(ElementState::EMPTY, |state, selector| state.union(selector.state_dependencies()))
 }
 
 /// [§ 6 Cascading](https://www.w3.org/TR/css-cascade-4/#cascading)

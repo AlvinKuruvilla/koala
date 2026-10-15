@@ -1275,3 +1275,39 @@ fn test_specificity_pseudo_element() {
         Specificity(0, 1, 2)
     );
 }
+
+// State dependencies
+//
+// A pointer move that changes which element is hovered needs a restyle only
+// if some selector reads :hover.
+
+fn stylesheet(css: &str) -> koala_css::Stylesheet {
+    let mut tokenizer = koala_css::CSSTokenizer::new(css.to_string());
+    tokenizer.run();
+    koala_css::CSSParser::new(tokenizer.into_tokens()).parse_stylesheet()
+}
+
+#[test]
+fn test_state_dependencies_of_selector() {
+    let hover = koala_css::selector::ElementState::HOVER;
+    let empty = koala_css::selector::ElementState::EMPTY;
+    let deps = |text: &str| parse_selector(text).expect("valid selector").state_dependencies();
+
+    assert_eq!(deps("a:hover"), hover);
+    // A :hover in an ancestor compound still makes `a` depend on hover.
+    assert_eq!(deps("nav:hover a"), hover);
+    assert_eq!(deps("a:link"), empty);
+    assert_eq!(deps("ul > li:first-child"), empty);
+}
+
+#[test]
+fn test_state_dependencies_of_stylesheets() {
+    let hover = koala_css::selector::ElementState::HOVER;
+    let empty = koala_css::selector::ElementState::EMPTY;
+    let none = stylesheet("p { color: red } a:link { color: blue }");
+    let some = stylesheet("p, nav:hover a { color: red }");
+
+    assert_eq!(koala_css::cascade::state_dependencies(&none, &none), empty);
+    assert_eq!(koala_css::cascade::state_dependencies(&none, &some), hover);
+    assert_eq!(koala_css::cascade::state_dependencies(&some, &none), hover);
+}

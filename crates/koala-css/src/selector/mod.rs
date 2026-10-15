@@ -408,6 +408,40 @@ impl ParsedSelector {
         self.complex.combinators.is_empty()
     }
 
+    /// The interaction state this selector reads, in any of its compound
+    /// selectors: `a:hover` and `nav:hover a` both read
+    /// [`ElementState::HOVER`]. If a state change touches none of these
+    /// flags, it cannot change whether this selector matches anything.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) in the number of simple selectors.
+    #[must_use]
+    pub fn state_dependencies(&self) -> ElementState {
+        let compounds = std::iter::once(&self.complex.subject)
+            .chain(self.complex.combinators.iter().map(|(_, compound)| compound));
+        let mut state = ElementState::EMPTY;
+        for simple in compounds.flat_map(|compound| &compound.simple_selectors) {
+            // Exhaustive so that a selector that nests others (`:is()`,
+            // `:not()`) has to say what it reads when it is added.
+            match simple {
+                SimpleSelector::PseudoClass(PseudoClass::UserAction(action)) => {
+                    state = state.union(action.state());
+                }
+                SimpleSelector::PseudoClass(
+                    PseudoClass::Location(_) | PseudoClass::Input(_) | PseudoClass::Structural(_),
+                )
+                | SimpleSelector::Type(_)
+                | SimpleSelector::Class(_)
+                | SimpleSelector::Id(_)
+                | SimpleSelector::Universal
+                | SimpleSelector::NeverMatch
+                | SimpleSelector::Attribute(_) => {}
+            }
+        }
+        state
+    }
+
     /// [§ 4.1 Selector Matching](https://www.w3.org/TR/selectors-4/#match-a-selector-against-an-element)
     /// "A selector is said to match an element when..."
     ///
