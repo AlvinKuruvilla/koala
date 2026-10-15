@@ -512,6 +512,10 @@ fn inherit_styles(parent: &ComputedStyle) -> ComputedStyle {
         // "Inherited: yes"
         visibility: parent.visibility,
 
+        // [CSS UI 4 § 5.1.1 cursor](https://drafts.csswg.org/css-ui-4/#cursor)
+        // "Inherited: yes"
+        cursor: parent.cursor,
+
         // [§ 3.2 opacity](https://www.w3.org/TR/css-color-4/#transparency)
         // "Inherited: no"
         opacity: None,

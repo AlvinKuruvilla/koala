@@ -1235,3 +1235,53 @@ fn test_content_values() {
     );
     assert_eq!(p.after.expect("::after styled").content, Some(Content::None));
 }
+
+/// [CSS UI 4 § 5.1.1](https://drafts.csswg.org/css-ui-4/#cursor):
+/// "[<cursor-image>,]* <cursor-predefined>". Image cursors are skipped for
+/// the keyword after them; a keyword not preceded by a comma is invalid.
+#[test]
+fn cursor_keeps_the_trailing_keyword() {
+    use koala_css::Cursor;
+    let cursor = |value: &str| div_style(&format!("div {{ cursor: {value}; }}")).cursor;
+
+    assert_eq!(cursor("pointer"), Some(Cursor::Pointer));
+    assert_eq!(cursor("NOT-ALLOWED"), Some(Cursor::NotAllowed));
+    assert_eq!(cursor("url(hand.png), pointer"), Some(Cursor::Pointer));
+    assert_eq!(cursor("url(a.svg), url(b.png) 2 3, grab"), Some(Cursor::Grab));
+
+    assert_eq!(cursor("url(hand.png) pointer"), None);
+    assert_eq!(cursor("pointer help"), None);
+    assert_eq!(cursor("hand"), None);
+}
+
+/// "Inherited: yes"
+#[test]
+fn cursor_is_inherited() {
+    use koala_css::Cursor;
+    let mut tree = DomTree::new();
+    let div = tree.alloc(make_element("div", None, &[]));
+    let span = tree.alloc(make_element("span", None, &[]));
+    tree.append_child(NodeId::ROOT, div);
+    tree.append_child(div, span);
+    let styles = compute_styles(&tree, &empty_stylesheet(), &parse_css("div { cursor: help; }"));
+    assert_eq!(styles.get(&span).expect("styled").cursor, Some(Cursor::Help));
+}
+
+/// [HTML § 15.3.4](https://html.spec.whatwg.org/multipage/rendering.html#phrasing-content-3):
+/// ":link, :visited { text-decoration: underline; cursor: pointer; }".
+/// An `<a>` without `href` is not a link and gets neither.
+#[test]
+fn ua_stylesheet_gives_links_the_pointer_cursor() {
+    use koala_css::Cursor;
+    let mut tree = DomTree::new();
+    let link = tree.alloc(make_element_with_attrs("a", None, &[], &[("href", "/")]));
+    let anchor = tree.alloc(make_element("a", None, &[]));
+    tree.append_child(NodeId::ROOT, link);
+    tree.append_child(NodeId::ROOT, anchor);
+    let ua = koala_css::ua_stylesheet::ua_stylesheet();
+    let styles = compute_styles(&tree, ua, &empty_stylesheet());
+
+    assert_eq!(styles.get(&link).expect("styled").cursor, Some(Cursor::Pointer));
+    assert!(styles.get(&link).expect("styled").text_decoration_line.is_some());
+    assert_eq!(styles.get(&anchor).expect("styled").cursor, None);
+}

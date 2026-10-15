@@ -260,6 +260,152 @@ pub enum Visibility {
     Collapse,
 }
 
+/// [CSS UI 4 § 5.1.1 'cursor'](https://drafts.csswg.org/css-ui-4/#cursor)
+///
+/// "This property specifies the type of cursor to be displayed for the
+/// pointing device when the cursor's hotspot is within the element's
+/// border edge."
+///
+/// Value: `[<cursor-image>,]* <cursor-predefined>`
+/// Initial: auto
+/// Inherited: yes
+///
+/// Only the `<cursor-predefined>` keyword is kept. Image cursors are not
+/// supported, and the spec says what follows: "If the user agent cannot
+/// handle any of these author-defined cursors, it must use the
+/// keyword-based cursor at the end of the list."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum Cursor {
+    /// "The UA determines the cursor to display based on the current
+    /// context: auto behaves as text over selectable text or editable
+    /// elements, and default otherwise."
+    #[default]
+    Auto,
+    /// "The platform-dependent default cursor. Often rendered as an arrow."
+    Default,
+    /// "No cursor is rendered for the element."
+    None,
+    /// "A context menu is available for the object under the cursor."
+    ContextMenu,
+    /// "Help is available for the object under the cursor."
+    Help,
+    /// "The cursor is a pointer that indicates a link."
+    Pointer,
+    /// "A progress indicator. The program is performing some processing,
+    /// but is different from wait in that the user may still interact with
+    /// the program."
+    Progress,
+    /// "Indicates that the program is busy and the user should wait."
+    Wait,
+    /// "Indicates that a cell or set of cells may be selected."
+    Cell,
+    /// "A simple crosshair (e.g., short line segments resembling a "+"
+    /// sign)."
+    Crosshair,
+    /// "Indicates text that may be selected. Often rendered as a vertical
+    /// I-beam."
+    Text,
+    /// "Indicates vertical-text that may be selected. Often rendered as a
+    /// horizontal I-beam."
+    VerticalText,
+    /// "Indicates an alias of/shortcut to something is to be created."
+    Alias,
+    /// "Indicates something is to be copied."
+    Copy,
+    /// "Indicates something is to be moved."
+    Move,
+    /// "Indicates that the dragged item cannot be dropped at the current
+    /// cursor location."
+    NoDrop,
+    /// "Indicates that the requested action will not be carried out."
+    NotAllowed,
+    /// "Indicates that something can be grabbed (dragged to be moved)."
+    Grab,
+    /// "Indicates that something is being grabbed (dragged to be moved)."
+    Grabbing,
+    /// `e-resize`: "Indicates that some edge is to be moved."
+    EResize,
+    /// `n-resize`: "Indicates that some edge is to be moved."
+    NResize,
+    /// `ne-resize`: "Indicates that some edge is to be moved."
+    NeResize,
+    /// `nw-resize`: "Indicates that some edge is to be moved."
+    NwResize,
+    /// `s-resize`: "Indicates that some edge is to be moved."
+    SResize,
+    /// `se-resize`: "Indicates that some edge is to be moved."
+    SeResize,
+    /// `sw-resize`: "Indicates that some edge is to be moved."
+    SwResize,
+    /// `w-resize`: "Indicates that some edge is to be moved."
+    WResize,
+    /// `ew-resize`: "Indicates a bidirectional resize cursor."
+    EwResize,
+    /// `ns-resize`: "Indicates a bidirectional resize cursor."
+    NsResize,
+    /// `nesw-resize`: "Indicates a bidirectional resize cursor."
+    NeswResize,
+    /// `nwse-resize`: "Indicates a bidirectional resize cursor."
+    NwseResize,
+    /// "Indicates that the item/column can be resized horizontally."
+    ColResize,
+    /// "Indicates that the item/row can be resized vertically."
+    RowResize,
+    /// "Indicates that the something can be scrolled in any direction."
+    AllScroll,
+    /// "Indicates that something can be zoomed (magnified) in"
+    ZoomIn,
+    /// "Indicates that something can be zoomed (magnified) ... out"
+    ZoomOut,
+}
+
+impl Cursor {
+    /// The `<cursor-predefined>` keyword `keyword` names, matched
+    /// ASCII case-insensitively as CSS keywords are.
+    #[must_use]
+    pub fn from_keyword(keyword: &str) -> Option<Self> {
+        Some(match keyword.to_ascii_lowercase().as_str() {
+            "auto" => Self::Auto,
+            "default" => Self::Default,
+            "none" => Self::None,
+            "context-menu" => Self::ContextMenu,
+            "help" => Self::Help,
+            "pointer" => Self::Pointer,
+            "progress" => Self::Progress,
+            "wait" => Self::Wait,
+            "cell" => Self::Cell,
+            "crosshair" => Self::Crosshair,
+            "text" => Self::Text,
+            "vertical-text" => Self::VerticalText,
+            "alias" => Self::Alias,
+            "copy" => Self::Copy,
+            "move" => Self::Move,
+            "no-drop" => Self::NoDrop,
+            "not-allowed" => Self::NotAllowed,
+            "grab" => Self::Grab,
+            "grabbing" => Self::Grabbing,
+            "e-resize" => Self::EResize,
+            "n-resize" => Self::NResize,
+            "ne-resize" => Self::NeResize,
+            "nw-resize" => Self::NwResize,
+            "s-resize" => Self::SResize,
+            "se-resize" => Self::SeResize,
+            "sw-resize" => Self::SwResize,
+            "w-resize" => Self::WResize,
+            "ew-resize" => Self::EwResize,
+            "ns-resize" => Self::NsResize,
+            "nesw-resize" => Self::NeswResize,
+            "nwse-resize" => Self::NwseResize,
+            "col-resize" => Self::ColResize,
+            "row-resize" => Self::RowResize,
+            "all-scroll" => Self::AllScroll,
+            "zoom-in" => Self::ZoomIn,
+            "zoom-out" => Self::ZoomOut,
+            _ => return None,
+        })
+    }
+}
+
 /// [§ 7.2 Explicit Track Sizing](https://www.w3.org/TR/css-grid-1/#track-sizing)
 ///
 /// "A track sizing function can be specified as a length, a percentage of the
@@ -783,6 +929,16 @@ pub struct ComputedStyle {
     /// Initial: visible
     /// Inherited: yes
     pub visibility: Option<Visibility>,
+
+    /// [CSS UI 4 § 5.1.1 'cursor'](https://drafts.csswg.org/css-ui-4/#cursor)
+    ///
+    /// "This property specifies the type of cursor to be displayed for the
+    /// pointing device when the cursor's hotspot is within the element's
+    /// border edge."
+    ///
+    /// Initial: auto
+    /// Inherited: yes
+    pub cursor: Option<Cursor>,
 
     /// [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
     ///
@@ -1898,6 +2054,31 @@ impl ComputedStyle {
                     }
                 } else {
                     reject(decl);
+                }
+            }
+            // [CSS UI 4 § 5.1.1 'cursor'](https://drafts.csswg.org/css-ui-4/#cursor)
+            //
+            // "Value: [<cursor-image>,]* <cursor-predefined>"
+            //
+            // The keyword is the last component. Anything before it must
+            // end in the comma that closes the last `<cursor-image>`; the
+            // images themselves are skipped (see `Cursor`).
+            "cursor" => {
+                let mut significant = values
+                    .iter()
+                    .filter(|v| !matches!(v, ComponentValue::Token(CSSToken::Whitespace)))
+                    .rev();
+                let keyword = match significant.next() {
+                    Some(ComponentValue::Token(CSSToken::Ident(ident))) => Cursor::from_keyword(ident),
+                    _ => None,
+                };
+                let preceded_by_comma_or_nothing = matches!(
+                    significant.next(),
+                    None | Some(ComponentValue::Token(CSSToken::Comma))
+                );
+                match keyword {
+                    Some(cursor) if preceded_by_comma_or_nothing => self.cursor = Some(cursor),
+                    _ => reject(decl),
                 }
             }
             // [§ 3.2 'opacity'](https://www.w3.org/TR/css-color-4/#transparency)
