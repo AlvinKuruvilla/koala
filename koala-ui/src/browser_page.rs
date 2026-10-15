@@ -51,20 +51,6 @@ use crate::page_state::PageState;
 use crate::render_worker::{RenderResult, WorkerMessage, run_render_worker};
 use crate::worker::Worker;
 
-/// Summary returned by `try_take_load_result`. The GUI side uses
-/// `state_swapped` to decide whether to trigger a fresh render, and
-/// `load_finished` to toggle any loading indicator (success and
-/// failure both count as "finished" — the engine is no longer working
-/// on that request).
-pub struct LoadPollResult {
-    /// `true` when the loader worker delivered a new page state on
-    /// this poll (successful load only).
-    pub state_swapped: bool,
-    /// `true` when a load request completed (either with a new state
-    /// or with an error). `false` means no load event was pending.
-    pub load_finished: bool,
-}
-
 /// A rendered frame, ready to display.
 pub struct Frame {
     pub image: Image,
@@ -159,16 +145,6 @@ impl BrowserPage {
         self.state_generation
     }
 
-    /// Parses `html` on the calling thread and replaces the current
-    /// page state synchronously. Used for ad-hoc in-memory HTML
-    /// (tests, debugging) — clears the history stack because the
-    /// HTML has no identity the user could navigate back to.
-    pub fn load_html(&mut self, html: &str) {
-        self.set_state(PageState::from_document(parse_html_string(html)));
-        self.current_url = None;
-        self.history.clear();
-        self.history_index = None;
-    }
 
     /// Loads the built-in landing page (see `landing.rs`). Runs
     /// synchronously — no worker hop, since the HTML is already in
@@ -308,16 +284,13 @@ impl BrowserPage {
         self.title.clone()
     }
 
-    /// Non-blocking check for a completed URL load. The loader
-    /// always produces a valid `PageState` (failures are turned
-    /// into an error page inside the worker), so every received
-    /// result counts as both `state_swapped` and `load_finished`.
-    pub fn try_take_load_result(&mut self) -> LoadPollResult {
+    /// Non-blocking check for a completed URL load. Returns `true` when
+    /// one arrived and became the current page. The loader turns
+    /// failures into an error page, so every completed load swaps the
+    /// page.
+    pub fn try_take_load_result(&mut self) -> bool {
         let Some(LoadResult { url, source, state }) = self.loader.try_recv() else {
-            return LoadPollResult {
-                state_swapped: false,
-                load_finished: false,
-            };
+            return false;
         };
 
         self.set_state(Some(state));
@@ -354,10 +327,7 @@ impl BrowserPage {
             }
         }
 
-        LoadPollResult {
-            state_swapped: true,
-            load_finished: true,
-        }
+        true
     }
 
     /// Asks the render worker for a frame at this size, in physical

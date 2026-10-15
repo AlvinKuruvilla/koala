@@ -340,8 +340,8 @@ fn main() -> Result<(), slint::PlatformError> {
         // background tabs need this so their labels and spinners
         // update when an off-screen load completes.
         for (i, tab) in tabs_ref.iter().enumerate() {
-            let load_update = tab.page.borrow_mut().try_take_load_result();
-            if load_update.state_swapped {
+            let page_swapped = tab.page.borrow_mut().try_take_load_result();
+            if page_swapped {
                 let page = tab.page.borrow();
                 *tab.title.borrow_mut() = page.current_title();
                 *tab.url_text.borrow_mut() = page.current_url().unwrap_or_default();
