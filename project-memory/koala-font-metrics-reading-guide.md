@@ -41,8 +41,9 @@ It must open both a single font (`.ttf`, `.otf`) and one face of a
 collection (`.ttc`): the first font Koala tries on macOS is
 `/System/Library/Fonts/Helvetica.ttc`.
 
-`koala-font` takes `&[u8]` and does no I/O. Reading the file stays with
-the caller, per the layering rule in `koala-std-roadmap.md`.
+`koala-font` reads through a source the caller provides and does no
+I/O itself; opening the file stays with the caller, per the layering
+rule in `koala-std-roadmap.md`. See Decisions below.
 
 ### Left out on purpose
 
@@ -214,14 +215,79 @@ checks. Revisit at the rasterizer, which needs coverage buffers.
 Against: error variants cannot carry formatted strings. With a typed
 enum they do not need to.
 
+## Decisions (2026-10-15)
+
+The recommendations above were taken, except `no_std`: the crate uses
+`std`. The API follows fontdue's shape (`Font::from_bytes` plus
+`FontSettings { collection_index }`), with two departures:
+
+- **Typed errors**: `FontError`, where fontdue returns `&'static str`.
+- **Lazy, ranged reads**: fontdue copies everything out when the font
+  is built. Measured in release on 2026-10-15, fontdue's parse costs
+  7-9 ms per font against 0.1-0.4 ms to read the whole file, so eager
+  parsing is the cost to avoid. `Font` instead reads through a
+  *source* and asks it only for the byte ranges it needs. For the
+  metrics that is the collection header, the table directory and four
+  small tables: under a kilobyte per face, wherever the bytes live.
+
+The source is a trait the caller implements, so `koala-font` itself
+still does no I/O:
+
+```text
+FontSource::read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()>
+```
+
+Its signature is `std::os::unix::fs::FileExt::read_exact_at`'s, so a
+`File` source is a one-line wrapper on Unix (positioned reads, no
+seeking, shareable by `&`). Bytes in memory (`Arc<[u8]>`, `Vec<u8>`)
+are a source too, returning `UnexpectedEof` past the end. Reading the
+whole file into memory stays the simple path; asking a file for a few
+ranges is the path for CSS font matching, which will ask small
+questions of every system font.
+
+```text
+FontSettings { collection_index: u32 }                  // Default: 0
+Font::from_source(source, settings) -> Result<Font<S>, FontError>
+face_count(&source) -> Result<u32, FontError>
+font.units_per_em() -> u16
+font.hhea_metrics() -> VerticalMetrics { ascender, descender, line_gap }
+font.typo_metrics() -> Option<VerticalMetrics>
+font.underline()    -> Option<DecorationLine { position, thickness }>
+font.strikeout()    -> Option<DecorationLine>
+font.scale_factor(px) -> f32
+```
+
+Values are in font units. The `FontMetrics` implementation in
+`koala-browser` applies CSS's choice of typo or `hhea` metrics and the
+scaling.
+
+What `Font` keeps between calls (the table directory, the decoded
+metrics, the source) is yours to decide. The v0 values are tiny, so
+reading them all in `from_source` is reasonable; the glyph tables in
+later slices are what must stay unread until asked for.
+
 ## Testing
 
 `ttf-parser` 0.21 is already in the dependency tree through fontdue
-and reads all of these values. As a dev-dependency it can be the
+and reads all of these values. As a dev-dependency it is the
 differential oracle, as Boa is planned to be for the JS engine: for
-every font file on the machine, every value `koala-font` reports must
-equal `ttf-parser`'s. That runs over real data rather than a
-hand-made fixture.
+every face of every font file on the machine, every value `koala-font`
+reports must equal `ttf-parser`'s. That runs over real data rather
+than a hand-made fixture. `tests/ttf_parser_oracle.rs`:
+
+- compares each face read from memory, and again read from the file
+  through a counting source, which must give the same values while
+  reading at most 4 KiB per face;
+- compares `OS/2` values only where `ttf-parser` keeps the table: it
+  drops `OS/2` entirely when the version is above 5 or a version 0
+  table is shorter than 78 bytes, where `koala-font` reports what is
+  there;
+- reads `ttf-parser`'s raw table values (`Face::tables()`), not its
+  `underline_metrics()`, which applies variable-font adjustments that
+  v0 does not.
+
+A quickcheck property test asserts that arbitrary bytes give an error
+or a font, never a panic.
 
 ## After this slice
 

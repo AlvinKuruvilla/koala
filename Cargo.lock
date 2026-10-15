@@ -3306,6 +3306,8 @@ dependencies = [
 name = "koala-font"
 version = "0.1.0"
 dependencies = [
+ "quickcheck",
+ "thiserror 2.0.21",
  "ttf-parser 0.21.1",
 ]
 
