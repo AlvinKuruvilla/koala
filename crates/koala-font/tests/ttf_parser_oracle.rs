@@ -35,7 +35,8 @@ struct CountingFile {
 
 impl FontSource for CountingFile {
     fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
-        self.bytes_read.set(self.bytes_read.get() + buf.len() as u64);
+        self.bytes_read
+            .set(self.bytes_read.get() + buf.len() as u64);
         self.file.read_exact_at(buf, offset)
     }
 }
@@ -93,12 +94,32 @@ impl Expected {
                 differences.push(format!("{what}: koala-font {ours}, ttf-parser {theirs}"));
             }
         };
-        check("unitsPerEm", format!("{}", font.units_per_em()), format!("{}", self.units_per_em));
-        check("hhea", format!("{:?}", font.hhea_metrics()), format!("{:?}", self.hhea));
-        check("underline", format!("{:?}", font.underline()), format!("{:?}", self.underline));
+        check(
+            "unitsPerEm",
+            format!("{}", font.units_per_em()),
+            format!("{}", self.units_per_em),
+        );
+        check(
+            "hhea",
+            format!("{:?}", font.hhea_metrics()),
+            format!("{:?}", self.hhea),
+        );
+        check(
+            "underline",
+            format!("{:?}", font.underline()),
+            format!("{:?}", self.underline),
+        );
         if let Some((typo, strikeout)) = self.os2 {
-            check("typo", format!("{:?}", font.typo_metrics()), format!("{:?}", Some(typo)));
-            check("strikeout", format!("{:?}", font.strikeout()), format!("{:?}", Some(strikeout)));
+            check(
+                "typo",
+                format!("{:?}", font.typo_metrics()),
+                format!("{:?}", Some(typo)),
+            );
+            check(
+                "strikeout",
+                format!("{:?}", font.strikeout()),
+                format!("{:?}", Some(strikeout)),
+            );
         }
         differences
     }
@@ -112,25 +133,37 @@ fn metrics_match_ttf_parser_on_every_system_font() {
     let mut faces = 0;
     let mut failures = Vec::new();
     for path in &files {
-        let Ok(bytes) = std::fs::read(path) else { continue };
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
         let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(1);
         match face_count(bytes.as_slice()) {
             Ok(ours) if ours == count => {}
-            other => failures.push(format!("{}: face count {other:?}, expected {count}", path.display())),
+            other => failures.push(format!(
+                "{}: face count {other:?}, expected {count}",
+                path.display()
+            )),
         }
 
         let shared: Arc<[u8]> = Arc::from(bytes.as_slice());
         for index in 0..count {
             // A face ttf-parser cannot read gives nothing to compare with.
-            let Ok(face) = ttf_parser::Face::parse(&bytes, index) else { continue };
+            let Ok(face) = ttf_parser::Face::parse(&bytes, index) else {
+                continue;
+            };
             faces += 1;
             let expected = Expected::of(&face);
-            let settings = FontSettings { collection_index: index };
+            let settings = FontSettings {
+                collection_index: index,
+            };
             let name = format!("{} face {index}", path.display());
 
             match Font::from_source(Arc::clone(&shared), settings) {
                 Ok(font) => failures.extend(
-                    expected.differences(&font).into_iter().map(|d| format!("{name} (memory): {d}")),
+                    expected
+                        .differences(&font)
+                        .into_iter()
+                        .map(|d| format!("{name} (memory): {d}")),
                 ),
                 Err(error) => failures.push(format!("{name} (memory): {error}")),
             }
@@ -138,11 +171,16 @@ fn metrics_match_ttf_parser_on_every_system_font() {
             match Font::from_source(counting_file(path), settings) {
                 Ok(font) => {
                     failures.extend(
-                        expected.differences(&font).into_iter().map(|d| format!("{name} (file): {d}")),
+                        expected
+                            .differences(&font)
+                            .into_iter()
+                            .map(|d| format!("{name} (file): {d}")),
                     );
                     let read = font.source().bytes_read.get();
                     if read > READ_BUDGET {
-                        failures.push(format!("{name} (file): read {read} bytes, budget {READ_BUDGET}"));
+                        failures.push(format!(
+                            "{name} (file): read {read} bytes, budget {READ_BUDGET}"
+                        ));
                     }
                 }
                 Err(error) => failures.push(format!("{name} (file): {error}")),

@@ -3,7 +3,11 @@
 use std::path::{Path, PathBuf};
 
 /// Where macOS and common Linux distributions keep system fonts.
-const FONT_DIRS: &[&str] = &["/System/Library/Fonts", "/Library/Fonts", "/usr/share/fonts"];
+const FONT_DIRS: &[&str] = &[
+    "/System/Library/Fonts",
+    "/Library/Fonts",
+    "/usr/share/fonts",
+];
 
 /// Every `.ttf`, `.otf` and `.ttc` file under the system font
 /// directories, sorted so failures come out in a stable order.
@@ -11,7 +15,9 @@ pub fn system_font_files() -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut pending: Vec<PathBuf> = FONT_DIRS.iter().map(PathBuf::from).collect();
     while let Some(dir) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {

@@ -17,8 +17,17 @@ fn reads_big_endian_fields_in_order() {
     let bytes = [0x00, 0x01, 0xFF, 0xFE, 0x00, 0x01, 0x80, 0x00];
     let mut reader = Reader::new(&bytes);
     assert_eq!(reader.read_array().map(u16::from_be_bytes), Some(1));
-    assert_eq!(reader.read_array().map(FWord::from_be_bytes), Some(FWord::from(-2)));
-    assert_eq!(reader.read_array().map(Fixed::from_be_bytes).map(Fixed::to_f64), Some(1.5));
+    assert_eq!(
+        reader.read_array().map(FWord::from_be_bytes),
+        Some(FWord::from(-2))
+    );
+    assert_eq!(
+        reader
+            .read_array()
+            .map(Fixed::from_be_bytes)
+            .map(Fixed::to_f64),
+        Some(1.5)
+    );
     assert_eq!(reader.read_array::<1>(), None);
 }
 
@@ -50,7 +59,10 @@ fn reads_a_table_directory_header_in_spec_order() {
         0x00, 0x20, // rangeShift
     ];
     let mut reader = Reader::new(&bytes);
-    assert_eq!(reader.read_array().map(u32::from_be_bytes), Some(0x0001_0000));
+    assert_eq!(
+        reader.read_array().map(u32::from_be_bytes),
+        Some(0x0001_0000)
+    );
     assert_eq!(reader.read_array().map(u16::from_be_bytes), Some(10));
     assert_eq!(reader.read_array().map(u16::from_be_bytes), Some(128));
     assert_eq!(reader.read_array().map(u16::from_be_bytes), Some(3));

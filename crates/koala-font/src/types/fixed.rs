@@ -65,7 +65,10 @@ mod tests {
     /// The extremes need all 32 bits; `f64` holds them exactly.
     #[test]
     fn extremes_are_exact() {
-        assert_eq!(Fixed::from_bits(i32::MAX).to_f64(), 32767.0 + 65535.0 / 65536.0);
+        assert_eq!(
+            Fixed::from_bits(i32::MAX).to_f64(),
+            32767.0 + 65535.0 / 65536.0
+        );
         assert_eq!(Fixed::from_bits(i32::MIN).to_f64(), -32768.0);
     }
 

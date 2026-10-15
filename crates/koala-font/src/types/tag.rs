@@ -155,14 +155,26 @@ mod tests {
     fn rejects_each_broken_rule() {
         assert_eq!(
             Tag::new([b'h', 0x1F, b'a', b'd']),
-            Err(InvalidTag::ByteOutOfRange { index: 1, byte: 0x1F })
+            Err(InvalidTag::ByteOutOfRange {
+                index: 1,
+                byte: 0x1F
+            })
         );
         assert_eq!(
             Tag::new([b'h', b'e', b'a', 0x7F]),
-            Err(InvalidTag::ByteOutOfRange { index: 3, byte: 0x7F })
+            Err(InvalidTag::ByteOutOfRange {
+                index: 3,
+                byte: 0x7F
+            })
         );
-        assert_eq!(Tag::new(*b"he d"), Err(InvalidTag::SpaceBeforeCharacter { index: 3 }));
-        assert_eq!(Tag::new(*b" abc"), Err(InvalidTag::SpaceBeforeCharacter { index: 1 }));
+        assert_eq!(
+            Tag::new(*b"he d"),
+            Err(InvalidTag::SpaceBeforeCharacter { index: 3 })
+        );
+        assert_eq!(
+            Tag::new(*b" abc"),
+            Err(InvalidTag::SpaceBeforeCharacter { index: 1 })
+        );
         assert_eq!(Tag::new(*b"    "), Err(InvalidTag::NoCharacters));
     }
 

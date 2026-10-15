@@ -22,7 +22,12 @@ fn sample_font() -> Option<Vec<u8>> {
 /// Open face `index` of `bytes` and read everything; only a panic fails.
 fn open_and_read(bytes: Vec<u8>, index: u32) {
     let _ = face_count(bytes.as_slice());
-    if let Ok(font) = Font::from_source(bytes, FontSettings { collection_index: index }) {
+    if let Ok(font) = Font::from_source(
+        bytes,
+        FontSettings {
+            collection_index: index,
+        },
+    ) {
         read_everything(&font);
     }
 }

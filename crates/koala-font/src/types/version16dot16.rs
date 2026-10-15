@@ -103,8 +103,8 @@ mod tests {
 
     #[test]
     fn orders_as_versions() {
-        let versions = [0x0001_0000, 0x0002_0000, 0x0002_5000, 0x0003_0000]
-            .map(Version16Dot16::from_bits);
+        let versions =
+            [0x0001_0000, 0x0002_0000, 0x0002_5000, 0x0003_0000].map(Version16Dot16::from_bits);
         assert!(versions.is_sorted());
     }
 }
