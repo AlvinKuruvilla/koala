@@ -37,6 +37,7 @@ mod directory;
 mod error;
 mod font;
 mod metrics;
+mod reader;
 mod source;
 mod tables;
 mod types;
