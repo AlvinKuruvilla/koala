@@ -3303,6 +3303,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "koala-font"
+version = "0.1.0"
+dependencies = [
+ "ttf-parser 0.21.1",
+]
+
+[[package]]
 name = "koala-html"
 version = "0.1.0"
 dependencies = [
