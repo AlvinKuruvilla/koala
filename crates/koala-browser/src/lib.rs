@@ -101,6 +101,42 @@ pub struct LoadedDocument {
     ///
     /// Used by the renderer to draw `DrawSvg` commands.
     pub inline_svgs: HashMap<NodeId, std::sync::Arc<inline_svg::InlineSvg>>,
+
+    /// The intrinsic size of each loaded `<img>`, keyed by the element.
+    /// Building the layout tree again (see [`restyle`]) needs it.
+    pub image_dims: HashMap<NodeId, (f32, f32)>,
+}
+
+/// What [`restyle`] recomputes.
+pub struct Restyle {
+    /// Computed styles per node.
+    pub styles: HashMap<NodeId, ComputedStyle>,
+    /// Layout tree built from `styles`, not yet laid out.
+    pub layout_tree: Option<LayoutBox>,
+    /// Inline SVGs are parsed against their computed `color`
+    /// (`currentColor`), so a restyle can change them too.
+    pub inline_svgs: HashMap<NodeId, std::sync::Arc<inline_svg::InlineSvg>>,
+}
+
+/// Recompute styles, the layout tree and inline SVGs after something
+/// changed what selectors match without a new load, such as the hovered
+/// node ([`DomTree::set_hovered`]).
+///
+/// The whole document is restyled.
+#[must_use]
+pub fn restyle(
+    dom: &DomTree,
+    stylesheet: &Stylesheet,
+    image_dims: &HashMap<NodeId, (f32, f32)>,
+) -> Restyle {
+    let ua = koala_css::ua_stylesheet::ua_stylesheet();
+    let (styles, layout_tree) = recompute_styles_and_layout(dom, ua, stylesheet, image_dims);
+    let inline_svgs = inline_svg::load_inline_svgs(dom, &styles);
+    Restyle {
+        styles,
+        layout_tree,
+        inline_svgs,
+    }
 }
 
 impl LoadedDocument {
@@ -350,6 +386,7 @@ fn parse_html_with_base_url<H: JsHooks>(
         diagnostics: diagnostics::take(),
         images,
         inline_svgs,
+        image_dims,
     }
 }
 
