@@ -861,3 +861,8 @@ measuring layout when the resolved size equals the base size is the fix.
   74 ms Wikipedia cascade, which every hover change now repeats.
 - The cascade skips at-rules (`Rule::At(_) => {}`), so `@media` rules never
   apply, and `state_dependencies` misses `:hover` rules inside them.
+- `cached_fonts` (`koala-ui/src/render_worker.rs` on `ui/pointer`, formerly
+  `browser_page.rs`) says loading four font files "costs ~250 ms". Measured
+  2026-10-15 in release: 0.1-0.4 ms to read each file and 7-9 ms for
+  fontdue to parse it, about 35 ms for four. Probably a debug-build or
+  pre-rework figure; re-measure before relying on it.
