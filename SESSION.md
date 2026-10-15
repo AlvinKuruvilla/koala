@@ -849,3 +849,9 @@ measuring layout when the resolved size equals the base size is the fix.
   find the `<a>`. § 9.2.1.1 breaks the inline box into two, one inside
   each anonymous block. The block-in-inline arm of `layout_inline_content`
   is then unreachable through the box tree.
+- `LayoutBox::hit_test` walks every box on each call, and a hit on an
+  inline-box fragment searches the owning block's subtree (`find_box`) to
+  read that box's visibility. Not measured; re-cascade and relayout on
+  hover cost far more today. If a profile shows it: store visibility on
+  the fragment, then prune subtrees by descendant bounds (which must take
+  in positioned descendants), then cache the last hit until relayout.

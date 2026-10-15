@@ -28,6 +28,7 @@ pub mod flex;
 pub mod float;
 pub mod grid;
 pub mod formatting_context;
+mod hit_test;
 pub mod inline;
 pub mod layout_box;
 pub mod positioned;
@@ -46,7 +47,7 @@ pub use inline::{
     ApproximateFontMetrics, FontMetrics, FragmentContent, InlineLayout, LineBox, LineFragment,
     TextRun, VerticalAlign,
 };
-pub use layout_box::{BoxType, LayoutBox};
+pub use layout_box::{BoxType, ElementBoxId, LayoutBox};
 pub use positioned::{BoxOffsets, PositionedLayout};
 pub use stacking::{StackingContext, ZIndex};
 pub use table::TableLayout;

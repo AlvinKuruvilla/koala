@@ -9,10 +9,9 @@
 )]
 
 use koala_css::layout::default_display_for_element;
-use koala_css::layout::layout_box::ElementBoxId;
 use koala_css::{
-    ApproximateFontMetrics, DisplayValue, FragmentContent, InnerDisplayType, LayoutBox,
-    OuterDisplayType, Rect, TextRun,
+    ApproximateFontMetrics, DisplayValue, ElementBoxId, FragmentContent, InnerDisplayType,
+    LayoutBox, OuterDisplayType, Rect, TextRun,
 };
 
 #[test]
@@ -5030,4 +5029,191 @@ fn test_inline_box_continues_after_br() {
     for line in &p.line_boxes {
         assert_eq!(inline_box_fragments(line).len(), 1);
     }
+}
+
+// Hit testing
+//
+// [CSSOM View § 5](https://drafts.csswg.org/cssom-view/#dom-document-elementsfrompoint)
+//
+// "For each box in the viewport, in paint order, starting with the topmost
+// box, that would be a target for hit testing at coordinates x,y"
+
+fn id_of(layout_box: &LayoutBox) -> ElementBoxId {
+    layout_box
+        .box_type
+        .element_box_id()
+        .expect("an element's box")
+}
+
+fn centre(rect: Rect) -> (f32, f32) {
+    (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
+}
+
+/// Inside `<a>one <em>two</em></a>`, a point on "two" is in both
+/// fragments; the `<em>`'s comes later, so it wins. A point on "one" is in
+/// the `<a>`'s only.
+#[test]
+fn test_hit_test_finds_innermost_inline_box() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; }</style>\
+         <p><a>one <em>two</em></a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    let a = &p.children[0];
+    let em = a
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("em"))
+        .expect("<em> inside <a>");
+
+    let texts = text_fragments(&p.line_boxes[0]);
+    let (_, one) = texts[0];
+    let (_, two) = *texts.last().expect("the <em>'s text");
+    let (x, y) = centre(one);
+    assert_eq!(root.hit_test(x, y), Some(id_of(a)));
+    let (x, y) = centre(two);
+    assert_eq!(root.hit_test(x, y), Some(id_of(em)));
+}
+
+/// Text outside any inline box belongs to the block that owns its line.
+#[test]
+fn test_hit_test_bare_text_hits_its_block() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; }</style>\
+         <p>plain <a>link</a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    let (_, plain) = text_fragments(&p.line_boxes[0])[0];
+    let (x, y) = centre(plain);
+    assert_eq!(root.hit_test(x, y), Some(id_of(p)));
+}
+
+/// [Selectors 4 § 9.1](https://www.w3.org/TR/selectors-4/#the-hover-pseudo)
+///
+/// "The :hover pseudo-class applies while the user designates an element
+/// (or pseudo-element) with a pointing device"
+///
+/// An inline `::before` gets its own inline-box fragment, so the hit is the
+/// pseudo-element, whose `node` is its element.
+#[test]
+fn test_hit_test_returns_pseudo_element() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; } \
+         span::before { content: 'icon'; }</style>\
+         <p><span>label</span></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    let span = &p.children[0];
+    let (_, icon) = text_fragments(&p.line_boxes[0])[0];
+    let (x, y) = centre(icon);
+    let hit = root.hit_test(x, y).expect("the ::before");
+    assert_eq!(hit.node, id_of(span).node);
+    assert!(hit.pseudo_element.is_some(), "{hit:?}");
+}
+
+/// An inline-block inside an `<a>` is painted after the line's text, so it
+/// is hit before the `<a>`'s fragment around it.
+#[test]
+fn test_hit_test_inline_block_inside_inline_box() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; } \
+         b { display: inline-block; width: 30px; height: 10px; }</style>\
+         <p><a>go <b></b></a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    let b = &p.children[0]
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("b"))
+        .expect("<b> inside <a>");
+    let (x, y) = centre(b.dimensions.border_box());
+    assert_eq!(root.hit_test(x, y), Some(id_of(b)));
+}
+
+/// [CSS Display 4 § 5](https://drafts.csswg.org/css-display-4/#visibility)
+///
+/// "Invisible boxes ... cannot be interacted with (and behave as if they
+/// had pointer-events: none)"
+///
+/// The hidden `<div>` is skipped, the visible `<p>` inside it is not, and a
+/// point on the hidden `<div>` outside the `<p>` falls through to `<body>`.
+#[test]
+fn test_hit_test_skips_invisible_box_but_not_its_children() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; } \
+         div { visibility: hidden; padding-bottom: 40px; } \
+         p { visibility: visible; }</style>\
+         <div><p>shown</p></div></body></html>",
+    );
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+    let p = &div.children[0];
+
+    let (x, y) = centre(p.dimensions.border_box());
+    assert_eq!(root.hit_test(x, y), Some(id_of(p)));
+
+    let div_box = div.dimensions.border_box();
+    let below_p = div_box.y + div_box.height - 5.0;
+    assert_eq!(root.hit_test(10.0, below_p), Some(id_of(body)));
+}
+
+/// [CSS Backgrounds 3 § 4.3](https://www.w3.org/TR/css-backgrounds-3/#corner-clipping)
+///
+/// "pointer events to the curved border edge"
+///
+/// A 100×100 circle: its corner (2, 2) is outside the curve, its centre
+/// and the middle of its top edge are inside.
+#[test]
+fn test_hit_test_respects_border_radius() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } \
+         div { width: 100px; height: 100px; border-radius: 50px; }</style>\
+         <div></div></body></html>",
+    );
+    let body = box_at_depth(&root, 2);
+    let div = &body.children[0];
+    assert_eq!(root.hit_test(50.0, 50.0), Some(id_of(div)));
+    assert_eq!(root.hit_test(50.0, 1.0), Some(id_of(div)));
+    assert_eq!(root.hit_test(2.0, 2.0), Some(id_of(body)));
+}
+
+/// [CSS Overflow 3 § 3](https://drafts.csswg.org/css-overflow-3/#overflow-control)
+///
+/// "the box's content is clipped to its overflow clip edge"
+///
+/// The inner `<div>` overflows its 20px-tall parent. Below the parent it
+/// is clipped away, so the point goes to `<body>`.
+#[test]
+fn test_hit_test_respects_overflow_clip() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; padding-bottom: 100px; } \
+         .clip { height: 20px; overflow: hidden; } \
+         .tall { height: 80px; }</style>\
+         <div class='clip'><div class='tall'></div></div></body></html>",
+    );
+    let body = box_at_depth(&root, 2);
+    let clip = &body.children[0];
+    let tall = &clip.children[0];
+    assert_eq!(root.hit_test(10.0, 10.0), Some(id_of(tall)));
+    assert_eq!(root.hit_test(10.0, 50.0), Some(id_of(body)));
+}
+
+/// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
+///
+/// Positioned descendants paint after in-flow ones, so an absolutely
+/// positioned box earlier in the tree is hit before an in-flow box after
+/// it.
+#[test]
+fn test_hit_test_positioned_box_is_on_top() {
+    let root = layout_html(
+        "<html><body><style>body { margin: 0; } \
+         .over { position: absolute; top: 0; left: 0; width: 50px; height: 50px; } \
+         .under { height: 100px; }</style>\
+         <div class='over'></div><div class='under'></div></body></html>",
+    );
+    let body = box_at_depth(&root, 2);
+    let over = &body.children[0];
+    let under = &body.children[1];
+    assert_eq!(root.hit_test(10.0, 10.0), Some(id_of(over)));
+    assert_eq!(root.hit_test(10.0, 80.0), Some(id_of(under)));
 }
