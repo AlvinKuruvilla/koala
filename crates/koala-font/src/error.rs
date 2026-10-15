@@ -17,6 +17,13 @@ pub enum FontError {
     /// start with anything, and `sfntVersion` 0x00010000 is not a tag.
     #[error("not an OpenType font or font collection: it starts with bytes {0:02x?}")]
     UnrecognizedSignature([u8; 4]),
+    /// The collection header's major version is neither 1 nor 2, so where
+    /// its fields are is unknown.
+    #[error("font collection header version {major} is not supported; only 1 and 2 are")]
+    UnsupportedCollectionVersion {
+        /// `majorVersion` as the header gives it.
+        major: u16,
+    },
     /// The requested face is past the end of the collection.
     #[error("face {index} was requested, but the font holds {count}")]
     FaceIndexOutOfRange {

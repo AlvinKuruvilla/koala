@@ -1,5 +1,6 @@
 //! A face of a font, and how to open one.
 
+use crate::directory::Header;
 use crate::error::FontError;
 use crate::metrics::{DecorationLine, VerticalMetrics};
 use crate::source::FontSource;
@@ -84,6 +85,5 @@ impl<S: FontSource> Font<S> {
 ///
 /// As [`Font::from_source`], for the header alone.
 pub fn face_count<S: FontSource + ?Sized>(source: &S) -> Result<u32, FontError> {
-    let _ = source;
-    todo!("1 for a single font, the TTC header's count for a collection")
+    Ok(Header::read(source)?.face_count())
 }
