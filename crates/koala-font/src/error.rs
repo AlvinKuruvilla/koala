@@ -2,7 +2,7 @@
 
 use std::io;
 
-use crate::tag::Tag;
+use crate::types::tag::Tag;
 
 /// Why a font could not be opened. Each is a reason to fall back to
 /// another font.
@@ -13,9 +13,10 @@ pub enum FontError {
     #[error("reading the font failed: {0}")]
     Source(#[from] io::Error),
     /// The first four bytes are neither an OpenType `sfntVersion` nor
-    /// `ttcf`.
-    #[error("not an OpenType font or font collection: it starts with '{0}'")]
-    UnrecognizedSignature(Tag),
+    /// `ttcf`. They are kept as bytes: a file that is not a font can
+    /// start with anything, and `sfntVersion` 0x00010000 is not a tag.
+    #[error("not an OpenType font or font collection: it starts with bytes {0:02x?}")]
+    UnrecognizedSignature([u8; 4]),
     /// The requested face is past the end of the collection.
     #[error("face {index} was requested, but the font holds {count}")]
     FaceIndexOutOfRange {

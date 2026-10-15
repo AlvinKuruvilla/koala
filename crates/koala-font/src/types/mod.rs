@@ -10,6 +10,7 @@
 pub mod f2dot14;
 pub mod fixed;
 pub mod fword;
+pub mod tag;
 pub mod u24;
 pub mod ufword;
 pub mod version16dot16;
