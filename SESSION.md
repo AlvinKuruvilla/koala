@@ -871,3 +871,12 @@ measuring layout when the resolved size equals the base size is the fix.
   in place of `head`, so `Font::from_source` fails with
   `MissingTable(head)`. ttf-parser rejects the same font. Matters once
   font fallback can pick such a font.
+- `<u>` text is not underlined: the UA stylesheet
+  (`crates/koala-css/src/ua_stylesheet.rs`) only gives `a` an
+  underline. HTML's rendering section has `u, ins { text-decoration:
+  underline; }` (and `s, strike, del` line-through), not checked yet.
+- Bold and italic runs are measured with the regular font but drawn with
+  Arial Bold/Italic, so they overflow their boxes:
+  `<b>bold gjpqy</b> <i>italic gjpqy</i>` at 12px draws the two runs
+  touching, with the space between them covered. Seen in
+  `tmp/underline/after.png`.
