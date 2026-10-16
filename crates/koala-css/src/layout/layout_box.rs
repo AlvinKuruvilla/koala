@@ -281,6 +281,7 @@ fn layout_inline_content(
                     margin_left,
                     margin_right,
                     border_padding,
+                    font_metrics,
                 );
 
                 // STEP 3: Recursively lay out the inline box's children.
