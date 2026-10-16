@@ -31,6 +31,7 @@ koala-html = { path = "crates/koala-html" }
 koala-css = { path = "crates/koala-css" }
 koala-js = { path = "crates/koala-js" }
 koala-std = { path = "crates/koala-std" }
+koala-font = { path = "crates/koala-font" }
 koala-wpt = { path = "crates/koala-wpt" }
 koala-browser = { path = "crates/koala-browser" }
 

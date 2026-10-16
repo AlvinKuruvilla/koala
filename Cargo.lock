@@ -3212,6 +3212,7 @@ dependencies = [
  "koala-css",
  "koala-dom",
  "koala-fetch",
+ "koala-font",
  "koala-html",
  "koala-js",
  "koala-std",

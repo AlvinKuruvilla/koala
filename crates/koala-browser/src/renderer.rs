@@ -31,7 +31,7 @@ use koala_common::image::LoadedImage;
 use crate::inline_svg::InlineSvg;
 
 /// Common system font paths to search for a default (regular) font.
-const FONT_SEARCH_PATHS: &[&str] = &[
+pub(crate) const FONT_SEARCH_PATHS: &[&str] = &[
     // macOS
     "/System/Library/Fonts/Helvetica.ttc",
     "/System/Library/Fonts/SFNS.ttf",

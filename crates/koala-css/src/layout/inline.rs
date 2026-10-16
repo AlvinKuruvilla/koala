@@ -54,6 +54,58 @@ pub trait FontMetrics {
     /// "The initial value of 'line-height' is 'normal'. We recommend a used
     /// value for 'normal' between 1.0 and 1.2."
     fn line_height(&self, font_size: f32) -> f32;
+
+    /// The font's own vertical metrics at `font_size`, in pixels.
+    ///
+    /// [§ 3.2.1 Ascent and Descent Metrics](https://drafts.csswg.org/css-inline-3/#ascent-descent)
+    ///
+    /// "CSS assumes that every font has font metrics that specify a
+    /// characteristic height above the baseline—called the ascent
+    /// metric—and a characteristic depth below it—called the descent
+    /// metric—which CSS uses for laying out text and boxes in an inline
+    /// formatting context."
+    ///
+    /// Which of a font's tables supply these is the implementor's
+    /// business: this trait is where font formats stop and CSS starts.
+    fn vertical_metrics(&self, font_size: f32) -> VerticalFontMetrics;
+}
+
+/// A font's vertical metrics at one font size, in pixels.
+///
+/// [§ 3.2 Font and Glyph Metrics](https://drafts.csswg.org/css-inline-3/#font-metrics)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VerticalFontMetrics {
+    /// "a characteristic height above the baseline—called the ascent
+    /// metric".
+    pub ascent: f32,
+    /// "a characteristic depth below it—called the descent metric",
+    /// positive below the baseline.
+    pub descent: f32,
+    /// [§ 3.2.2 Line Gap Metrics](https://drafts.csswg.org/css-inline-3/#font-line-gap)
+    ///
+    /// "a font-recommended “line gap” or “external leading” metric".
+    /// "UAs must floor the line gap metric at zero", so this is never
+    /// negative.
+    pub line_gap: f32,
+    /// The font's suggested underline, if it gives one.
+    ///
+    /// [§ 2.8.2 Using Font Metrics for Automatic Positioning](https://drafts.csswg.org/css-text-decor-4/#line-auto-offset)
+    ///
+    /// "Some font formats (such as OpenType) can offer information about
+    /// the appropriate position of a line decoration."
+    pub underline: Option<DecorationMetrics>,
+    /// The font's suggested line-through, if it gives one.
+    pub strikeout: Option<DecorationMetrics>,
+}
+
+/// Where a font places one of its decoration lines, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecorationMetrics {
+    /// Height of the line's top edge above the baseline; negative below
+    /// it, as an underline usually is.
+    pub top: f32,
+    /// The line's thickness.
+    pub thickness: f32,
 }
 
 /// Approximate font metrics using fixed ratios.
@@ -84,6 +136,19 @@ impl FontMetrics for ApproximateFontMetrics {
     fn line_height(&self, font_size: f32) -> f32 {
         const LINE_HEIGHT_RATIO: f32 = 1.2;
         font_size * LINE_HEIGHT_RATIO
+    }
+
+    /// The ascent is `ASCENDER_RATIO` of the em and the descent the rest,
+    /// with no line gap; the font is not known, so neither is where it
+    /// would put its decorations.
+    fn vertical_metrics(&self, font_size: f32) -> VerticalFontMetrics {
+        VerticalFontMetrics {
+            ascent: font_size * ASCENDER_RATIO,
+            descent: font_size * (1.0 - ASCENDER_RATIO),
+            line_gap: 0.0,
+            underline: None,
+            strikeout: None,
+        }
     }
 }
 
