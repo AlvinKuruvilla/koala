@@ -39,7 +39,7 @@ mod font;
 mod metrics;
 mod reader;
 mod source;
-mod tables;
+pub mod tables;
 mod types;
 
 pub use error::FontError;

@@ -45,6 +45,7 @@ forward_from_be_bytes! {
     U24 => 3,
     u32 => 4,
     i32 => 4,
+    i64 => 8,
     F2Dot14 => 2,
     FWord => 2,
     UFWord => 2,

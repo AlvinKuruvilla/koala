@@ -4,7 +4,7 @@ use crate::directory::{Header, TableDirectory};
 use crate::error::FontError;
 use crate::metrics::{DecorationLine, VerticalMetrics};
 use crate::source::FontSource;
-use crate::tables::{head, post};
+use crate::tables::{self, Head, Hhea, Os2, Post};
 
 /// How to open a font.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -14,13 +14,14 @@ pub struct FontSettings {
     pub collection_index: u32,
 }
 
-/// One face of a font, read on demand from its source.
+/// One face of a font: its font-wide tables, and the source to read
+/// more from.
 pub struct Font<S> {
     source: S,
-    /// `head.unitsPerEm`, in 16..=16384.
-    units_per_em: u16,
-    /// `post`'s underline fields, if the face has a readable `post`.
-    underline: Option<DecorationLine>,
+    head: Head,
+    hhea: Hhea,
+    os2: Option<Os2>,
+    post: Option<Post>,
 }
 
 impl<S: FontSource> Font<S> {
@@ -30,19 +31,19 @@ impl<S: FontSource> Font<S> {
     ///
     /// See [`FontError`]: the source could not be read, it is not an
     /// OpenType font or collection, the face does not exist, or a table
-    /// every face needs is missing or too short.
+    /// every face needs is missing, too short or invalid.
     pub fn from_source(source: S, settings: FontSettings) -> Result<Self, FontError> {
         // The tables are read here, not on demand, so the accessors below
         // cannot fail: a face that opens has every value they report.
-        // That costs reading `head` and `post` even for a caller that
-        // wants only one of them, a few dozen bytes each.
+        // That costs reading all four even for a caller that wants one,
+        // about 220 bytes.
         let directory = TableDirectory::read(&source, settings.collection_index)?;
-        let head = head::read(&source, &directory)?;
-        let underline = post::read(&source, &directory)?;
         Ok(Self {
+            head: tables::read_head(&source, &directory)?,
+            hhea: tables::read_hhea(&source, &directory)?,
+            os2: tables::read_os2(&source, &directory)?,
+            post: tables::read_post(&source, &directory)?,
             source,
-            units_per_em: head.units_per_em,
-            underline,
         })
     }
 
@@ -51,16 +52,42 @@ impl<S: FontSource> Font<S> {
         &self.source
     }
 
-    /// `head.unitsPerEm`: font units per em.
+    /// The `head` table. Every face that opens has one.
+    pub const fn head(&self) -> &Head {
+        &self.head
+    }
+
+    /// The `hhea` table. Every face that opens has one.
+    pub const fn hhea(&self) -> &Hhea {
+        &self.hhea
+    }
+
+    /// The `OS/2` table, or `None` if the face has none or one too short
+    /// for the fields every version has.
+    pub const fn os2(&self) -> Option<&Os2> {
+        self.os2.as_ref()
+    }
+
+    /// The `post` table's header, or `None` if the face has none or one
+    /// this crate cannot read.
+    pub const fn post(&self) -> Option<&Post> {
+        self.post.as_ref()
+    }
+
+    /// `head.unitsPerEm`: font units per em, in 16..=16384.
     #[must_use]
     pub const fn units_per_em(&self) -> u16 {
-        self.units_per_em
+        self.head.units_per_em
     }
 
     /// `hhea`'s `ascender`, `descender` and `lineGap`.
     #[must_use]
-    pub fn hhea_metrics(&self) -> VerticalMetrics {
-        todo!()
+    pub const fn hhea_metrics(&self) -> VerticalMetrics {
+        VerticalMetrics {
+            ascender: self.hhea.ascender,
+            descender: self.hhea.descender,
+            line_gap: self.hhea.line_gap,
+        }
     }
 
     /// `OS/2`'s `sTypoAscender`, `sTypoDescender` and `sTypoLineGap`, or
@@ -68,27 +95,40 @@ impl<S: FontSource> Font<S> {
     /// them.
     #[must_use]
     pub fn typo_metrics(&self) -> Option<VerticalMetrics> {
-        todo!()
+        let line_metrics = self.os2.as_ref()?.line_metrics?;
+        Some(VerticalMetrics {
+            ascender: line_metrics.s_typo_ascender,
+            descender: line_metrics.s_typo_descender,
+            line_gap: line_metrics.s_typo_line_gap,
+        })
     }
 
     /// `post`'s `underlinePosition` and `underlineThickness`, or `None`
-    /// if the font has no `post` table.
+    /// if the font has no readable `post` table.
     #[must_use]
-    pub const fn underline(&self) -> Option<DecorationLine> {
-        self.underline
+    pub fn underline(&self) -> Option<DecorationLine> {
+        let post = self.post.as_ref()?;
+        Some(DecorationLine {
+            position: post.underline_position,
+            thickness: post.underline_thickness,
+        })
     }
 
     /// `OS/2`'s `yStrikeoutPosition` and `yStrikeoutSize`, or `None` if
     /// the font has no `OS/2` table.
     #[must_use]
     pub fn strikeout(&self) -> Option<DecorationLine> {
-        todo!()
+        let os2 = self.os2.as_ref()?;
+        Some(DecorationLine {
+            position: os2.y_strikeout_position,
+            thickness: os2.y_strikeout_size,
+        })
     }
 
     /// Pixels per font unit at a font size of `px` pixels per em.
     #[must_use]
     pub fn scale_factor(&self, px: f32) -> f32 {
-        px / f32::from(self.units_per_em)
+        px / f32::from(self.head.units_per_em)
     }
 }
 
