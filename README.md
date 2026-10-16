@@ -5,7 +5,7 @@
 <h1 align="center">Koala</h1>
 
 <p align="center">
-  A browser engine for AI agents, written from scratch in Rust.
+  A browser engine AI agents can rewind, written from scratch in Rust.
 </p>
 
 <p align="center">
@@ -15,24 +15,64 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
 </p>
 
-Agents that browse the web today drive Chromium from outside, through
-screenshots or accessibility-tree snapshots. Koala is a browser engine built
-to be driven by agents directly: it will hand an agent the layout tree as
-typed data (boxes, roles, reading order) and each page's forms, links, and
-buttons as actions. People watch the same pages in a desktop browser.
+Web agents that search, learn, or are evaluated on websites need to try an
+action and go back. No browser can copy a running page, so today they
+relaunch the browser and replay every step from the start, or clone a whole
+virtual machine. Koala is being built so that a page's entire client state
+(DOM, styles, layout, and JavaScript heap) forks in milliseconds: try an
+action, look at the result, keep it or throw it away, and run many branches
+side by side, each rendering the same way every time.
 
-The agent interface does not exist yet. Today Koala parses, styles, lays
-out, and paints pages without WebKit, Blink, or Gecko, and renders them to
-PNG from the command line or in the desktop browser. JavaScript runs on
+The fork interface does not exist yet. A prototype that forks a process
+holding a loaded Wikipedia page and a live JavaScript heap takes 1 to 11 ms,
+against 170 ms to load the page again. Today Koala parses, styles, lays out,
+and paints pages without WebKit, Blink, or Gecko, and renders them to PNG
+from the command line or in the desktop browser. JavaScript runs on
 [Boa](https://github.com/boa-dev/boa).
+
+## Who needs this
+
+- **Agents that plan by searching.** Instead of committing to its first
+  guess, an agent can try several actions from the same page and keep the
+  best. Today going back means relaunching the browser and replaying every
+  step: one study measured 33 minutes per task, and in 40% of tasks the
+  replayed page no longer matched the original
+  ([ExACT](https://arxiv.org/abs/2410.02052)).
+- **Training agents with reinforcement learning.** Training runs many
+  attempts from the same starting state. When resetting the browser is
+  slow, the GPUs wait for it; cheap branching keeps them busy.
+- **Evaluating agents.** Every run starts from an identical page, and a
+  failed run can be replayed exactly to see where it went wrong.
+
+Rewinding covers what the browser holds: the page, its scripts, and their
+state. It cannot take back what the agent already sent to a server, such
+as an order placed or an email sent, so it fits exploring, reading, and
+self-hosted test sites, not undoing purchases on live ones.
 
 ## Contents
 
+- [Who needs this](#who-needs-this)
+- [Roadmap](#roadmap)
 - [Status](#status)
 - [Getting started](#getting-started)
 - [Architecture](#architecture)
 - [Development](#development)
 - [License](#license)
+
+## Roadmap
+
+1. Render the server-rendered apps that web-agent benchmarks run: WebShop,
+   and WebArena's store, forum, classifieds, and wiki.
+2. Interaction: scripts that keep running after load, form input and
+   submission, and navigation.
+3. Forking: one page per single-threaded process, forked on request, behind
+   `reset`, `step`, and `fork`.
+4. A measured result: a tree-search agent on WebShop, timed with forking
+   against replaying its actions.
+
+Agents will drive Koala through the Chrome DevTools Protocol, so tools built
+for Chrome, such as `chrome-devtools-mcp`, work unchanged; forking is the one
+thing Koala adds.
 
 ## Status
 
