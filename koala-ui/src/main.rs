@@ -201,8 +201,36 @@ fn main() -> Result<(), slint::PlatformError> {
             if idx >= tabs_ref.len() {
                 return;
             }
+            // The pointer is on the tab strip, not over the page being
+            // left; without this it would come back still hovering.
+            if let Some(previous) = tabs_ref.get(active.get()) {
+                previous.page.borrow().pointer_left();
+            }
             active.set(idx);
             sync_window_to_active_tab(&window, idx, &tabs_ref[idx]);
+        });
+    }
+    {
+        let tabs = tabs.clone();
+        let active = active.clone();
+        let weak = window.as_weak();
+        window.on_pointer_moved(move |x, y| {
+            let Some(window) = weak.upgrade() else { return };
+            let tabs_ref = tabs.borrow();
+            let Some(tab) = tabs_ref.get(active.get()) else { return };
+            // Slint reports logical pixels; the page is laid out in
+            // physical ones (see the render size in the poll timer).
+            let scale = window.window().scale_factor();
+            tab.page.borrow().pointer_moved(x * scale, y * scale);
+        });
+    }
+    {
+        let tabs = tabs.clone();
+        let active = active.clone();
+        window.on_pointer_left(move || {
+            let tabs_ref = tabs.borrow();
+            let Some(tab) = tabs_ref.get(active.get()) else { return };
+            tab.page.borrow().pointer_left();
         });
     }
     {

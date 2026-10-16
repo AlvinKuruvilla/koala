@@ -314,13 +314,10 @@ impl Renderer {
         // Write the raw bytes in 4-byte strides. Iterating
         // `pixels_mut()` compiles into an element-by-element store
         // that's 2–3× slower than a flat byte loop on this buffer
-        // size; using `chunks_exact_mut(4)` lets LLVM vectorise.
+        // size; fixed 4-byte chunks let LLVM vectorise.
         let bytes = self.buffer.as_mut();
-        for chunk in bytes.chunks_exact_mut(4) {
-            chunk[0] = color.r;
-            chunk[1] = color.g;
-            chunk[2] = color.b;
-            chunk[3] = color.a;
+        for pixel in bytes.as_chunks_mut::<4>().0 {
+            *pixel = [color.r, color.g, color.b, color.a];
         }
     }
 

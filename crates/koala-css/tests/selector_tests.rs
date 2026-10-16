@@ -5,7 +5,8 @@
 use koala_std::collections::HashMap;
 
 use koala_css::selector::{
-    AttributeSelector, Combinator, PseudoClass, PseudoElement, SimpleSelector, Specificity,
+    AttributeSelector, Combinator, Location, PseudoClass, PseudoElement, SimpleSelector,
+    Specificity, Structural, UserAction,
     parse_selector,
 };
 use koala_dom::{AttributesMap, DomTree, ElementData, Namespace, NodeId, NodeType};
@@ -30,7 +31,7 @@ fn test_parse_type_selector() {
     let selector = parse_selector("body").unwrap();
     assert_eq!(selector.specificity, Specificity(0, 0, 1));
     assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
-    assert!(selector.complex.combinators.is_empty());
+    assert_eq!(selector.complex.combinators.len(), 0);
     assert!(matches!(
         &selector.complex.subject.simple_selectors[0],
         SimpleSelector::Type(name) if name == "body"
@@ -73,7 +74,7 @@ fn test_parse_compound_selector() {
     let selector = parse_selector("div.highlight#main").unwrap();
     assert_eq!(selector.specificity, Specificity(1, 1, 1));
     assert_eq!(selector.complex.subject.simple_selectors.len(), 3);
-    assert!(selector.complex.combinators.is_empty());
+    assert_eq!(selector.complex.combinators.len(), 0);
 }
 
 // Combinator Parsing Tests
@@ -524,9 +525,19 @@ fn test_matches_complex_combinator_chain() {
 
 #[test]
 fn test_parse_hover_pseudo_class() {
-    // :hover → interactive pseudo-class → NeverMatch
+    // :hover → [PseudoClass(UserAction(Hover))]
     let selector = parse_selector(":hover").unwrap();
     assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
+    assert!(matches!(
+        &selector.complex.subject.simple_selectors[0],
+        SimpleSelector::PseudoClass(PseudoClass::UserAction(UserAction::Hover))
+    ));
+}
+
+#[test]
+fn test_parse_functional_hover_is_not_hover() {
+    // :hover() is not :hover; every implemented pseudo-class is non-functional.
+    let selector = parse_selector(":hover()").unwrap();
     assert!(matches!(
         &selector.complex.subject.simple_selectors[0],
         SimpleSelector::NeverMatch
@@ -611,7 +622,7 @@ fn test_pseudo_element_selector_matches_no_element() {
 
 #[test]
 fn test_parse_btn_hover_compound() {
-    // .btn:hover → [Class("btn"), NeverMatch]
+    // .btn:hover → [Class("btn"), PseudoClass(UserAction(Hover))]
     let selector = parse_selector(".btn:hover").unwrap();
     assert_eq!(selector.complex.subject.simple_selectors.len(), 2);
     assert!(matches!(
@@ -620,7 +631,7 @@ fn test_parse_btn_hover_compound() {
     ));
     assert!(matches!(
         &selector.complex.subject.simple_selectors[1],
-        SimpleSelector::NeverMatch
+        SimpleSelector::PseudoClass(PseudoClass::UserAction(UserAction::Hover))
     ));
 }
 
@@ -635,7 +646,7 @@ fn test_parse_first_child_pseudo() {
     ));
     assert!(matches!(
         &selector.complex.subject.simple_selectors[1],
-        SimpleSelector::PseudoClass(PseudoClass::FirstChild)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::FirstChild))
     ));
 }
 
@@ -646,7 +657,7 @@ fn test_parse_root_pseudo() {
     assert_eq!(selector.complex.subject.simple_selectors.len(), 1);
     assert!(matches!(
         &selector.complex.subject.simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::Root)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::Root))
     ));
 }
 
@@ -658,7 +669,7 @@ fn test_parse_structural_pseudo_classes() {
             .complex
             .subject
             .simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::LastChild)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::LastChild))
     ));
     assert!(matches!(
         parse_selector(":first-of-type")
@@ -666,7 +677,7 @@ fn test_parse_structural_pseudo_classes() {
             .complex
             .subject
             .simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::FirstOfType)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::FirstOfType))
     ));
     assert!(matches!(
         parse_selector(":last-of-type")
@@ -674,7 +685,7 @@ fn test_parse_structural_pseudo_classes() {
             .complex
             .subject
             .simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::LastOfType)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::LastOfType))
     ));
     assert!(matches!(
         parse_selector(":only-child")
@@ -682,7 +693,7 @@ fn test_parse_structural_pseudo_classes() {
             .complex
             .subject
             .simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::OnlyChild)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::OnlyChild))
     ));
     assert!(matches!(
         parse_selector(":empty")
@@ -690,7 +701,7 @@ fn test_parse_structural_pseudo_classes() {
             .complex
             .subject
             .simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::Empty)
+        SimpleSelector::PseudoClass(PseudoClass::Structural(Structural::Empty))
     ));
     assert!(matches!(
         parse_selector(":link")
@@ -698,7 +709,7 @@ fn test_parse_structural_pseudo_classes() {
             .complex
             .subject
             .simple_selectors[0],
-        SimpleSelector::PseudoClass(PseudoClass::Link)
+        SimpleSelector::PseudoClass(PseudoClass::Location(Location::Link))
     ));
 }
 
@@ -846,7 +857,7 @@ fn test_parse_complex_selector_with_pseudo_and_attr() {
         SimpleSelector::Attribute(AttributeSelector::Equals(name, val))
             if name == "attr" && val == "val"
     ));
-    // Combinator chain: Descendant with compound [Type("div"), Class("class"), NeverMatch]
+    // Combinator chain: Descendant with compound [Type("div"), Class("class"), Hover]
     assert_eq!(selector.complex.combinators.len(), 1);
     assert_eq!(selector.complex.combinators[0].0, Combinator::Descendant);
     assert_eq!(selector.complex.combinators[0].1.simple_selectors.len(), 3);
@@ -888,6 +899,127 @@ fn test_matches_last_child() {
     let selector = parse_selector(":last-child").unwrap();
     assert!(!selector.matches_in_tree(&tree, p1_id));
     assert!(selector.matches_in_tree(&tree, p2_id));
+}
+
+fn set_attr(tree: &mut DomTree, id: NodeId, name: &str, value: &str) {
+    let _ = tree
+        .as_element_mut(id)
+        .expect("test builds attributes on elements only")
+        .attrs
+        .insert(name.to_string(), value.to_string());
+}
+
+#[test]
+fn test_matches_hover_designated_and_ancestors() {
+    // Build: <div><p>hovered</p><p>sibling</p></div>
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+    let p1_id = tree.alloc(make_element_type("p", None, &[]));
+    let p2_id = tree.alloc(make_element_type("p", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, p1_id);
+    tree.append_child(div_id, p2_id);
+
+    let selector = parse_selector(":hover").unwrap();
+    assert!(!selector.matches_in_tree(&tree, p1_id), "nothing is hovered yet");
+
+    tree.set_hovered(Some(p1_id));
+    assert!(selector.matches_in_tree(&tree, p1_id));
+    assert!(selector.matches_in_tree(&tree, div_id));
+    assert!(!selector.matches_in_tree(&tree, p2_id));
+}
+
+/// Selectors § 9.1: "An element also matches :hover if one of its
+/// descendants in the flat tree (including non-element nodes, such as text
+/// nodes) matches the above conditions." Hit testing a run of text yields
+/// the text node, so this is the common case, not a corner.
+#[test]
+fn test_matches_hover_through_text_node() {
+    // Build: <a>link text</a>
+    let mut tree = DomTree::new();
+    let a_id = tree.alloc(make_element_type("a", None, &[]));
+    let text_id = tree.alloc(NodeType::Text("link text".to_string()));
+    tree.append_child(NodeId::ROOT, a_id);
+    tree.append_child(a_id, text_id);
+    tree.set_hovered(Some(text_id));
+
+    assert!(parse_selector("a:hover").unwrap().matches_in_tree(&tree, a_id));
+}
+
+/// The example in HTML § 4.16.3, under `:hover`. Designating `#a` makes
+/// `p`, `label` and `#a` match through the ancestor rule, and `#c` match as
+/// the label's labeled control. "However, the element with ID "b" does not
+/// match :hover: its flat tree descendant is not designated, even though
+/// that flat tree descendant matches :hover."
+#[test]
+fn test_matches_hover_html_spec_label_example() {
+    // Build: <p><label for=c><input id=a></label><span id=b><input id=c></span></p>
+    let mut tree = DomTree::new();
+    let p_id = tree.alloc(make_element_type("p", None, &[]));
+    let label_id = tree.alloc(make_element_type("label", None, &[]));
+    let a_id = tree.alloc(make_element_type("input", Some("a"), &[]));
+    let b_id = tree.alloc(make_element_type("span", Some("b"), &[]));
+    let c_id = tree.alloc(make_element_type("input", Some("c"), &[]));
+    tree.append_child(NodeId::ROOT, p_id);
+    tree.append_child(p_id, label_id);
+    tree.append_child(label_id, a_id);
+    tree.append_child(p_id, b_id);
+    tree.append_child(b_id, c_id);
+    set_attr(&mut tree, label_id, "for", "c");
+    tree.set_hovered(Some(a_id));
+
+    let selector = parse_selector(":hover").unwrap();
+    assert!(selector.matches_in_tree(&tree, p_id));
+    assert!(selector.matches_in_tree(&tree, label_id));
+    assert!(selector.matches_in_tree(&tree, a_id));
+    assert!(selector.matches_in_tree(&tree, c_id));
+    assert!(!selector.matches_in_tree(&tree, b_id));
+}
+
+/// Without a `for` attribute, the labeled control is the label's first
+/// labelable descendant. `<input type=hidden>` is not labelable, so it is
+/// skipped in favour of the `<select>` after it.
+#[test]
+fn test_matches_hover_label_first_labelable_descendant() {
+    // Build: <div><label><input type=hidden><select></select></label></div>
+    let mut tree = DomTree::new();
+    let div_id = tree.alloc(make_element_type("div", None, &[]));
+    let label_id = tree.alloc(make_element_type("label", None, &[]));
+    let hidden_id = tree.alloc(make_element_type("input", None, &[]));
+    let select_id = tree.alloc(make_element_type("select", None, &[]));
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(div_id, label_id);
+    tree.append_child(label_id, hidden_id);
+    tree.append_child(label_id, select_id);
+    set_attr(&mut tree, hidden_id, "type", "HIDDEN");
+
+    // Designating the label itself: the select matches as its labeled
+    // control even though it is a descendant that is not designated.
+    tree.set_hovered(Some(label_id));
+    let selector = parse_selector(":hover").unwrap();
+    assert!(selector.matches_in_tree(&tree, select_id));
+    assert!(!selector.matches_in_tree(&tree, hidden_id));
+}
+
+/// "the first such element in tree order is a labelable element": when the
+/// first element with the ID is not labelable, the label has no labeled
+/// control, even if a later element with the same ID is labelable.
+#[test]
+fn test_matches_hover_label_for_first_id_not_labelable() {
+    // Build: <label for=x></label><div id=x></div><input id=x>
+    let mut tree = DomTree::new();
+    let label_id = tree.alloc(make_element_type("label", None, &[]));
+    let div_id = tree.alloc(make_element_type("div", Some("x"), &[]));
+    let input_id = tree.alloc(make_element_type("input", Some("x"), &[]));
+    tree.append_child(NodeId::ROOT, label_id);
+    tree.append_child(NodeId::ROOT, div_id);
+    tree.append_child(NodeId::ROOT, input_id);
+    set_attr(&mut tree, label_id, "for", "x");
+    tree.set_hovered(Some(label_id));
+
+    let selector = parse_selector(":hover").unwrap();
+    assert!(!selector.matches_in_tree(&tree, div_id));
+    assert!(!selector.matches_in_tree(&tree, input_id));
 }
 
 #[test]
@@ -1082,8 +1214,8 @@ fn test_match_attribute_substring() {
 
 #[test]
 fn test_never_match_doesnt_match() {
-    // .btn:hover → NeverMatch makes the whole compound fail
-    let selector = parse_selector(".btn:hover").unwrap();
+    // .btn:focus → NeverMatch makes the whole compound fail
+    let selector = parse_selector(".btn:focus").unwrap();
     let btn = make_element("div", None, &["btn"]);
     assert!(!selector.matches(&btn));
 }
@@ -1109,9 +1241,9 @@ fn test_specificity_attribute() {
 
 #[test]
 fn test_specificity_btn_hover() {
-    // .btn:hover → Class(0,1,0) + NeverMatch(0,0,0) = (0,1,0)
+    // .btn:hover → Class(0,1,0) + pseudo-class(0,1,0) = (0,2,0)
     let selector = parse_selector(".btn:hover").unwrap();
-    assert_eq!(selector.specificity, Specificity(0, 1, 0));
+    assert_eq!(selector.specificity, Specificity(0, 2, 0));
 }
 
 #[test]
@@ -1142,4 +1274,40 @@ fn test_specificity_pseudo_element() {
         parse_selector("p.note:after").unwrap().specificity,
         Specificity(0, 1, 2)
     );
+}
+
+// State dependencies
+//
+// A pointer move that changes which element is hovered needs a restyle only
+// if some selector reads :hover.
+
+fn stylesheet(css: &str) -> koala_css::Stylesheet {
+    let mut tokenizer = koala_css::CSSTokenizer::new(css.to_string());
+    tokenizer.run();
+    koala_css::CSSParser::new(tokenizer.into_tokens()).parse_stylesheet()
+}
+
+#[test]
+fn test_state_dependencies_of_selector() {
+    let hover = koala_css::selector::ElementState::HOVER;
+    let empty = koala_css::selector::ElementState::EMPTY;
+    let deps = |text: &str| parse_selector(text).expect("valid selector").state_dependencies();
+
+    assert_eq!(deps("a:hover"), hover);
+    // A :hover in an ancestor compound still makes `a` depend on hover.
+    assert_eq!(deps("nav:hover a"), hover);
+    assert_eq!(deps("a:link"), empty);
+    assert_eq!(deps("ul > li:first-child"), empty);
+}
+
+#[test]
+fn test_state_dependencies_of_stylesheets() {
+    let hover = koala_css::selector::ElementState::HOVER;
+    let empty = koala_css::selector::ElementState::EMPTY;
+    let none = stylesheet("p { color: red } a:link { color: blue }");
+    let some = stylesheet("p, nav:hover a { color: red }");
+
+    assert_eq!(koala_css::cascade::state_dependencies(&none, &none), empty);
+    assert_eq!(koala_css::cascade::state_dependencies(&none, &some), hover);
+    assert_eq!(koala_css::cascade::state_dependencies(&some, &none), hover);
 }

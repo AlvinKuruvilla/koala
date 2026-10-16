@@ -64,6 +64,11 @@ export component MainWindow inherits Window {
     // Open/close the developer HUD window. Handled in Rust, which owns
     // the second window's lifecycle.
     callback toggle-devhud();
+    // The pointer moved over the page, or left it. Coordinates are in
+    // logical pixels from the viewport's top-left corner; Rust scales
+    // them to the physical pixels the page is laid out in.
+    callback pointer-moved(length, length);
+    callback pointer-left();
 
     // Application menu bar. Native NSMenu on macOS, in-window
     // strip elsewhere. Must be a direct child of `Window` —
@@ -238,6 +243,27 @@ export component MainWindow inherits Window {
                 height: parent.height;
                 source: root.viewport-source;
                 image-fit: fill;
+            }
+
+            // Forwards pointer movement to the page for :hover. A
+            // TouchArea reports every move as a `pointer-event` of kind
+            // `move`, button held or not; its `moved` callback fires only
+            // during a drag.
+            TouchArea {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.move) {
+                        root.pointer-moved(self.mouse-x, self.mouse-y);
+                    }
+                }
+                changed has-hover => {
+                    if (!self.has-hover) {
+                        root.pointer-left();
+                    }
+                }
             }
 
             if root.loading: ProgressIndicator {

@@ -41,20 +41,19 @@ pub enum SimpleSelector {
     Universal,
 
     /// Pseudo-class or pseudo-element that always fails to match.
-    /// Used for interactive states (`:hover`, `:focus`, `:active`, `:visited`, etc.)
+    /// Used for interactive states (`:focus`, `:active`, `:visited`, etc.)
     /// and pseudo-elements (`::before`, `::after`, etc.) that are irrelevant
     /// to static rendering but whose presence should not cause the entire
     /// rule to be dropped.
     ///
-    /// Examples: `:hover`, `:focus`, `:active`, `:visited`, `::before`, `::after`,
+    /// Examples: `:focus`, `:active`, `:visited`, `::before`, `::after`,
     /// `::placeholder`, `:nth-child(2)`, `:not(.foo)`
     NeverMatch,
 
-    /// [§ 4 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
-    /// Structural pseudo-class that requires DOM tree context to match.
+    /// [§ 3.5 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
+    /// A pseudo-class Koala implements. Matching needs DOM tree context.
     ///
-    /// Examples: `:root`, `:first-child`, `:last-child`, `:empty`, `:only-child`,
-    /// `:first-of-type`, `:last-of-type`, `:link`, `:enabled`, `:disabled`
+    /// Examples: `:root`, `:first-child`, `:link`, `:enabled`, `:hover`
     PseudoClass(PseudoClass),
 
     /// [§ 6.4 Attribute selectors](https://www.w3.org/TR/selectors-4/#attribute-selectors)
@@ -65,71 +64,179 @@ pub enum SimpleSelector {
     Attribute(AttributeSelector),
 }
 
-/// Structural pseudo-classes per [§ 4 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// [§ 3.5 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
+///
+/// The pseudo-classes Koala implements, grouped by the Selectors chapter
+/// that defines them. The grouping is what invalidation keys on: only
+/// [`UserAction`] pseudo-classes can change their match without the DOM
+/// changing, so only they need restyling in response to user input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PseudoClass {
-    /// [§ 4.4 :root](https://www.w3.org/TR/selectors-4/#the-root-pseudo)
+    /// [§ 8 Location Pseudo-classes](https://www.w3.org/TR/selectors-4/#location)
+    Location(Location),
+
+    /// [§ 9 User Action Pseudo-classes](https://www.w3.org/TR/selectors-4/#useraction-pseudos)
+    UserAction(UserAction),
+
+    /// [§ 12 The Input Pseudo-classes](https://www.w3.org/TR/selectors-4/#input-pseudos)
+    Input(Input),
+
+    /// [§ 13 Tree-Structural pseudo-classes](https://www.w3.org/TR/selectors-4/#structural-pseudos)
+    Structural(Structural),
+}
+
+/// [§ 8 Location Pseudo-classes](https://www.w3.org/TR/selectors-4/#location)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Location {
+    /// [§ 8.2 The Link History Pseudo-classes](https://www.w3.org/TR/selectors-4/#link)
+    /// "The :link pseudo-class applies to links that have not yet been visited."
+    ///
+    /// Koala keeps no history, so every link is unvisited.
+    ///
+    /// Example: `a:link` — matches `<a href="...">` but not `<a>` without href
+    Link,
+}
+
+/// [§ 9 User Action Pseudo-classes](https://www.w3.org/TR/selectors-4/#useraction-pseudos)
+///
+/// "Interactive user interfaces sometimes change the rendering in response
+/// to user actions. Selectors provides several user action pseudo-classes
+/// for the selection of an element the user is acting on."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserAction {
+    /// [§ 9.1 The Pointer Hover Pseudo-class](https://www.w3.org/TR/selectors-4/#the-hover-pseudo)
+    /// "The :hover pseudo-class applies while the user designates an element
+    /// (or pseudo-element) with a pointing device, but does not necessarily
+    /// activate it."
+    ///
+    /// Example: `a:hover` — matches the `<a>` under the pointer, and any
+    /// `<a>` containing it
+    Hover,
+}
+
+impl UserAction {
+    /// The piece of interaction state this pseudo-class reads. A change to
+    /// that state is what can change whether it matches.
+    #[must_use]
+    pub const fn state(self) -> ElementState {
+        match self {
+            Self::Hover => ElementState::HOVER,
+        }
+    }
+}
+
+/// [§ 12 The Input Pseudo-classes](https://www.w3.org/TR/selectors-4/#input-pseudos)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Input {
+    /// [§ 12.1.1 The :enabled and :disabled Pseudo-classes](https://www.w3.org/TR/selectors-4/#enableddisabled)
+    /// "The :enabled pseudo-class represents user interface elements that are
+    /// in an enabled state; such elements must have a corresponding disabled
+    /// state."
+    ///
+    /// Example: `input:enabled` — matches `<input>` (no disabled attribute)
+    Enabled,
+
+    /// [§ 12.1.1 The :enabled and :disabled Pseudo-classes](https://www.w3.org/TR/selectors-4/#enableddisabled)
+    /// "Conversely, the :disabled pseudo-class represents user interface
+    /// elements that are in a disabled state; such elements must have a
+    /// corresponding enabled state."
+    ///
+    /// Example: `input:disabled` — matches `<input disabled>`
+    Disabled,
+}
+
+/// [§ 13 Tree-Structural pseudo-classes](https://www.w3.org/TR/selectors-4/#structural-pseudos)
+///
+/// "Selectors introduces the concept of structural pseudo-classes to permit
+/// selection based on extra information that lies in the document tree but
+/// cannot be represented by other simple selectors or combinators."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Structural {
+    /// [§ 13.1 :root pseudo-class](https://www.w3.org/TR/selectors-4/#the-root-pseudo)
     /// "The :root pseudo-class represents an element that is the root of the document."
     ///
     /// Example: `:root { --main-color: blue; }` — matches the `<html>` element
     Root,
 
-    /// [§ 4.12 :first-child](https://www.w3.org/TR/selectors-4/#the-first-child-pseudo)
+    /// [§ 13.2 :empty pseudo-class](https://www.w3.org/TR/selectors-4/#the-empty-pseudo)
+    /// "The :empty pseudo-class represents an element that has no children
+    /// except, optionally, document white space characters."
+    ///
+    /// Example: `div:empty` — matches `<div></div>` but not `<div>text</div>`
+    Empty,
+
+    /// [§ 13.3.3 :first-child pseudo-class](https://www.w3.org/TR/selectors-4/#the-first-child-pseudo)
     /// "The :first-child pseudo-class represents an element that is first among its
     /// inclusive siblings."
     ///
     /// Example: `li:first-child` — matches `<li>A</li>` in `<ul><li>A</li><li>B</li></ul>`
     FirstChild,
 
-    /// [§ 4.12 :last-child](https://www.w3.org/TR/selectors-4/#the-last-child-pseudo)
+    /// [§ 13.3.4 :last-child pseudo-class](https://www.w3.org/TR/selectors-4/#the-last-child-pseudo)
     /// "The :last-child pseudo-class represents an element that is last among its
     /// inclusive siblings."
     ///
     /// Example: `li:last-child` — matches `<li>B</li>` in `<ul><li>A</li><li>B</li></ul>`
     LastChild,
 
-    /// [§ 4.11 :first-of-type](https://www.w3.org/TR/selectors-4/#the-first-of-type-pseudo)
-    /// "The :first-of-type pseudo-class represents an element that is the first sibling
-    /// of its type."
-    ///
-    /// Example: `p:first-of-type` — matches the first `<p>` even if preceded by a `<div>`
-    FirstOfType,
-
-    /// [§ 4.11 :last-of-type](https://www.w3.org/TR/selectors-4/#the-last-of-type-pseudo)
-    /// "The :last-of-type pseudo-class represents an element that is the last sibling
-    /// of its type."
-    ///
-    /// Example: `p:last-of-type` — matches the last `<p>` among its siblings
-    LastOfType,
-
-    /// [§ 4.12 :only-child](https://www.w3.org/TR/selectors-4/#the-only-child-pseudo)
+    /// [§ 13.3.5 :only-child pseudo-class](https://www.w3.org/TR/selectors-4/#the-only-child-pseudo)
     /// "The :only-child pseudo-class represents an element that has no siblings."
     ///
     /// Example: `p:only-child` — matches `<p>` in `<div><p>alone</p></div>`
     OnlyChild,
 
-    /// [§ 4.5 :empty](https://www.w3.org/TR/selectors-4/#the-empty-pseudo)
-    /// "The :empty pseudo-class represents an element that has no children at all."
+    /// [§ 13.4.3 :first-of-type pseudo-class](https://www.w3.org/TR/selectors-4/#the-first-of-type-pseudo)
+    /// "The :first-of-type pseudo-class represents the same element as
+    /// :nth-of-type(1)."
     ///
-    /// Example: `div:empty` — matches `<div></div>` but not `<div>text</div>`
-    Empty,
+    /// Example: `p:first-of-type` — matches the first `<p>` even if preceded by a `<div>`
+    FirstOfType,
 
-    /// [§ 4.6 :link](https://www.w3.org/TR/selectors-4/#the-link-pseudo)
-    /// "The :link pseudo-class applies to links that have not yet been visited."
-    /// In static rendering, all links are treated as unvisited.
+    /// [§ 13.4.4 :last-of-type pseudo-class](https://www.w3.org/TR/selectors-4/#the-last-of-type-pseudo)
+    /// "The :last-of-type pseudo-class represents the same element as
+    /// :nth-last-of-type(1)."
     ///
-    /// Example: `a:link` — matches `<a href="...">` but not `<a>` without href
-    Link,
+    /// Example: `p:last-of-type` — matches the last `<p>` among its siblings
+    LastOfType,
+}
 
-    /// :disabled — form element with disabled attribute
-    ///
-    /// Example: `input:disabled` — matches `<input disabled>`
-    Disabled,
+/// Interaction state an element can be in, as a set of flags. Each
+/// [`UserAction`] pseudo-class reads one flag (see [`UserAction::state`]).
+///
+/// Invalidation uses this to decide whether a change in interaction state
+/// can affect any style: collect the flags that the stylesheet's selectors
+/// read, and a change to any other flag needs no restyle.
+///
+/// NOTE: Hand-rolled over the `bitflags` crate: it needs only the
+/// operations below, and Koala keeps engine code free of dependencies where
+/// that is cheap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ElementState(u8);
 
-    /// :enabled — form element without disabled attribute
-    ///
-    /// Example: `input:enabled` — matches `<input>` (no disabled attribute)
-    Enabled,
+impl ElementState {
+    /// No interaction state.
+    pub const EMPTY: Self = Self(0);
+
+    /// Designated by a pointing device ([`UserAction::Hover`]).
+    pub const HOVER: Self = Self(1 << 0);
+
+    /// Whether no flag is set.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Whether every flag in `other` is also set in `self`.
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// The flags set in either `self` or `other`.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
 }
 
 /// Attribute selectors per [§ 6.4](https://www.w3.org/TR/selectors-4/#attribute-selectors)
@@ -299,6 +406,40 @@ impl ParsedSelector {
     #[must_use]
     pub const fn is_simple(&self) -> bool {
         self.complex.combinators.is_empty()
+    }
+
+    /// The interaction state this selector reads, in any of its compound
+    /// selectors: `a:hover` and `nav:hover a` both read
+    /// [`ElementState::HOVER`]. If a state change touches none of these
+    /// flags, it cannot change whether this selector matches anything.
+    ///
+    /// # Time complexity
+    ///
+    /// *O*(*n*) in the number of simple selectors.
+    #[must_use]
+    pub fn state_dependencies(&self) -> ElementState {
+        let compounds = std::iter::once(&self.complex.subject)
+            .chain(self.complex.combinators.iter().map(|(_, compound)| compound));
+        let mut state = ElementState::EMPTY;
+        for simple in compounds.flat_map(|compound| &compound.simple_selectors) {
+            // Exhaustive so that a selector that nests others (`:is()`,
+            // `:not()`) has to say what it reads when it is added.
+            match simple {
+                SimpleSelector::PseudoClass(PseudoClass::UserAction(action)) => {
+                    state = state.union(action.state());
+                }
+                SimpleSelector::PseudoClass(
+                    PseudoClass::Location(_) | PseudoClass::Input(_) | PseudoClass::Structural(_),
+                )
+                | SimpleSelector::Type(_)
+                | SimpleSelector::Class(_)
+                | SimpleSelector::Id(_)
+                | SimpleSelector::Universal
+                | SimpleSelector::NeverMatch
+                | SimpleSelector::Attribute(_) => {}
+            }
+        }
+        state
     }
 
     /// [§ 4.1 Selector Matching](https://www.w3.org/TR/selectors-4/#match-a-selector-against-an-element)
@@ -484,40 +625,41 @@ fn compound_matches_in_tree(compound: &CompoundSelector, tree: &DomTree, node_id
         return false;
     };
     compound.simple_selectors.iter().all(|simple| match simple {
-        SimpleSelector::PseudoClass(pc) => pseudo_class_matches(pc, tree, node_id, element),
+        SimpleSelector::PseudoClass(pc) => pseudo_class_matches(*pc, tree, node_id, element),
         _ => simple.matches(element),
     })
 }
 
-/// [§ 4 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
+/// [§ 3.5 Pseudo-classes](https://www.w3.org/TR/selectors-4/#pseudo-classes)
 ///
-/// Match a structural pseudo-class against an element with full DOM tree context.
+/// Match a pseudo-class against an element with full DOM tree context.
 fn pseudo_class_matches(
-    pc: &PseudoClass,
+    pc: PseudoClass,
     tree: &DomTree,
     node_id: NodeId,
     element: &ElementData,
 ) -> bool {
     match pc {
-        // [§ 4.4 :root](https://www.w3.org/TR/selectors-4/#the-root-pseudo)
-        // "The :root pseudo-class represents an element that is the root of the document.
-        // In HTML, this is the <html> element."
-        PseudoClass::Root => tree.document_element() == Some(node_id),
+        // [§ 13.1 :root pseudo-class](https://www.w3.org/TR/selectors-4/#the-root-pseudo)
+        // "The :root pseudo-class represents an element that is the root of the
+        // document. For example, in a DOM document, the :root pseudo-class
+        // matches the document element."
+        PseudoClass::Structural(Structural::Root) => tree.document_element() == Some(node_id),
 
-        // [§ 4.12 :first-child](https://www.w3.org/TR/selectors-4/#the-first-child-pseudo)
+        // [§ 13.3.3 :first-child pseudo-class](https://www.w3.org/TR/selectors-4/#the-first-child-pseudo)
         // "The :first-child pseudo-class represents an element that is first among its
         // inclusive siblings."
-        PseudoClass::FirstChild => tree.parent(node_id).is_some_and(|parent| {
+        PseudoClass::Structural(Structural::FirstChild) => tree.parent(node_id).is_some_and(|parent| {
             tree.children(parent)
                 .iter()
                 .find(|&&c| tree.as_element(c).is_some())
                 == Some(&node_id)
         }),
 
-        // [§ 4.12 :last-child](https://www.w3.org/TR/selectors-4/#the-last-child-pseudo)
+        // [§ 13.3.4 :last-child pseudo-class](https://www.w3.org/TR/selectors-4/#the-last-child-pseudo)
         // "The :last-child pseudo-class represents an element that is last among its
         // inclusive siblings."
-        PseudoClass::LastChild => tree.parent(node_id).is_some_and(|parent| {
+        PseudoClass::Structural(Structural::LastChild) => tree.parent(node_id).is_some_and(|parent| {
             tree.children(parent)
                 .iter()
                 .rev()
@@ -525,29 +667,29 @@ fn pseudo_class_matches(
                 == Some(&node_id)
         }),
 
-        // [§ 4.11 :first-of-type](https://www.w3.org/TR/selectors-4/#the-first-of-type-pseudo)
-        // "The :first-of-type pseudo-class represents an element that is the first sibling
-        // of its type."
-        PseudoClass::FirstOfType => tree.parent(node_id).is_some_and(|parent| {
+        // [§ 13.4.3 :first-of-type pseudo-class](https://www.w3.org/TR/selectors-4/#the-first-of-type-pseudo)
+        // "The :first-of-type pseudo-class represents the same element as
+        // :nth-of-type(1)."
+        PseudoClass::Structural(Structural::FirstOfType) => tree.parent(node_id).is_some_and(|parent| {
             tree.children(parent).iter().find(|&&c| {
                 tree.as_element(c)
                     .is_some_and(|e| e.tag_name.eq_ignore_ascii_case(&element.tag_name))
             }) == Some(&node_id)
         }),
 
-        // [§ 4.11 :last-of-type](https://www.w3.org/TR/selectors-4/#the-last-of-type-pseudo)
-        // "The :last-of-type pseudo-class represents an element that is the last sibling
-        // of its type."
-        PseudoClass::LastOfType => tree.parent(node_id).is_some_and(|parent| {
+        // [§ 13.4.4 :last-of-type pseudo-class](https://www.w3.org/TR/selectors-4/#the-last-of-type-pseudo)
+        // "The :last-of-type pseudo-class represents the same element as
+        // :nth-last-of-type(1)."
+        PseudoClass::Structural(Structural::LastOfType) => tree.parent(node_id).is_some_and(|parent| {
             tree.children(parent).iter().rev().find(|&&c| {
                 tree.as_element(c)
                     .is_some_and(|e| e.tag_name.eq_ignore_ascii_case(&element.tag_name))
             }) == Some(&node_id)
         }),
 
-        // [§ 4.12 :only-child](https://www.w3.org/TR/selectors-4/#the-only-child-pseudo)
+        // [§ 13.3.5 :only-child pseudo-class](https://www.w3.org/TR/selectors-4/#the-only-child-pseudo)
         // "The :only-child pseudo-class represents an element that has no siblings."
-        PseudoClass::OnlyChild => tree.parent(node_id).is_some_and(|parent| {
+        PseudoClass::Structural(Structural::OnlyChild) => tree.parent(node_id).is_some_and(|parent| {
             tree.children(parent)
                 .iter()
                 .filter(|&&c| tree.as_element(c).is_some())
@@ -555,11 +697,15 @@ fn pseudo_class_matches(
                 == 1
         }),
 
-        // [§ 4.5 :empty](https://www.w3.org/TR/selectors-4/#the-empty-pseudo)
-        // "The :empty pseudo-class represents an element that has no children at all.
-        // In terms of the document tree, only element nodes and content nodes...
-        // must be considered."
-        PseudoClass::Empty => {
+        // [§ 13.2 :empty pseudo-class](https://www.w3.org/TR/selectors-4/#the-empty-pseudo)
+        // "The :empty pseudo-class represents an element that has no children
+        // except, optionally, document white space characters. In terms of the
+        // document tree, only element nodes and content nodes (such as [DOM]
+        // text nodes, and entity references) whose data has a non-zero length
+        // must be considered as affecting emptiness; comments, processing
+        // instructions, and other nodes must not affect whether an element is
+        // considered empty or not."
+        PseudoClass::Structural(Structural::Empty) => {
             tree.children(node_id)
                 .iter()
                 .all(|&c| match tree.get(c).map(|n| &n.node_type) {
@@ -569,21 +715,106 @@ fn pseudo_class_matches(
                 })
         }
 
-        // [§ 4.6 :link](https://www.w3.org/TR/selectors-4/#the-link-pseudo)
+        // [§ 8.2 The Link History Pseudo-classes](https://www.w3.org/TR/selectors-4/#link)
         // "The :link pseudo-class applies to links that have not yet been visited."
-        // In static rendering, all links are unvisited, so :link matches any
-        // <a> or <area> element with an href attribute.
-        PseudoClass::Link => {
+        // Koala keeps no history, so all links are unvisited, and :link matches
+        // any <a> or <area> element with an href attribute.
+        PseudoClass::Location(Location::Link) => {
             (element.tag_name.eq_ignore_ascii_case("a")
                 || element.tag_name.eq_ignore_ascii_case("area"))
                 && element.attrs.contains_key("href")
         }
 
         // :disabled — element has the disabled attribute
-        PseudoClass::Disabled => element.attrs.contains_key("disabled"),
+        PseudoClass::Input(Input::Disabled) => element.attrs.contains_key("disabled"),
 
         // :enabled — element does not have the disabled attribute
-        PseudoClass::Enabled => !element.attrs.contains_key("disabled"),
+        PseudoClass::Input(Input::Enabled) => !element.attrs.contains_key("disabled"),
+
+        // [§ 9.1 The Pointer Hover Pseudo-class](https://www.w3.org/TR/selectors-4/#the-hover-pseudo)
+        // [HTML § 4.16.3 Pseudo-classes](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-hover)
+        PseudoClass::UserAction(UserAction::Hover) => {
+            // "For the purposes of defining the :hover pseudo-class only, an
+            // HTML user agent must consider an element as being one that the
+            // user designates if it is an element that the user indicates
+            // using a pointing device."
+            let Some(designated) = tree.hovered() else {
+                return false;
+            };
+
+            // "Per the definition in Selectors, :hover also matches flat tree
+            // ancestors of elements that are designated."
+            //
+            // NOTE: Koala has no shadow trees, so the flat tree is the DOM
+            // tree. `designated` may be a text node, which Selectors allows:
+            // "including non-element nodes, such as text nodes".
+            let hover_chain = || std::iter::once(designated).chain(tree.ancestors(designated));
+            if hover_chain().any(|id| id == node_id) {
+                return true;
+            }
+
+            // "Additionally, any element that is the labeled control of a
+            // label element that is currently matching :hover, also matches
+            // :hover. (But, it does not count as being designated.)"
+            //
+            // A label matches :hover only through the chain above: labels
+            // are not labelable elements, so no label is itself a labeled
+            // control. The labels to check are therefore exactly the ones on
+            // the chain, and this cannot recurse.
+            hover_chain().any(|id| {
+                tree.as_element(id)
+                    .is_some_and(|e| e.tag_name.eq_ignore_ascii_case("label"))
+                    && labeled_control(tree, id) == Some(node_id)
+            })
+        }
+    }
+}
+
+/// [HTML § 4.10.4 The label element](https://html.spec.whatwg.org/multipage/forms.html#labeled-control)
+///
+/// The labeled control of the `label` element `label`, if it has one.
+fn labeled_control(tree: &DomTree, label: NodeId) -> Option<NodeId> {
+    let for_value = tree.as_element(label)?.attrs.get("for");
+
+    // "If the attribute is specified and there is an element in the tree
+    // whose ID is equal to the value of the for attribute, and the first
+    // such element in tree order is a labelable element, then that element
+    // is the label element's labeled control."
+    if let Some(for_value) = for_value {
+        let first_with_id = tree.iter_all().find(|&id| {
+            tree.as_element(id)
+                .is_some_and(|e| e.id() == Some(for_value))
+        })?;
+        return is_labelable(tree, first_with_id).then_some(first_with_id);
+    }
+
+    // "If the for attribute is not specified, but the label element has a
+    // labelable element descendant, then the first such descendant in tree
+    // order is the label element's labeled control."
+    tree.descendants(label).find(|&id| is_labelable(tree, id))
+}
+
+/// [HTML § 4.10.2 Categories](https://html.spec.whatwg.org/multipage/forms.html#category-label)
+///
+/// "Some elements, not all of them form-associated, are categorized as
+/// labelable elements. These are elements that can be associated with a
+/// label element."
+///
+/// NOTE: The list also includes "form-associated custom elements", which
+/// Koala does not implement.
+fn is_labelable(tree: &DomTree, id: NodeId) -> bool {
+    let Some(element) = tree.as_element(id) else {
+        return false;
+    };
+    match element.tag_name.to_ascii_lowercase().as_str() {
+        // "button", "meter", "output", "progress", "select", "textarea"
+        "button" | "meter" | "output" | "progress" | "select" | "textarea" => true,
+        // "input (if the type attribute is not in the Hidden state)"
+        "input" => !element
+            .attrs
+            .get("type")
+            .is_some_and(|t| t.eq_ignore_ascii_case("hidden")),
+        _ => false,
     }
 }
 
@@ -792,7 +1023,7 @@ fn report_unmatched_pseudo_class(name: &str, is_functional: bool) {
     const DEFINED: &[&str] = &[
         "active", "any-link", "autofill", "blank", "checked", "current", "default", "defined",
         "dir", "focus", "focus-visible", "focus-within", "fullscreen", "future", "has", "host",
-        "hover", "in-range", "indeterminate", "invalid", "is", "lang", "local-link", "modal",
+        "in-range", "indeterminate", "invalid", "is", "lang", "local-link", "modal",
         "not", "nth-child", "nth-last-child", "nth-last-of-type", "nth-of-type", "only-of-type",
         "open", "optional", "out-of-range", "past", "paused", "placeholder-shown", "playing",
         "popover-open", "read-only", "read-write", "required", "scope", "target",
@@ -1125,41 +1356,31 @@ pub fn parse_selector(raw: &str) -> Option<ParsedSelector> {
                     });
                     current_compound.push(SimpleSelector::NeverMatch);
                 } else {
-                    // Dispatch pseudo-class by name
-                    match pseudo_lower.as_str() {
-                        // Structural pseudo-classes that affect static rendering
-                        "root" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Root));
-                        }
-                        "first-child" => current_compound
-                            .push(SimpleSelector::PseudoClass(PseudoClass::FirstChild)),
-                        "last-child" => current_compound
-                            .push(SimpleSelector::PseudoClass(PseudoClass::LastChild)),
-                        "first-of-type" => current_compound
-                            .push(SimpleSelector::PseudoClass(PseudoClass::FirstOfType)),
-                        "last-of-type" => current_compound
-                            .push(SimpleSelector::PseudoClass(PseudoClass::LastOfType)),
-                        "only-child" => current_compound
-                            .push(SimpleSelector::PseudoClass(PseudoClass::OnlyChild)),
-                        "empty" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Empty));
-                        }
-                        "link" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Link));
-                        }
-                        "disabled" => current_compound
-                            .push(SimpleSelector::PseudoClass(PseudoClass::Disabled)),
-                        "enabled" => {
-                            current_compound.push(SimpleSelector::PseudoClass(PseudoClass::Enabled));
-                        }
-
+                    // Dispatch pseudo-class by name. Every pseudo-class Koala
+                    // implements is non-functional, so `:root()` is not `:root`.
+                    let known = match pseudo_lower.as_str() {
+                        _ if is_functional => None,
+                        "link" => Some(PseudoClass::Location(Location::Link)),
+                        "hover" => Some(PseudoClass::UserAction(UserAction::Hover)),
+                        "enabled" => Some(PseudoClass::Input(Input::Enabled)),
+                        "disabled" => Some(PseudoClass::Input(Input::Disabled)),
+                        "root" => Some(PseudoClass::Structural(Structural::Root)),
+                        "empty" => Some(PseudoClass::Structural(Structural::Empty)),
+                        "first-child" => Some(PseudoClass::Structural(Structural::FirstChild)),
+                        "last-child" => Some(PseudoClass::Structural(Structural::LastChild)),
+                        "only-child" => Some(PseudoClass::Structural(Structural::OnlyChild)),
+                        "first-of-type" => Some(PseudoClass::Structural(Structural::FirstOfType)),
+                        "last-of-type" => Some(PseudoClass::Structural(Structural::LastOfType)),
+                        _ => None,
+                    };
+                    if let Some(pc) = known {
+                        current_compound.push(SimpleSelector::PseudoClass(pc));
+                    } else {
                         // Everything else: interactive states, legacy pseudo-elements
                         // (:before, :after), functional pseudo-classes (:nth-child, :not,
                         // :is, :where, :has), and unknown → NeverMatch (graceful degradation)
-                        _ => {
-                            report_unmatched_pseudo_class(&pseudo_lower, is_functional);
-                            current_compound.push(SimpleSelector::NeverMatch);
-                        }
+                        report_unmatched_pseudo_class(&pseudo_lower, is_functional);
+                        current_compound.push(SimpleSelector::NeverMatch);
                     }
                 }
             }

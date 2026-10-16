@@ -14,8 +14,15 @@
 use crate::style::ColorValue;
 use crate::style::values::{FontStyle, TextAlign, TextDecorationLine};
 
-use super::box_model::Rect;
+use super::box_model::{EdgeSizes, Rect};
 use super::layout_box::ElementBoxId;
+
+/// A font's ascent as a fraction of its em square: 0.8, close to typical
+/// Latin fonts (Helvetica ≈ 0.77, Arial ≈ 0.81).
+///
+/// TODO: read the real ascent from the font's tables through
+/// `FontMetrics`; see the vertical font metrics entry in SESSION.md.
+const ASCENDER_RATIO: f32 = 0.8;
 
 /// Font metrics interface for text measurement during layout.
 ///
@@ -144,8 +151,25 @@ pub struct LineFragment {
 pub enum FragmentContent {
     /// A run of text.
     Text(TextRun),
-    /// An inline-level box (e.g., `<span>`, `<a>`).
-    InlineBox,
+    /// [§ 2 Fragmentation Model and Terminology](https://www.w3.org/TR/css-break-3/#box-fragment)
+    ///
+    /// "box fragment: The portion of a box that belongs to exactly one
+    /// fragmentainer. ... Each fragment has its own share of the box's
+    /// border, padding, and margin"
+    ///
+    /// "Breaking inline content into lines is another form of fragmentation,
+    /// and similarly creates box fragments when it breaks inline boxes
+    /// across line boxes."
+    ///
+    /// A box fragment of a non-replaced inline box (`<a>`, `<span>`);
+    /// `bounds` is its border box. It precedes its contents in the line's
+    /// fragments, so the last one containing a point is the innermost box.
+    InlineBox {
+        /// The inline box this is a fragment of.
+        id: ElementBoxId,
+        /// Distance from the top of the border box to the baseline.
+        ascent: f32,
+    },
     /// A replaced inline element (e.g., `<img>`).
     ReplacedElement,
     /// [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
@@ -319,6 +343,20 @@ pub struct InlineLayout {
     /// of being collapsed. Set when `white-space` is `pre`, `pre-wrap`, or
     /// `pre-line`.
     pub preserve_newlines: bool,
+
+    /// Inline boxes begun and not yet ended, outermost first.
+    open_inline_boxes: Vec<OpenInlineBox>,
+}
+
+/// An inline box whose fragment on the current line is still growing.
+struct OpenInlineBox {
+    id: ElementBoxId,
+    /// Index of its fragment in `current_line_fragments`.
+    fragment: usize,
+    border_padding_right: f32,
+    margin_right: f32,
+    height: f32,
+    ascent: f32,
 }
 
 impl InlineLayout {
@@ -342,6 +380,7 @@ impl InlineLayout {
             left_offset: 0.0,
             no_wrap: false,
             preserve_newlines: false,
+            open_inline_boxes: Vec::new(),
         }
     }
 
@@ -595,61 +634,6 @@ impl InlineLayout {
         }
     }
 
-    /// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
-    ///
-    /// Add an inline-level box (e.g., `<span>`) to the current line.
-    ///
-    /// "Horizontal margins, borders, and padding are respected between
-    /// inline boxes."
-    ///
-    /// "The boxes may be aligned vertically in different ways: their bottoms
-    /// or tops may be aligned, or the baselines of text within them may be
-    /// aligned."
-    pub fn add_inline_box(&mut self, width: f32, height: f32) {
-        // STEP 1: Check if box fits on current line.
-        // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
-        //
-        // "When an inline box exceeds the width of a line box, it is split
-        // into several boxes and these boxes are distributed across several
-        // line boxes."
-        //
-        // If the box doesn't fit and we're not at the start of a line,
-        // wrap to a new line. The `current_x == 0.0` guard prevents
-        // infinite wrapping when a single box is wider than the available
-        // width.
-        let fits_on_current_line =
-            self.current_x + width <= self.available_width || self.current_x == 0.0;
-
-        if !fits_on_current_line {
-            self.finish_line();
-        }
-
-        // STEP 2: Create fragment and position it.
-        //
-        // "Horizontal margins, borders, and padding are respected between
-        // inline boxes."
-        //
-        // The width and height parameters represent the margin box
-        // dimensions of the inline box, as computed by the caller.
-        let fragment = LineFragment {
-            bounds: Rect {
-                x: self.start_x + self.left_offset + self.current_x,
-                y: self.current_y,
-                width,
-                height,
-            },
-            content: FragmentContent::InlineBox,
-            vertical_align: VerticalAlign::Baseline,
-        };
-        self.current_line_fragments.push(fragment);
-
-        // STEP 3: Advance current position and update line height.
-        self.current_x += width;
-        if height > self.current_line_max_height {
-            self.current_line_max_height = height;
-        }
-    }
-
     /// [§ 9.2.4 Atomic inline-level boxes](https://www.w3.org/TR/css-display-3/#atomic-inline)
     ///
     /// Add an atomic inline-level block container (display: inline-block)
@@ -708,9 +692,9 @@ impl InlineLayout {
     /// "Horizontal margins, borders, and padding are respected between
     /// these boxes."
     ///
-    /// The `left_mbp` parameter is the sum of the left margin, border,
-    /// and padding of the inline box. This horizontal offset is applied
-    /// at the start edge of the inline box's content.
+    /// `border_padding` is the box's border plus padding on each side.
+    /// Everything laid out until the matching `end_inline_box` is the
+    /// box's content.
     ///
     /// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
     ///
@@ -720,7 +704,16 @@ impl InlineLayout {
     ///
     /// If the left edge does not fit on the current line and the line
     /// is not empty, the current line is finished first.
-    pub fn begin_inline_box(&mut self, left_mbp: f32) {
+    pub fn begin_inline_box(
+        &mut self,
+        id: ElementBoxId,
+        font_size: f32,
+        margin_left: f32,
+        margin_right: f32,
+        border_padding: EdgeSizes,
+    ) {
+        let left_mbp = margin_left + border_padding.left;
+
         // STEP 1: Check if the left margin+border+padding fits on the
         // current line.
         //
@@ -731,7 +724,46 @@ impl InlineLayout {
             self.finish_line();
         }
 
-        // STEP 2: Advance current_x by the left margin+border+padding.
+        // STEP 2: Start the box's fragment on this line at its left border
+        // edge.
+        //
+        // [§ 10.6.1 Inline, non-replaced elements](https://www.w3.org/TR/CSS2/visudet.html#inline-non-replaced)
+        //
+        // "The height of the content area should be based on the font, but
+        // this specification does not specify how. A UA may, e.g., use the
+        // em-box or the maximum ascender and descender of the font."
+        //
+        // The em-box: `font_size` tall, with the baseline `ASCENDER_RATIO`
+        // of the way down, as for text.
+        //
+        // "The vertical padding, border and margin of an inline, non-replaced
+        // box start at the top and bottom of the content area, and has
+        // nothing to do with the 'line-height'."
+        //
+        // The vertical margin is outside the border box, so it is not part
+        // of the fragment.
+        let height = border_padding.top + font_size + border_padding.bottom;
+        let ascent = font_size.mul_add(ASCENDER_RATIO, border_padding.top);
+        self.open_inline_boxes.push(OpenInlineBox {
+            id,
+            fragment: self.current_line_fragments.len(),
+            border_padding_right: border_padding.right,
+            margin_right,
+            height,
+            ascent,
+        });
+        self.current_line_fragments.push(LineFragment {
+            bounds: Rect {
+                x: self.start_x + self.left_offset + self.current_x + margin_left,
+                y: self.current_y,
+                width: 0.0,
+                height,
+            },
+            content: FragmentContent::InlineBox { id, ascent },
+            vertical_align: VerticalAlign::Baseline,
+        });
+
+        // STEP 3: Advance current_x by the left margin+border+padding.
         //
         // Content placed after this call will start after the left edge
         // decoration of the inline box.
@@ -740,22 +772,89 @@ impl InlineLayout {
 
     /// [§ 9.2.2 Inline-level elements and inline boxes](https://www.w3.org/TR/CSS2/visuren.html#inline-boxes)
     ///
-    /// End a non-replaced inline box.
-    ///
-    /// The `right_mbp` parameter is the sum of the right margin, border,
-    /// and padding of the inline box. This horizontal offset is applied
-    /// at the end edge of the inline box's content.
+    /// End the innermost open non-replaced inline box.
     ///
     /// [§ 8.3 Margin properties](https://www.w3.org/TR/CSS2/box.html#margin-properties)
     ///
     /// "Horizontal margins, borders, and padding are respected between
     /// these boxes."
-    pub fn end_inline_box(&mut self, right_mbp: f32) {
-        // Advance current_x by the right margin+border+padding.
+    ///
+    /// # Panics
+    ///
+    /// If no inline box is open.
+    pub fn end_inline_box(&mut self) {
+        let open = self
+            .open_inline_boxes
+            .pop()
+            .expect("end_inline_box pairs with a begin_inline_box");
+
+        // STEP 1: Close the box's fragment on this line at its right border
+        // edge.
+        let right_border_edge =
+            self.start_x + self.left_offset + self.current_x + open.border_padding_right;
+        let fragment = &mut self.current_line_fragments[open.fragment];
+        fragment.bounds.width = right_border_edge - fragment.bounds.x;
+
+        // STEP 2: Advance current_x by the right border+padding+margin.
         //
         // Content placed after this call will start after the right edge
         // decoration of the inline box.
-        self.current_x += right_mbp;
+        self.current_x += open.border_padding_right + open.margin_right;
+    }
+
+    /// [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
+    ///
+    /// "When an inline box is split, margins, borders, and padding have no
+    /// visual effect where the split occurs (or at any split, when there
+    /// are several)."
+    ///
+    /// Close every open box's fragment at the end of the current line,
+    /// with no right edge. Called before the line is finished.
+    fn split_open_inline_boxes(&mut self) {
+        let line_end = self.start_x + self.left_offset + self.current_x;
+        for open in &self.open_inline_boxes {
+            let fragment = &mut self.current_line_fragments[open.fragment];
+            fragment.bounds.width = line_end - fragment.bounds.x;
+        }
+    }
+
+    /// Continue every open box on the new current line, with no left edge
+    /// (see `split_open_inline_boxes`). Called once the line is empty.
+    fn continue_open_inline_boxes(&mut self) {
+        debug_assert!(self.current_line_fragments.is_empty());
+        let line_start = self.start_x + self.left_offset + self.current_x;
+        for open in &mut self.open_inline_boxes {
+            open.fragment = self.current_line_fragments.len();
+            self.current_line_fragments.push(LineFragment {
+                bounds: Rect {
+                    x: line_start,
+                    y: self.current_y,
+                    width: 0.0,
+                    height: open.height,
+                },
+                content: FragmentContent::InlineBox {
+                    id: open.id,
+                    ascent: open.ascent,
+                },
+                vertical_align: VerticalAlign::Baseline,
+            });
+        }
+    }
+
+    /// Whether the current line holds anything besides inline-box
+    /// fragments.
+    ///
+    /// Inline-box fragments alone do not make a line box. A box that wraps
+    /// gets a fragment on the next line before any of its content does;
+    /// if what wrapped was only collapsible white space, that line must
+    /// not exist.
+    ///
+    /// TODO: § 9.4.2 does keep a line holding an inline box with non-zero
+    /// margins, padding or borders; see SESSION.md.
+    fn line_has_content(&self) -> bool {
+        self.current_line_fragments
+            .iter()
+            .any(|fragment| !matches!(fragment.content, FragmentContent::InlineBox { .. }))
     }
 
     /// [§ 15.3.8 The br element](https://html.spec.whatwg.org/multipage/rendering.html#the-br-element)
@@ -792,7 +891,7 @@ impl InlineLayout {
             self.current_line_max_height = line_height;
         }
 
-        if self.current_line_fragments.is_empty() {
+        if !self.line_has_content() {
             // [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading)
             //
             // "The minimum height consists of a minimum height above the
@@ -857,14 +956,9 @@ impl InlineLayout {
         //
         // The line box height is max_ascent + max_descent.
         // The baseline is at max_ascent from the top of the line box.
-        //
-        // Implementation note: Without actual font tables, we approximate
-        // the ascender as 80% of the em square. This matches typical Latin
-        // fonts (e.g., Helvetica ascender ≈ 0.77, Arial ≈ 0.81).
-        const ASCENDER_RATIO: f32 = 0.8;
 
         // Don't create empty line boxes.
-        if self.current_line_fragments.is_empty() {
+        if !self.line_has_content() {
             // Even though we skip creating a LineBox, reset horizontal
             // position so the next content starts at the line's leading edge.
             //
@@ -875,19 +969,30 @@ impl InlineLayout {
             // finish_line() is a no-op → recurse with same state.
             self.current_x = 0.0;
             self.current_line_max_height = 0.0;
+            self.current_line_fragments.clear();
+            self.continue_open_inline_boxes();
             return;
         }
+
+        self.split_open_inline_boxes();
 
         let mut max_ascent: f32 = 0.0;
         let mut max_descent: f32 = 0.0;
 
         for frag in &self.current_line_fragments {
-            match frag.vertical_align {
-                VerticalAlign::Top | VerticalAlign::Bottom => {
-                    // Top/bottom-aligned fragments don't participate in
-                    // baseline calculation — they are positioned after
-                    // the baseline is established.
-                }
+            match (&frag.content, frag.vertical_align) {
+                // Top/bottom-aligned fragments don't participate in
+                // baseline calculation — they are positioned after
+                // the baseline is established.
+                (_, VerticalAlign::Top | VerticalAlign::Bottom)
+                // [§ 10.6.1](https://www.w3.org/TR/CSS2/visudet.html#inline-non-replaced)
+                //
+                // "But only the 'line-height' is used when calculating the
+                // height of the line box."
+                //
+                // An inline box's border box can stick out of the line box;
+                // its text, placed by its own line-height, is what counts.
+                | (FragmentContent::InlineBox { .. }, _) => {}
                 _ => {
                     let (ascent, descent) = Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
                     if ascent > max_ascent {
@@ -999,6 +1104,7 @@ impl InlineLayout {
         self.current_y += line_height;
         self.current_x = 0.0;
         self.current_line_max_height = 0.0;
+        self.continue_open_inline_boxes();
     }
 
     /// Calculate the ascent and descent of a fragment for vertical alignment.
@@ -1013,18 +1119,20 @@ impl InlineLayout {
     ///   `ascent = half_leading + font_size × ascender_ratio`
     ///   `descent = line_height - ascent`
     ///
-    /// For non-text fragments (`InlineBox`, `ReplacedElement`), we approximate
-    /// using the fragment height directly.
+    /// An inline box's fragment carries its own ascent, set by
+    /// `begin_inline_box`. For atomic fragments (`ReplacedElement`,
+    /// `InlineBlock`), we approximate using the fragment height directly.
     fn fragment_ascent_descent(frag: &LineFragment, ascender_ratio: f32) -> (f32, f32) {
         let frag_height = frag.bounds.height;
 
         let font_size = match &frag.content {
             FragmentContent::Text(run) => run.font_size,
-            // For non-text fragments, treat the full height as the "font size"
+            &FragmentContent::InlineBox { ascent, .. } => {
+                return (ascent, frag_height - ascent);
+            }
+            // For atomic fragments, treat the full height as the "font size"
             // so ascent = height × ascender_ratio.
-            FragmentContent::InlineBox
-            | FragmentContent::ReplacedElement
-            | FragmentContent::InlineBlock(_) => frag_height,
+            FragmentContent::ReplacedElement | FragmentContent::InlineBlock(_) => frag_height,
         };
 
         let half_leading = (frag_height - font_size) / 2.0;

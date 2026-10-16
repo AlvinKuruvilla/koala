@@ -199,6 +199,10 @@ pub struct DomTree {
     /// All nodes in the tree, indexed by `NodeId`.
     /// The Document node is always at index 0 (`NodeId::ROOT`).
     nodes: Vec<Node>,
+
+    /// The node the user designates with a pointing device, if any.
+    /// See [`Self::hovered`].
+    hovered: Option<NodeId>,
 }
 
 impl DomTree {
@@ -227,7 +231,35 @@ impl DomTree {
         // STEP 3: Place Document at index 0 (`NodeId::ROOT`).
         Self {
             nodes: vec![document],
+            hovered: None,
         }
+    }
+
+    /// [Selectors § 9.1 The Pointer Hover Pseudo-class](https://www.w3.org/TR/selectors-4/#the-hover-pseudo)
+    ///
+    /// "The :hover pseudo-class applies while the user designates an element
+    /// (or pseudo-element) with a pointing device, but does not necessarily
+    /// activate it."
+    ///
+    /// The node under the pointer, as found by hit testing. It may be a
+    /// text node: "An element also matches :hover if one of its descendants
+    /// in the flat tree (including non-element nodes, such as text nodes)
+    /// matches the above conditions."
+    ///
+    /// This is user-agent interaction state, not part of the document the
+    /// DOM Standard describes. It lives on the tree so that selector
+    /// matching, which already takes a `&DomTree`, sees it without a
+    /// separate context parameter.
+    #[must_use]
+    pub const fn hovered(&self) -> Option<NodeId> {
+        self.hovered
+    }
+
+    /// Set the node the pointer designates, or `None` when the pointer
+    /// has left the document. Styles are not recomputed; the caller
+    /// re-runs the cascade.
+    pub const fn set_hovered(&mut self, node: Option<NodeId>) {
+        self.hovered = node;
     }
 
     /// Get the root document node ID.
