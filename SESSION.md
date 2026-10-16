@@ -910,3 +910,11 @@ measuring layout when the resolved size equals the base size is the fix.
     `matchMedia`, `URLSearchParams`, `classList`, `dataset`,
     `MutationObserver`, `requestAnimationFrame` (probe in
     `tmp/compat-check/probe/`).
+- `cargo clippy -p koala-browser --all-targets` fails on 12 pedantic errors
+  in test files: casts in `tests/inline_svg_render.rs` and
+  `tests/renderer_letter_spacing.rs`, missing doc backticks in
+  `tests/renderer_bounds.rs`, an elidable lifetime in
+  `tests/script_loading.rs`. The library target is clean.
+- No `<base href>`: relative links resolve against the document's URL
+  (`koala_browser::input`). Only `a`/`area` have activation behavior, so a
+  `<button>` inside a link follows the link; `target` is ignored.

@@ -47,6 +47,7 @@ pub use inline::{
     ApproximateFontMetrics, DecorationMetrics, FontMetrics, FragmentContent, InlineLayout,
     LineBox, LineFragment, TextRun, VerticalAlign, VerticalFontMetrics,
 };
+pub use hit_test::HitTestResult;
 pub use layout_box::{BoxType, ElementBoxId, LayoutBox};
 pub use positioned::{BoxOffsets, PositionedLayout};
 pub use stacking::{StackingContext, ZIndex};

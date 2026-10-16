@@ -123,13 +123,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let i = active.get();
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(i) else { return };
-            window.set_url_text(SharedString::from(url.as_str()));
-            window.set_committed_url(SharedString::from(url.as_str()));
-            *tab.url_text.borrow_mut() = url.clone();
-            tab.page.borrow().request_load(&url);
-            tab.loading.set(Loading::AwaitingState);
-            window.set_loading(true);
-            refresh_tab_entry(&tab_model, i, tab);
+            start_load(&window, &tab_model, i, tab, &url);
         });
     }
     {
@@ -235,6 +229,30 @@ fn main() -> Result<(), slint::PlatformError> {
             let tabs_ref = tabs.borrow();
             let Some(tab) = tabs_ref.get(active.get()) else { return };
             tab.page.borrow().pointer_left();
+        });
+    }
+    {
+        let tabs = tabs.clone();
+        let active = active.clone();
+        let weak = window.as_weak();
+        window.on_pointer_pressed(move |x, y| {
+            let Some(window) = weak.upgrade() else { return };
+            let tabs_ref = tabs.borrow();
+            let Some(tab) = tabs_ref.get(active.get()) else { return };
+            let scale = window.window().scale_factor();
+            tab.page.borrow().pointer_pressed(x * scale, y * scale);
+        });
+    }
+    {
+        let tabs = tabs.clone();
+        let active = active.clone();
+        let weak = window.as_weak();
+        window.on_pointer_released(move |x, y| {
+            let Some(window) = weak.upgrade() else { return };
+            let tabs_ref = tabs.borrow();
+            let Some(tab) = tabs_ref.get(active.get()) else { return };
+            let scale = window.window().scale_factor();
+            tab.page.borrow().pointer_released(x * scale, y * scale);
         });
     }
     {
@@ -360,7 +378,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            if let Some(frame) = tab.page.borrow().try_take_render_image() {
+            let update = tab.page.borrow().poll_renderer();
+            // Only the active tab is under the pointer, so only its
+            // cursor is shown.
+            if let Some(cursor) = update.cursor
+                && i == active_idx
+            {
+                window.set_page_cursor(page_cursor(cursor));
+            }
+            // Only the active tab receives clicks, so only it navigates.
+            if let Some(url) = update.navigate
+                && i == active_idx
+            {
+                start_load(&window, &tab_model_for_tick, i, tab, &url);
+            }
+            if let Some(frame) = update.frame {
                 // A frame of an earlier page state is still shown (it is
                 // what the tab has), but only a frame of the awaited
                 // state ends loading.
@@ -448,6 +480,24 @@ fn push_tab(
 /// VecModel implementation fires a `row_changed` notification that
 /// re-renders the corresponding `TabItem` in the strip without
 /// rebuilding the whole `for` loop.
+/// Load `url` in the active tab at `index`, as from the location bar or a
+/// followed link.
+fn start_load(
+    window: &MainWindow,
+    tab_model: &VecModel<TabEntry>,
+    index: usize,
+    tab: &TabState,
+    url: &str,
+) {
+    window.set_url_text(SharedString::from(url));
+    window.set_committed_url(SharedString::from(url));
+    *tab.url_text.borrow_mut() = url.to_owned();
+    tab.page.borrow().request_load(url);
+    tab.loading.set(Loading::AwaitingState);
+    window.set_loading(true);
+    refresh_tab_entry(tab_model, index, tab);
+}
+
 fn refresh_tab_entry(model: &VecModel<TabEntry>, index: usize, state: &TabState) {
     let entry = TabEntry {
         title: SharedString::from(state.title.borrow().as_str()),
@@ -532,6 +582,51 @@ fn has_url_scheme(s: &str) -> bool {
     }
     // `host:8080` — bare port, not a scheme.
     !after.is_empty() && !after.chars().all(|c| c.is_ascii_digit())
+}
+
+/// The Slint cursor for a CSS `cursor` value.
+///
+/// Slint has no shape for six of the CSS keywords; each falls back to the
+/// nearest shape it has, the way CSS UI 4 describes them ("Often rendered
+/// as ..."): `cell` and `crosshair` are both plus-signs, `vertical-text`
+/// is an I-beam turned on its side, and `all-scroll`'s four arrows are
+/// `move`'s. `context-menu`, `zoom-in` and `zoom-out` are arrows with a
+/// badge, so the plain arrow.
+fn page_cursor(cursor: koala_browser::css::Cursor) -> PageCursor {
+    use koala_browser::css::Cursor;
+    match cursor {
+        Cursor::Auto | Cursor::Default | Cursor::ContextMenu | Cursor::ZoomIn | Cursor::ZoomOut => {
+            PageCursor::Default
+        }
+        Cursor::None => PageCursor::None,
+        Cursor::Help => PageCursor::Help,
+        Cursor::Pointer => PageCursor::Pointer,
+        Cursor::Progress => PageCursor::Progress,
+        Cursor::Wait => PageCursor::Wait,
+        Cursor::Cell | Cursor::Crosshair => PageCursor::Crosshair,
+        Cursor::Text | Cursor::VerticalText => PageCursor::Text,
+        Cursor::Alias => PageCursor::Alias,
+        Cursor::Copy => PageCursor::Copy,
+        Cursor::Move | Cursor::AllScroll => PageCursor::Move,
+        Cursor::NoDrop => PageCursor::NoDrop,
+        Cursor::NotAllowed => PageCursor::NotAllowed,
+        Cursor::Grab => PageCursor::Grab,
+        Cursor::Grabbing => PageCursor::Grabbing,
+        Cursor::ColResize => PageCursor::ColResize,
+        Cursor::RowResize => PageCursor::RowResize,
+        Cursor::NResize => PageCursor::NResize,
+        Cursor::EResize => PageCursor::EResize,
+        Cursor::SResize => PageCursor::SResize,
+        Cursor::WResize => PageCursor::WResize,
+        Cursor::NeResize => PageCursor::NeResize,
+        Cursor::NwResize => PageCursor::NwResize,
+        Cursor::SeResize => PageCursor::SeResize,
+        Cursor::SwResize => PageCursor::SwResize,
+        Cursor::EwResize => PageCursor::EwResize,
+        Cursor::NsResize => PageCursor::NsResize,
+        Cursor::NeswResize => PageCursor::NeswResize,
+        Cursor::NwseResize => PageCursor::NwseResize,
+    }
 }
 
 #[cfg(test)]

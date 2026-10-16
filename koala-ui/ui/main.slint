@@ -24,6 +24,19 @@ import { DevHudWindow } from "devhud.slint";
 // in the entry module's export list).
 export { TabEntry, DevHudWindow }
 
+// The cursor the page asks for (CSS `cursor`, resolved by the render
+// worker). It mirrors Slint's built-in `MouseCursor`, which the Rust
+// side cannot name: Slint exports it only through its unstable private
+// API. `mouse-cursor-for` below turns one into the other.
+export enum PageCursor {
+    default, none, help, pointer, progress, wait, crosshair, text,
+    alias, copy, move, no-drop, not-allowed, grab, grabbing,
+    col-resize, row-resize,
+    n-resize, e-resize, s-resize, w-resize,
+    ne-resize, nw-resize, se-resize, sw-resize,
+    ew-resize, ns-resize, nesw-resize, nwse-resize,
+}
+
 export component MainWindow inherits Window {
     title: root.page-title;
     preferred-width: 1024px;
@@ -69,6 +82,45 @@ export component MainWindow inherits Window {
     // them to the physical pixels the page is laid out in.
     callback pointer-moved(length, length);
     callback pointer-left();
+    // The primary button went down or came up over the page, at a point
+    // in the same coordinates as `pointer-moved`.
+    callback pointer-pressed(length, length);
+    callback pointer-released(length, length);
+
+    // The cursor shown while the pointer is over the page.
+    in property <PageCursor> page-cursor: PageCursor.default;
+
+    pure function mouse-cursor-for(cursor: PageCursor) -> MouseCursor {
+        if (cursor == PageCursor.none) { return MouseCursor.none; }
+        if (cursor == PageCursor.help) { return MouseCursor.help; }
+        if (cursor == PageCursor.pointer) { return MouseCursor.pointer; }
+        if (cursor == PageCursor.progress) { return MouseCursor.progress; }
+        if (cursor == PageCursor.wait) { return MouseCursor.wait; }
+        if (cursor == PageCursor.crosshair) { return MouseCursor.crosshair; }
+        if (cursor == PageCursor.text) { return MouseCursor.text; }
+        if (cursor == PageCursor.alias) { return MouseCursor.alias; }
+        if (cursor == PageCursor.copy) { return MouseCursor.copy; }
+        if (cursor == PageCursor.move) { return MouseCursor.move; }
+        if (cursor == PageCursor.no-drop) { return MouseCursor.no-drop; }
+        if (cursor == PageCursor.not-allowed) { return MouseCursor.not-allowed; }
+        if (cursor == PageCursor.grab) { return MouseCursor.grab; }
+        if (cursor == PageCursor.grabbing) { return MouseCursor.grabbing; }
+        if (cursor == PageCursor.col-resize) { return MouseCursor.col-resize; }
+        if (cursor == PageCursor.row-resize) { return MouseCursor.row-resize; }
+        if (cursor == PageCursor.n-resize) { return MouseCursor.n-resize; }
+        if (cursor == PageCursor.e-resize) { return MouseCursor.e-resize; }
+        if (cursor == PageCursor.s-resize) { return MouseCursor.s-resize; }
+        if (cursor == PageCursor.w-resize) { return MouseCursor.w-resize; }
+        if (cursor == PageCursor.ne-resize) { return MouseCursor.ne-resize; }
+        if (cursor == PageCursor.nw-resize) { return MouseCursor.nw-resize; }
+        if (cursor == PageCursor.se-resize) { return MouseCursor.se-resize; }
+        if (cursor == PageCursor.sw-resize) { return MouseCursor.sw-resize; }
+        if (cursor == PageCursor.ew-resize) { return MouseCursor.ew-resize; }
+        if (cursor == PageCursor.ns-resize) { return MouseCursor.ns-resize; }
+        if (cursor == PageCursor.nesw-resize) { return MouseCursor.nesw-resize; }
+        if (cursor == PageCursor.nwse-resize) { return MouseCursor.nwse-resize; }
+        return MouseCursor.default;
+    }
 
     // Application menu bar. Native NSMenu on macOS, in-window
     // strip elsewhere. Must be a direct child of `Window` —
@@ -254,9 +306,16 @@ export component MainWindow inherits Window {
                 y: 0;
                 width: parent.width;
                 height: parent.height;
+                mouse-cursor: root.mouse-cursor-for(root.page-cursor);
                 pointer-event(event) => {
                     if (event.kind == PointerEventKind.move) {
                         root.pointer-moved(self.mouse-x, self.mouse-y);
+                    } else if (event.button == PointerEventButton.left
+                            && event.kind == PointerEventKind.down) {
+                        root.pointer-pressed(self.mouse-x, self.mouse-y);
+                    } else if (event.button == PointerEventButton.left
+                            && event.kind == PointerEventKind.up) {
+                        root.pointer-released(self.mouse-x, self.mouse-y);
                     }
                 }
                 changed has-hover => {

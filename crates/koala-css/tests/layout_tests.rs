@@ -5045,6 +5045,10 @@ fn id_of(layout_box: &LayoutBox) -> ElementBoxId {
         .expect("an element's box")
 }
 
+fn hit_target(root: &LayoutBox, x: f32, y: f32) -> Option<ElementBoxId> {
+    root.hit_test(x, y).map(|hit| hit.target)
+}
+
 fn centre(rect: Rect) -> (f32, f32) {
     (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
 }
@@ -5070,9 +5074,9 @@ fn test_hit_test_finds_innermost_inline_box() {
     let (_, one) = texts[0];
     let (_, two) = *texts.last().expect("the <em>'s text");
     let (x, y) = centre(one);
-    assert_eq!(root.hit_test(x, y), Some(id_of(a)));
+    assert_eq!(hit_target(&root, x, y), Some(id_of(a)));
     let (x, y) = centre(two);
-    assert_eq!(root.hit_test(x, y), Some(id_of(em)));
+    assert_eq!(hit_target(&root, x, y), Some(id_of(em)));
 }
 
 /// Text outside any inline box belongs to the block that owns its line.
@@ -5085,7 +5089,7 @@ fn test_hit_test_bare_text_hits_its_block() {
     let p = &box_at_depth(&root, 2).children[0];
     let (_, plain) = text_fragments(&p.line_boxes[0])[0];
     let (x, y) = centre(plain);
-    assert_eq!(root.hit_test(x, y), Some(id_of(p)));
+    assert_eq!(hit_target(&root, x, y), Some(id_of(p)));
 }
 
 /// [Selectors 4 § 9.1](https://www.w3.org/TR/selectors-4/#the-hover-pseudo)
@@ -5106,7 +5110,7 @@ fn test_hit_test_returns_pseudo_element() {
     let span = &p.children[0];
     let (_, icon) = text_fragments(&p.line_boxes[0])[0];
     let (x, y) = centre(icon);
-    let hit = root.hit_test(x, y).expect("the ::before");
+    let hit = hit_target(&root, x, y).expect("the ::before");
     assert_eq!(hit.node, id_of(span).node);
     assert!(hit.pseudo_element.is_some(), "{hit:?}");
 }
@@ -5127,7 +5131,7 @@ fn test_hit_test_inline_block_inside_inline_box() {
         .find(|c| c.tag_name.as_deref() == Some("b"))
         .expect("<b> inside <a>");
     let (x, y) = centre(b.dimensions.border_box());
-    assert_eq!(root.hit_test(x, y), Some(id_of(b)));
+    assert_eq!(hit_target(&root, x, y), Some(id_of(b)));
 }
 
 /// [CSS Display 4 § 5](https://drafts.csswg.org/css-display-4/#visibility)
@@ -5150,11 +5154,11 @@ fn test_hit_test_skips_invisible_box_but_not_its_children() {
     let p = &div.children[0];
 
     let (x, y) = centre(p.dimensions.border_box());
-    assert_eq!(root.hit_test(x, y), Some(id_of(p)));
+    assert_eq!(hit_target(&root, x, y), Some(id_of(p)));
 
     let div_box = div.dimensions.border_box();
     let below_p = div_box.y + div_box.height - 5.0;
-    assert_eq!(root.hit_test(10.0, below_p), Some(id_of(body)));
+    assert_eq!(hit_target(&root, 10.0, below_p), Some(id_of(body)));
 }
 
 /// [CSS Backgrounds 3 § 4.3](https://www.w3.org/TR/css-backgrounds-3/#corner-clipping)
@@ -5172,9 +5176,9 @@ fn test_hit_test_respects_border_radius() {
     );
     let body = box_at_depth(&root, 2);
     let div = &body.children[0];
-    assert_eq!(root.hit_test(50.0, 50.0), Some(id_of(div)));
-    assert_eq!(root.hit_test(50.0, 1.0), Some(id_of(div)));
-    assert_eq!(root.hit_test(2.0, 2.0), Some(id_of(body)));
+    assert_eq!(hit_target(&root, 50.0, 50.0), Some(id_of(div)));
+    assert_eq!(hit_target(&root, 50.0, 1.0), Some(id_of(div)));
+    assert_eq!(hit_target(&root, 2.0, 2.0), Some(id_of(body)));
 }
 
 /// [CSS Overflow 3 § 3](https://drafts.csswg.org/css-overflow-3/#overflow-control)
@@ -5194,8 +5198,8 @@ fn test_hit_test_respects_overflow_clip() {
     let body = box_at_depth(&root, 2);
     let clip = &body.children[0];
     let tall = &clip.children[0];
-    assert_eq!(root.hit_test(10.0, 10.0), Some(id_of(tall)));
-    assert_eq!(root.hit_test(10.0, 50.0), Some(id_of(body)));
+    assert_eq!(hit_target(&root, 10.0, 10.0), Some(id_of(tall)));
+    assert_eq!(hit_target(&root, 10.0, 50.0), Some(id_of(body)));
 }
 
 /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
@@ -5214,8 +5218,35 @@ fn test_hit_test_positioned_box_is_on_top() {
     let body = box_at_depth(&root, 2);
     let over = &body.children[0];
     let under = &body.children[1];
-    assert_eq!(root.hit_test(10.0, 10.0), Some(id_of(over)));
-    assert_eq!(root.hit_test(10.0, 80.0), Some(id_of(under)));
+    assert_eq!(hit_target(&root, 10.0, 10.0), Some(id_of(over)));
+    assert_eq!(hit_target(&root, 10.0, 80.0), Some(id_of(under)));
+}
+
+/// [CSS UI 4 § 5.1.1.1](https://drafts.csswg.org/css-ui-4/#cursor):
+/// "auto behaves as text over selectable text ... and default otherwise."
+/// The hit test says which: over the link's text, beside it on the same
+/// block, and inside the link's padding but off its text.
+#[test]
+fn test_hit_test_reports_text() {
+    let root = layout_html(
+        "<html><body><style>body, p { margin: 0; } \
+         p { height: 100px; } a { padding: 0 30px; }</style>\
+         <p><a>link</a></p></body></html>",
+    );
+    let p = &box_at_depth(&root, 2).children[0];
+    let (_, text) = text_fragments(&p.line_boxes[0])[0];
+
+    let (x, y) = centre(text);
+    let on_text = root.hit_test(x, y).expect("the link");
+    assert!(on_text.over_text);
+
+    let below_line = root.hit_test(x, 80.0).expect("the paragraph");
+    assert_eq!(below_line.target, id_of(p));
+    assert!(!below_line.over_text);
+
+    let in_padding = root.hit_test(text.x - 15.0, y).expect("the link's padding");
+    assert_eq!(in_padding.target, on_text.target);
+    assert!(!in_padding.over_text);
 }
 
 /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order),

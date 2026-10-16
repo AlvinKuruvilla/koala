@@ -179,10 +179,18 @@ pre {
     font-family: monospace;
 }
 
-/* "a:any-link { color: -internal-link; text-decoration: underline; }" */
-a {
-    text-decoration: underline;
+/* [§ 15.3.4 Phrasing content](https://html.spec.whatwg.org/multipage/rendering.html#phrasing-content-3)
+ *
+ * ":link { color: #0000EE; }"
+ * ":visited { color: #551A8B; }"
+ * ":link, :visited { text-decoration: underline; cursor: pointer; }"
+ *
+ * NOTE: Koala keeps no history, so no link is visited and the :visited
+ * rules are left out. */
+:link {
     color: #0000EE;
+    text-decoration: underline;
+    cursor: pointer;
 }
 
 /* [§ 15.5.12–15.5.15 Form controls](https://html.spec.whatwg.org/multipage/rendering.html#the-input-element-as-a-form-control) */

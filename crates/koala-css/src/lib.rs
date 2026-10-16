@@ -70,8 +70,8 @@ pub use backgrounds::canvas_background;
 pub use cascade::compute_styles;
 pub use layout::{
     ApproximateFontMetrics, BoxDimensions, BoxType, DecorationMetrics, EdgeSizes, ElementBoxId,
-    FontMetrics, FontStyle, FragmentContent, LayoutBox, PositionType, Rect, TextDecorationLine,
-    TextRun, VerticalFontMetrics,
+    FontMetrics, FontStyle, FragmentContent, HitTestResult, LayoutBox, PositionType, Rect,
+    TextDecorationLine, TextRun, VerticalFontMetrics,
 };
 pub use paint::{DisplayCommand, DisplayList, DisplayListBuilder};
 pub use parser::{CSSParser, ComponentValue, Declaration, Rule, Stylesheet};
@@ -81,8 +81,9 @@ pub use selector::{
 };
 pub use style::ComputedStyle;
 pub use style::computed::{
-    AlignItems, AlignSelf, Content, ContentItem, FlexDirection, FlexWrap, GridAutoFlow, GridLine,
-    JustifyContent, ListStyleType, Overflow, TrackList, TrackSize, Visibility, WhiteSpace,
+    AlignItems, AlignSelf, Content, ContentItem, Cursor, FlexDirection, FlexWrap, GridAutoFlow,
+    GridLine, JustifyContent, ListStyleType, Overflow, TrackList, TrackSize, Visibility,
+    WhiteSpace,
 };
 pub use style::{
     AutoLength, BorderRadius, BorderValue, BoxShadow, ColorValue, DEFAULT_FONT_SIZE_PX,

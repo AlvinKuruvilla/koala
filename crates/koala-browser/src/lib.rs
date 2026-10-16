@@ -19,6 +19,7 @@
 pub mod font_metrics;
 pub mod image_loader;
 pub mod inline_svg;
+pub mod input;
 pub mod renderer;
 
 pub use koala_css as css;
@@ -105,6 +106,11 @@ pub struct LoadedDocument {
     /// The intrinsic size of each loaded `<img>`, keyed by the element.
     /// Building the layout tree again (see [`restyle`]) needs it.
     pub image_dims: HashMap<NodeId, (f32, f32)>,
+
+    /// The URL the document's relative references resolve against: its
+    /// own address, or `None` for a document parsed from a string or
+    /// loaded from a `data:` URL.
+    pub base_url: Option<String>,
 }
 
 /// What [`restyle`] recomputes.
@@ -387,6 +393,7 @@ fn parse_html_with_base_url<H: JsHooks>(
         images,
         inline_svgs,
         image_dims,
+        base_url: base_url.map(str::to_owned),
     }
 }
 

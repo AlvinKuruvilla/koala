@@ -42,13 +42,14 @@
 // `parse_html_string` / `load_document` and drop the interpreter
 // immediately after.
 
+use koala_browser::css::Cursor;
 use koala_browser::parse_html_string;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::error_page::Failure;
 use crate::load_worker::{LoadRequest, LoadResult, LoadSource, report_problems, run_load_worker};
 use crate::page_state::PageState;
-use crate::render_worker::{RenderResult, WorkerMessage, run_render_worker};
+use crate::render_worker::{RenderResult, WorkerMessage, WorkerReply, run_render_worker};
 use crate::worker::Worker;
 
 /// A rendered frame, ready to display.
@@ -56,6 +57,15 @@ pub struct Frame {
     pub image: Image,
     /// The [`BrowserPage::state_generation`] of the page state it shows.
     pub generation: u64,
+}
+
+/// What [`BrowserPage::poll_renderer`] found.
+pub struct RenderUpdate {
+    pub frame: Option<Frame>,
+    /// The cursor to show over the viewport, if it changed.
+    pub cursor: Option<Cursor>,
+    /// A URL a click on the page asked to load, if one did.
+    pub navigate: Option<String>,
 }
 
 /// A single entry in the per-tab history stack.
@@ -97,7 +107,7 @@ pub struct BrowserPage {
     history: Vec<HistoryEntry>,
     history_index: Option<usize>,
 
-    renderer: Worker<WorkerMessage, RenderResult>,
+    renderer: Worker<WorkerMessage, WorkerReply>,
 
     // `go_back` / `go_forward` post results to it themselves when a
     // history entry is the in-memory landing page rather than a URL the
@@ -352,10 +362,23 @@ impl BrowserPage {
         self.renderer.send(WorkerMessage::PointerLeft);
     }
 
-    /// Non-blocking check for a finished frame. Returns `None` when
-    /// no frame is ready. Intended to be called from a `slint::Timer`
-    /// at ~60 Hz. The frame's `generation` says which page state it
-    /// shows, which may be older than the current one.
+    /// The primary button went down over the viewport, in physical pixels.
+    pub fn pointer_pressed(&self, x: f32, y: f32) {
+        self.renderer.send(WorkerMessage::PointerPressed { x, y });
+    }
+
+    /// The primary button came up over the viewport, in physical pixels.
+    /// With a press before it, this is a click, which may follow a link;
+    /// `poll_renderer` then reports the URL.
+    pub fn pointer_released(&self, x: f32, y: f32) {
+        self.renderer.send(WorkerMessage::PointerReleased { x, y });
+    }
+
+    /// Non-blocking check for what the render worker sent since the last
+    /// poll: the newest frame and the newest cursor, either of which may
+    /// be absent. Intended to be called from a `slint::Timer` at ~60 Hz.
+    /// The frame's `generation` says which page state it shows, which
+    /// may be older than the current one.
     ///
     /// When the render worker caught a panic while rasterising the
     /// current page (e.g. a slice out-of-bounds in real-world HTML),
@@ -364,34 +387,26 @@ impl BrowserPage {
     /// synthesising an error-page `PageState` and injecting it
     /// through the load channel, so the next poll tick swaps state
     /// and schedules a fresh render of the built-in error template.
-    /// The caller always sees either a real frame or `None` — it
-    /// never has to know about engine panics.
-    pub fn try_take_render_image(&self) -> Option<Frame> {
-        let Some(result) = self.renderer.try_recv() else {
-            return None;
-        };
-
-        if !result.error.is_empty() {
-            self.install_engine_error(&result.error);
-            return None;
+    /// The caller never has to know about engine panics.
+    pub fn poll_renderer(&self) -> RenderUpdate {
+        let mut cursor = None;
+        let mut navigate = None;
+        let mut newest = None;
+        while let Some(reply) = self.renderer.try_recv() {
+            match reply {
+                WorkerReply::Cursor(c) => cursor = Some(c),
+                WorkerReply::Navigate(url) => navigate = Some(url),
+                WorkerReply::Frame(result) if !result.error.is_empty() => {
+                    self.install_engine_error(&result.error);
+                }
+                WorkerReply::Frame(result) => newest = Some(result),
+            }
         }
-
-        if result.pixels.is_empty() || result.width == 0 || result.height == 0 {
-            return None;
+        RenderUpdate {
+            frame: newest.and_then(to_frame),
+            cursor,
+            navigate,
         }
-
-        // RGBA bytes are already in `Rgba8Pixel`'s memory layout
-        // (R, G, B, A; 4 bytes per pixel, no padding). `make_mut_bytes`
-        // exposes the buffer as a flat `&mut [u8]` of length
-        // `width * height * 4`, so a single `copy_from_slice` does the
-        // whole transfer — no per-pixel iteration, no allocation past
-        // the initial buffer.
-        let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(result.width, result.height);
-        buf.make_mut_bytes().copy_from_slice(&result.pixels);
-        Some(Frame {
-            image: Image::from_rgba8(buf),
-            generation: result.generation,
-        })
     }
 
     /// Builds the error page for the currently-displayed URL and
@@ -418,4 +433,25 @@ impl BrowserPage {
             state,
         });
     }
+}
+
+/// Wrap a finished frame's pixels in a Slint image. `None` for a frame
+/// with no pixels.
+fn to_frame(result: RenderResult) -> Option<Frame> {
+    if result.pixels.is_empty() || result.width == 0 || result.height == 0 {
+        return None;
+    }
+
+    // RGBA bytes are already in `Rgba8Pixel`'s memory layout
+    // (R, G, B, A; 4 bytes per pixel, no padding). `make_mut_bytes`
+    // exposes the buffer as a flat `&mut [u8]` of length
+    // `width * height * 4`, so a single `copy_from_slice` does the
+    // whole transfer — no per-pixel iteration, no allocation past
+    // the initial buffer.
+    let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(result.width, result.height);
+    buf.make_mut_bytes().copy_from_slice(&result.pixels);
+    Some(Frame {
+        image: Image::from_rgba8(buf),
+        generation: result.generation,
+    })
 }
