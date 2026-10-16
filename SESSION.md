@@ -880,3 +880,33 @@ measuring layout when the resolved size equals the base size is the fix.
   `<b>bold gjpqy</b> <i>italic gjpqy</i>` at 12px draws the two runs
   touching, with the space between them covered. Seen in
   `tmp/underline/after.png`.
+- Found rendering WebArena-style apps (2026-10-16, screenshots and logs in
+  `tmp/compat-check/`):
+  - `font-size` as a percentage computes to 0, so the text is never
+    painted: `p{font-size:100%}` gives a 0-height line. Magento's
+    `html{font-size:62.5%}` erases every word on the page.
+  - `rem` lengths are dropped (11 of 14 pages; up to 1481 drops per page).
+  - The HTML parser panics in the `InCaption` insertion mode
+    (`koala-html/src/parser/core.rs:648`), so any `<table>` with a
+    `<caption>` aborts the render (Wikipedia infoboxes, Magento's
+    product table).
+  - At-rules are dropped without a diagnostic, so nobody sees `@media`
+    or `@font-face` disappear (see the entry above on the cascade).
+  - `load_scripts` (`koala-browser/src/lib.rs:714`) runs every `<script>`
+    as classic JS whatever its `type`: JSON blocks
+    (`text/x-magento-init`, `application/json`) raise SyntaxErrors, and
+    `type=module` is not supported.
+  - CSS-wide keywords `inherit`, `initial` and `unset` are rejected for
+    many properties (`color: inherit` dropped 340 times on one page).
+  - Escaped selectors (`.\!gl-m-0`, `.gl-w-1\/2`) fail to parse: 539
+    rules dropped on GitLab.
+  - `:not(:last-child)` and `:not(:disabled)` parse as pseudo-elements
+    and never match.
+  - Bootstrap 3's `.media-body` (`display: table-cell`) lays out as a
+    10000px-wide block, which hides WebShop's price line.
+  - DOM APIs missing for jQuery 3, Bootstrap and webpack:
+    `createDocumentFragment`, `document.readyState`,
+    `document.currentScript`, `navigator`, `getComputedStyle`,
+    `matchMedia`, `URLSearchParams`, `classList`, `dataset`,
+    `MutationObserver`, `requestAnimationFrame` (probe in
+    `tmp/compat-check/probe/`).
