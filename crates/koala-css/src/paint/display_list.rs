@@ -7,7 +7,7 @@
 
 use crate::ColorValue;
 use crate::style::BorderRadius;
-use crate::style::values::{FontStyle, TextDecorationLine};
+use crate::style::values::FontStyle;
 use koala_dom::NodeId;
 
 /// A single drawing command.
@@ -117,10 +117,14 @@ pub enum DisplayCommand {
     ///
     /// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order)
     /// Step 7: "the element's text"
+    ///
+    /// Decoration lines are not part of the command: the builder emits
+    /// them as `FillRect`s around it, in painting order.
     DrawText {
-        /// X coordinate of the text baseline origin.
+        /// X coordinate of the left end of the text.
         x: f32,
-        /// Y coordinate of the text baseline origin.
+        /// Y coordinate of the text's alphabetic baseline, which glyphs
+        /// sit on.
         y: f32,
         /// The text content to draw.
         text: String,
@@ -134,8 +138,6 @@ pub enum DisplayCommand {
         font_weight: u16,
         /// [§ 3.3 'font-style'](https://www.w3.org/TR/css-fonts-4/#font-style-prop)
         font_style: FontStyle,
-        /// [§ 3 'text-decoration-line'](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
-        text_decoration: TextDecorationLine,
         /// [§ 9.3 'letter-spacing'](https://www.w3.org/TR/css-text-3/#letter-spacing-property)
         ///
         /// Additional pixels inserted between adjacent glyph advances

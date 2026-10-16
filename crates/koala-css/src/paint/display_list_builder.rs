@@ -21,7 +21,7 @@ use crate::{BoxType, LayoutBox};
 
 use crate::ColorValue;
 
-use super::{DisplayCommand, DisplayList};
+use super::{DisplayCommand, DisplayList, text_decoration};
 
 /// Apply opacity to a color by multiplying its alpha channel.
 ///
@@ -281,17 +281,13 @@ impl<'a> DisplayListBuilder<'a> {
                 for line_box in &layout_box.line_boxes {
                     for fragment in &line_box.fragments {
                         if let FragmentContent::Text(text_run) = &fragment.content {
-                            display_list.push(DisplayCommand::DrawText {
-                                x: fragment.bounds.x,
-                                y: fragment.bounds.y,
-                                text: text_run.text.clone(),
-                                font_size: text_run.font_size,
-                                color: apply_opacity(&text_run.color, opacity),
-                                font_weight: text_run.font_weight,
-                                font_style: text_run.font_style,
-                                text_decoration: text_run.text_decoration,
-                                letter_spacing: text_run.letter_spacing
-                            });
+                            text_decoration::push_text_run(
+                                display_list,
+                                fragment.bounds.x,
+                                fragment.bounds.y,
+                                text_run,
+                                &apply_opacity(&text_run.color, opacity),
+                            );
                         }
                     }
                 }

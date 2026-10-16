@@ -18,9 +18,7 @@
 use anyhow::Result;
 use fontdue::{Font, FontSettings};
 use image::{ImageBuffer, Rgba, RgbaImage};
-use koala_css::{
-    BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle, TextDecorationLine,
-};
+use koala_css::{BorderRadius, ColorValue, DisplayCommand, DisplayList, FontStyle};
 use koala_dom::NodeId;
 use koala_std::collections::HashMap;
 use std::path::Path;
@@ -387,7 +385,6 @@ impl Renderer {
                 color,
                 font_weight,
                 font_style,
-                text_decoration,
                 letter_spacing,
             } => {
                 self.draw_text(
@@ -398,7 +395,6 @@ impl Renderer {
                     color,
                     *font_weight,
                     *font_style,
-                    *text_decoration,
                     *letter_spacing,
                 );
             }
@@ -662,7 +658,8 @@ impl Renderer {
         }
     }
 
-    /// Draw text at the given position.
+    /// Draw `text` with its left end at `x` and its glyphs on the
+    /// baseline at `y`.
     #[allow(
         clippy::too_many_arguments,
         clippy::cast_possible_truncation,
@@ -678,7 +675,6 @@ impl Renderer {
         color: &ColorValue,
         font_weight: u16,
         font_style: FontStyle,
-        text_decoration: TextDecorationLine,
         letter_spacing: f32,
     ) {
         // Select the best available font for the given weight and style,
@@ -703,7 +699,6 @@ impl Renderer {
 
         let rgba = Rgba([color.r, color.g, color.b, color.a]);
         let mut cursor_x = x;
-        let cursor_y = y;
 
         // Control characters (newlines, tabs, …) are filtered out
         // here rather than inside the loop body — line breaks come
@@ -723,10 +718,14 @@ impl Renderer {
             // Rasterize the character
             let (metrics, bitmap) = font.rasterize(ch, font_size);
 
-            // Calculate position (fontdue gives us the bitmap offset)
+            // fontdue gives the bitmap's offset from the glyph origin on the
+            // baseline: `xmin` to its left edge, and `ymin` up to its
+            // bottom edge, so its top row is `ymin + height` above the
+            // baseline. The baseline is truncated to a pixel row as
+            // `fill_rect` truncates, so a decoration placed relative to the
+            // same baseline lands on the rows it was meant to.
             let glyph_x = cursor_x as i32 + metrics.xmin;
-            let glyph_y =
-                cursor_y as i32 + (font_size as i32 - metrics.ymin - metrics.height as i32);
+            let glyph_y = y as i32 - metrics.ymin - metrics.height as i32;
 
             // Draw the glyph
             for gy in 0..metrics.height {
@@ -759,32 +758,6 @@ impl Renderer {
             cursor_x += metrics.advance_width;
             if chars.peek().is_some() {
                 cursor_x += letter_spacing;
-            }
-        }
-
-        // [§ 3 Text Decoration Lines](https://www.w3.org/TR/css-text-decoration-3/#text-decoration-line-property)
-        //
-        // Draw text decoration lines after the glyphs.
-        let total_advance = cursor_x - x;
-        if total_advance > 0.0
-            && (text_decoration.underline || text_decoration.overline || text_decoration.line_through)
-        {
-            let line_thickness = (font_size / 16.0).max(1.0);
-
-            if text_decoration.underline {
-                // Underline: just below the baseline.
-                let line_y = font_size.mul_add(0.9, y);
-                self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
-            }
-            if text_decoration.line_through {
-                // Line-through: through the middle of the text.
-                let line_y = font_size.mul_add(0.55, y);
-                self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
-            }
-            if text_decoration.overline {
-                // Overline: at the top of the text.
-                let line_y = font_size.mul_add(0.1, y);
-                self.fill_rect(x, line_y, total_advance, line_thickness, color, &BorderRadius::default());
             }
         }
     }

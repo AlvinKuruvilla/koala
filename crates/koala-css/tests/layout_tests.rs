@@ -5217,3 +5217,42 @@ fn test_hit_test_positioned_box_is_on_top() {
     assert_eq!(root.hit_test(10.0, 10.0), Some(id_of(over)));
     assert_eq!(root.hit_test(10.0, 80.0), Some(id_of(under)));
 }
+
+/// [CSS 2.1 Appendix E.2](https://www.w3.org/TR/CSS2/zindex.html#painting-order),
+/// for a run of text: "any underlining affecting the text of the
+/// element", then "the text.", then "any line-through affecting the text
+/// of the element". The decorations arrive as rectangles as wide as the
+/// text, and the text is drawn on its baseline.
+#[test]
+fn test_text_decorations_paint_around_text_in_order() {
+    use koala_css::DisplayCommand;
+
+    let display_list = paint_html(
+        "<style>body { margin: 0; font-size: 16px; } \
+         span { text-decoration: underline line-through; }</style>\
+         <body><span>struck</span></body>",
+    );
+
+    let commands = display_list.commands();
+    let text_index = commands
+        .iter()
+        .position(|c| matches!(c, DisplayCommand::DrawText { .. }))
+        .expect("the text is painted");
+    let DisplayCommand::DrawText { y: baseline, .. } = commands[text_index] else {
+        unreachable!("found as DrawText");
+    };
+    // ApproximateFontMetrics: A = 12.8, D = 3.2 in a 19.2px line, so
+    // L = 3.2 and the baseline is A + L/2 = 14.4 below the line's top.
+    assert!((baseline - 14.4).abs() < 1e-4, "baseline at {baseline}");
+
+    let DisplayCommand::FillRect { y: underline_top, height, .. } = commands[text_index - 1] else {
+        panic!("the underline comes just before the text");
+    };
+    assert!(underline_top > baseline, "underline at {underline_top}, baseline at {baseline}");
+    assert_eq!(height, 1.0);
+
+    let DisplayCommand::FillRect { y: strike_top, .. } = commands[text_index + 1] else {
+        panic!("the line-through comes just after the text");
+    };
+    assert!(strike_top < baseline, "line-through at {strike_top}, baseline at {baseline}");
+}
