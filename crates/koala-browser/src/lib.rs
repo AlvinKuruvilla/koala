@@ -792,21 +792,6 @@ pub fn load_system_font() -> Option<fontdue::Font> {
     Renderer::load_system_font()
 }
 
-/// Create a [`FontMetrics`](koala_css::FontMetrics) provider, using real
-/// font metrics if a font is available, falling back to approximation.
-///
-/// [§ 10.8 Line height calculations](https://www.w3.org/TR/CSS2/visudet.html#line-height)
-///
-/// "CSS assumes that every font has font metrics that specify a
-/// characteristic height above the baseline and a depth below it."
-#[must_use]
-pub fn create_font_metrics(font: Option<&fontdue::Font>) -> Box<dyn koala_css::FontMetrics + '_> {
-    match font {
-        Some(f) => Box::new(font_metrics::FontdueFontMetrics::new(f)),
-        None => Box::new(koala_css::ApproximateFontMetrics),
-    }
-}
-
 /// Opaque font handle for text measurement during layout.
 ///
 /// Wraps the underlying font library so that downstream crates (koala-gui,
@@ -819,6 +804,9 @@ pub fn create_font_metrics(font: Option<&fontdue::Font>) -> Box<dyn koala_css::F
 pub struct FontProvider {
     /// The loaded system font, if one was found.
     font: Option<fontdue::Font>,
+    /// The font's own vertical metrics, read by `koala-font`; `None` if
+    /// there is no font or `koala-font` could not read it.
+    em: Option<font_metrics::EmMetrics>,
 }
 
 impl FontProvider {
@@ -829,9 +817,32 @@ impl FontProvider {
     /// an approximate metrics provider.
     #[must_use]
     pub fn load() -> Self {
-        Self {
-            font: Renderer::load_system_font(),
+        // The font the renderer draws regular text with: the first of its
+        // search paths that fontdue can open. The bytes are kept until
+        // `koala-font` has read the same font's tables, and dropped after.
+        for path in renderer::FONT_SEARCH_PATHS {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let Ok(font) = fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
+            else {
+                continue;
+            };
+            let em = match font_metrics::EmMetrics::read(&bytes) {
+                Ok(em) => Some(em),
+                Err(error) => {
+                    if !warning::is_quiet() {
+                        eprintln!(
+                            "koala-font could not read {path}: {error}; layout approximates its \
+                             ascent and descent"
+                        );
+                    }
+                    None
+                }
+            };
+            return Self { font: Some(font), em };
         }
+        Self { font: None, em: None }
     }
 
     /// Create a [`FontMetrics`](koala_css::FontMetrics) provider from this font.
@@ -840,6 +851,9 @@ impl FontProvider {
     /// approximation (0.6 × font size per character) otherwise.
     #[must_use]
     pub fn metrics(&self) -> Box<dyn koala_css::FontMetrics + '_> {
-        create_font_metrics(self.font.as_ref())
+        match &self.font {
+            Some(font) => Box::new(font_metrics::FontdueFontMetrics::new(font, self.em)),
+            None => Box::new(koala_css::ApproximateFontMetrics),
+        }
     }
 }

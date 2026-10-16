@@ -3052,7 +3052,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3212,6 +3212,7 @@ dependencies = [
  "koala-css",
  "koala-dom",
  "koala-fetch",
+ "koala-font",
  "koala-html",
  "koala-js",
  "koala-std",
@@ -3300,6 +3301,15 @@ dependencies = [
  "reqwest",
  "thiserror 2.0.21",
  "url",
+]
+
+[[package]]
+name = "koala-font"
+version = "0.1.0"
+dependencies = [
+ "quickcheck",
+ "thiserror 2.0.21",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]

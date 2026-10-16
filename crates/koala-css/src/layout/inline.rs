@@ -20,8 +20,8 @@ use super::layout_box::ElementBoxId;
 /// A font's ascent as a fraction of its em square: 0.8, close to typical
 /// Latin fonts (Helvetica ≈ 0.77, Arial ≈ 0.81).
 ///
-/// TODO: read the real ascent from the font's tables through
-/// `FontMetrics`; see the vertical font metrics entry in SESSION.md.
+/// Used only where no font says otherwise: by [`ApproximateFontMetrics`],
+/// and for the baseline of atomic inlines (see `fragment_ascent_descent`).
 const ASCENDER_RATIO: f32 = 0.8;
 
 /// Font metrics interface for text measurement during layout.
@@ -54,6 +54,58 @@ pub trait FontMetrics {
     /// "The initial value of 'line-height' is 'normal'. We recommend a used
     /// value for 'normal' between 1.0 and 1.2."
     fn line_height(&self, font_size: f32) -> f32;
+
+    /// The font's own vertical metrics at `font_size`, in pixels.
+    ///
+    /// [§ 3.2.1 Ascent and Descent Metrics](https://drafts.csswg.org/css-inline-3/#ascent-descent)
+    ///
+    /// "CSS assumes that every font has font metrics that specify a
+    /// characteristic height above the baseline—called the ascent
+    /// metric—and a characteristic depth below it—called the descent
+    /// metric—which CSS uses for laying out text and boxes in an inline
+    /// formatting context."
+    ///
+    /// Which of a font's tables supply these is the implementor's
+    /// business: this trait is where font formats stop and CSS starts.
+    fn vertical_metrics(&self, font_size: f32) -> VerticalFontMetrics;
+}
+
+/// A font's vertical metrics at one font size, in pixels.
+///
+/// [§ 3.2 Font and Glyph Metrics](https://drafts.csswg.org/css-inline-3/#font-metrics)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VerticalFontMetrics {
+    /// "a characteristic height above the baseline—called the ascent
+    /// metric".
+    pub ascent: f32,
+    /// "a characteristic depth below it—called the descent metric",
+    /// positive below the baseline.
+    pub descent: f32,
+    /// [§ 3.2.2 Line Gap Metrics](https://drafts.csswg.org/css-inline-3/#font-line-gap)
+    ///
+    /// "a font-recommended “line gap” or “external leading” metric".
+    /// "UAs must floor the line gap metric at zero", so this is never
+    /// negative.
+    pub line_gap: f32,
+    /// The font's suggested underline, if it gives one.
+    ///
+    /// [§ 2.8.2 Using Font Metrics for Automatic Positioning](https://drafts.csswg.org/css-text-decor-4/#line-auto-offset)
+    ///
+    /// "Some font formats (such as OpenType) can offer information about
+    /// the appropriate position of a line decoration."
+    pub underline: Option<DecorationMetrics>,
+    /// The font's suggested line-through, if it gives one.
+    pub strikeout: Option<DecorationMetrics>,
+}
+
+/// Where a font places one of its decoration lines, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecorationMetrics {
+    /// Height of the line's top edge above the baseline; negative below
+    /// it, as an underline usually is.
+    pub top: f32,
+    /// The line's thickness.
+    pub thickness: f32,
 }
 
 /// Approximate font metrics using fixed ratios.
@@ -84,6 +136,19 @@ impl FontMetrics for ApproximateFontMetrics {
     fn line_height(&self, font_size: f32) -> f32 {
         const LINE_HEIGHT_RATIO: f32 = 1.2;
         font_size * LINE_HEIGHT_RATIO
+    }
+
+    /// The ascent is `ASCENDER_RATIO` of the em and the descent the rest,
+    /// with no line gap; the font is not known, so neither is where it
+    /// would put its decorations.
+    fn vertical_metrics(&self, font_size: f32) -> VerticalFontMetrics {
+        VerticalFontMetrics {
+            ascent: font_size * ASCENDER_RATIO,
+            descent: font_size * (1.0 - ASCENDER_RATIO),
+            line_gap: 0.0,
+            underline: None,
+            strikeout: None,
+        }
     }
 }
 
@@ -218,6 +283,35 @@ pub struct TextRun {
     /// advance the cursor by `glyph_advance + letter_spacing` for
     /// every glyph except the last in the run.
     pub letter_spacing: f32,
+
+    /// The run's font metrics at its font size, kept so painting can
+    /// place decorations without measuring the font again.
+    pub vertical_metrics: VerticalFontMetrics,
+
+    /// Distance from the top of the fragment to the run's baseline: A' in
+    /// [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading), the
+    /// font's ascent plus half the leading. See [`baseline_offset`].
+    pub baseline: f32,
+}
+
+/// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
+///
+/// The distance from the top of a glyph's inline box to its baseline,
+/// for a font with `metrics` in a box `line_height` tall.
+///
+/// "In this section we use A to mean that height (for a given font at a
+/// given size) and D the depth. We also define AD = A + D, the distance
+/// from the top to the bottom."
+fn baseline_offset(metrics: VerticalFontMetrics, line_height: f32) -> f32 {
+    // "Still for each glyph, determine the leading L to add, where L =
+    // 'line-height' - AD."
+    let leading = line_height - (metrics.ascent + metrics.descent);
+    // "Half the leading is added above A and the other half below D,
+    // giving the glyph and its leading a total height above the baseline
+    // of A' = A + L/2 and a total depth of D' = D + L/2."
+    //
+    // "Note. L may be negative."
+    leading.mul_add(0.5, metrics.ascent)
 }
 
 /// [§ 10.8.1 Leading and half-leading](https://www.w3.org/TR/CSS2/visudet.html#leading)
@@ -597,6 +691,7 @@ impl InlineLayout {
         font_metrics: &dyn FontMetrics,
     ) {
         let text_width = font_metrics.text_width(text, font_size, letter_spacing);
+        let vertical_metrics = font_metrics.vertical_metrics(font_size);
 
         // [§ 9.4.2](https://www.w3.org/TR/CSS2/visuren.html#inline-formatting)
         //
@@ -621,7 +716,9 @@ impl InlineLayout {
                 font_weight,
                 font_style,
                 text_decoration,
-                letter_spacing
+                letter_spacing,
+                vertical_metrics,
+                baseline: baseline_offset(vertical_metrics, line_height),
             }),
             vertical_align: VerticalAlign::Baseline,
         };
@@ -711,6 +808,7 @@ impl InlineLayout {
         margin_left: f32,
         margin_right: f32,
         border_padding: EdgeSizes,
+        font_metrics: &dyn FontMetrics,
     ) {
         let left_mbp = margin_left + border_padding.left;
 
@@ -733,8 +831,10 @@ impl InlineLayout {
         // this specification does not specify how. A UA may, e.g., use the
         // em-box or the maximum ascender and descender of the font."
         //
-        // The em-box: `font_size` tall, with the baseline `ASCENDER_RATIO`
-        // of the way down, as for text.
+        // The maximum ascender and descender: the content area is the
+        // font's A + D tall, with the baseline A below its top, so the
+        // baseline sits where the box's text puts it. The em-box would
+        // leave the baseline's place inside the box undefined.
         //
         // "The vertical padding, border and margin of an inline, non-replaced
         // box start at the top and bottom of the content area, and has
@@ -742,8 +842,9 @@ impl InlineLayout {
         //
         // The vertical margin is outside the border box, so it is not part
         // of the fragment.
-        let height = border_padding.top + font_size + border_padding.bottom;
-        let ascent = font_size.mul_add(ASCENDER_RATIO, border_padding.top);
+        let metrics = font_metrics.vertical_metrics(font_size);
+        let height = border_padding.top + metrics.ascent + metrics.descent + border_padding.bottom;
+        let ascent = border_padding.top + metrics.ascent;
         self.open_inline_boxes.push(OpenInlineBox {
             id,
             fragment: self.current_line_fragments.len(),
@@ -901,6 +1002,11 @@ impl InlineLayout {
             //
             // Create a zero-width strut fragment so finish_line() generates
             // a line box with the proper height.
+            //
+            // "If the inline box contains no glyphs at all, it is considered
+            // to contain a strut (an invisible glyph of zero width) with the
+            // A and D of the element's first available font."
+            let vertical_metrics = font_metrics.vertical_metrics(font_size);
             let fragment = LineFragment {
                 bounds: Rect {
                     x: self.start_x + self.left_offset + self.current_x,
@@ -919,6 +1025,8 @@ impl InlineLayout {
                     // A strut carries no visible glyphs, so there's
                     // no inter-character spacing to apply.
                     letter_spacing: 0.0,
+                    vertical_metrics,
+                    baseline: baseline_offset(vertical_metrics, line_height),
                 }),
                 vertical_align: VerticalAlign::Baseline,
             };
@@ -949,10 +1057,10 @@ impl InlineLayout {
         // "CSS assumes that every font has font metrics that specify a
         // characteristic height above the baseline and a depth below it."
         //
-        // For each baseline-aligned fragment, we compute ascent and descent:
-        //   - half_leading = (line_height - font_size) / 2
-        //   - ascent = half_leading + font_size * ASCENDER_RATIO
-        //   - descent = line_height - ascent
+        // For each baseline-aligned fragment, we take its height above and
+        // depth below the baseline: A' and D' for text (see
+        // `baseline_offset`), and what `fragment_ascent_descent` says for
+        // the rest.
         //
         // The line box height is max_ascent + max_descent.
         // The baseline is at max_ascent from the top of the line box.
@@ -994,7 +1102,7 @@ impl InlineLayout {
                 // its text, placed by its own line-height, is what counts.
                 | (FragmentContent::InlineBox { .. }, _) => {}
                 _ => {
-                    let (ascent, descent) = Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
+                    let (ascent, descent) = Self::fragment_ascent_descent(frag);
                     if ascent > max_ascent {
                         max_ascent = ascent;
                     }
@@ -1014,7 +1122,7 @@ impl InlineLayout {
         // "The 'vertical-align' property affects the vertical positioning
         // inside a line box of the boxes generated by an inline-level element."
         for frag in &mut self.current_line_fragments {
-            let (frag_ascent, _) = Self::fragment_ascent_descent(frag, ASCENDER_RATIO);
+            let (frag_ascent, _) = Self::fragment_ascent_descent(frag);
 
             frag.bounds.y = match frag.vertical_align {
                 // "Align the baseline of the box with the baseline of the
@@ -1114,29 +1222,29 @@ impl InlineLayout {
     /// "The height of the inline box encloses all glyphs and their
     /// half-leading on each side and is thus exactly 'line-height'."
     ///
-    /// For a text fragment:
-    ///   `half_leading = (line_height - font_size) / 2`
-    ///   `ascent = half_leading + font_size × ascender_ratio`
-    ///   `descent = line_height - ascent`
+    /// A text fragment is its run's A' and D' (`TextRun::baseline`, and
+    /// the fragment's height, `line-height`, less that). An inline box's
+    /// fragment carries its own ascent, set by `begin_inline_box`.
     ///
-    /// An inline box's fragment carries its own ascent, set by
-    /// `begin_inline_box`. For atomic fragments (`ReplacedElement`,
-    /// `InlineBlock`), we approximate using the fragment height directly.
-    fn fragment_ascent_descent(frag: &LineFragment, ascender_ratio: f32) -> (f32, f32) {
+    /// An atomic fragment (`ReplacedElement`, `InlineBlock`) puts its
+    /// baseline `ASCENDER_RATIO` of the way down. That is an
+    /// approximation. § 10.8.1: "The baseline of an 'inline-block' is the
+    /// baseline of its last line box in the normal flow"; and for
+    /// 'vertical-align: baseline', "If the box does not have a baseline,
+    /// align the bottom margin edge with the parent's baseline", as for a
+    /// replaced element.
+    fn fragment_ascent_descent(frag: &LineFragment) -> (f32, f32) {
         let frag_height = frag.bounds.height;
 
-        let font_size = match &frag.content {
-            FragmentContent::Text(run) => run.font_size,
+        let ascent = match &frag.content {
+            FragmentContent::Text(run) => run.baseline,
             &FragmentContent::InlineBox { ascent, .. } => {
                 return (ascent, frag_height - ascent);
             }
-            // For atomic fragments, treat the full height as the "font size"
-            // so ascent = height × ascender_ratio.
-            FragmentContent::ReplacedElement | FragmentContent::InlineBlock(_) => frag_height,
+            FragmentContent::ReplacedElement | FragmentContent::InlineBlock(_) => {
+                frag_height * ASCENDER_RATIO
+            }
         };
-
-        let half_leading = (frag_height - font_size) / 2.0;
-        let ascent = font_size.mul_add(ascender_ratio, half_leading);
         let descent = frag_height - ascent;
 
         (ascent.max(0.0), descent.max(0.0))
@@ -1225,5 +1333,114 @@ impl InlineLayout {
     #[must_use]
     pub fn total_height(&self) -> f32 {
         self.line_boxes.iter().map(|lb| lb.line_height).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use koala_dom::NodeId;
+
+    use super::{
+        DecorationMetrics, FontMetrics, FragmentContent, InlineLayout, VerticalFontMetrics,
+    };
+    use crate::layout::box_model::EdgeSizes;
+    use crate::layout::layout_box::ElementBoxId;
+    use crate::style::ColorValue;
+    use crate::style::values::{FontStyle, TextAlign, TextDecorationLine};
+
+    /// A font whose ascent and descent do not add up to its em, as real
+    /// fonts' seldom do. Close to Helvetica's typo metrics (0.75 em up,
+    /// 0.17 em down), with a descent of 0.125 em so every value below is
+    /// exact in `f32`.
+    struct ShortFont;
+
+    impl FontMetrics for ShortFont {
+        fn text_width(&self, text: &str, font_size: f32, _letter_spacing: f32) -> f32 {
+            #[allow(clippy::cast_precision_loss)]
+            let chars = text.chars().count() as f32;
+            chars * font_size * 0.5
+        }
+
+        fn line_height(&self, font_size: f32) -> f32 {
+            font_size * 1.25
+        }
+
+        fn vertical_metrics(&self, font_size: f32) -> VerticalFontMetrics {
+            VerticalFontMetrics {
+                ascent: font_size * 0.75,
+                descent: font_size * 0.125,
+                line_gap: 0.0,
+                underline: Some(DecorationMetrics {
+                    top: font_size * -0.0625,
+                    thickness: font_size * 0.0625,
+                }),
+                strikeout: None,
+            }
+        }
+    }
+
+    fn add_text(layout: &mut InlineLayout, text: &str, font_size: f32) {
+        layout.add_text(
+            text,
+            font_size,
+            &ColorValue::BLACK,
+            400,
+            FontStyle::Normal,
+            TextDecorationLine::default(),
+            0.0,
+            &ShortFont,
+        );
+    }
+
+    /// [§ 10.8.1](https://www.w3.org/TR/CSS2/visudet.html#leading): at
+    /// 16px, A = 12 and D = 2, so AD = 14 in a 20px line: L = 6, and the
+    /// baseline is A + L/2 = 15 below the top. An em-based formula would
+    /// put it at 0.8 × 16 + (20 - 16) / 2 = 14.8.
+    #[test]
+    fn text_baseline_is_ascent_plus_half_the_leading() {
+        let mut layout = InlineLayout::new(500.0, 0.0, 0.0, TextAlign::Left);
+        add_text(&mut layout, "text", 16.0);
+        layout.finish_line();
+
+        let line = &layout.line_boxes[0];
+        assert_eq!(line.line_height, 20.0);
+        assert_eq!(line.baseline, 15.0);
+        let FragmentContent::Text(run) = &line.fragments[0].content else {
+            panic!("the line holds the text");
+        };
+        assert_eq!(run.baseline, 15.0);
+        assert_eq!(run.vertical_metrics, ShortFont.vertical_metrics(16.0));
+    }
+
+    /// An inline box's content area is the font's A + D, with its
+    /// baseline A below the top, so it lines up with its own text: 12px
+    /// of ascent under 3px of top border and padding puts the box's top
+    /// 15 - 3 - 12 = 0 below the line's top.
+    #[test]
+    fn inline_box_content_area_is_ascent_plus_descent() {
+        let mut layout = InlineLayout::new(500.0, 0.0, 0.0, TextAlign::Left);
+        let id = ElementBoxId {
+            node: NodeId(1),
+            pseudo_element: None,
+        };
+        let border_padding = EdgeSizes {
+            top: 3.0,
+            right: 0.0,
+            bottom: 1.0,
+            left: 0.0,
+        };
+        layout.begin_inline_box(id, 16.0, 0.0, 0.0, border_padding, &ShortFont);
+        add_text(&mut layout, "link", 16.0);
+        layout.end_inline_box();
+        layout.finish_line();
+
+        let line = &layout.line_boxes[0];
+        let inline_box = &line.fragments[0];
+        let FragmentContent::InlineBox { ascent, .. } = inline_box.content else {
+            panic!("the inline box's fragment comes first");
+        };
+        assert_eq!(ascent, 15.0);
+        assert_eq!(inline_box.bounds.height, 3.0 + 12.0 + 2.0 + 1.0);
+        assert_eq!(inline_box.bounds.y, line.baseline - 15.0);
     }
 }

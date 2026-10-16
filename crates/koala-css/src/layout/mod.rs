@@ -44,8 +44,8 @@ pub use box_model::{BoxDimensions, EdgeSizes, Rect};
 pub use float::FloatContext;
 pub use formatting_context::{BlockFormattingContext, InlineFormattingContext};
 pub use inline::{
-    ApproximateFontMetrics, FontMetrics, FragmentContent, InlineLayout, LineBox, LineFragment,
-    TextRun, VerticalAlign,
+    ApproximateFontMetrics, DecorationMetrics, FontMetrics, FragmentContent, InlineLayout,
+    LineBox, LineFragment, TextRun, VerticalAlign, VerticalFontMetrics,
 };
 pub use layout_box::{BoxType, ElementBoxId, LayoutBox};
 pub use positioned::{BoxOffsets, PositionedLayout};

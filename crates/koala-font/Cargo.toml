@@ -1,0 +1,16 @@
+[package]
+name = "koala-font"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OpenType font parsing for Koala; replaces fontdue a slice at a time"
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+quickcheck = "1"
+ttf-parser = "0.25.1"

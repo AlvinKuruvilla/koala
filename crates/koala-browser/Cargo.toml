@@ -12,6 +12,7 @@ koala-dom.workspace = true
 koala-html.workspace = true
 koala-css.workspace = true
 koala-js.workspace = true
+koala-font.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 # `tracing` is always linked: spans dispatch through a global

@@ -23,6 +23,7 @@
 
 mod display_list;
 mod display_list_builder;
+mod text_decoration;
 
 pub use display_list::{DisplayCommand, DisplayList};
 pub use display_list_builder::DisplayListBuilder;

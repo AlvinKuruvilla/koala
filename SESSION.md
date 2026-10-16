@@ -861,3 +861,22 @@ measuring layout when the resolved size equals the base size is the fix.
   74 ms Wikipedia cascade, which every hover change now repeats.
 - The cascade skips at-rules (`Rule::At(_) => {}`), so `@media` rules never
   apply, and `state_dependencies` misses `:hover` rules inside them.
+- `cached_fonts` (`koala-ui/src/render_worker.rs` on `ui/pointer`, formerly
+  `browser_page.rs`) says loading four font files "costs ~250 ms". Measured
+  2026-10-15 in release: 0.1-0.4 ms to read each file and 7-9 ms for
+  fontdue to parse it, about 35 ms for four. Probably a debug-build or
+  pre-rework figure; re-measure before relying on it.
+- `koala-font` cannot open Apple's bitmap-only fonts, such as
+  `/System/Library/Fonts/Supplemental/NISC18030.ttf`: they carry `bhed`
+  in place of `head`, so `Font::from_source` fails with
+  `MissingTable(head)`. ttf-parser rejects the same font. Matters once
+  font fallback can pick such a font.
+- `<u>` text is not underlined: the UA stylesheet
+  (`crates/koala-css/src/ua_stylesheet.rs`) only gives `a` an
+  underline. HTML's rendering section has `u, ins { text-decoration:
+  underline; }` (and `s, strike, del` line-through), not checked yet.
+- Bold and italic runs are measured with the regular font but drawn with
+  Arial Bold/Italic, so they overflow their boxes:
+  `<b>bold gjpqy</b> <i>italic gjpqy</i>` at 12px draws the two runs
+  touching, with the space between them covered. Seen in
+  `tmp/underline/after.png`.
